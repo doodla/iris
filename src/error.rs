@@ -25,7 +25,7 @@ pub mod exit {
     pub const PENDING: i32 = 4;
     /// Outcome uncertain: the provider may have accepted a paid request.
     pub const UNCERTAIN: i32 = 5;
-    /// Interrupted by the user (SIGINT).
+    /// Interrupted by SIGINT (Ctrl-C), SIGTERM, or SIGHUP.
     pub const INTERRUPTED: i32 = 130;
 }
 

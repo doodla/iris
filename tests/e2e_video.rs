@@ -512,31 +512,82 @@ fn a_wait_limit_exits_4_and_leaves_the_job_running() {
     veo.assert_no_credential_leaks();
 }
 
+/// Send `signal` (e.g. `TERM`) to a running `iris` through the `kill` utility.
+fn send_signal(child: &Running, signal: &str) {
+    let status = std::process::Command::new("kill")
+        .args([&format!("-{signal}"), &child.pid().to_string()])
+        .status()
+        .unwrap();
+    assert!(status.success(), "kill -{signal} failed");
+}
+
 #[test]
-fn ctrl_c_during_jobs_wait_exits_130_and_leaves_the_job_running() {
-    let sb = Sandbox::new();
-    let veo = VeoMock::start();
-    let id = submit_detached(&sb, &veo, &[]);
+fn ctrl_c_sigterm_or_sighup_during_jobs_wait_exits_130_and_leaves_the_job_running() {
+    for signal in ["INT", "TERM", "HUP"] {
+        let sb = Sandbox::new();
+        let veo = VeoMock::start();
+        let id = submit_detached(&sb, &veo, &[]);
 
-    let child = sb
-        .iris()
-        .gemini(&veo.api)
-        .args(["jobs", "wait", &id, "--timeout", "60s", "--poll-interval", "2s", "--json"])
-        .spawn();
-    // The first poll has been answered (and the handler armed) once this is printed.
-    child.wait_for_stderr(&format!("Job {id} is running"), Duration::from_secs(30));
-    child.interrupt();
-    let out = child.finish();
-    let v = out.err(130, "interrupted");
-    assert_eq!(v["command"], "jobs.wait");
-    assert_eq!(v["error"]["job_id"], id.as_str());
-    assert_eq!(v["error"]["job_status"], "running");
-    assert!(v["error"]["hint"].as_str().unwrap().contains(&format!("iris jobs wait {id}")), "{v}");
-    assert!(out.elapsed < Duration::from_secs(30), "{:?}", out.elapsed);
+        let child = sb
+            .iris()
+            .gemini(&veo.api)
+            .args(["jobs", "wait", &id, "--timeout", "60s", "--poll-interval", "2s", "--json"])
+            .spawn();
+        // The first poll has been answered (and the handler armed) once this is printed.
+        child.wait_for_stderr(&format!("Job {id} is running"), Duration::from_secs(30));
+        send_signal(&child, signal);
+        let out = child.finish();
+        let v = out.err(130, "interrupted");
+        assert_eq!(v["command"], "jobs.wait");
+        assert_eq!(v["error"]["job_id"], id.as_str());
+        assert_eq!(v["error"]["job_status"], "running");
+        assert!(v["error"]["hint"].as_str().unwrap().contains(&format!("iris jobs wait {id}")), "{v}");
+        assert!(out.elapsed < Duration::from_secs(30), "SIG{signal}: {:?}", out.elapsed);
 
-    assert_eq!(sb.record(&id)["status"], "running", "Ctrl-C never fails the job");
-    assert_eq!(veo.submits(), 1);
-    veo.assert_no_credential_leaks();
+        assert_eq!(sb.record(&id)["status"], "running", "SIG{signal} never fails the job");
+        assert_eq!(veo.submits(), 1);
+        veo.assert_no_credential_leaks();
+    }
+}
+
+#[test]
+fn sigterm_or_sighup_during_a_paid_submit_is_deferred_until_the_operation_id_is_recorded() {
+    for signal in ["TERM", "HUP"] {
+        let sb = Sandbox::new();
+        let veo = VeoMock::start();
+        // The provider takes a while to accept the submission.
+        veo.submit.set(json_response(200, json!({ "name": veo.op_name })).set_delay(Duration::from_secs(2)));
+        let child = sb
+            .iris()
+            .gemini(&veo.api)
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+            .spawn();
+        // The handlers are installed before this line is printed.
+        child.wait_for_stderr("Submitting job", Duration::from_secs(30));
+        veo.api.wait_for("POST", &veo_submit_path(VEO_LITE), 1, Duration::from_secs(30));
+        send_signal(&child, signal);
+        child.wait_for_stderr("Interrupt received", Duration::from_secs(30));
+        let out = child.finish();
+        // Exactly one envelope (checked by `err`), exit 130, and the job was recorded.
+        let v = out.err(130, "interrupted");
+        let error = &v["error"];
+        assert_eq!(error["job_status"], "running", "SIG{signal}: {v}");
+        assert_eq!(error["remote_operation_id"], veo.op_name.as_str());
+        assert_eq!(error["retryable"], false, "running the command again would bill another job");
+        assert_eq!(error["details"]["charge_possible"], true);
+        let id = error["job_id"].as_str().unwrap();
+        let rec = sb.record(id);
+        assert_eq!(rec["status"], "running");
+        assert_eq!(rec["remote_operation_id"], veo.op_name.as_str());
+        assert_eq!(veo.submits(), 1);
+
+        // A later process follows the job as usual.
+        veo.succeed();
+        let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", id, "--json"]).run().ok();
+        assert_eq!(job_of(&v)["status"], "succeeded");
+        assert_eq!(veo.submits(), 1);
+        veo.assert_no_credential_leaks();
+    }
 }
 
 // ----- scenario 8: download failure, recovery, expiry --------------------------------------------

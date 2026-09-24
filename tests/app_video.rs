@@ -462,6 +462,10 @@ async fn first_ctrl_c_during_submission_is_deferred_until_the_operation_id_is_re
     assert_eq!(e.exit_code(), 130);
     assert_eq!(e.job_status, Some(JobStatus::Running));
     assert!(e.remote_operation_id.is_some());
+    // The job was accepted: re-running the command would bill another one.
+    assert_eq!(e.retryable, Some(false));
+    assert_eq!(e.details["charge_possible"], true);
+    assert!(e.hint.as_deref().unwrap().contains("iris jobs wait"), "{e:?}");
     let id = JobId::parse(e.job_id.as_deref().unwrap()).unwrap();
     assert_eq!(store(&f.sandbox).load(&id).unwrap().status(), JobStatus::Running);
     assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0, "no waiting after an interrupt");
@@ -489,7 +493,12 @@ async fn second_ctrl_c_during_submission_exits_at_once_leaving_the_record_submit
     let (r, ()) = tokio::join!(run, driver);
     let e = r.unwrap_err();
     assert_eq!(e.code, ErrorCode::Interrupted);
+    assert_eq!(e.exit_code(), 130);
     assert_eq!(e.job_status, Some(JobStatus::Submitting));
+    // The request may have reached the provider: not retryable, charge possible.
+    assert_eq!(e.retryable, Some(false));
+    assert_eq!(e.details["charge_possible"], true);
+    assert_eq!(e.provider, Some(ProviderId::Gemini));
     let id = JobId::parse(e.job_id.as_deref().unwrap()).unwrap();
     let raw = record_json(&f.sandbox.state(), id.as_str());
     assert_eq!(raw["status"], "submitting");
@@ -499,6 +508,7 @@ async fn second_ctrl_c_during_submission_exits_at_once_leaving_the_record_submit
     let until = rec.created_at().checked_add(ctx.store.submit_budget() + iris::jobs::SUBMIT_GRACE).unwrap();
     assert!(hint.contains(&format!("submitting until about {until}")), "{hint}");
     assert!(hint.contains("submission_unknown after that"), "{hint}");
+    assert!(hint.contains(&format!("iris jobs status {id}")), "{hint}");
 }
 
 #[tokio::test]

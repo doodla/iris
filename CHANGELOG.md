@@ -112,6 +112,13 @@ machine-readable contract for agents.
 - `jobs download` on a record that still says `running` checks the job's status once first, so a
   job that finished since the last check downloads instead of reporting `job_not_ready`.
 
+- SIGTERM and SIGHUP are handled like Ctrl-C: during a paid Veo submission the first one is
+  deferred until the operation id is recorded, and every interrupted command prints exactly one
+  `interrupted` envelope and exits 130 (previously SIGTERM killed the process silently, possibly
+  losing the operation id).
+- An interrupted Veo submission (the deferred first interrupt, or a second one) reports
+  `retryable: false` and `details.charge_possible: true`.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

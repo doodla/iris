@@ -164,7 +164,7 @@ Note the `preview_model` warning is still there even though the request itself f
 collected while resolving the model (before the paid call) are not discarded just because the
 call that followed them didn't succeed.
 
-### Waiting, `--timeout`, and Ctrl-C
+### Waiting, `--timeout`, Ctrl-C, and other signals
 
 `iris video generate` (without `--detach`) and `iris jobs wait` poll until the job reaches a
 terminal status, the caller's `--timeout` passes, or you press Ctrl-C. Either of the latter two
@@ -197,6 +197,18 @@ $ echo $?
 ```
 
 The poll loop's backoff sleeps are also interruptible, so Ctrl-C is responsive even mid-backoff.
+
+**SIGTERM and SIGHUP are handled exactly like Ctrl-C** (SIGINT), so a supervisor's `kill`, a
+`timeout` wrapper, or a closed terminal also ends with one `interrupted` result (one JSON envelope
+in `--json` mode) and exit **130**, never a silent death.
+
+During the paid submission itself, the first interrupt is **deferred** until the provider answers,
+so the operation id gets recorded: the command then exits 130 with the job `running` (resume with
+`iris jobs wait <id>`). A second interrupt stops at once; the job stays `submitting` (reported as
+`submission_unknown` once the paid-submission budget has passed, since Iris cannot follow it without
+an operation id — `iris jobs status <id>` shows which). Both results say `retryable: false` and
+`details.charge_possible: true`: the provider may have accepted and billed the request, so running
+`iris video generate` again would pay for a second video.
 
 ## Downloads
 

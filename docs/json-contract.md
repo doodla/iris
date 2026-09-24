@@ -320,7 +320,7 @@ says `retryable: true`.
 | 3 | credentials, access, or quota problem |
 | 4 | not finished yet — the job continues remotely |
 | 5 | outcome uncertain — do not blindly resubmit |
-| 130 | interrupted (Ctrl-C) |
+| 130 | interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP) |
 
 Exit 2 covers *both* local validation (nothing was sent — the request never left the process) and
 a definite provider-side rejection of a malformed request as given (e.g. an OpenAI HTTP 400 →
@@ -344,6 +344,12 @@ A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retry
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
 errors are not charged. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
 with `retryable: false` and `details.charge_possible: true`.
+`interrupted` (exit 130) covers SIGINT (Ctrl-C), SIGTERM, and SIGHUP alike, once Iris has started
+an interruptible phase (a provider call, a poll, a wait, a download); it is always reported as one
+envelope. Its default `retryable: true` means running the same command again is harmless — except
+while a paid request is in flight (a Veo `video generate` submit or an image call), which reports
+`retryable: false` and `details.charge_possible: true` because running it again could pay twice
+(see [jobs.md](jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
 
 For job outputs, `artifact_expired` means the output is gone for good: the file host answered 410,
 or 403/404 after the provider's retention period (`job.remote_expires_at`). A 403/404 before that

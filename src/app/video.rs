@@ -6,10 +6,12 @@
 //! answer) → `submission_unknown`, error `submission_uncertain`, exit 5, never
 //! resubmitted.
 //!
-//! Ctrl-C during the submission is deferred once, until the provider answers, so
-//! the operation id gets recorded (then exit 130 with the job `running`); a second
-//! Ctrl-C exits at once and leaves the record `submitting` (reported as
-//! `submission_unknown` once the paid-submit budget has passed). With `--detach`
+//! An interrupt (Ctrl-C, SIGTERM, SIGHUP) during the submission is deferred once,
+//! until the provider answers, so the operation id gets recorded (then exit 130
+//! with the job `running`); a second one exits at once and leaves the record
+//! `submitting` (reported as `submission_unknown` once the paid-submit budget has
+//! passed). Both report `retryable: false` and `details.charge_possible: true`:
+//! running the command again would submit another paid job. With `--detach`
 //! the command returns after submission; otherwise it waits and downloads like
 //! `jobs wait`, except that a file which appeared at the target since the
 //! preflight never blocks saving the paid output (`<stem>.<n>.<ext>`,
@@ -166,6 +168,12 @@ pub async fn run(
         },
         ctx.now(),
     )?;
+    // Interrupts (Ctrl-C, SIGTERM, SIGHUP) are handled from before the record
+    // exists, so none can end the process by default between recording the job
+    // and recording the provider's answer; one that arrives before the request
+    // is sent is deferred like any other.
+    ctx.interrupt.arm();
+    let seen = ctx.interrupt.count();
     ctx.store.create(&record)?;
 
     let req = VideoRequest {
@@ -178,8 +186,6 @@ pub async fn run(
     };
     ctx.progress
         .line(format!("Submitting job {job_id} to {provider} ({}); this is a paid request", resolved.id));
-    ctx.interrupt.arm();
-    let seen = ctx.interrupt.count();
     let mut deferred = false;
     let submission = {
         let submit = video.submit(&req, &pctx);
@@ -192,17 +198,22 @@ pub async fn run(
                     deferred = true;
                     ctx.progress.line(format!(
                         "Interrupt received: waiting for the provider to acknowledge job {job_id} so it can be \
-                         recorded; press Ctrl-C again to stop immediately (the job may then be unrecoverable)"
+                         recorded; interrupt again (Ctrl-C) to stop immediately (the job may then be \
+                         unrecoverable)"
                     ));
                 }
                 () = ctx.interrupt.after(seen + 1), if deferred => {
                     let unknown_at = submission_unknown_at(ctx, &record)
                         .map(|t| format!("until about {t}"))
                         .unwrap_or_else(|| "for a while".to_string());
+                    // The request may have reached the provider: running the command
+                    // again would submit (and bill) another job.
                     return Err(IrisError::new(
                         ErrorCode::Interrupted,
                         format!("interrupted while submitting job {job_id}; the provider's answer was not recorded"),
                     )
+                    .with_retryable(Some(false))
+                    .with_detail("charge_possible", true)
                     .with_job(job_id.to_string(), Some(JobStatus::Submitting))
                     .with_provider(provider)
                     .with_hint(format!(
@@ -231,12 +242,19 @@ pub async fn run(
             };
             ctx.progress.line(format!("Job {job_id} accepted by {provider}"));
             if deferred {
+                // The job exists and is billed; running the command again would
+                // submit another one, so this is not retryable as is.
                 return Err(with_job_context(
                     IrisError::new(
                         ErrorCode::Interrupted,
                         format!("interrupted; job {job_id} was submitted and continues remotely"),
                     )
-                    .with_hint(format!("resume with `iris jobs wait {job_id}`")),
+                    .with_retryable(Some(false))
+                    .with_detail("charge_possible", true)
+                    .with_hint(format!(
+                        "resume with `iris jobs wait {job_id}`; do not re-run `iris video generate`, which would \
+                         submit and bill a new job"
+                    )),
                     &record,
                 ));
             }

@@ -26,14 +26,15 @@ pub struct Deps {
     pub catalog: Catalog,
     /// HTTP client; `None` builds one from the settings on first use.
     pub http: Option<HttpClient>,
-    /// Ctrl-C source.
+    /// Interrupt source (Ctrl-C and termination signals).
     pub interrupt: Interrupt,
     /// Time source for timestamps written by the app.
     pub clock: Clock,
 }
 
 impl Deps {
-    /// The production set: built-in adapters and catalog, SIGINT, system clock.
+    /// The production set: built-in adapters and catalog, SIGINT/SIGTERM/SIGHUP,
+    /// system clock.
     pub fn builtin() -> Deps {
         Deps {
             registry: Registry::builtin(),
@@ -196,14 +197,20 @@ impl fmt::Debug for Clock {
     }
 }
 
-/// Counts Ctrl-C presses so workflows can race provider calls, polls, and
-/// downloads against them (dropping the losing future cancels HTTP).
+/// Counts interrupts so workflows can race provider calls, polls, and downloads
+/// against them (dropping the losing future cancels HTTP).
 ///
-/// The SIGINT handler is installed lazily by [`Interrupt::arm`], when a workflow
-/// enters an interruptible phase; until then Ctrl-C keeps its default effect
-/// (terminate), which is right for quick local commands. Once installed, it stays
-/// for the rest of the process (tokio cannot uninstall it), so every long-running
-/// phase afterwards must watch the interrupt.
+/// On Unix, SIGINT (Ctrl-C), SIGTERM, and SIGHUP all count as interrupts: a
+/// supervisor's `kill`, a `timeout`, or a closed terminal gets the same handling
+/// as Ctrl-C (a paid Veo submission defers the first one until the operation id
+/// is recorded; every interruptible phase ends with one `interrupted` result,
+/// exit 130). Elsewhere only Ctrl-C does.
+///
+/// The handlers are installed lazily by [`Interrupt::arm`], when a workflow enters
+/// an interruptible phase; until then these signals keep their default effect
+/// (terminate), which is right for quick local commands. Once installed, they stay
+/// for the rest of the process (tokio cannot uninstall them), so every
+/// long-running phase afterwards must watch the interrupt.
 #[derive(Clone)]
 pub struct Interrupt {
     inner: Arc<InterruptInner>,
@@ -216,7 +223,7 @@ struct InterruptInner {
 }
 
 impl Interrupt {
-    /// Interrupts come from SIGINT (Ctrl-C).
+    /// Interrupts come from SIGINT (Ctrl-C), SIGTERM, and SIGHUP.
     pub fn signal() -> Interrupt {
         Interrupt::with_source(true)
     }
@@ -246,7 +253,7 @@ impl Interrupt {
         *self.inner.count.borrow()
     }
 
-    /// Install the SIGINT handler (idempotent; no-op for manual interrupts).
+    /// Install the signal handlers (idempotent; no-op for manual interrupts).
     /// Must be called from within a tokio runtime.
     pub fn arm(&self) {
         if !self.inner.from_signal || self.inner.armed.swap(true, Ordering::SeqCst) {
@@ -259,20 +266,29 @@ impl Interrupt {
         #[cfg(unix)]
         {
             use tokio::signal::unix::{SignalKind, signal};
-            // `signal()` registers the handler synchronously, before any request is sent.
-            match signal(SignalKind::interrupt()) {
-                Ok(mut sigint) => {
-                    let inner = Arc::clone(&self.inner);
-                    tokio::spawn(async move {
-                        while sigint.recv().await.is_some() {
-                            inner.count.send_modify(|n| *n += 1);
-                        }
-                    });
+            let kinds = [
+                ("SIGINT", SignalKind::interrupt()),
+                ("SIGTERM", SignalKind::terminate()),
+                ("SIGHUP", SignalKind::hangup()),
+            ];
+            let mut installed = 0;
+            for (name, kind) in kinds {
+                // `signal()` registers the handler synchronously, before any request is sent.
+                match signal(kind) {
+                    Ok(mut stream) => {
+                        installed += 1;
+                        let inner = Arc::clone(&self.inner);
+                        tokio::spawn(async move {
+                            while stream.recv().await.is_some() {
+                                inner.count.send_modify(|n| *n += 1);
+                            }
+                        });
+                    }
+                    Err(e) => tracing::warn!("cannot install the {name} handler: {e}"),
                 }
-                Err(e) => {
-                    self.inner.armed.store(false, Ordering::SeqCst);
-                    tracing::warn!("cannot install the Ctrl-C handler: {e}");
-                }
+            }
+            if installed == 0 {
+                self.inner.armed.store(false, Ordering::SeqCst);
             }
         }
         #[cfg(not(unix))]
