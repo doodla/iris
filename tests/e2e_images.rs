@@ -432,6 +432,26 @@ fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory(
     assert_eq!(std::fs::read(sb.path("out")).unwrap(), b"in the way", "the file in the way is untouched");
 }
 
+#[test]
+fn a_missing_key_creates_no_output_directory() {
+    let sb = Sandbox::new();
+    for extra in [["-d", "newdir"], ["-o", "deep/er/x.png"]] {
+        let out = sb
+            .iris()
+            .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+            .args(extra)
+            .run();
+        let v = out.err(3, "missing_credentials");
+        assert!(v["error"]["message"].as_str().unwrap().contains("OPENAI_API_KEY"), "{v}");
+    }
+    assert!(files_in(&sb.work()).is_empty(), "{:?}", files_in(&sb.work()));
+
+    // A dry run needs no key and creates nothing either.
+    let out = sb.iris().args(["image", "generate", PROMPT, "-d", "planned", "--dry-run", "--json"]).run();
+    out.ok();
+    assert!(files_in(&sb.work()).is_empty(), "{:?}", files_in(&sb.work()));
+}
+
 // ----- scenario 4: error mapping through the process --------------------------------------------
 
 /// Run one OpenAI generation against `answer` and return the output and the mock.

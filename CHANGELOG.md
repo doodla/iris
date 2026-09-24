@@ -82,6 +82,8 @@ machine-readable contract for agents.
   `output_saved_elsewhere` warning. Errors after a paid image call that could not save an image
   now carry `details.charge_possible: true`, a billing hint, `details.saved`, and
   `details.fallback_paths`.
+- `image generate`/`image edit` check that the provider's API key is present before creating any
+  output directory, so a run that fails with `missing_credentials` leaves nothing on disk.
 - A Gemini image call that returns no image (and was not blocked) is now `provider_error`
   (retryable; running it again is billed again) instead of `remote_job_failed`: a synchronous call
   has no remote job.

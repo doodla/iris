@@ -4,7 +4,8 @@
 //! Order of checks (everything local happens before the paid request):
 //! model resolution → option/input validation against the catalog → prompt
 //! length → input files → output planning and preflight (`output_exists`, output
-//! directory) → `--dry-run` plan → credential → provider call → save every image
+//! directory checked but not created) → `--dry-run` plan → credential → output
+//! directories created and proven writable → provider call → save every image
 //! (never discarding paid output: a file that appeared meanwhile makes the image go
 //! to `<stem>.<n>.<ext>`, and an image that cannot be saved there at all goes to
 //! `<state_dir>/unsaved/`).
@@ -117,7 +118,9 @@ async fn run_checked(
     }
     warnings.extend(plan.warnings.iter().cloned());
     artifacts::preflight(&plan.paths, common.overwrite)?;
-    artifacts::preflight_dirs(&plan.paths, !common.dry_run)?;
+    // Check the output directories without creating anything yet: a real run
+    // creates them only once the credential is known to be present.
+    artifacts::preflight_dirs(&plan.paths, false)?;
 
     let adapter = ctx
         .provider(provider)?
@@ -144,7 +147,10 @@ async fn run_checked(
         }));
     }
 
+    // The credential is checked after every local check but before any output
+    // directory is created, so a missing key leaves nothing on disk.
     let pctx = ctx.provider_context(provider)?;
+    artifacts::preflight_dirs(&plan.paths, true)?;
     let req = ImageRequest {
         operation: op,
         model: resolved.id.clone(),

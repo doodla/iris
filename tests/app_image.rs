@@ -217,6 +217,22 @@ async fn missing_credentials_are_reported_after_all_local_validation() {
     assert_eq!(e.exit_code(), 3);
     assert!(e.message.contains("OPENAI_API_KEY"));
     assert_eq!(f.calls(), 0);
+
+    // A missing key creates no output directory ...
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("new/deeper/x.png"));
+    assert_eq!(
+        err_code(image::run(&ctx, Operation::ImageGenerate, a, &mut w).await),
+        ErrorCode::MissingCredentials
+    );
+    assert!(!f.sandbox.path("new").exists(), "nothing is created before the credential check");
+    // ... while an unusable output location is still reported first, as local validation.
+    std::fs::write(f.sandbox.path("blocker"), b"file").unwrap();
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("blocker/x.png"));
+    let code = err_code(image::run(&ctx, Operation::ImageGenerate, a, &mut w).await);
+    assert_ne!(code, ErrorCode::MissingCredentials, "the output location is checked before the key");
+    assert_eq!(f.calls(), 0);
 }
 
 #[tokio::test]
