@@ -99,8 +99,12 @@ pub(crate) fn parse(path: &Path, text: &str) -> Result<FileConfig, IrisError> {
             format!("credentials are read only from {}, never from the config file", vars.join(" / ")),
         ));
     }
-    let config = toml::Value::Table(table).try_into::<FileConfig>().map_err(|e| schema_error(path, &e))?;
-    if let Some(name) = config.providers.keys().find(|k| !ProviderId::ALL.iter().any(|p| p.as_str() == *k)) {
+    // Checked before the typed pass, which reads each table's contents first: a
+    // misspelled `[providers.<id>]` table is reported as unknown itself, never as a
+    // problem with a key inside it.
+    if let Some(toml::Value::Table(providers)) = table.get("providers")
+        && let Some(name) = providers.keys().find(|k| !ProviderId::ALL.iter().any(|p| p.as_str() == *k))
+    {
         let known: Vec<String> = ProviderId::ALL.iter().map(|p| format!("`{p}`")).collect();
         return Err(key_error(
             path,
@@ -108,7 +112,7 @@ pub(crate) fn parse(path: &Path, text: &str) -> Result<FileConfig, IrisError> {
             format!("unknown key; expected one of {}", known.join(", ")),
         ));
     }
-    Ok(config)
+    toml::Value::Table(table).try_into::<FileConfig>().map_err(|e| schema_error(path, &e))
 }
 
 /// A `config_invalid` error for the typed pass (unknown key or wrong type): the key
@@ -322,8 +326,32 @@ base_url = "https://generativelanguage.googleapis.com"
         assert!(e.message.contains("wait_timeout"), "the expected keys are listed: {}", e.message);
         let e = err("[providers.other]\nbase_url = \"https://x\"\n");
         assert_eq!(key(&e), Some("providers.other"));
+        assert!(e.message.contains("expected one of `openai`, `gemini`"), "{}", e.message);
         let e = err("outptu_dir = \"/x\"\n");
         assert_eq!(key(&e), Some("outptu_dir"));
+    }
+
+    #[test]
+    fn an_unknown_provider_table_is_reported_before_its_contents() {
+        // An unknown key inside it: the table name is the error, not the key.
+        let e = err("[providers.other]\nx = 1\n");
+        assert_eq!(e.code, ErrorCode::ConfigInvalid);
+        assert_eq!(key(&e), Some("providers.other"));
+        assert!(e.message.contains("`providers.other`: unknown key; expected one of"), "{}", e.message);
+        // A misspelled provider with a wrongly typed value: the misspelling is the error.
+        let e = err("[providers.opneai]\nbase_url = 5\n");
+        assert_eq!(key(&e), Some("providers.opneai"));
+        assert!(!e.message.contains("wrong type"), "{}", e.message);
+        // Dotted keys and inline tables name the same table.
+        assert_eq!(key(&err("providers.opneai.base_url = \"https://x\"\n")), Some("providers.opneai"));
+        assert_eq!(key(&err("providers = { other = { x = 1 } }\n")), Some("providers.other"));
+        // A known provider's table is still checked key by key.
+        let e = err("[providers.openai]\nx = 1\n");
+        assert_eq!(key(&e), Some("providers.openai.x"));
+        // `providers` itself of the wrong type is a type error, not an unknown table.
+        let e = err("providers = 5\n");
+        assert_eq!(key(&e), Some("providers"));
+        assert!(e.message.contains("wrong type"), "{}", e.message);
     }
 
     #[test]

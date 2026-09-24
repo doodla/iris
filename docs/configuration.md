@@ -94,8 +94,8 @@ $ echo $?
 2
 ```
 
-A table for a provider Iris does not have is rejected the same way (`providers.<id>`: unknown
-key; expected one of `openai`, `gemini`).
+A table for a provider Iris does not have is rejected the same way, whatever it contains
+(`providers.<id>`: unknown key; expected one of `openai`, `gemini`).
 
 **Any key that looks like a credential — `api_key`, anything ending in `_key`, `key`, `token`,
 `secret`, or `password`, case-insensitive, at any depth — is rejected too**, with a message
