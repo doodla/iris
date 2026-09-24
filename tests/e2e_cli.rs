@@ -470,3 +470,34 @@ fn models_report_the_effective_default_model() {
     let line = human.human().lines().find(|l| l.starts_with("gpt-image-2 ")).unwrap().to_string();
     assert_eq!(line.matches("image.generate, image.edit").count(), 2, "operations and default for: {line}");
 }
+
+#[test]
+fn doctor_checks_access_to_the_configured_default_model() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let route = "/v1/models/gpt-image-2";
+    api.on("GET", route, json_response(200, serde_json::json!({ "id": "gpt-image-2", "object": "model" })));
+    let config = sb.config("iris.toml", "[providers.openai]\nimage_model = \"gpt-image-2\"\n");
+    // Only the OpenAI key is set, so Gemini is skipped and the mock sees every call.
+    let v = sb
+        .iris()
+        .env("IRIS_CONFIG", &config)
+        .openai(&api)
+        .args(["doctor", "--check-access", "--json"])
+        .run()
+        .ok();
+    let checks = v["result"]["checks"].as_array().unwrap();
+    let access: Vec<&Value> =
+        checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")).collect();
+    let ids: Vec<&str> = access.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["access.openai.gpt-image-2", "access.gemini"], "{v}");
+    assert_eq!(access[0]["status"], "ok", "{v}");
+    assert_eq!(v["result"]["healthy"], true, "{v}");
+    assert_eq!(
+        api.count("GET", route),
+        1,
+        "one metadata read of the configured default (image generate and edit)"
+    );
+    assert_eq!(api.total(), 1, "the catalog default was not checked: {:?}", api.requests());
+    api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {OPENAI_KEY}"))));
+}

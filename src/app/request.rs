@@ -144,16 +144,20 @@ fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisE
         })
 }
 
-/// The model a generation command uses for `op` on `provider` when no `--model` is
-/// given: the configured `providers.<provider>.image_model`/`video_model` if set,
-/// else the catalog default. `None` when there is none for this provider and
-/// operation.
+/// The *default model* for `op` on `provider`: the model a generation command uses
+/// when no `--model` is given, i.e. the configured
+/// `providers.<provider>.image_model`/`video_model` if set, else the catalog default.
+/// `models list`/`models show` report it as `default_for` and `doctor --check-access`
+/// checks it. `Ok(None)` when there is none for this provider and operation (a
+/// configured model that does not implement `op` included); an error when the
+/// configured id is not in the catalog, since every command without `--model` fails
+/// on it too.
 pub(crate) fn effective_default(
     ctx: &AppContext,
     provider: ProviderId,
     op: Operation,
-) -> Option<&'static ModelSpec> {
-    default_spec(ctx, provider, op).ok().filter(|m| m.provider == provider && m.supports(op))
+) -> Result<Option<&'static ModelSpec>, IrisError> {
+    Ok(configured_or_catalog_default(ctx, provider, op)?.filter(|m| m.provider == provider && m.supports(op)))
 }
 
 fn default_spec(
@@ -161,24 +165,7 @@ fn default_spec(
     provider: ProviderId,
     op: Operation,
 ) -> Result<&'static ModelSpec, IrisError> {
-    let settings = ctx.settings.provider(provider);
-    let (configured, kind) = if op.is_async_job() {
-        (&settings.video_model, "video_model")
-    } else {
-        (&settings.image_model, "image_model")
-    };
-    if configured.source != SettingSource::Default
-        && let Some(id) = &configured.value
-    {
-        return ctx.catalog.find(id).ok_or_else(|| {
-            IrisError::new(
-                ErrorCode::UnknownModel,
-                format!("the configured default model '{id}' (providers.{provider}.{kind}) is not known"),
-            )
-            .with_hint("run `iris models list`, or pass --model")
-        });
-    }
-    ctx.catalog.default_model(provider, op).ok_or_else(|| {
+    configured_or_catalog_default(ctx, provider, op)?.ok_or_else(|| {
         let others: Vec<String> =
             ctx.catalog.providers_for(op).into_iter().map(|p| p.as_str().to_string()).collect();
         let hint = if others.is_empty() {
@@ -192,6 +179,33 @@ fn default_spec(
         )
         .with_hint(hint)
     })
+}
+
+/// The configured default model for `op`'s kind if one is set (an error if the
+/// catalog does not know it), else the catalog default for `op`, if any.
+fn configured_or_catalog_default(
+    ctx: &AppContext,
+    provider: ProviderId,
+    op: Operation,
+) -> Result<Option<&'static ModelSpec>, IrisError> {
+    let settings = ctx.settings.provider(provider);
+    let (configured, kind) = if op.is_async_job() {
+        (&settings.video_model, "video_model")
+    } else {
+        (&settings.image_model, "image_model")
+    };
+    if configured.source != SettingSource::Default
+        && let Some(id) = &configured.value
+    {
+        return ctx.catalog.find(id).map(Some).ok_or_else(|| {
+            IrisError::new(
+                ErrorCode::UnknownModel,
+                format!("the configured default model '{id}' (providers.{provider}.{kind}) is not known"),
+            )
+            .with_hint("run `iris models list`, or pass --model")
+        });
+    }
+    Ok(ctx.catalog.default_model(provider, op))
 }
 
 /// Prompt checks that need the model: non-empty, and within the declared limit.

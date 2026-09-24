@@ -113,9 +113,12 @@ Healthy.
 ```
 
 `iris doctor --check-access` additionally makes one free, unbilled metadata call per **default
-model** (openai image, gemini image, gemini video — three calls today) to see whether each one is
-visible to your key, not just that a key is present. That read does not check billing tier,
-prepaid credit, or OpenAI organization verification, so a paid request can still be refused.
+model** to see whether each one is visible to your key, not just that a key is present. A default
+model is the model a command uses without `--model`: `providers.<provider>.image_model` /
+`video_model` from your config file when set, else the built-in default (openai image, gemini
+image, gemini video — three calls with no config file; `iris models list` shows them under
+`DEFAULT FOR`). That read does not check billing tier, prepaid credit, or OpenAI organization
+verification, so a paid request can still be refused.
 
 `iris doctor` exits 0 whenever its checks ran, even when it finds problems: scripts should read
 `healthy` (`result.healthy` with `--json`) or look for `[error]` lines, not the exit code.

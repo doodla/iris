@@ -548,6 +548,35 @@ async fn doctor_check_ids_are_unique_and_access_means_visible_to_the_key() {
 }
 
 #[tokio::test]
+async fn doctor_reports_a_configured_default_model_the_catalog_does_not_know() {
+    let f = Fixture::new();
+    // The configuration accepts a built-in id, but this run's catalog (the fake one)
+    // does not know it: every command without --model would fail on it, so doctor
+    // names it in an error check instead of silently checking another model.
+    let config = f.sandbox.path("iris.toml");
+    std::fs::write(&config, "[providers.openai]\nimage_model = \"gpt-image-2\"\n").unwrap();
+    let run = f.run(&["doctor", "--config", config.to_str().unwrap(), "--check-access", "--json"]).await;
+    assert_eq!(run.code, 0, "{run:?}");
+    let v = run.json();
+    assert_eq!(v["result"]["healthy"], false, "{v}");
+    let checks = v["result"]["checks"].as_array().unwrap();
+    let access: Vec<&Value> =
+        checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")).collect();
+    let ids: Vec<&str> = access.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    assert_eq!(ids, ["access.openai", "access.gemini.fake-gemini-image", "access.gemini.fake-video-1"]);
+    assert_eq!(access[0]["status"], "error");
+    let message = access[0]["message"].as_str().unwrap();
+    assert!(message.contains("'gpt-image-2' (providers.openai.image_model) is not known"), "{message}");
+    assert_eq!(message.matches("gpt-image-2").count(), 1, "named once for generate and edit: {message}");
+    assert_eq!(f.openai.access_calls.load(Ordering::SeqCst), 0, "no other openai model was checked instead");
+    assert_eq!(f.gemini.access_calls.load(Ordering::SeqCst), 2);
+
+    // The commands fail on the same setting.
+    let run = f.run(&["--config", config.to_str().unwrap(), "image", "generate", "x", "--json"]).await;
+    assert_eq!(run.error_code(), "unknown_model");
+}
+
+#[tokio::test]
 async fn schema_and_completions_are_printed_raw_without_json() {
     let f = Fixture::new();
     let run = f.run(&["schema"]).await;

@@ -148,11 +148,13 @@ pub enum Command {
     #[command(
         long_about = "Check credential presence (never values), configuration validity, state and output \
                       directory writability, and base URL overrides. --check-access additionally makes free \
-                      metadata calls to see whether each provider's default models are visible to your key; \
-                      they do not check billing tier, prepaid credit, or organization verification, so a paid \
-                      request can still be refused.\n\nExit status: doctor exits 0 whenever its checks ran, \
-                      even when it finds problems. Read `healthy` (result.healthy with --json) or look for \
-                      [error] lines instead of relying on the exit code.",
+                      metadata calls to see whether each provider's default models (the models commands use \
+                      without --model: providers.<provider>.image_model/video_model when configured, else the \
+                      built-in default) are visible to your key; they do not check billing tier, prepaid credit, \
+                      or organization verification, so a paid request can still be refused.\n\nExit status: \
+                      doctor exits 0 whenever its checks ran, even when it finds problems. Read `healthy` \
+                      (result.healthy with --json) or look for [error] lines instead of relying on the exit \
+                      code.",
         after_help = "Examples:\n  iris doctor\n  iris doctor --check-access --json"
     )]
     Doctor(DoctorArgs),
@@ -680,7 +682,8 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Also check with free metadata calls whether the default models are visible to your key
+    /// Also check with free metadata calls whether the default models (used without --model) are
+    /// visible to your key
     #[arg(long)]
     pub check_access: bool,
 }

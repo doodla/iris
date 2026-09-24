@@ -48,7 +48,7 @@ fn default_for(ctx: &AppContext, m: &ModelSpec) -> Vec<Operation> {
     m.operations
         .iter()
         .copied()
-        .filter(|op| effective_default(ctx, m.provider, *op).is_some_and(|d| d.id == m.id))
+        .filter(|op| matches!(effective_default(ctx, m.provider, *op), Ok(Some(d)) if d.id == m.id))
         .collect()
 }
 

@@ -15,6 +15,7 @@ use crate::output::results::{CheckStatus, DoctorCheck, DoctorResult};
 use crate::providers::AccountAccess;
 
 use super::context::AppContext;
+use super::request;
 
 /// Inputs of `doctor`.
 #[derive(Debug, Clone, Default)]
@@ -129,10 +130,13 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
     DoctorResult { healthy, checks }
 }
 
-/// One check per default model (`access.<provider>.<model>`), or one per provider
-/// (`access.<provider>`) when its models could not be checked. A model the metadata
-/// read finds is only *visible to the key*: billing tier, credit, and organization
-/// verification are not part of that read.
+/// One check per default model (`access.<provider>.<model>`): the model a command
+/// uses without `--model` ([`request::effective_default`], the same resolution as
+/// `default_for` and the generation commands), each model checked once. One check
+/// per provider (`access.<provider>`) when its models could not be checked, or when
+/// a configured default is not in the catalog. A model the metadata read finds is
+/// only *visible to the key*: billing tier, credit, and organization verification
+/// are not part of that read.
 async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
     for provider in ProviderId::ALL {
         let id = format!("access.{provider}");
@@ -144,18 +148,23 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
             ));
             continue;
         }
-        let mut models: Vec<&str> = Operation::ALL
-            .iter()
-            .filter_map(|op| ctx.catalog.default_model(*provider, *op))
-            .map(|m| m.id)
-            .collect();
-        models.dedup();
+        let mut models: Vec<&str> = Vec::new();
+        let mut unknown: Vec<String> = Vec::new();
+        for op in Operation::ALL {
+            match request::effective_default(ctx, *provider, *op) {
+                Ok(Some(m)) if !models.contains(&m.id) => models.push(m.id),
+                Ok(_) => {}
+                Err(e) if !unknown.contains(&e.message) => unknown.push(e.message.clone()),
+                Err(_) => {}
+            }
+        }
+        if !unknown.is_empty() {
+            checks.push(check(&id, CheckStatus::Error, format!("not checked: {}", unknown.join("; "))));
+        }
         if models.is_empty() {
-            checks.push(check(
-                &id,
-                CheckStatus::Warning,
-                "not checked: no default model in the catalog".to_string(),
-            ));
+            if unknown.is_empty() {
+                checks.push(check(&id, CheckStatus::Warning, "not checked: no default model".to_string()));
+            }
             continue;
         }
         let (adapter, pctx) =

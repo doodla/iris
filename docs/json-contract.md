@@ -235,11 +235,14 @@ non-zero exit means doctor itself could not run (for example a usage error).
 
 Check ids are unique within one result: `config`, `credentials.<provider>`,
 `credentials.google_api_key`, `state_dir`, `output_dir`, `base_url.<provider>`, `jobs`, and with
-`--check-access` one `access.<provider>.<model>` per default model (or a single
-`access.<provider>` when that provider's models were not checked, e.g. its key is not set, and
-`access` when the configuration is invalid). An `ok` access check means the model is visible to
-the key (a free metadata read), not that billing tier, prepaid credit, or organization
-verification allow a paid request.
+`--check-access` one `access.<provider>.<model>` per default model, checked once even when it is
+the default for several operations. A default model is the model a command uses without
+`--model`: the configured `providers.<provider>.image_model` / `video_model` when set, otherwise
+the catalog default — the models `default_for` lists. A single `access.<provider>` reports a
+provider whose models were not checked (e.g. its key is not set) or, with status `error`, a
+configured default model the catalog does not know; `access` reports that the configuration is
+invalid. An `ok` access check means the model is visible to the key (a free metadata read), not
+that billing tier, prepaid credit, or organization verification allow a paid request.
 
 ### `schema` → `{ "schema": { "...": "the JSON Schema document itself" } }` (without `--json`, the raw schema is printed instead)
 
