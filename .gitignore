@@ -44,6 +44,10 @@ target
 *.key
 config.local.toml
 
+# A job-state directory kept in the checkout (IRIS_STATE_DIR=.iris-state):
+# job records and their lock files
+.iris-state/
+
 # Release archives written by scripts/package-release.sh
 /dist/
 
