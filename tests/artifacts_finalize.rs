@@ -163,12 +163,50 @@ fn part_files_are_hidden_named_and_removed_on_drop() {
 }
 
 #[test]
+fn part_files_are_reset_and_synced_through_the_open_handle() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("job_x.mp4");
+    let mut part = PartFile::create_for(&target).unwrap();
+    // A failed first attempt left an error body; the retry starts over.
+    part.file_mut().write_all(br#"{"error":"partial"#).unwrap();
+    part.reset().unwrap();
+    part.file_mut().write_all(&mp4(4000)).unwrap();
+    let saved = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap();
+    assert_eq!(saved.artifact.bytes, mp4(4000).len() as u64);
+    assert_eq!(saved.artifact.sha256, sha256_bytes(&mp4(4000)));
+    assert_eq!(fs::read(&target).unwrap(), mp4(4000));
+    assert_eq!(listing(dir.path()), vec!["job_x.mp4"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_symlink_swapped_in_at_the_part_name_is_never_written_through() {
+    // In a shared writable directory another user could replace the random temp
+    // name with a symlink. Writes, resets, validation and hashing use the handle
+    // opened with O_EXCL, so the link target is never touched.
+    let dir = tempfile::tempdir().unwrap();
+    let victim = dir.path().join("victim.txt");
+    fs::write(&victim, b"precious").unwrap();
+    let mut part = PartFile::create_for(&dir.path().join("job_x.mp4")).unwrap();
+    let name = part.path().to_path_buf();
+    fs::remove_file(&name).unwrap();
+    std::os::unix::fs::symlink(&victim, &name).unwrap();
+
+    part.file_mut().write_all(b"garbage").unwrap();
+    part.reset().unwrap();
+    part.file_mut().write_all(&mp4(4000)).unwrap();
+    assert_eq!(fs::read(&victim).unwrap(), b"precious");
+    drop(part);
+    assert_eq!(fs::read(&victim).unwrap(), b"precious");
+}
+
+#[test]
 fn downloads_are_validated_then_finalized() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("job_x.mp4");
-    let part = PartFile::create_for(&target).unwrap();
-    // The HTTP layer writes by path (truncating on retries).
-    fs::write(part.path(), mp4(4000)).unwrap();
+    // Writers use the open handle, never the temp file's name.
+    let mut part = PartFile::create_for(&target).unwrap();
+    part.file_mut().write_all(&mp4(4000)).unwrap();
     let saved = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap();
     assert_eq!(saved.outcome, SaveOutcome::Written);
     assert_eq!(saved.artifact.media_type, "video/mp4");
@@ -177,15 +215,15 @@ fn downloads_are_validated_then_finalized() {
     assert_eq!(listing(dir.path()), vec!["job_x.mp4"]);
 
     // Repeat download of identical content: safe no-op.
-    let part = PartFile::create_for(&target).unwrap();
-    fs::write(part.path(), mp4(4000)).unwrap();
+    let mut part = PartFile::create_for(&target).unwrap();
+    part.file_mut().write_all(&mp4(4000)).unwrap();
     let again = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap();
     assert_eq!(again.outcome, SaveOutcome::AlreadyPresent);
     assert_eq!(again.warnings[0].code, "already_downloaded");
 
     // Different content without --overwrite: output_exists, nothing replaced.
-    let part = PartFile::create_for(&target).unwrap();
-    fs::write(part.path(), mp4(5000)).unwrap();
+    let mut part = PartFile::create_for(&target).unwrap();
+    part.file_mut().write_all(&mp4(5000)).unwrap();
     let err = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap_err();
     assert_eq!(err.code, ErrorCode::OutputExists);
     assert_eq!(fs::read(&target).unwrap(), mp4(4000));
@@ -197,16 +235,16 @@ fn error_bodies_and_truncated_downloads_never_reach_the_final_name() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("job_x.mp4");
 
-    let part = PartFile::create_for(&target).unwrap();
-    fs::write(part.path(), br#"{"error":{"code":404,"status":"NOT_FOUND"}}"#).unwrap();
+    let mut part = PartFile::create_for(&target).unwrap();
+    part.file_mut().write_all(br#"{"error":{"code":404,"status":"NOT_FOUND"}}"#).unwrap();
     let err = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::Overwrite).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidMedia);
     assert!(err.message.contains("JSON"));
     assert_eq!(err.details["path"], target.to_str().unwrap());
 
-    let part = PartFile::create_for(&target).unwrap();
+    let mut part = PartFile::create_for(&target).unwrap();
     let full = mp4(4000);
-    fs::write(part.path(), &full[..full.len() - 100]).unwrap();
+    part.file_mut().write_all(&full[..full.len() - 100]).unwrap();
     let err = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::Overwrite).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidMedia);
     assert!(listing(dir.path()).is_empty());
@@ -395,16 +433,16 @@ fn same_kind_types_are_kept_and_other_kinds_rejected_for_downloads() {
     let target = dir.path().join("job_x.mp4");
 
     // A valid QuickTime file where MP4 was declared: kept, under .mov.
-    let part = PartFile::create_for(&target).unwrap();
-    fs::write(part.path(), mov()).unwrap();
+    let mut part = PartFile::create_for(&target).unwrap();
+    part.file_mut().write_all(&mov()).unwrap();
     let saved = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap();
     assert_eq!(Path::new(&saved.artifact.path), dir.path().join("job_x.mov"));
     assert_eq!(saved.artifact.media_type, "video/quicktime");
     assert_eq!(saved.warnings[0].code, "output_extension_adjusted");
 
     // An image where a video was expected: invalid, nothing saved.
-    let part = PartFile::create_for(&target).unwrap();
-    fs::write(part.path(), image(ImageFormat::Png, 9)).unwrap();
+    let mut part = PartFile::create_for(&target).unwrap();
+    part.file_mut().write_all(&image(ImageFormat::Png, 9)).unwrap();
     let err = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidMedia);
     assert!(err.message.contains("expected video/mp4"), "{}", err.message);

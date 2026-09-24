@@ -3,8 +3,8 @@
 //! without touching the network.
 //!
 //! The network fetch itself (`crate::http::download`) streams into a
-//! [`PartFile`](super::PartFile) path; [`finalize_download`](super::finalize_download)
-//! then validates and places it.
+//! [`PartFile`](super::PartFile) through its open handle;
+//! [`finalize_download`](super::finalize_download) then validates and places it.
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -106,7 +106,7 @@ pub fn copy_local(
         )
         .with_detail("path", source.path.to_string_lossy().into_owned()));
     }
-    let info = finalize::validate_output_file(part.path(), expected)?;
+    let info = finalize::validate_part(&mut part, expected)?;
     finalize::finish(part, index, info, copied, sha256, mode, FinalizeMode::NoClobber)
 }
 

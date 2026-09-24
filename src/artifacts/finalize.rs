@@ -21,9 +21,16 @@
 //!
 //! The temp file is removed on every failure path. Content is validated (decode /
 //! ISO-BMFF walk) before it is given its final name.
+//!
+//! All I/O on a temp file goes through the handle opened when it was created:
+//! writing ([`PartFile::file_mut`], [`PartFile::reset`]), validating, hashing, and
+//! syncing. The file is never reopened by name, because in a shared, writable
+//! directory another user could swap that name for a symlink, and a reopen (with
+//! `O_TRUNC`, say) would follow it; that would undo the `O_EXCL` creation C-04
+//! requires. Only the final rename uses the name.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
@@ -87,7 +94,12 @@ pub struct SavedArtifact {
 }
 
 /// A temp file in the target's directory, named `.<name>.iris-part-<random>`,
-/// removed when dropped unless finalized. Downloads stream into [`PartFile::path`].
+/// removed when dropped unless finalized.
+///
+/// Write ONLY through [`PartFile::file_mut`] (an async writer can share the same
+/// open file via `tokio::fs::File::from_std(part.file_mut().try_clone()?)`), and
+/// start a retried download over with [`PartFile::reset`] or a new `PartFile`.
+/// Never reopen [`PartFile::path`]; see the module docs.
 #[derive(Debug)]
 pub struct PartFile {
     tmp: NamedTempFile,
@@ -120,7 +132,8 @@ impl PartFile {
         Ok(PartFile { tmp, target: target.to_path_buf() })
     }
 
-    /// Path of the temp file.
+    /// Path of the temp file, for messages. Do not open it: write through
+    /// [`PartFile::file_mut`].
     pub fn path(&self) -> &Path {
         self.tmp.path()
     }
@@ -130,9 +143,29 @@ impl PartFile {
         &self.target
     }
 
-    /// The open temp file (for writers that hold a handle rather than a path).
+    /// The open temp file: the only way to write its content.
     pub fn file_mut(&mut self) -> &mut File {
         self.tmp.as_file_mut()
+    }
+
+    /// Empty the temp file and rewind it, through the open handle, so a retried
+    /// download starts over without reopening the file by name.
+    pub fn reset(&mut self) -> Result<(), IrisError> {
+        let shown = self.tmp.path().to_path_buf();
+        let file = self.tmp.as_file_mut();
+        file.set_len(0)
+            .and_then(|()| file.seek(SeekFrom::Start(0)))
+            .map(|_| ())
+            .map_err(|e| IrisError::io(format_args!("cannot reset {}", shown.display()), &e))
+    }
+
+    /// Size and SHA-256 of the content, read through the open handle.
+    fn hash(&mut self) -> Result<(u64, String), IrisError> {
+        let shown = self.tmp.path().to_path_buf();
+        let file = self.tmp.as_file_mut();
+        file.seek(SeekFrom::Start(0))
+            .and_then(|_| sha256_reader(file))
+            .map_err(|e| IrisError::io(format_args!("cannot read {}", shown.display()), &e))
     }
 }
 
@@ -178,22 +211,22 @@ pub fn save_image(
 /// existing different file there is `output_exists` (the download can be repeated
 /// to another path; nothing unrelated is replaced).
 pub fn finalize_download(
-    part: PartFile,
+    mut part: PartFile,
     index: u32,
     expected: &[&str],
     mode: FinalizeMode,
 ) -> Result<SavedArtifact, IrisError> {
-    let info = validate_output_file(part.path(), expected)
+    let info = validate_part(&mut part, expected)
         .map_err(|e| e.with_detail("path", part.target().to_string_lossy().into_owned()))?;
-    let (bytes, sha256) = sha256_file(part.path())
-        .map_err(|e| IrisError::io(format_args!("cannot read {}", part.path().display()), &e))?;
+    let (bytes, sha256) = part.hash()?;
     finish(part, index, info, bytes, sha256, mode, FinalizeMode::NoClobber)
 }
 
-/// Validate a finished output file; see [`finalize_download`] for how `expected`
-/// is applied.
-pub(super) fn validate_output_file(path: &Path, expected: &[&str]) -> Result<MediaInfo, IrisError> {
-    let info = media::validate_file(path, &[])?;
+/// Validate a finished temp file through its open handle; see
+/// [`finalize_download`] for how `expected` is applied.
+pub(super) fn validate_part(part: &mut PartFile, expected: &[&str]) -> Result<MediaInfo, IrisError> {
+    let shown = part.path().to_path_buf();
+    let info = media::validate_reader(part.file_mut(), &shown, &[])?;
     if !expected.is_empty() {
         require_same_kind(expected, info.media_type)?;
     }
@@ -287,10 +320,11 @@ pub fn place(
     sha256: &str,
     mode: FinalizeMode,
 ) -> Result<(PathBuf, SaveOutcome), IrisError> {
-    // Make the content durable before it gets its final name. Opened by path so it
-    // also covers writers that re-created the temp file.
-    File::open(part.path())
-        .and_then(|f| f.sync_all())
+    // Make the content durable before it gets its final name (through the held
+    // handle, never by reopening the name).
+    part.tmp
+        .as_file()
+        .sync_all()
         .map_err(|e| IrisError::io(format_args!("cannot sync {}", part.path().display()), &e))?;
     let dir = target.parent().map(Path::to_path_buf);
     let io_err = |e: &io::Error| IrisError::io(format_args!("cannot save {}", target.display()), e);
@@ -382,12 +416,16 @@ pub fn build_artifact(index: u32, path: &Path, info: &MediaInfo, bytes: u64, sha
 
 /// Size and lowercase hex SHA-256 of a file, streamed.
 pub fn sha256_file(path: &Path) -> io::Result<(u64, String)> {
-    let mut file = File::open(path)?;
+    sha256_reader(&mut File::open(path)?)
+}
+
+/// Size and lowercase hex SHA-256 of everything `reader` yields, streamed.
+fn sha256_reader(reader: &mut impl Read) -> io::Result<(u64, String)> {
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 64 * 1024];
     let mut total = 0u64;
     loop {
-        let n = file.read(&mut buf)?;
+        let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }

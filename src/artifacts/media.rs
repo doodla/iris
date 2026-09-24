@@ -247,15 +247,29 @@ pub fn validate_bytes(bytes: &[u8], expected: &[&str]) -> Result<MediaInfo, Iris
 /// Validate a media file on disk (see [`validate_bytes`]). Videos are walked
 /// without loading them into memory. Errors: `invalid_media`, `io_error`.
 pub fn validate_file(path: &Path, expected: &[&str]) -> Result<MediaInfo, IrisError> {
-    let io_err = |e: io::Error| IrisError::io(format_args!("cannot read {}", path.display()), &e);
-    let mut file = File::open(path).map_err(io_err)?;
+    let mut file =
+        File::open(path).map_err(|e| IrisError::io(format_args!("cannot read {}", path.display()), &e))?;
+    validate_reader(&mut file, path, expected)
+}
+
+/// Validate media read from the start of `reader` (e.g. an open temp file, so it is
+/// never reopened by name). `shown` names the content in `io_error` messages.
+/// Videos are walked without loading them into memory. Errors: `invalid_media`,
+/// `io_error`.
+pub fn validate_reader<R: Read + Seek>(
+    reader: &mut R,
+    shown: &Path,
+    expected: &[&str],
+) -> Result<MediaInfo, IrisError> {
+    let io_err = |e: io::Error| IrisError::io(format_args!("cannot read {}", shown.display()), &e);
+    reader.seek(SeekFrom::Start(0)).map_err(io_err)?;
     let mut head = Vec::with_capacity(SNIFF_LEN);
-    (&mut file).take(SNIFF_LEN as u64).read_to_end(&mut head).map_err(io_err)?;
+    (&mut *reader).take(SNIFF_LEN as u64).read_to_end(&mut head).map_err(io_err)?;
     let media_type = sniff(&head).ok_or_else(|| unrecognized(&head))?;
     check_expected(media_type, expected)?;
+    reader.seek(SeekFrom::Start(0)).map_err(io_err)?;
     if is_video(media_type) {
-        file.seek(SeekFrom::Start(0)).map_err(io_err)?;
-        let info = inspect_iso_bmff(&mut BufReader::new(file))
+        let info = inspect_iso_bmff(&mut BufReader::new(reader))
             .map_err(|why| invalid_media(format!("content is not a valid {media_type} video: {why}")))?;
         return Ok(MediaInfo {
             media_type,
@@ -265,7 +279,8 @@ pub fn validate_file(path: &Path, expected: &[&str]) -> Result<MediaInfo, IrisEr
         });
     }
     if is_decodable_image(media_type) {
-        let bytes = std::fs::read(path).map_err(io_err)?;
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).map_err(io_err)?;
         return validate_bytes(&bytes, expected);
     }
     Ok(MediaInfo { media_type, width: None, height: None, duration_seconds: None })

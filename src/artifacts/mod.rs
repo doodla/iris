@@ -14,7 +14,8 @@
 //! * [`decide_download`], [`copy_local`] — repeat downloads without the network.
 //!
 //! Nothing here talks to the network: streaming a remote artifact is
-//! `crate::http::download`, which writes into a [`PartFile`] path.
+//! `crate::http::download`, which writes into a [`PartFile`] through its open
+//! handle (never by reopening its path).
 
 mod download;
 mod finalize;
