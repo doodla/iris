@@ -17,9 +17,13 @@ Before writing code: read the provider's *current* official developer documentat
 consumer app — see the README's note that ChatGPT/Gemini-app/Flow subscriptions are not API
 access) for authentication, endpoints, request/response shapes, synchronous vs. asynchronous
 behavior, supported inputs, retry/idempotency guidance, artifact retention, and pricing. Record
-what you found and when you checked it — Iris's own catalog comments cite `research.md`/
-`verification.md` files with dates and source URLs for exactly this reason; do the same for a new
-provider so the next person can tell what is verified against current docs and what has drifted.
+what you found and when you checked it, so the next person can tell what is verified against
+current docs and what has drifted. Iris does this in the code itself: the module header of each
+catalog file (`src/catalog/openai.rs`, `gemini.rs`, `veo.rs`) says which official documentation
+its values come from and the date it was checked, the price tables carry their source (`PRICING_URL`) and
+date (`CATALOG_AS_OF`, or `PRICING_AS_OF` for OpenAI) into every `pricing` entry and cost
+estimate, and the adapters' module headers explain their wire-format choices. Do the same for a
+new provider.
 
 Decide honestly what Iris can support: if the provider's Rust SDK (if one exists) does not cover
 what you need or lags the API, write a thin REST client instead of waiting on or working around

@@ -23,9 +23,10 @@
 //!   variable names, and default base URL come from [`ProviderId`], so nothing here
 //!   lists providers by name.
 //!
-//! Dependencies outside the usual module layering (see docs/architecture.md):
-//! `config` uses `catalog` (a configured default model "must be a known model")
-//! and `output::results` (the `config show` rows).
+//! Besides the foundation modules, `config` uses `catalog` (a configured default
+//! model "must be a known model"), `output::results` (the `config show` and
+//! `config path` results), and `http` (the client settings and timeouts it
+//! resolves); see the layering in docs/architecture.md.
 
 #![warn(missing_docs)]
 
