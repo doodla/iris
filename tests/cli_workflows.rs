@@ -823,6 +823,56 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
 }
 
 #[tokio::test]
+async fn human_text_says_where_model_text_is_and_completion_only_for_reported_outcomes() {
+    let f = Fixture::new();
+    // Model text: JSON keeps pointing at the result's `text`; human mode prints it.
+    let text_output = || {
+        let mut output = image_output(vec![png(8, 8)]);
+        output.text = Some("a short caption".into());
+        output.warnings.push(iris::domain::Warning::new(
+            iris::providers::gemini::WARNING_TEXT_OUTPUT,
+            "the model also returned text; it is reported in the result's `text` field",
+        ));
+        output
+    };
+    f.gemini.images().push(Ok(text_output()));
+    let run = f.run(&["image", "generate", "x", "--provider", "gemini"]).await;
+    assert_eq!(run.code, 0, "{run:?}");
+    assert!(
+        run.stderr.contains("warning[provider_text_output]: the model also returned text"),
+        "{}",
+        run.stderr
+    );
+    assert!(!run.stderr.contains("`text` field"), "{}", run.stderr);
+    assert!(run.stderr.contains("Model text: a short caption"), "{}", run.stderr);
+    f.gemini.images().push(Ok(text_output()));
+    let v = f.run(&["image", "generate", "x", "--provider", "gemini", "--json"]).await.json();
+    assert_eq!(v["result"]["text"], "a short caption");
+    assert!(v["warnings"][0]["message"].as_str().unwrap().contains("`text` field"), "{v}");
+
+    // A submission whose outcome is unknown has no completion time to show.
+    f.gemini.videos().push_submit(Err(iris::error::IrisError::new(
+        iris::error::ErrorCode::SubmissionUncertain,
+        "no answer",
+    )));
+    let v = f.run(&["video", "generate", "boat", "--json"]).await.json();
+    let id = v["error"]["job_id"].as_str().unwrap().to_string();
+    let run = f.run(&["jobs", "status", &id, "--no-refresh"]).await;
+    assert!(run.stdout.contains(" submission_unknown\n"), "{}", run.stdout);
+    assert!(!run.stdout.contains("completed:"), "{}", run.stdout);
+
+    // A running job has none either; a succeeded one does.
+    let v = f.run(&["video", "generate", "boat", "--detach", "--json"]).await.json();
+    let id = v["result"]["job"]["job_id"].as_str().unwrap().to_string();
+    f.gemini.videos().push_poll(Ok(iris::providers::RemoteStatus::Running { progress: None }));
+    let run = f.run(&["jobs", "status", &id]).await;
+    assert!(run.stdout.contains(" running\n") && !run.stdout.contains("completed:"), "{}", run.stdout);
+    f.gemini.videos().push_poll(Ok(remote_success("http://127.0.0.1:9/v1beta/files/x:download")));
+    let run = f.run(&["jobs", "status", &id]).await;
+    assert!(run.stdout.contains(" succeeded\n") && run.stdout.contains("completed:"), "{}", run.stdout);
+}
+
+#[tokio::test]
 async fn human_errors_still_list_images_saved_before_the_failure() {
     let f = Fixture::new();
     f.openai.images().push(Ok(image_output(vec![png(4, 4), b"not an image".to_vec()])));

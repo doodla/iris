@@ -9,8 +9,9 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use crate::domain::{Artifact, CostEstimate, Warning};
+use crate::domain::{Artifact, CostEstimate, JobStatus, Warning};
 use crate::providers::AccountAccess;
+use crate::providers::gemini::WARNING_TEXT_OUTPUT;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
 use super::results::*;
@@ -63,9 +64,16 @@ pub fn schema_document(schema: &Value) -> String {
     text
 }
 
-/// One warning line for stderr.
+/// One warning line for stderr. A message written for the JSON result is reworded
+/// where human mode shows the thing it points at somewhere else.
 pub fn warning(w: &Warning) -> String {
-    format!("warning[{}]: {}\n", w.code, w.message)
+    let message = match w.code.as_str() {
+        WARNING_TEXT_OUTPUT => {
+            "the model also returned text alongside the image; it is printed as \"Model text\""
+        }
+        _ => w.message.as_str(),
+    };
+    format!("warning[{}]: {message}\n", w.code)
 }
 
 /// An error for stderr: code and message, then hint and recovery identifiers.
@@ -171,7 +179,11 @@ fn job_block(j: &JobView) -> String {
     if let Some(t) = &j.last_checked_at {
         field("checked", t);
     }
-    if let Some(t) = &j.completed_at {
+    // Only an outcome the provider reported is a completion; a submission Iris could
+    // not confirm (submission_unknown) or a job still running has none.
+    if let Some(t) = &j.completed_at
+        && matches!(j.status, JobStatus::Succeeded | JobStatus::Failed | JobStatus::Expired)
+    {
         field("completed", t);
     }
     if let Some(t) = &j.remote_expires_at {

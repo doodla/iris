@@ -183,6 +183,9 @@ machine-readable contract for agents.
 - `default_for` in `models list`/`models show` reports the model a command uses without `--model`:
   the configured `providers.<provider>.image_model`/`video_model` when set, else the catalog
   default (it always showed the catalog default).
+- Human output: `jobs status` no longer prints a `completed:` time for a job that is still running
+  or whose submission outcome is unknown, and the `provider_text_output` warning points at the
+  "Model text" line instead of a JSON field.
 
 ### Known limitations
 
