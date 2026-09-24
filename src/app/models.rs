@@ -52,9 +52,10 @@ fn default_for(ctx: &AppContext, m: &ModelSpec) -> Vec<Operation> {
         .collect()
 }
 
-/// `models show <MODEL>`: declared capabilities, options, defaults, pricing, and
-/// access. With `check_access`, asks the provider (free metadata call) whether
-/// this account can use the model.
+/// `models show <MODEL>`: declared capabilities, options, constraints, defaults,
+/// pricing, and access. With `check_access`, asks the provider (free metadata call)
+/// whether the model is visible to the key; billing tier, credit, and organization
+/// verification are not part of that check.
 pub async fn show(
     ctx: &AppContext,
     model: &str,
