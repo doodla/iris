@@ -19,6 +19,8 @@
 //! Cancellation: every future here can be dropped at any point (the application
 //! races it against Ctrl-C); dropping aborts the in-flight request or backoff sleep.
 
+#![warn(missing_docs)]
+
 mod download;
 mod retry;
 

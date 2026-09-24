@@ -134,6 +134,7 @@ impl EnvSnapshot {
         self.credentials.get(&provider)
     }
 
+    /// The platform whose default paths apply.
     pub fn platform(&self) -> Platform {
         self.platform
     }

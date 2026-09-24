@@ -18,6 +18,12 @@
 //!   be absolute (or start with `~`).
 //! * Credentials come only from `OPENAI_API_KEY` / `GEMINI_API_KEY` and are held as
 //!   [`Secret`]s; nothing here ever formats their values.
+//!
+//! Dependencies outside C-01's layering: `config` uses `catalog` (C-05: a
+//! configured default model "must be a known model") and `output::results` (the
+//! `config show` rows); see the T-06 task record.
+
+#![warn(missing_docs)]
 
 mod env;
 mod file;
@@ -65,7 +71,9 @@ pub const WARNING_NON_DEFAULT_BASE_URL: &str = "non_default_base_url";
 /// A resolved value and the layer it came from.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Resolved<T> {
+    /// The effective value.
     pub value: T,
+    /// The layer that supplied it (flag, env, file, or default).
     pub source: SettingSource,
 }
 
@@ -89,6 +97,7 @@ pub struct CliOverrides {
 /// Resolved settings of one provider.
 #[derive(Debug, Clone)]
 pub struct ProviderSettings {
+    /// The provider these settings belong to.
     pub provider: ProviderId,
     /// API base URL. Credentials are sent only to this origin.
     pub base_url: Resolved<Url>,
@@ -113,10 +122,15 @@ pub struct Settings {
     pub state_dir: Resolved<PathBuf>,
     /// Default image provider (before `--model` inference, which the app applies).
     pub image_provider: Resolved<ProviderId>,
+    /// Caller wait limit for video jobs (`video.wait_timeout`).
     pub wait_timeout: Resolved<Duration>,
+    /// Poll interval for video jobs (`video.poll_interval`, at least 2s).
     pub poll_interval: Resolved<Duration>,
+    /// Keep prompt text in job records (`jobs.store_prompts`).
     pub store_prompts: Resolved<bool>,
+    /// OpenAI settings (`providers.openai`).
     pub openai: ProviderSettings,
+    /// Gemini settings (`providers.gemini`).
     pub gemini: ProviderSettings,
     /// Tracing filter directives for the log subscriber.
     pub log_filter: Resolved<String>,

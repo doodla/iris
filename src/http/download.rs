@@ -77,6 +77,7 @@ pub enum DownloadError {
     /// status is retryable). Callers map 403/404/410 of a previously succeeded job
     /// to `artifact_expired` ([`DownloadError::into_iris`] does so).
     Status {
+        /// HTTP status of the failing hop.
         status: u16,
         /// Bounded, secret-scrubbed, URL-redacted excerpt of the error body.
         body_snippet: String,
@@ -87,6 +88,7 @@ pub enum DownloadError {
         /// [`DownloadError::into_iris`] then reports `rate_limited` whatever the
         /// status (C-04), as [`HttpClient::execute`] does.
         retry_after_limit: Option<Duration>,
+        /// Attempts made.
         attempts: u32,
         /// Redacted URL of the failing hop.
         url: String,
@@ -94,18 +96,34 @@ pub enum DownloadError {
     /// A success status whose `Content-Type` says it is an error document
     /// (`application/json`, `*+json`, `application/xml`, `text/*`), not media.
     /// Nothing was written to `dest`.
-    InvalidMedia { content_type: String, body_snippet: String, url: String },
+    InvalidMedia {
+        /// The media type the host declared (lowercase, no parameters).
+        content_type: String,
+        /// Bounded, secret-scrubbed, URL-redacted excerpt of the body.
+        body_snippet: String,
+        /// Redacted URL of the hop that served it.
+        url: String,
+    },
     /// Refused by policy: invalid URL, non-https hop, redirect without a usable
     /// `Location`, or more than [`MAX_REDIRECTS`] hops.
-    Refused { message: String },
+    Refused {
+        /// Display-safe reason.
+        message: String,
+    },
     /// No usable response after the allowed attempts.
     Transport(TransportError),
     /// Writing `dest` failed.
-    Io { message: String },
+    Io {
+        /// Display-safe description of the file error.
+        message: String,
+    },
     /// A local programming or setup error, never retried: the client was not built
     /// by [`HttpClient::new`] (its redirect policy is unknown), or reqwest refused
     /// to build the request.
-    Internal { message: String },
+    Internal {
+        /// Display-safe description.
+        message: String,
+    },
 }
 
 impl DownloadError {

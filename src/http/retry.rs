@@ -2,6 +2,44 @@
 //!
 //! The executor owns *when* to retry; the calling adapter owns *what a response
 //! means* (it knows the provider's error bodies) and says so through a [`Verdict`].
+//!
+//! # Paid submissions: what the adapter still has to decide
+//!
+//! For [`RetryClass::PaidSubmit`] the executor never resends after a possible
+//! delivery, but it cannot know how each operation must *report* an uncertain
+//! outcome. Two different failures can leave a paid request in an unknown state:
+//!
+//! * no usable response arrived after the request may have been sent (timeout,
+//!   reset, truncated body): [`HttpError::is_ambiguous`] is true;
+//! * the provider answered 408 or 5xx, which does not prove the request was not
+//!   processed. [`Verdict::default_for`] classifies these as [`Verdict::Transient`],
+//!   and the executor then returns the classifier's error (`provider_error`,
+//!   retryable) *as an [`HttpError::Error`]*, where `is_ambiguous()` is false.
+//!
+//! Synchronous image calls report both as documented by D-05 (`request_timeout` +
+//! `charge_possible`, or `provider_error` retryable). Video submissions (D-08) must
+//! treat both as `submission_uncertain` so the job is recorded as
+//! `submission_unknown` and never resubmitted: the Veo submit classifier returns
+//! `Verdict::Final(<submission_uncertain error>)` for 408 and every 5xx (never
+//! `Transient`), except a provider-documented "not processed" overload rejection,
+//! which stays a [`Verdict::RetryableRejection`]; and the adapter maps
+//! `Err(e) if e.is_ambiguous()` to `submission_uncertain` too. For example:
+//!
+//! ```
+//! # use iris::http::{HttpResponse, Verdict};
+//! # use iris::domain::ProviderId;
+//! # use iris::error::{ErrorCode, IrisError};
+//! fn classify_veo_submit(r: &HttpResponse) -> Verdict {
+//!     if r.status.as_u16() == 408 || r.status.is_server_error() {
+//!         // The operation may exist and be billed (D-08): never "failed".
+//!         return Verdict::Final(IrisError::new(
+//!             ErrorCode::SubmissionUncertain,
+//!             "the provider may have accepted this video job",
+//!         ));
+//!     }
+//!     Verdict::default_for(r, Some(ProviderId::Gemini))
+//! }
+//! ```
 
 use std::fmt;
 use std::time::{Duration, Instant};
@@ -25,7 +63,8 @@ pub(crate) const PROVIDER_TEXT_MAX: usize = 500;
 pub enum RetryClass {
     /// Paid, non-idempotent submission (image generate/edit, video submit). Retried
     /// only when the request provably was not processed: a connection failure before
-    /// sending, or a [`Verdict::RetryableRejection`]. At most 3 attempts.
+    /// sending, or a [`Verdict::RetryableRejection`]. At most 3 attempts. See the
+    /// module documentation for how video submissions report 408/5xx answers.
     PaidSubmit,
     /// Idempotent read (poll, model metadata). Retries connect errors, timeouts,
     /// body read errors, [`Verdict::RetryableRejection`] and [`Verdict::Transient`].
@@ -144,11 +183,23 @@ pub enum Verdict {
     /// Retried by every class. `error` is returned if retries run out.
     /// `retry_after` is a provider-body delay (e.g. Google `RetryInfo.retryDelay`);
     /// `Retry-After`/`retry-after-ms` headers are read by the executor itself.
-    RetryableRejection { error: IrisError, retry_after: Option<Duration> },
+    RetryableRejection {
+        /// Returned (enriched) when retries run out or are not allowed.
+        error: IrisError,
+        /// Delay the provider asked for in the response body, if any.
+        retry_after: Option<Duration>,
+    },
     /// A transient server-side failure where the request may have been processed
     /// (408, 500, 502, 503, 504). Retried by `IdempotentRead`/`Download`; returned
-    /// immediately for `PaidSubmit`.
-    Transient { error: IrisError, retry_after: Option<Duration> },
+    /// immediately for `PaidSubmit` as [`HttpError::Error`] carrying `error`.
+    /// A video submission classifier must not return this: it returns
+    /// `Final(submission_uncertain)` instead (module docs, D-08).
+    Transient {
+        /// Returned (enriched) when retries run out or are not allowed.
+        error: IrisError,
+        /// Delay the provider asked for in the response body, if any.
+        retry_after: Option<Duration>,
+    },
     /// Not retryable (400, 401, 403, 404, 409, 413, 422, quota, content blocks, …).
     Final(IrisError),
 }
@@ -193,6 +244,7 @@ impl Verdict {
 /// Per-call parameters for [`HttpClient::execute`].
 #[derive(Debug, Clone, Copy)]
 pub struct Call {
+    /// Retry rules for this call.
     pub class: RetryClass,
     /// Total time limit of one attempt, from connecting until the body is read
     /// (`Timeouts::generate` / `submit` / `poll`).
@@ -204,15 +256,20 @@ pub struct Call {
 }
 
 impl Call {
+    /// A call with retry class `class` and per-attempt time limit `timeout`, no
+    /// request id header, and no provider.
     pub fn new(class: RetryClass, timeout: Duration) -> Self {
         Call { class, timeout, request_id_header: None, provider: None }
     }
 
+    /// Capture the provider request id from response header `header` (sanitized
+    /// with [`sanitize_request_id`]).
     pub fn with_request_id_header(mut self, header: &'static str) -> Self {
         self.request_id_header = Some(header);
         self
     }
 
+    /// Attach `provider` to errors the executor produces or enriches.
     pub fn with_provider(mut self, provider: ProviderId) -> Self {
         self.provider = Some(provider);
         self
@@ -222,8 +279,11 @@ impl Call {
 /// A complete HTTP response (body fully read).
 #[derive(Clone)]
 pub struct HttpResponse {
+    /// HTTP status.
     pub status: StatusCode,
+    /// Response headers (never logged).
     pub headers: HeaderMap,
+    /// The complete body (never logged).
     pub body: Bytes,
     /// Sanitized provider request id from [`Call::request_id_header`].
     pub request_id: Option<String>,
@@ -320,6 +380,8 @@ pub enum TransportKind {
 }
 
 impl TransportKind {
+    /// Stable lowercase name (`connect`, `timeout`, `other`), used in logs and in
+    /// `details.transport`.
     pub const fn as_str(self) -> &'static str {
         match self {
             TransportKind::Connect => "connect",
@@ -332,14 +394,18 @@ impl TransportKind {
 /// No usable response was received.
 #[derive(Debug, Clone)]
 pub struct TransportError {
+    /// How the attempt failed.
     pub kind: TransportKind,
     /// True when the request may have reached the provider (everything except a
     /// failed connection). For a paid submission this is the uncertainty window.
     pub after_send: bool,
     /// Status of the response, if its headers arrived before the body failed.
     pub status: Option<u16>,
+    /// Attempts made, including the failed one.
     pub attempts: u32,
+    /// Retry class of the call.
     pub class: RetryClass,
+    /// Provider of the call, if known.
     pub provider: Option<ProviderId>,
     /// Redacted URL of the failed request.
     pub url: String,
@@ -421,7 +487,13 @@ pub enum HttpError {
 }
 
 impl HttpError {
-    /// True when a request may have been processed although no answer arrived.
+    /// True when a request may have been processed although no answer arrived
+    /// (a transport failure after sending).
+    ///
+    /// This does not cover a 408/5xx *answer* to a paid submission, which the
+    /// executor returns as [`HttpError::Error`] with the classifier's error. Video
+    /// submissions must make their classifier return `submission_uncertain` for
+    /// those (see the module documentation and D-08).
     pub fn is_ambiguous(&self) -> bool {
         matches!(self, HttpError::Transport(t) if t.after_send)
     }
