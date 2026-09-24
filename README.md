@@ -296,7 +296,8 @@ credential each provider reads and whether it's set.
 
 - **Synchronous image calls cannot be recovered.** If the connection is lost after OpenAI or
   Gemini accepts an image request, Iris cannot resume or query it later — there is no job to
-  recover (unlike video). A timeout after sending is reported as `request_timeout` with
+  recover (unlike video). A timeout or dropped connection after sending (and an OpenAI 408/5xx
+  answer) is reported as `submission_uncertain` (exit 5, `retryable: false`) with
   `details.charge_possible: true`; Iris never retries it automatically.
 - **Veo models are all "preview"** per Google's own lifecycle labeling — behavior, limits, and
   availability may change upstream without notice.

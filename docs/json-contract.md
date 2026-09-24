@@ -297,13 +297,15 @@ serializes the real, current value.
 | `wait_timeout` | pending | 4 | true |
 | `job_not_ready` | pending | 4 | true |
 | `submission_uncertain` | uncertain | 5 | false |
-| `interrupted` | interrupted | 130 | true |
+| `interrupted` | interrupted | 130 | true (false while a paid image request was in flight) |
 
 "Retryable" here is the *default* Iris reports for that code; a specific error can override it
 (e.g. `provider_error` is `true` for a 5xx it classified as transient). `retryable` describes
 whether *retrying the same request* might help — it is never an instruction to retry a paid
 submission automatically; see [jobs.md](jobs.md#submission-uncertainty) for why Iris never
-resubmits a paid request whose outcome it cannot prove.
+resubmits a paid request whose outcome it cannot prove. An image-command error whose
+`details.charge_possible` is `true` (the provider may have processed and billed the request) never
+says `retryable: true`.
 
 **Exit code summary:**
 
@@ -323,10 +325,22 @@ a definite provider-side rejection of a malformed request as given (e.g. an Open
 request before running again"; agents that need to distinguish them check `error.provider_status`:
 `null` means nothing was sent, a non-null value means the provider rejected it outright.
 
-A timeout on a paid **synchronous** request, after it was already sent, is reported as
-`request_timeout` with `details.charge_possible: true` and a hint that Iris did not retry it —
-Iris has no way to resume a synchronous call, unlike a video job (see
-[jobs.md](jobs.md#why-synchronous-calls-have-no-job-record)).
+A paid **synchronous** image request whose outcome Iris cannot know is reported as
+`submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint
+that Iris did not retry it, and `job_id: null` — Iris has no way to resume a synchronous call,
+unlike a video job (see [jobs.md](jobs.md#why-synchronous-calls-have-no-job-record)). That covers:
+
+- no complete answer after the request was sent: a timeout (`details.transport: "timeout"`) or a
+  connection that failed (`details.transport: "other"`; a dropped connection is never reported as
+  a timeout);
+- an OpenAI HTTP 408 or 5xx answer, except the documented `server_is_overloaded` 503, which says
+  the request was not processed and is retried automatically. OpenAI errors carry the
+  `X-Client-Request-Id` Iris sent in `details.client_request_id`.
+
+A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retryable, for a 5xx)
+without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
+errors are not charged. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
+with `retryable: false` and `details.charge_possible: true`.
 
 Provider error strings and HTTP-status-specific provider codes are **never** the public taxonomy —
 they are mapped to one of the codes above by each adapter (see

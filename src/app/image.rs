@@ -31,7 +31,26 @@ pub struct ImageArgs {
 }
 
 /// Run `image generate` (`op = image.generate`) or `image edit` (`image.edit`).
+///
+/// No error it returns says both `details.charge_possible: true` and
+/// `retryable: true`: a request that may already have been billed is never
+/// presented as safe to run again.
 pub async fn run(
+    ctx: &AppContext,
+    op: Operation,
+    args: ImageArgs,
+    warnings: &mut Vec<Warning>,
+) -> Result<GenerationOutcome<ImageResult>, IrisError> {
+    run_checked(ctx, op, args, warnings).await.map_err(|mut e| {
+        let charged = e.details.get("charge_possible").and_then(serde_json::Value::as_bool) == Some(true);
+        if charged && e.retryable == Some(true) {
+            e.retryable = Some(false);
+        }
+        e
+    })
+}
+
+async fn run_checked(
     ctx: &AppContext,
     op: Operation,
     args: ImageArgs,
@@ -146,13 +165,18 @@ pub async fn run(
     let output: ImageOutput = tokio::select! {
         result = call => result?,
         () = ctx.interrupt.after(seen) => {
+            // Interrupted, but the outcome is as uncertain as a lost connection: not retryable.
             return Err(IrisError::new(
                 ErrorCode::Interrupted,
                 "interrupted while waiting for the provider's answer; no image was saved",
             )
             .with_provider(provider)
+            .with_retryable(Some(false))
             .with_detail("charge_possible", true)
-            .with_hint("the provider may still have processed (and billed) the request; Iris did not retry it"));
+            .with_hint(
+                "the provider may still have processed (and billed) the request; Iris did not retry it. Check \
+                 your provider usage before running the command again",
+            ));
         }
     };
     if output.images.is_empty() {

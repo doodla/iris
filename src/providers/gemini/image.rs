@@ -2,7 +2,8 @@
 //!
 //! One paid request per call (`PaidSubmit` retry class): only connection failures
 //! before sending and 429 rate limits are retried. Images come back inline as
-//! base64; there is no job id and nothing to recover later.
+//! base64; there is no job id and nothing to recover later, so a request that may
+//! have been processed without an answer reaching Iris is `submission_uncertain`.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_PAD_INDIFFERENT, URL_SAFE_PAD_INDIFFERENT};
@@ -16,7 +17,7 @@ use crate::artifacts::media;
 use crate::catalog::gemini::MAX_REQUEST_BYTES;
 use crate::domain::{Operation, ProviderId, Usage, Warning};
 use crate::error::{ErrorCode, IrisError};
-use crate::http::{HttpError, RetryClass};
+use crate::http::{HttpError, RetryClass, TransportKind};
 use crate::providers::{GeneratedImage, ImageOutput, ImageRequest, ProviderContext};
 use crate::redact;
 
@@ -189,26 +190,42 @@ fn str_option<'a>(name: &str, value: &'a crate::catalog::OptionValue) -> Result<
         .ok_or_else(|| IrisError::internal(format!("option '{name}' must be a string, got {value}")))
 }
 
-/// Paid synchronous call failures (see docs/json-contract.md). Neither case below is retried.
-/// * A transport failure after sending is `request_timeout` with `charge_possible`.
-/// * An HTTP 408 or 504 answer (`request_timeout`) arrived after
-///   the request was sent. It gets the same `charge_possible` and no-retry hint.
-///   Google's billing page says a request that "fails with a 400 or 500 error" is
-///   not charged, and it does not name 408 or 504. docs/json-contract.md treats every timeout
-///   after sending the same way, and a Veo submit that gets 408 or 504 is
-///   `submission_uncertain` too.
+/// Paid synchronous call failures (see docs/json-contract.md). None is retried.
+///
+/// * A transport failure after sending (timeout, reset, truncated body) is
+///   `submission_uncertain`: the request may have been processed and billed, and
+///   Iris cannot find out. It keeps `details.transport` and `details.charge_possible`.
+/// * An HTTP error answer keeps its mapped code (e.g. `provider_error`, retryable, for
+///   a 5xx) without `charge_possible`: Google's billing documentation says requests
+///   that fail with 400 or 500 errors are not charged.
 fn paid_call_error(err: HttpError) -> IrisError {
     match err {
         HttpError::Transport(t) if t.after_send => {
             let mut e = t.to_iris();
-            e.code = ErrorCode::RequestTimeout;
-            e.retryable = ErrorCode::RequestTimeout.default_retryable();
-            e
-        }
-        HttpError::Error(e) if e.code == ErrorCode::RequestTimeout => {
-            e.with_detail("charge_possible", true).with_hint(
+            e.code = ErrorCode::SubmissionUncertain;
+            e.retryable = Some(false);
+            let what = match t.kind {
+                TransportKind::Timeout => "no complete answer arrived within the time limit",
+                _ => "the connection failed after the request was sent",
+            };
+            e.message = format!(
+                "the Gemini API may have received this image request, but no complete answer arrived \
+                 ({what}; {}): {}",
+                t.url, t.message
+            );
+            e.hint = Some(
                 "Iris did not retry automatically because the provider may already have processed (and \
-                 billed) this request; check usage in Google AI Studio before running it again",
+                 billed) this request; check usage in Google AI Studio before running the command again"
+                    .to_string(),
+            );
+            e.with_detail("charge_possible", true)
+        }
+        HttpError::Error(e)
+            if e.hint.is_none() && e.provider_status.is_some_and(|s| s == 408 || s >= 500) =>
+        {
+            e.with_hint(
+                "Iris did not retry automatically; Google's billing documentation says requests that fail \
+                 with 400 or 500 errors are not charged",
             )
         }
         other => other.into_iris(),

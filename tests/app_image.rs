@@ -315,6 +315,23 @@ async fn invalid_media_from_the_provider_is_not_saved() {
 }
 
 #[tokio::test]
+async fn a_possibly_charged_error_is_never_reported_as_retryable() {
+    let f = Fixture::new();
+    f.openai.images().push(Err(IrisError::new(ErrorCode::RequestTimeout, "slow")
+        .with_provider(ProviderId::OpenAi)
+        .with_detail("charge_possible", true)));
+    let (r, _) = f.run(Operation::ImageGenerate, args("x")).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::RequestTimeout);
+    assert_eq!(e.retryable, Some(false));
+
+    // Without charge_possible the provider's retryability is kept.
+    f.openai.images().push(Err(IrisError::new(ErrorCode::RequestTimeout, "slow")));
+    let (r, _) = f.run(Operation::ImageGenerate, args("x")).await;
+    assert_eq!(r.unwrap_err().retryable, Some(true));
+}
+
+#[tokio::test]
 async fn provider_errors_pass_through_and_nothing_is_saved() {
     let f = Fixture::new();
     f.openai
@@ -443,5 +460,6 @@ async fn ctrl_c_during_the_request_is_reported_as_possibly_charged() {
     assert_eq!(e.code, ErrorCode::Interrupted);
     assert_eq!(e.exit_code(), 130);
     assert_eq!(e.details.get("charge_possible"), Some(&serde_json::Value::Bool(true)));
+    assert_eq!(e.retryable, Some(false), "the request may have been billed: not presented as retryable");
     assert!(files_in(&f.sandbox.work()).is_empty());
 }

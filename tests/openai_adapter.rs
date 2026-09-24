@@ -866,8 +866,8 @@ async fn error_table_maps_every_documented_status() {
             name: "408",
             status: 408,
             body: json!({}),
-            code: ErrorCode::ProviderError,
-            retryable: Some(true),
+            code: ErrorCode::SubmissionUncertain,
+            retryable: Some(false),
             provider_code: None,
         },
         Case {
@@ -934,32 +934,32 @@ async fn error_table_maps_every_documented_status() {
             name: "500",
             status: 500,
             body: openai_error("The server had an error.", "server_error", None),
-            code: ErrorCode::ProviderError,
-            retryable: Some(true),
+            code: ErrorCode::SubmissionUncertain,
+            retryable: Some(false),
             provider_code: Some("server_error"),
         },
         Case {
             name: "502",
             status: 502,
             body: json!({}),
-            code: ErrorCode::ProviderError,
-            retryable: Some(true),
+            code: ErrorCode::SubmissionUncertain,
+            retryable: Some(false),
             provider_code: None,
         },
         Case {
             name: "504",
             status: 504,
             body: json!({}),
-            code: ErrorCode::ProviderError,
-            retryable: Some(true),
+            code: ErrorCode::SubmissionUncertain,
+            retryable: Some(false),
             provider_code: None,
         },
         Case {
             name: "503 without server_is_overloaded",
             status: 503,
             body: openai_error("Service unavailable.", "service_unavailable_error", None),
-            code: ErrorCode::ProviderError,
-            retryable: Some(true),
+            code: ErrorCode::SubmissionUncertain,
+            retryable: Some(false),
             provider_code: Some("service_unavailable_error"),
         },
     ];
@@ -980,8 +980,14 @@ async fn error_table_maps_every_documented_status() {
         assert!(err.hint.is_some(), "{name}: every mapped error carries a hint");
         assert_eq!(requests(&server).await.len(), 1, "{name}: never retried");
         if case.status == 408 || case.status >= 500 {
+            // OpenAI may have processed the request: uncertain (exit 5), never "retry it".
+            assert_eq!(err.exit_code(), 5, "{name}");
+            assert_eq!(err.details.get("charge_possible"), Some(&json!(true)), "{name}");
             assert!(err.hint.as_deref().unwrap().contains("did not retry automatically"), "{name}");
             assert!(err.details.get("client_request_id").is_some(), "{name}");
+            assert!(err.job_id.is_none(), "{name}: a synchronous call has no job");
+        } else {
+            assert!(err.details.get("charge_possible").is_none(), "{name}");
         }
         if case.code == ErrorCode::QuotaExceeded {
             assert!(err.hint.as_deref().unwrap().contains("billing"), "{name}: {:?}", err.hint);
@@ -1241,6 +1247,7 @@ async fn overloaded_503_is_retried_then_succeeds() {
     assert_eq!(err.code, ErrorCode::ProviderError);
     assert_eq!(err.retryable, Some(true));
     assert_eq!(err.provider_code.as_deref(), Some("server_is_overloaded"));
+    assert!(err.details.get("charge_possible").is_none(), "OpenAI says the request was not processed");
     assert_eq!(requests(&server).await.len(), 3);
 }
 
@@ -1259,7 +1266,7 @@ async fn x_should_retry_false_is_respected() {
 }
 
 #[tokio::test]
-async fn a_timeout_after_sending_is_request_timeout_with_charge_possible_and_no_retry() {
+async fn a_timeout_after_sending_is_submission_uncertain_with_charge_possible_and_no_retry() {
     let server = MockServer::start().await;
     let img = png_rgb(8, 8);
     mount(&server, GEN, ok(images_body(&[&img], Some("png"))).set_delay(Duration::from_secs(3))).await;
@@ -1267,8 +1274,12 @@ async fn a_timeout_after_sending_is_request_timeout_with_charge_possible_and_no_
     ctx.timeouts.generate = Duration::from_millis(300);
     let err =
         OpenAiProvider::new().generate(&generate_request(ResolvedOptions::new()), &ctx).await.unwrap_err();
-    assert_eq!(err.code, ErrorCode::RequestTimeout);
+    assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{}", err.message);
+    assert_eq!(err.exit_code(), 5);
+    assert_eq!(err.retryable, Some(false));
     assert_eq!(err.details.get("charge_possible"), Some(&json!(true)));
+    assert_eq!(err.details.get("transport"), Some(&json!("timeout")));
+    assert!(err.job_id.is_none());
     let hint = err.hint.as_deref().unwrap();
     assert!(
         hint.contains("Iris did not retry automatically; the provider may have billed this request"),
@@ -1333,7 +1344,7 @@ fn read_request(stream: &mut std::net::TcpStream) -> Option<String> {
 }
 
 #[tokio::test]
-async fn a_connection_lost_after_sending_is_request_timeout_with_charge_possible_and_no_retry() {
+async fn a_connection_lost_after_sending_is_submission_uncertain_not_a_timeout() {
     let cases: [(&str, &'static [u8]); 2] = [
         ("closed after the request, before any response", b""),
         (
@@ -1348,8 +1359,10 @@ async fn a_connection_lost_after_sending_is_request_timeout_with_charge_possible
             .generate(&generate_request(ResolvedOptions::new()), &ctx_for(&base))
             .await
             .expect_err(name);
-        assert_eq!(err.code, ErrorCode::RequestTimeout, "{name}: {}", err.message);
-        assert_eq!(err.retryable, Some(true), "{name}");
+        assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{name}: {}", err.message);
+        assert_eq!(err.retryable, Some(false), "{name}");
+        // Nothing timed out: the connection failed, and the transport detail says so.
+        assert_eq!(err.details.get("transport"), Some(&json!("other")), "{name}");
         assert_eq!(err.provider, Some(ProviderId::OpenAi), "{name}");
         assert_eq!(err.details.get("charge_possible"), Some(&json!(true)), "{name}");
         let hint = err.hint.as_deref().unwrap();
@@ -1406,7 +1419,7 @@ async fn provider_messages_are_redacted_and_truncated() {
     let server = MockServer::start().await;
     mount(&server, GEN, ResponseTemplate::new(502).set_body_string("<html>Bad Gateway</html>")).await;
     let err = generate_err(&server).await;
-    assert_eq!(err.code, ErrorCode::ProviderError);
+    assert_eq!(err.code, ErrorCode::SubmissionUncertain);
     assert_eq!(err.details.get("provider_message"), Some(&json!("<html>Bad Gateway</html>")));
     assert!(err.provider_code.is_none());
 }

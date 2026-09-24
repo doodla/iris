@@ -62,6 +62,17 @@ machine-readable contract for agents.
 - `AGENTS.md`/`CLAUDE.md` durable agent instructions, and this project's documentation set under
   `docs/`.
 
+### Changed
+
+- A paid synchronous image request whose outcome is unknown — a timeout or dropped connection
+  after it was sent, or an OpenAI HTTP 408/5xx answer other than the documented
+  `server_is_overloaded` 503 — is now `submission_uncertain` (exit 5, `retryable: false`,
+  `details.charge_possible: true`, `job_id: null`) instead of a retryable `request_timeout` or
+  `provider_error`. A dropped connection is no longer labeled a timeout. Gemini HTTP error answers
+  keep their codes without `charge_possible` (Google does not charge failed requests), and Ctrl-C
+  during a paid image call reports `retryable: false`. No image error with
+  `details.charge_possible: true` says `retryable: true`.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

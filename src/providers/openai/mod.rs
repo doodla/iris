@@ -10,7 +10,8 @@
 //! The Images API is synchronous: images come back inline as base64, there is no job
 //! id, no retrieval endpoint, and no idempotency key (API reference, OpenAPI spec). Paid calls
 //! therefore run under the `PaidSubmit` retry class, and an answer lost after sending
-//! is reported as `request_timeout` with `details.charge_possible`, never resent.
+//! (or an HTTP 408/5xx answer other than the documented overload rejection) is reported
+//! as `submission_uncertain` with `details.charge_possible`, never resent.
 //!
 //! Every request sends `model` explicitly (the documented default is a removed
 //! model), `Authorization: Bearer <key>`, and a fresh ULID in `X-Client-Request-Id`;

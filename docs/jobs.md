@@ -11,10 +11,11 @@ invocation, on the same machine.
 the same HTTP response, so there is nothing to persist between request and response, and no
 operation id to poll later. If the connection is lost *after* the provider accepted the request,
 Iris cannot know whether it succeeded and has no way to check — that outcome is reported as
-`request_timeout` with `details.charge_possible: true`, and Iris never retries it automatically
-(see [json-contract.md](json-contract.md#error-object)). This is a real, provider-shaped
-limitation, not an Iris gap: OpenAI's Images API and Gemini's `generateContent` are both plain
-request/response calls with no job or operation concept, so there is nothing durable to recover.
+`submission_uncertain` (exit 5) with `details.charge_possible: true` and `job_id: null`, and Iris
+never retries it automatically (see [json-contract.md](json-contract.md#error-object)). This is a
+real, provider-shaped limitation, not an Iris gap: OpenAI's Images API and Gemini's
+`generateContent` are both plain request/response calls with no job or operation concept, so there
+is nothing durable to recover.
 Only `video.generate` gets a job record, because Veo's `predictLongRunning` API is itself
 asynchronous — the provider gives back an operation id Iris can poll until the provider's own
 retention window ends (about 2 days; see [Retention and expiry](#retention-and-expiry) below), not

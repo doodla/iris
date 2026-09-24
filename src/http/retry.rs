@@ -17,8 +17,9 @@
 //!   and the executor then returns the classifier's error (`provider_error`,
 //!   retryable) *as an [`HttpError::Error`]*, where `is_ambiguous()` is false.
 //!
-//! Synchronous image calls report both as `request_timeout` +
-//! `charge_possible`, or `provider_error` retryable. Video submissions must
+//! Synchronous image calls report both as `submission_uncertain` with
+//! `charge_possible` (except where the provider documents that an error answer was
+//! not processed or billed). Video submissions must
 //! treat both as `submission_uncertain` so the job is recorded as
 //! `submission_unknown` and never resubmitted: the Veo submit classifier returns
 //! `Verdict::Final(<submission_uncertain error>)` for 408 and every 5xx (never

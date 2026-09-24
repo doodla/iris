@@ -484,25 +484,70 @@ fn a_rate_limited_paid_request_is_retried_and_then_succeeds() {
     assert!(out.elapsed < std::time::Duration::from_secs(30), "{:?}", out.elapsed);
 }
 
+/// A paid request that may have been billed is never presented as retryable.
+fn assert_not_retryable_if_charged(v: &Value) {
+    if v["error"]["details"]["charge_possible"] == true {
+        assert_ne!(v["error"]["retryable"], true, "charge_possible with retryable true: {v}");
+    }
+}
+
+/// The error of a paid synchronous call whose outcome Iris cannot know: exit 5,
+/// not retryable, possibly charged, and no job to resume.
+fn assert_uncertain(out: &Out) -> Value {
+    let v = out.err(5, "submission_uncertain");
+    let e = &v["error"];
+    assert_eq!(e["category"], "uncertain", "{v}");
+    assert_eq!(e["retryable"], false, "{v}");
+    assert_eq!(e["details"]["charge_possible"], true, "{v}");
+    assert!(e["job_id"].is_null() && e["job_status"].is_null(), "a synchronous call has no job: {v}");
+    assert!(e["hint"].as_str().unwrap().contains("did not retry"), "{v}");
+    assert_not_retryable_if_charged(&v);
+    v
+}
+
 #[test]
 fn a_server_error_on_a_paid_image_request_is_reported_once_and_never_retried() {
+    // OpenAI may have processed a request it answered with a 5xx: uncertain (exit 5).
     let (sb, api, out) = openai_run(openai_error(500, "server_error", None, "The server had an error."), &[]);
-    let v = out.err(1, "provider_error");
-    assert_eq!(v["error"]["category"], "provider");
-    assert_eq!(v["error"]["retryable"], true, "the caller may retry");
+    let v = assert_uncertain(&out);
+    assert_eq!(v["error"]["provider"], "openai");
     assert_eq!(v["error"]["provider_status"], 500);
-    assert!(v["error"]["hint"].as_str().unwrap().contains("did not retry"), "{v}");
+    assert_eq!(v["error"]["provider_request_id"], "req_e2e_error");
+    let sent = header(&api.hits("POST", OPENAI_GENERATIONS)[0], "x-client-request-id").unwrap();
+    assert_eq!(v["error"]["details"]["client_request_id"], sent.as_str(), "{v}");
     assert_eq!(api.total(), 1, "a paid request that may have been processed is never resent");
     assert!(files_in(&sb.work()).is_empty());
 
+    // Google does not charge a request that failed with a 5xx: an ordinary, retryable error.
     let (_sb, api, out) =
         gemini_run(google_error(500, "INTERNAL", "An internal error has occurred.", json!([])), &[]);
-    out.err(1, "provider_error");
+    let v = out.err(1, "provider_error");
+    assert_eq!(v["error"]["retryable"], true, "{v}");
+    assert!(v["error"]["details"].get("charge_possible").is_none(), "{v}");
     assert_eq!(api.total(), 1);
 }
 
 #[test]
-fn a_response_slower_than_the_configured_timeout_is_request_timeout_with_charge_possible() {
+fn an_overloaded_openai_503_is_retried_and_then_succeeds() {
+    let image = png(12, 12);
+    let overloaded = openai_error(
+        503,
+        "service_unavailable_error",
+        Some("server_is_overloaded"),
+        "The model is overloaded.",
+    )
+    .insert_header("retry-after-ms", "20");
+    let (sb, api, out) = openai_run(
+        Switch::sequence(vec![overloaded, openai_images(&[&image], "req_e2e_overload")]),
+        &["-o", "o.png"],
+    );
+    out.ok();
+    assert_eq!(api.count("POST", OPENAI_GENERATIONS), 2, "OpenAI documents the 503 as not processed");
+    assert_eq!(std::fs::read(sb.path("o.png")).unwrap(), image);
+}
+
+#[test]
+fn a_response_slower_than_the_configured_timeout_is_submission_uncertain() {
     let slow = openai_images(&[&png(8, 8)], "req_slow").set_delay(std::time::Duration::from_secs(4));
     let sb = Sandbox::new();
     let api = MockApi::start();
@@ -515,10 +560,9 @@ fn a_response_slower_than_the_configured_timeout_is_request_timeout_with_charge_
         .arg("--config")
         .arg(&config)
         .run();
-    let v = out.err(1, "request_timeout");
-    assert_eq!(v["error"]["category"], "timeout");
-    assert_eq!(v["error"]["details"]["charge_possible"], true, "{v}");
-    assert!(v["error"]["hint"].as_str().unwrap().contains("did not retry"), "{v}");
+    let v = assert_uncertain(&out);
+    assert_eq!(v["error"]["details"]["transport"], "timeout", "{v}");
+    assert!(v["error"]["details"]["client_request_id"].is_string(), "{v}");
     assert_eq!(api.total(), 1, "never resent");
     assert!(out.elapsed < std::time::Duration::from_secs(4), "the 1s timeout applied: {:?}", out.elapsed);
     assert!(files_in(&sb.work()).is_empty());
@@ -534,15 +578,121 @@ fn a_response_slower_than_the_configured_timeout_is_request_timeout_with_charge_
             .set_delay(std::time::Duration::from_secs(4)),
     );
     let config = sb.config("iris.toml", "[providers.gemini]\nrequest_timeout = \"1s\"\n");
-    let v = sb
+    let out = sb
         .iris()
         .gemini(&api)
         .args(["image", "generate", PROMPT, "--provider", "gemini", "--json", "--config"])
         .arg(&config)
-        .run()
-        .err(1, "request_timeout");
-    assert_eq!(v["error"]["details"]["charge_possible"], true, "{v}");
+        .run();
+    let v = assert_uncertain(&out);
+    assert_eq!(v["error"]["provider"], "gemini");
+    assert_eq!(v["error"]["details"]["transport"], "timeout", "{v}");
     assert_eq!(api.total(), 1);
+}
+
+/// A raw 127.0.0.1 server that reads each request completely (head and
+/// `Content-Length` body) and closes the connection without answering: a
+/// connection lost after the request was sent. Returns its origin and the number of
+/// requests read.
+fn dropping_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::Read as _;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", listener.local_addr().unwrap());
+    let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let seen = requests.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            stream.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 16 * 1024];
+            let mut head_end = None;
+            while head_end.is_none() {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+                head_end = buf.windows(4).position(|w| w == b"\r\n\r\n");
+            }
+            let Some(head_end) = head_end else { continue };
+            let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+            let body_len: usize = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+            while buf.len() < head_end + 4 + body_len {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+            seen.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            // Dropping the stream closes the connection with no response.
+        }
+    });
+    (origin, requests)
+}
+
+#[test]
+fn a_connection_dropped_after_sending_is_submission_uncertain_not_a_timeout() {
+    // OpenAI.
+    let sb = Sandbox::new();
+    let (origin, requests) = dropping_server();
+    let out = sb
+        .iris()
+        .env("IRIS_OPENAI_BASE_URL", format!("{origin}/v1"))
+        .env("OPENAI_API_KEY", OPENAI_KEY)
+        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .run();
+    let v = assert_uncertain(&out);
+    assert_eq!(v["error"]["provider"], "openai");
+    assert_eq!(v["error"]["details"]["transport"], "other", "nothing timed out: {v}");
+    assert!(v["error"]["details"]["client_request_id"].is_string(), "{v}");
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1, "never resent");
+    assert!(files_in(&sb.work()).is_empty());
+
+    // Gemini.
+    let sb = Sandbox::new();
+    let (origin, requests) = dropping_server();
+    let out = sb
+        .iris()
+        .env("IRIS_GEMINI_BASE_URL", &origin)
+        .env("GEMINI_API_KEY", GEMINI_KEY)
+        .args(["image", "generate", PROMPT, "--provider", "gemini", "--json"])
+        .run();
+    let v = assert_uncertain(&out);
+    assert_eq!(v["error"]["provider"], "gemini");
+    assert_eq!(v["error"]["details"]["transport"], "other", "nothing timed out: {v}");
+    assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1, "never resent");
+}
+
+#[test]
+fn ctrl_c_during_a_paid_image_call_exits_130_and_is_not_retryable() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on(
+        "POST",
+        OPENAI_GENERATIONS,
+        openai_images(&[&png(8, 8)], "req_e2e_int").set_delay(std::time::Duration::from_secs(10)),
+    );
+    let child = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .spawn();
+    // The request was received, so the Ctrl-C handler is installed and the call is in flight.
+    api.wait_for("POST", OPENAI_GENERATIONS, 1, std::time::Duration::from_secs(30));
+    child.interrupt();
+    let out = child.finish();
+    let v = out.err(130, "interrupted");
+    assert_eq!(v["error"]["retryable"], false, "{v}");
+    assert_eq!(v["error"]["details"]["charge_possible"], true, "{v}");
+    assert!(v["error"]["hint"].as_str().unwrap().contains("did not retry"), "{v}");
+    assert_not_retryable_if_charged(&v);
+    assert!(out.elapsed < std::time::Duration::from_secs(10), "{:?}", out.elapsed);
+    assert_eq!(api.total(), 1);
+    assert!(files_in(&sb.work()).is_empty());
 }
 
 // ----- scenario 10 (images): secret hygiene with -vv ----------------------------------------------

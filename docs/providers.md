@@ -57,8 +57,8 @@ compiler alone):
   `PaidSubmit` retry class, which retries *only* a connection failure before the request was sent,
   a provider-documented rate-limit rejection, or a provider-documented "not processed" overload
   rejection — never a timeout or reset after sending, and never a bare 5xx. If a paid request's
-  outcome is ambiguous, return an error with code `submission_uncertain` (video) or
-  `request_timeout` with `details.charge_possible: true` (synchronous image); never resubmit it
+  outcome is ambiguous, return an error with code `submission_uncertain` and
+  `details.charge_possible: true` (video or synchronous image); never resubmit it
   yourself. See `providers/gemini/veo.rs::classify_submit` for the reference implementation of
   this rule.
 - **`poll` is idempotent** and uses the `IdempotentRead` retry class (retried on connect errors,

@@ -5,8 +5,10 @@
 //! Paid image requests run under [`RetryClass::PaidSubmit`]: they are resent only
 //! when OpenAI provably did not process them (a connection that failed before
 //! sending, a 429 rate limit, or a 503 `server_is_overloaded`), and never when the
-//! response says `x-should-retry: false`. 500/502/504, timeouts, and resets after
-//! sending are reported, never retried, because the Images API has no idempotency key.
+//! response says `x-should-retry: false`. Any other outcome that leaves open whether
+//! OpenAI processed (and billed) the request (HTTP 408 or 5xx, a timeout or a lost
+//! connection after sending) is `submission_uncertain`: reported, never retried,
+//! because the Images API has no idempotency key.
 
 use bytes::Bytes;
 use reqwest::header::CONTENT_TYPE;
@@ -47,8 +49,9 @@ pub(super) fn endpoint(ctx: &ProviderContext, path: &str) -> String {
 /// POST a JSON body to a paid Images endpoint under `PaidSubmit`.
 ///
 /// Every attempt carries a fresh `X-Client-Request-Id` (a ULID). Errors are mapped
-/// by [`classify_paid`]; a transport failure after sending becomes `request_timeout`
-/// with `details.charge_possible = true` and the client request id of that attempt.
+/// by [`classify_paid`]; a transport failure after sending becomes
+/// `submission_uncertain` (see [`uncertain_transport`]). Every error that follows a
+/// 408 or 5xx answer carries the client request id of that attempt.
 pub(super) async fn post_paid(
     ctx: &ProviderContext,
     auth: &AuthHeader,
@@ -126,17 +129,22 @@ fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
     e
 }
 
-/// A paid request may have reached OpenAI but no complete answer arrived
-/// (timeout, reset, truncated body). Never retried (see docs/jobs.md).
+/// A paid request may have reached OpenAI but no complete answer arrived (timeout,
+/// reset, truncated body): `submission_uncertain` (exit 5, not retryable) with
+/// `details.charge_possible`, `details.transport` (`timeout` or `other`, never
+/// relabeled), and the client request id. Never retried (see docs/jobs.md).
 fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError {
     let mut err = t.to_iris();
-    err.code = ErrorCode::RequestTimeout;
-    err.retryable = ErrorCode::RequestTimeout.default_retryable();
+    err.code = ErrorCode::SubmissionUncertain;
+    err.retryable = Some(false);
     let what = match t.kind {
         crate::http::TransportKind::Timeout => "no complete response arrived within the time limit",
         _ => "the connection failed after the request was sent",
     };
-    err.message = format!("OpenAI did not return a complete response ({what}; {}): {}", t.url, t.message);
+    err.message = format!(
+        "OpenAI may have received this image request, but no complete response arrived ({what}; {}): {}",
+        t.url, t.message
+    );
     err.hint = Some(format!(
         "Iris did not retry automatically; the provider may have billed this request. Check your OpenAI \
          usage before running the command again (X-Client-Request-Id {client_request_id})"
@@ -158,7 +166,7 @@ fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError
 /// | 402 (undocumented; "Payment Required") | `quota_exceeded` | no |
 /// | 403 | `permission_denied` (verification / region / project hint) | no |
 /// | 404 | `permission_denied` (model not available to this key) | no |
-/// | 408, 500–599 | `provider_error` (retryable by the caller) | no |
+/// | 408, other 500–599 | `submission_uncertain` (`charge_possible`, not retryable) | no |
 ///
 /// OpenAI's image guide uses `error.type = image_generation_user_error` for every
 /// user-correctable failure and names `error.code` the stable discriminator; only
@@ -245,15 +253,21 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
                  Image models; `iris models show <MODEL> --check-access` checks availability for free",
             ),
         ),
+        // OpenAI documents neither 408 nor these 5xx answers as "not processed", and the
+        // Images API has no idempotency key: the outcome is unknown.
         408 | 500..=599 => Verdict::Final(
             err(
-                ErrorCode::ProviderError,
-                format!("OpenAI returned a server error (HTTP {status}){provider_says}"),
+                ErrorCode::SubmissionUncertain,
+                format!(
+                    "OpenAI answered HTTP {status} and may still have processed this image \
+                     request{provider_says}"
+                ),
             )
-            .with_retryable(Some(true))
+            .with_retryable(Some(false))
+            .with_detail("charge_possible", true)
             .with_hint(
                 "Iris did not retry automatically because OpenAI may already have processed (and \
-                     billed) this request; check your OpenAI usage, then run the command again if needed",
+                 billed) this request; check your OpenAI usage before running the command again",
             ),
         ),
         _ => {

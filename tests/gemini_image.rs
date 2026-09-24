@@ -557,6 +557,8 @@ async fn every_error_table_row_maps_to_its_public_code() {
         } else {
             assert_eq!(err.retryable, Some(false), "HTTP {status}");
         }
+        // Google does not charge requests that fail with an HTTP error.
+        assert!(err.details.get("charge_possible").is_none(), "HTTP {status}");
     }
 
     let (err, _) = error_case(404, google_error(404, "NOT_FOUND", "not found", json!([]))).await;
@@ -711,7 +713,7 @@ async fn a_retry_delay_beyond_the_cap_is_reported_instead_of_waited() {
 }
 
 #[tokio::test]
-async fn a_timeout_after_sending_is_not_retried_and_may_be_charged() {
+async fn a_timeout_after_sending_is_submission_uncertain_and_never_resent() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(GENERATE_PATH))
@@ -722,14 +724,77 @@ async fn a_timeout_after_sending_is_not_retried_and_may_be_charged() {
         .generate(&generate_request(ResolvedOptions::new()), &ctx_with(&server, Duration::from_millis(300)))
         .await
         .unwrap_err();
-    assert_eq!(err.code, ErrorCode::RequestTimeout);
+    assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{}", err.message);
+    assert_eq!(err.exit_code(), 5);
+    assert_eq!(err.retryable, Some(false));
     assert_eq!(err.details["charge_possible"], true);
+    assert_eq!(err.details["transport"], "timeout");
+    assert!(err.job_id.is_none());
     assert!(err.hint.as_deref().unwrap().contains("did not retry"));
     assert_eq!(requests(&server).await.len(), 1);
 }
 
+/// A raw 127.0.0.1 server that reads one whole request per connection and closes
+/// the connection without answering. Returns its origin and the connection count.
+fn closing_server() -> (String, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::io::Read as _;
+    use std::sync::atomic::Ordering;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let connections = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = connections.clone();
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            count.fetch_add(1, Ordering::SeqCst);
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 16 * 1024];
+            // Read the head, then the Content-Length body, then close.
+            let head_end = loop {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+                    _ => break None,
+                }
+                if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                    break Some(pos);
+                }
+            };
+            let Some(head_end) = head_end else { continue };
+            let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+            let body_len: usize = head
+                .lines()
+                .find_map(|l| l.strip_prefix("content-length:"))
+                .and_then(|v| v.trim().parse().ok())
+                .unwrap_or(0);
+            while buf.len() < head_end + 4 + body_len {
+                match stream.read(&mut chunk) {
+                    Ok(n) if n > 0 => buf.extend_from_slice(&chunk[..n]),
+                    _ => break,
+                }
+            }
+        }
+    });
+    (format!("http://{addr}"), connections)
+}
+
 #[tokio::test]
-async fn timeout_answers_are_sent_once_and_may_be_charged() {
+async fn a_connection_dropped_after_sending_is_submission_uncertain_not_a_timeout() {
+    let (origin, connections) = closing_server();
+    let mut ctx = ctx_with(&MockServer::start().await, Duration::from_secs(5));
+    ctx.base_url = url::Url::parse(&origin).unwrap();
+    let err =
+        GeminiProvider::new().generate(&generate_request(ResolvedOptions::new()), &ctx).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{}", err.message);
+    assert_eq!(err.retryable, Some(false));
+    assert_eq!(err.details["charge_possible"], true);
+    assert_eq!(err.details["transport"], "other", "nothing timed out");
+    assert!(err.message.contains("after the request was sent"), "{}", err.message);
+    assert_eq!(connections.load(std::sync::atomic::Ordering::SeqCst), 1, "never resent");
+}
+
+#[tokio::test]
+async fn http_timeout_answers_keep_their_code_are_sent_once_and_are_not_marked_as_charged() {
     for (status, rpc_status) in [(408u16, "DEADLINE_EXCEEDED"), (504, "DEADLINE_EXCEEDED")] {
         let (err, sent) =
             error_case(status, google_error(status, rpc_status, "Deadline exceeded.", json!([]))).await;
@@ -737,13 +802,14 @@ async fn timeout_answers_are_sent_once_and_may_be_charged() {
         assert_eq!(sent, 1, "HTTP {status} must not be resent for a paid image call");
         assert_eq!(err.provider_status, Some(status));
         assert_eq!(err.retryable, Some(true));
-        assert_eq!(err.details["charge_possible"], true, "HTTP {status}");
+        assert!(err.details.get("charge_possible").is_none(), "HTTP {status}: Google does not charge it");
         assert!(err.hint.as_deref().unwrap().contains("did not retry"), "HTTP {status}: {:?}", err.hint);
     }
-    // Other server errors keep the default mapping (provider_error, no charge claim).
     let (err, _) = error_case(500, google_error(500, "INTERNAL", "internal error", json!([]))).await;
     assert_eq!(err.code, ErrorCode::ProviderError);
+    assert_eq!(err.retryable, Some(true));
     assert!(err.details.get("charge_possible").is_none());
+    assert!(err.hint.as_deref().unwrap().contains("not charged"), "{:?}", err.hint);
 }
 
 #[tokio::test]
