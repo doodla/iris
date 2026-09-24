@@ -145,11 +145,12 @@ const LITE_OPTIONS: &[OptionSpec] = &[
 ];
 
 const NOTE_PREVIEW: &str = "Preview model";
-// C-06 words this "Paid tier with Prepay credits required"; T-03 verification C4
-// found Postpay billing plans exist too, so the note states the verified requirement.
-const NOTE_PAID: &str =
-    "Paid tier required (no free tier): an active billing plan, with a positive balance on Prepay";
-const NOTE_AUTH_KEY: &str = "Auth API key required (the provider rejects standard keys from September 2026)";
+// The billing and key notes are C-06 rev 3 verbatim, like the image notes in
+// `catalog::gemini`. T-03 verification C4 (Postpay plans exist too) and C5 (the
+// standard-key cutoff date is unconfirmed) suggest softer wording; changing it is a
+// contract revision for both catalogs, not an adapter decision.
+const NOTE_PAID: &str = "Paid tier with Prepay credits required (no free tier)";
+const NOTE_AUTH_KEY: &str = "Auth API key required (standard keys rejected since September 2026)";
 const NOTE_AUDIO: &str = "Audio is always generated and cannot be disabled";
 const NOTE_RETENTION: &str =
     "Generated videos are deleted by the provider after 2 days; download before then";

@@ -73,8 +73,13 @@ fn the_three_nano_banana_models_are_declared_with_ids_names_and_aliases() {
         assert_eq!(m.outputs.media_types, &["image/png", "image/jpeg"]);
         assert_eq!(m.outputs.max_count, 1);
         assert_eq!(m.limits.max_prompt_chars, None);
-        assert!(m.access_notes.iter().any(|n| n.contains("No free tier")), "{}", m.id);
-        assert!(m.access_notes.iter().any(|n| n.contains("auth key")), "{}", m.id);
+        // C-06 rev 3 verbatim; a change of wording is a contract revision.
+        for note in [
+            "No free tier for image models: billing (Prepay) required",
+            "Standard (legacy) API keys are rejected from September 2026; use an auth key",
+        ] {
+            assert!(m.access_notes.contains(&note), "{}: {note}", m.id);
+        }
     }
     assert_eq!(spec(FLASH).display_name, "Nano Banana 2 (Gemini 3.1 Flash Image)");
     assert_eq!(spec(LITE).display_name, "Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)");
