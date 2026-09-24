@@ -1,0 +1,1545 @@
+{
+  "$defs": {
+    "AccessView": {
+      "properties": {
+        "account_access": {
+          "$ref": "#/$defs/AccountAccess",
+          "description": "Result of an account check; `not_checked` unless `--check-access` was used."
+        },
+        "checked_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "credential_env": {
+          "type": "string"
+        },
+        "credential_present": {
+          "type": "boolean"
+        },
+        "requirements": {
+          "description": "Documented account requirements (tier, verification, allowlists).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "credential_env",
+        "credential_present",
+        "requirements",
+        "account_access"
+      ],
+      "type": "object"
+    },
+    "AccountAccess": {
+      "description": "Whether the current account can use a model, from a free metadata call.",
+      "enum": [
+        "not_checked",
+        "available",
+        "unavailable",
+        "unknown"
+      ],
+      "type": "string"
+    },
+    "Artifact": {
+      "description": "A media file saved locally by Iris.",
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "duration_seconds": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "height": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "index": {
+          "description": "0-based position among the outputs of one request/job.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "description": "Absolute local path.",
+          "type": "string"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the file contents.",
+          "type": "string"
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "path",
+        "media_type",
+        "bytes",
+        "sha256"
+      ],
+      "type": "object"
+    },
+    "CheckStatus": {
+      "enum": [
+        "ok",
+        "warning",
+        "error"
+      ],
+      "type": "string"
+    },
+    "CommandName": {
+      "description": "Command identifiers used in the envelope's `command` field.",
+      "enum": [
+        "image.generate",
+        "image.edit",
+        "video.generate",
+        "jobs.list",
+        "jobs.status",
+        "jobs.wait",
+        "jobs.download",
+        "jobs.delete",
+        "models.list",
+        "models.show",
+        "providers.list",
+        "config.show",
+        "config.path",
+        "doctor",
+        "schema",
+        "completions",
+        "version"
+      ],
+      "type": "string"
+    },
+    "CompletionsResult": {
+      "description": "`completions`.",
+      "properties": {
+        "script": {
+          "type": "string"
+        },
+        "shell": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "shell",
+        "script"
+      ],
+      "type": "object"
+    },
+    "ConfigPathResult": {
+      "description": "`config.path`.",
+      "properties": {
+        "config_file": {
+          "type": "string"
+        },
+        "jobs_dir": {
+          "type": "string"
+        },
+        "state_dir": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "config_file",
+        "state_dir",
+        "jobs_dir"
+      ],
+      "type": "object"
+    },
+    "ConfigShowResult": {
+      "description": "`config.show`.",
+      "properties": {
+        "config_file": {
+          "type": "string"
+        },
+        "config_file_exists": {
+          "type": "boolean"
+        },
+        "credentials": {
+          "items": {
+            "$ref": "#/$defs/CredentialView"
+          },
+          "type": "array"
+        },
+        "settings": {
+          "items": {
+            "$ref": "#/$defs/SettingView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "config_file",
+        "config_file_exists",
+        "settings",
+        "credentials"
+      ],
+      "type": "object"
+    },
+    "CostEstimate": {
+      "description": "A cost estimate. Always an estimate computed from Iris's published price table.",
+      "properties": {
+        "amount": {
+          "format": "double",
+          "type": "number"
+        },
+        "as_of": {
+          "description": "Date (YYYY-MM-DD) the price table was checked.",
+          "type": "string"
+        },
+        "basis": {
+          "description": "Human-readable basis, e.g. \"1 image x $0.011 (gpt-image-1, low, 1024x1024)\".",
+          "type": "string"
+        },
+        "currency": {
+          "type": "string"
+        },
+        "estimated": {
+          "description": "Always `true`: this is an estimate, not a bill.",
+          "type": "boolean"
+        },
+        "source_url": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "estimated",
+        "currency",
+        "amount",
+        "basis",
+        "source_url",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "CredentialView": {
+      "properties": {
+        "env": {
+          "type": "string"
+        },
+        "present": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "env",
+        "present"
+      ],
+      "type": "object"
+    },
+    "DoctorCheck": {
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/CheckStatus"
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "message"
+      ],
+      "type": "object"
+    },
+    "DoctorResult": {
+      "description": "`doctor`.",
+      "properties": {
+        "checks": {
+          "items": {
+            "$ref": "#/$defs/DoctorCheck"
+          },
+          "type": "array"
+        },
+        "healthy": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "healthy",
+        "checks"
+      ],
+      "type": "object"
+    },
+    "DownloadState": {
+      "description": "Download state of one output of a succeeded job.",
+      "enum": [
+        "pending",
+        "downloaded",
+        "failed",
+        "expired"
+      ],
+      "type": "string"
+    },
+    "ErrorBody": {
+      "description": "The error object of a failed command.",
+      "properties": {
+        "category": {
+          "$ref": "#/$defs/ErrorCategory"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "details": {
+          "additionalProperties": true,
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "hint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "job_status": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/JobStatus"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "message": {
+          "type": "string"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProviderId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "provider_code": {
+          "description": "Provider's own code (informational, unstable).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider_request_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "provider_status": {
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "remote_operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retry_after_seconds": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "retryable": {
+          "description": "Whether running the same command again may succeed; null if unknown.",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "category",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ErrorCategory": {
+      "description": "Coarse, stable grouping of error codes. Deserialization is tolerant like [`ErrorCode`].",
+      "enum": [
+        "usage",
+        "validation",
+        "config",
+        "conflict",
+        "not_found",
+        "auth",
+        "access",
+        "quota",
+        "rate_limit",
+        "content",
+        "provider",
+        "network",
+        "timeout",
+        "artifact",
+        "io",
+        "internal",
+        "pending",
+        "uncertain",
+        "interrupted"
+      ],
+      "type": "string"
+    },
+    "ErrorCode": {
+      "description": "Stable, public error codes.\n\nDeserialization is tolerant: a code this binary does not know (written by a newer\nIris into a persisted job record) reads as `internal_error` instead of failing.",
+      "enum": [
+        "usage_error",
+        "invalid_argument",
+        "unsupported_operation",
+        "unsupported_option",
+        "unknown_model",
+        "unknown_provider",
+        "input_file_invalid",
+        "config_invalid",
+        "output_exists",
+        "job_not_found",
+        "missing_credentials",
+        "authentication_failed",
+        "permission_denied",
+        "quota_exceeded",
+        "rate_limited",
+        "content_blocked",
+        "provider_error",
+        "provider_bad_response",
+        "remote_job_failed",
+        "network_error",
+        "request_timeout",
+        "download_failed",
+        "artifact_expired",
+        "invalid_media",
+        "state_invalid",
+        "io_error",
+        "internal_error",
+        "wait_timeout",
+        "job_not_ready",
+        "submission_uncertain",
+        "interrupted"
+      ],
+      "type": "string"
+    },
+    "HelpResult": {
+      "description": "`--help` in JSON mode.",
+      "properties": {
+        "help": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "help"
+      ],
+      "type": "object"
+    },
+    "ImageResult": {
+      "description": "`image.generate` / `image.edit`.",
+      "properties": {
+        "artifacts": {
+          "items": {
+            "$ref": "#/$defs/Artifact"
+          },
+          "type": "array"
+        },
+        "completed_at": {
+          "type": "string"
+        },
+        "cost_estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostEstimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "model": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/Operation"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderId"
+        },
+        "provider_request_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/JobStatus",
+          "description": "Always `succeeded` (failures are errors)."
+        },
+        "text": {
+          "description": "Text returned by the model alongside images, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "provider",
+        "model",
+        "operation",
+        "status",
+        "created_at",
+        "completed_at",
+        "artifacts"
+      ],
+      "type": "object"
+    },
+    "InputsView": {
+      "properties": {
+        "first_frame": {
+          "type": "boolean"
+        },
+        "input_media_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "last_frame": {
+          "type": "boolean"
+        },
+        "mask": {
+          "type": "boolean"
+        },
+        "max_input_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_input_images": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_reference_images": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_input_images",
+        "input_media_types",
+        "max_input_bytes",
+        "mask",
+        "first_frame",
+        "last_frame",
+        "max_reference_images"
+      ],
+      "type": "object"
+    },
+    "JobDeleteResult": {
+      "description": "`jobs.delete`.",
+      "properties": {
+        "deleted": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "note": {
+          "type": "string"
+        },
+        "remote_effect": {
+          "description": "Always `none`: deletion is local only.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "deleted",
+        "remote_effect",
+        "note"
+      ],
+      "type": "object"
+    },
+    "JobListResult": {
+      "description": "`jobs.list`.",
+      "properties": {
+        "jobs": {
+          "items": {
+            "$ref": "#/$defs/JobView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "jobs"
+      ],
+      "type": "object"
+    },
+    "JobOutputView": {
+      "description": "One output of a job.",
+      "properties": {
+        "artifact": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Artifact"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "download_state": {
+          "$ref": "#/$defs/DownloadState"
+        },
+        "index": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "last_error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "media_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "index",
+        "download_state"
+      ],
+      "type": "object"
+    },
+    "JobResult": {
+      "description": "`video.generate`, `jobs.status`, `jobs.wait`, `jobs.download`.",
+      "properties": {
+        "job": {
+          "$ref": "#/$defs/JobView"
+        },
+        "next_steps": {
+          "description": "Suggested follow-up commands.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "job",
+        "next_steps"
+      ],
+      "type": "object"
+    },
+    "JobStatus": {
+      "description": "Normalized status of a persisted provider-native job.",
+      "oneOf": [
+        {
+          "const": "submitting",
+          "description": "Record written; submission request in flight (or the process died during it).",
+          "type": "string"
+        },
+        {
+          "const": "submission_unknown",
+          "description": "The provider may or may not have accepted the paid request. Never auto-resubmitted.",
+          "type": "string"
+        },
+        {
+          "const": "running",
+          "description": "Accepted by the provider and not finished.",
+          "type": "string"
+        },
+        {
+          "const": "succeeded",
+          "description": "Finished successfully; outputs may or may not be downloaded yet.",
+          "type": "string"
+        },
+        {
+          "const": "failed",
+          "description": "The provider rejected the submission or reported the job failed.",
+          "type": "string"
+        },
+        {
+          "const": "expired",
+          "description": "The remote operation or its outputs are no longer available.",
+          "type": "string"
+        }
+      ]
+    },
+    "JobView": {
+      "description": "A persisted provider-native job, as shown to users and agents.",
+      "properties": {
+        "artifacts": {
+          "description": "Downloaded artifacts (subset of `outputs[].artifact`).",
+          "items": {
+            "$ref": "#/$defs/Artifact"
+          },
+          "type": "array"
+        },
+        "completed_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cost_estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostEstimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "error": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "job_id": {
+          "type": "string"
+        },
+        "last_checked_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "model": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/Operation"
+        },
+        "outputs": {
+          "items": {
+            "$ref": "#/$defs/JobOutputView"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderId"
+        },
+        "remote_expires_at": {
+          "description": "Estimated time after which the provider no longer serves the outputs.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "remote_operation_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "request": {
+          "additionalProperties": true,
+          "description": "Non-secret resolved request options (never the prompt text or input contents).",
+          "type": "object"
+        },
+        "status": {
+          "$ref": "#/$defs/JobStatus"
+        },
+        "submitted_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "usage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Usage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "job_id",
+        "provider",
+        "model",
+        "operation",
+        "status",
+        "created_at",
+        "updated_at",
+        "outputs",
+        "artifacts",
+        "request"
+      ],
+      "type": "object"
+    },
+    "Lifecycle": {
+      "description": "Lifecycle stage as documented by the provider.",
+      "enum": [
+        "ga",
+        "preview",
+        "deprecated"
+      ],
+      "type": "string"
+    },
+    "LimitsView": {
+      "properties": {
+        "max_prompt_chars": {
+          "format": "uint",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ModelCapabilities": {
+      "description": "`models.show`.",
+      "properties": {
+        "access": {
+          "$ref": "#/$defs/AccessView"
+        },
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "capabilities_source": {
+          "description": "`catalog` (declared by Iris, checked on `catalog_as_of`).",
+          "type": "string"
+        },
+        "catalog_as_of": {
+          "type": "string"
+        },
+        "default_for": {
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "type": "array"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "docs_url": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "inputs": {
+          "$ref": "#/$defs/InputsView"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle"
+        },
+        "limits": {
+          "$ref": "#/$defs/LimitsView"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "type": "array"
+        },
+        "options": {
+          "items": {
+            "$ref": "#/$defs/OptionView"
+          },
+          "type": "array"
+        },
+        "outputs": {
+          "$ref": "#/$defs/OutputsView"
+        },
+        "pricing": {
+          "items": {
+            "$ref": "#/$defs/PriceView"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderId"
+        }
+      },
+      "required": [
+        "id",
+        "provider",
+        "display_name",
+        "aliases",
+        "lifecycle",
+        "operations",
+        "default_for",
+        "inputs",
+        "options",
+        "outputs",
+        "limits",
+        "pricing",
+        "access",
+        "capabilities_source",
+        "catalog_as_of",
+        "docs_url"
+      ],
+      "type": "object"
+    },
+    "ModelListResult": {
+      "description": "`models.list`.",
+      "properties": {
+        "models": {
+          "items": {
+            "$ref": "#/$defs/ModelSummary"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "models"
+      ],
+      "type": "object"
+    },
+    "ModelShowResult": {
+      "properties": {
+        "model": {
+          "$ref": "#/$defs/ModelCapabilities"
+        }
+      },
+      "required": [
+        "model"
+      ],
+      "type": "object"
+    },
+    "ModelSummary": {
+      "description": "Summary row of `models.list`.",
+      "properties": {
+        "aliases": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "default_for": {
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "type": "array"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "lifecycle": {
+          "$ref": "#/$defs/Lifecycle"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderId"
+        }
+      },
+      "required": [
+        "id",
+        "provider",
+        "display_name",
+        "aliases",
+        "lifecycle",
+        "operations",
+        "default_for"
+      ],
+      "type": "object"
+    },
+    "Operation": {
+      "description": "A media operation. Serialized as `image.generate`, `image.edit`, `video.generate`.",
+      "enum": [
+        "image.generate",
+        "image.edit",
+        "video.generate"
+      ],
+      "type": "string"
+    },
+    "OptionView": {
+      "properties": {
+        "default": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "description": {
+          "type": "string"
+        },
+        "flag": {
+          "description": "Typed CLI flag, or null if only settable with `-O name=value`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min": {
+          "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "type": "array"
+        },
+        "syntax": {
+          "description": "Syntax description for pattern-validated strings.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "`enum`, `integer`, `boolean`, `string`.",
+          "type": "string"
+        },
+        "values": {
+          "items": {
+            "type": "string"
+          },
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "type",
+        "operations",
+        "description"
+      ],
+      "type": "object"
+    },
+    "OutputsView": {
+      "properties": {
+        "max_count": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_types": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "media_types",
+        "max_count"
+      ],
+      "type": "object"
+    },
+    "PlanInput": {
+      "properties": {
+        "bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_type": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "role": {
+          "description": "`image`, `mask`, `first_frame`, `last_frame`, `reference`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role",
+        "path",
+        "media_type",
+        "bytes"
+      ],
+      "type": "object"
+    },
+    "PlanResult": {
+      "description": "`--dry-run` of any generation command.",
+      "properties": {
+        "async_job": {
+          "description": "True if the real command would create a provider-native async job.",
+          "type": "boolean"
+        },
+        "cost_estimate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CostEstimate"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "credential_present": {
+          "type": "boolean"
+        },
+        "dry_run": {
+          "description": "Always `true`.",
+          "type": "boolean"
+        },
+        "inputs": {
+          "items": {
+            "$ref": "#/$defs/PlanInput"
+          },
+          "type": "array"
+        },
+        "model": {
+          "type": "string"
+        },
+        "operation": {
+          "$ref": "#/$defs/Operation"
+        },
+        "options": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "outputs": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "provider": {
+          "$ref": "#/$defs/ProviderId"
+        }
+      },
+      "required": [
+        "dry_run",
+        "provider",
+        "model",
+        "operation",
+        "async_job",
+        "options",
+        "inputs",
+        "outputs",
+        "credential_present"
+      ],
+      "type": "object"
+    },
+    "PriceView": {
+      "properties": {
+        "as_of": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        },
+        "source_url": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "usd": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "description",
+        "unit",
+        "usd",
+        "source_url",
+        "as_of"
+      ],
+      "type": "object"
+    },
+    "ProviderId": {
+      "description": "A media provider known to Iris.",
+      "oneOf": [
+        {
+          "const": "openai",
+          "description": "OpenAI developer API (api.openai.com).",
+          "type": "string"
+        },
+        {
+          "const": "gemini",
+          "description": "Google Gemini developer API (generativelanguage.googleapis.com), including Veo.",
+          "type": "string"
+        }
+      ]
+    },
+    "ProviderListResult": {
+      "description": "`providers.list`.",
+      "properties": {
+        "providers": {
+          "items": {
+            "$ref": "#/$defs/ProviderView"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "providers"
+      ],
+      "type": "object"
+    },
+    "ProviderView": {
+      "properties": {
+        "base_url": {
+          "type": "string"
+        },
+        "credential_env": {
+          "type": "string"
+        },
+        "credential_present": {
+          "type": "boolean"
+        },
+        "display_name": {
+          "type": "string"
+        },
+        "docs_url": {
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/ProviderId"
+        },
+        "operations": {
+          "items": {
+            "$ref": "#/$defs/Operation"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "display_name",
+        "credential_env",
+        "credential_present",
+        "operations",
+        "base_url",
+        "docs_url"
+      ],
+      "type": "object"
+    },
+    "ResultPayload": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ImageResult"
+        },
+        {
+          "$ref": "#/$defs/JobResult"
+        },
+        {
+          "$ref": "#/$defs/JobListResult"
+        },
+        {
+          "$ref": "#/$defs/JobDeleteResult"
+        },
+        {
+          "$ref": "#/$defs/ModelListResult"
+        },
+        {
+          "$ref": "#/$defs/ModelShowResult"
+        },
+        {
+          "$ref": "#/$defs/ProviderListResult"
+        },
+        {
+          "$ref": "#/$defs/ConfigShowResult"
+        },
+        {
+          "$ref": "#/$defs/ConfigPathResult"
+        },
+        {
+          "$ref": "#/$defs/DoctorResult"
+        },
+        {
+          "$ref": "#/$defs/SchemaResult"
+        },
+        {
+          "$ref": "#/$defs/CompletionsResult"
+        },
+        {
+          "$ref": "#/$defs/VersionResult"
+        },
+        {
+          "$ref": "#/$defs/HelpResult"
+        },
+        {
+          "$ref": "#/$defs/PlanResult"
+        }
+      ],
+      "description": "Every possible `result` payload. Serialized untagged; the envelope's `command`\ntells which variant applies (see the `$defs` in the published schema)."
+    },
+    "SchemaResult": {
+      "description": "`schema`.",
+      "properties": {
+        "schema": true
+      },
+      "required": [
+        "schema"
+      ],
+      "type": "object"
+    },
+    "SettingSource": {
+      "enum": [
+        "flag",
+        "env",
+        "file",
+        "default"
+      ],
+      "type": "string"
+    },
+    "SettingView": {
+      "properties": {
+        "env_var": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SettingSource"
+        },
+        "value": true
+      },
+      "required": [
+        "key",
+        "value",
+        "source"
+      ],
+      "type": "object"
+    },
+    "Usage": {
+      "description": "Token/usage information reported by a provider, normalized where possible.",
+      "properties": {
+        "input_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "output_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "provider_usage": {
+          "description": "Provider usage object as reported (numbers only; unstable shape)."
+        },
+        "total_tokens": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "VersionResult": {
+      "description": "`version`.",
+      "properties": {
+        "git_commit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "version",
+        "schema_version",
+        "target"
+      ],
+      "type": "object"
+    },
+    "Warning": {
+      "description": "A non-fatal notice attached to a result.",
+      "properties": {
+        "code": {
+          "description": "Stable snake_case warning code (additive set; see docs/json-contract.md).",
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "code",
+        "message"
+      ],
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The single JSON document printed on stdout in `--json` mode.",
+  "properties": {
+    "command": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CommandName"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "error": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ErrorBody"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "result": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ResultPayload"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "schema_version": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "warnings": {
+      "items": {
+        "$ref": "#/$defs/Warning"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "ok",
+    "warnings"
+  ],
+  "title": "Envelope",
+  "type": "object"
+}

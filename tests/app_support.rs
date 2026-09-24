@@ -727,5 +727,92 @@ pub async fn run_cli(setup: CliSetup, args: &[&str]) -> CliRun {
     argv.extend(args.iter().map(std::ffi::OsString::from));
     let code = iris::cli::run_with(argv, io, deps(setup.providers, setup.interrupt)).await;
     let text = |buf: &Arc<Mutex<Vec<u8>>>| String::from_utf8(buf.lock().unwrap().clone()).unwrap();
-    CliRun { code, stdout: text(&stdout), stderr: text(&stderr) }
+    let run = CliRun { code, stdout: text(&stdout), stderr: text(&stderr) };
+    // Every --json output must match the published schema.
+    if args.contains(&"--json") && !args.contains(&"--") {
+        assert_matches_schema(&run.json());
+    }
+    run
+}
+
+// ----- published schema --------------------------------------------------------------
+
+/// The committed schema document `schema/iris-output.v1.schema.json`.
+pub fn committed_schema() -> &'static serde_json::Value {
+    static SCHEMA: std::sync::OnceLock<serde_json::Value> = std::sync::OnceLock::new();
+    SCHEMA.get_or_init(|| {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/schema/iris-output.v1.schema.json");
+        serde_json::from_str(&std::fs::read_to_string(path).expect("committed schema"))
+            .expect("schema is JSON")
+    })
+}
+
+/// Validator for `#/$defs/<name>` of the committed schema (`None` = the envelope).
+fn validator(def: Option<&str>) -> jsonschema::Validator {
+    let schema = committed_schema();
+    let doc = match def {
+        None => schema.clone(),
+        Some(name) => {
+            assert!(schema["$defs"].get(name).is_some(), "the schema has no $defs/{name}");
+            serde_json::json!({
+                "$schema": schema["$schema"],
+                "$ref": format!("#/$defs/{name}"),
+                "$defs": schema["$defs"],
+            })
+        }
+    };
+    jsonschema::validator_for(&doc).expect("valid JSON Schema")
+}
+
+fn check(def: Option<&str>, instance: &serde_json::Value) {
+    let v = validator(def);
+    let errors: Vec<String> =
+        v.iter_errors(instance).map(|e| format!("{} at {}", e, e.instance_path())).collect();
+    assert!(errors.is_empty(), "does not match {}: {errors:?}\n{instance}", def.unwrap_or("the envelope"));
+}
+
+/// The `$defs` type of a success `result` for `command` (C-03).
+pub fn result_def(command: Option<&str>, result: &serde_json::Value) -> &'static str {
+    let only_help = result.as_object().is_some_and(|o| o.len() == 1 && o.contains_key("help"));
+    if only_help {
+        return "HelpResult";
+    }
+    if result.get("dry_run").is_some() {
+        return "PlanResult";
+    }
+    match command.expect("successful envelopes name their command") {
+        "image.generate" | "image.edit" => "ImageResult",
+        "video.generate" | "jobs.status" | "jobs.wait" | "jobs.download" => "JobResult",
+        "jobs.list" => "JobListResult",
+        "jobs.delete" => "JobDeleteResult",
+        "models.list" => "ModelListResult",
+        "models.show" => "ModelShowResult",
+        "providers.list" => "ProviderListResult",
+        "config.show" => "ConfigShowResult",
+        "config.path" => "ConfigPathResult",
+        "doctor" => "DoctorResult",
+        "schema" => "SchemaResult",
+        "completions" => "CompletionsResult",
+        "version" => "VersionResult",
+        other => panic!("unknown command {other}"),
+    }
+}
+
+/// Validate one envelope against the committed schema: the whole envelope, then
+/// `result` against its command's `$defs` type or `error` against `ErrorBody`.
+pub fn assert_matches_schema(envelope: &serde_json::Value) {
+    check(None, envelope);
+    let obj = envelope.as_object().expect("envelope is an object");
+    for key in ["schema_version", "ok", "command", "result", "error", "warnings"] {
+        assert!(obj.contains_key(key), "envelope lacks {key}: {envelope}");
+    }
+    let ok = envelope["ok"].as_bool().unwrap();
+    assert_eq!(envelope["result"].is_null(), !ok, "exactly one of result/error: {envelope}");
+    assert_eq!(envelope["error"].is_null(), ok, "exactly one of result/error: {envelope}");
+    if ok {
+        let def = result_def(envelope["command"].as_str(), &envelope["result"]);
+        check(Some(def), &envelope["result"]);
+    } else {
+        check(Some("ErrorBody"), &envelope["error"]);
+    }
 }
