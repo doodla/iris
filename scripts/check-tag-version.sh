@@ -54,12 +54,12 @@ if [ -z "$version" ]; then
 fi
 
 # A shell case glob here (`[0-9]*.[0-9]*.[0-9]*`) would accept far more than
-# semver: in a glob, `.` matches any character and `*` matches any string, so
-# e.g. `1.2.3$(echo pwned)` matches it too (verified locally). This value
-# later goes into `${{ }}`-templated `run:` scripts in release.yml (tag
-# comparison, archive/tag names, `gh release create --title`), so require
+# semver: in a glob, `*` matches any string, so e.g. `1.2.3$(echo pwned)`
+# matches it too. release.yml publishes this value as the verify job's output
+# and passes it to later steps through `env:` variables, where it becomes part
+# of archive names, the tag comparison, and the release title. Require
 # strictly `X.Y.Z` with an optional `-prerelease` suffix instead, anchored at
-# both ends.
+# both ends, so nothing else can reach a file name, URL, or command line.
 if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
     echo "check-tag-version: package.version '$version' does not look like semver" >&2
     exit 1

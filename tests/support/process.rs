@@ -103,7 +103,8 @@ impl Sandbox {
         serde_json::from_str(&text).unwrap_or_else(|e| panic!("record {job_id} is not JSON ({e}): {text}"))
     }
 
-    /// `iris` in this sandbox with no credentials and unreachable providers.
+    /// An `iris` command that runs in this [`Sandbox`], with no credentials and
+    /// unreachable providers.
     pub fn iris(&self) -> Iris {
         Iris::new(self)
     }

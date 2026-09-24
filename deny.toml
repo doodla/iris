@@ -16,21 +16,19 @@ no-default-features = false
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 ignore = []
-# Shell out to the system `git` binary to update the advisory-db clone
-# instead of cargo-deny's embedded git library. This is the documented
-# workaround for networks/proxies that terminate TLS in a way the embedded
-# library doesn't trust (that's what happened during local validation for
-# this task: the embedded fetcher failed the TLS handshake while the system
-# `git` CLI succeeded against the same host)
-# and is a no-op cost elsewhere.
+# Update the advisory-db clone with the system `git` binary instead of
+# cargo-deny's embedded git library. The system client uses the host's own
+# proxy and CA configuration, so the fetch also works behind proxies that
+# re-sign TLS traffic with a local CA the embedded library may not trust;
+# elsewhere it costs nothing.
 git-fetch-with-cli = true
 
 [licenses]
 version = 2
-# MIT distribution: every allowed license here must be
-# compatible with re-distributing Iris under MIT. Kept to exactly what the
-# current dependency tree needs (verified with `cargo deny check licenses`),
-# no copyleft.
+# MIT distribution: every allowed license here must be compatible with
+# redistributing Iris under MIT. List only licenses the dependency tree uses
+# (cargo-deny warns about allowed licenses no dependency has), and no
+# copyleft.
 allow = [
     "MIT",
     "Apache-2.0",

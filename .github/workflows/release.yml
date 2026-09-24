@@ -97,7 +97,7 @@ jobs:
           # cover the two Apple targets. macos_deployment_target pins
           # MACOSX_DEPLOYMENT_TARGET to the exact floor documented in the
           # header comment above; without it, the real minimum is whatever
-          # rustc/cc default to today, which a future toolchain or a C
+          # rustc/cc default to at build time, which a future toolchain or a C
           # dependency's build script (e.g. aws-lc-sys) could silently
           # raise without this workflow noticing.
           - target: x86_64-unknown-linux-musl
