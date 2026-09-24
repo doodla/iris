@@ -11,7 +11,10 @@
 //! * [`preflight`] refuses existing files before any paid request unless
 //!   `--overwrite`; [`preflight_dirs`] makes sure the output directories exist (or
 //!   can be created) and are writable, so a paid result is never lost because it
-//!   cannot be saved.
+//!   cannot be saved. An output location that cannot be used as given (a file in
+//!   the way, no permission, a read-only file system, a parent that cannot be
+//!   created) is `invalid_argument` with `details.path`: nothing was sent, and only
+//!   choosing another location fixes it.
 
 use std::fs;
 use std::io;
@@ -198,7 +201,8 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
 
 /// Check planned paths before any paid request: an existing file without
 /// `overwrite` is `output_exists` (exit 2, nothing sent); an existing directory is
-/// always `invalid_argument`.
+/// always `invalid_argument`, and so is a path that cannot be used as given (a file
+/// where a directory should be, no permission to look).
 pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
     for path in paths {
         match std::fs::symlink_metadata(path) {
@@ -206,13 +210,25 @@ pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
                 return Err(IrisError::invalid(format!(
                     "output path {} is an existing directory",
                     path.display()
-                )));
+                ))
+                .with_detail("path", path.to_string_lossy().into_owned())
+                .with_hint(DIR_HINT));
             }
             Ok(_) if !overwrite => return Err(output_exists(path)),
             Ok(_) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {}
             Err(e) => {
-                return Err(IrisError::io(format_args!("cannot check output path {}", path.display()), &e));
+                // A regular file in the way names the real culprit.
+                if e.kind() == io::ErrorKind::NotADirectory
+                    && let Some(dir) = path.parent()
+                {
+                    check_ancestors(dir)?;
+                }
+                return Err(location_error(
+                    format_args!("cannot check output path {}", path.display()),
+                    path,
+                    &e,
+                ));
             }
         }
     }
@@ -228,9 +244,12 @@ pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
 /// * with `create` (every real run; pass `false` for `--dry-run`, which must not
 ///   touch the filesystem) the directory is created if missing and proven
 ///   writable by creating and removing a `.iris-preflight.iris-part-*` temp file.
-///   Failures are `io_error` naming the directory.
 ///
-/// Nothing is sent before this passes, so an unusable directory costs nothing.
+/// A location that cannot be used as given (no permission, a read-only file
+/// system, a parent that cannot be created, a file in the way) is
+/// `invalid_argument` with `details.path` and a hint; other I/O failures (a full
+/// disk, a device error) stay `io_error`. Nothing is sent before this passes, so an
+/// unusable directory costs nothing.
 pub fn preflight_dirs(paths: &[PathBuf], create: bool) -> Result<(), IrisError> {
     let mut checked: Vec<&Path> = Vec::new();
     for path in paths {
@@ -245,14 +264,18 @@ pub fn preflight_dirs(paths: &[PathBuf], create: bool) -> Result<(), IrisError> 
         check_ancestors(dir)?;
         if create {
             fs::create_dir_all(dir).map_err(|e| {
-                dir_error(format_args!("cannot create output directory {}", dir.display()), dir, &e)
+                location_error(format_args!("cannot create output directory {}", dir.display()), dir, &e)
             })?;
             tempfile::Builder::new()
                 .prefix(".iris-preflight.iris-part-")
                 .rand_bytes(8)
                 .tempfile_in(dir)
                 .map_err(|e| {
-                    dir_error(format_args!("output directory {} is not writable", dir.display()), dir, &e)
+                    location_error(
+                        format_args!("output directory {} is not writable", dir.display()),
+                        dir,
+                        &e,
+                    )
                 })?;
         }
     }
@@ -282,7 +305,7 @@ fn check_ancestors(dir: &Path) -> Result<(), IrisError> {
             // A path component further up is a file; the loop reaches it next.
             Err(e) if e.kind() == io::ErrorKind::NotADirectory => {}
             Err(e) => {
-                return Err(dir_error(
+                return Err(location_error(
                     format_args!("cannot check output directory {}", dir.display()),
                     dir,
                     &e,
@@ -295,8 +318,33 @@ fn check_ancestors(dir: &Path) -> Result<(), IrisError> {
 
 const DIR_HINT: &str = "choose a writable directory with -d/--out-dir, or another -o/--output path";
 
-fn dir_error(context: std::fmt::Arguments<'_>, dir: &Path, e: &io::Error) -> IrisError {
-    IrisError::io(context, e).with_detail("path", dir.to_string_lossy().into_owned()).with_hint(DIR_HINT)
+/// Whether an I/O error on an output location means the location cannot be used as
+/// given, so only another path fixes it (`invalid_argument`, exit 2), rather than a
+/// runtime failure such as a full disk (`io_error`).
+fn is_unusable_location(e: &io::Error) -> bool {
+    use io::ErrorKind::*;
+    matches!(
+        e.kind(),
+        NotFound
+            | PermissionDenied
+            | NotADirectory
+            | IsADirectory
+            | ReadOnlyFilesystem
+            | InvalidFilename
+            | AlreadyExists
+            | InvalidInput
+    )
+}
+
+/// The error for an output location `path` that failed with `e` during preflight
+/// (see [`is_unusable_location`]); both kinds carry `details.path` and a hint.
+fn location_error(context: std::fmt::Arguments<'_>, path: &Path, e: &io::Error) -> IrisError {
+    let err = if is_unusable_location(e) {
+        IrisError::invalid(format!("{context}: {e}"))
+    } else {
+        IrisError::io(context, e)
+    };
+    err.with_detail("path", path.to_string_lossy().into_owned()).with_hint(DIR_HINT)
 }
 
 /// The `output_exists` error for `path`.
@@ -383,4 +431,40 @@ fn extension_list(media_types: &[&str]) -> String {
         }
     }
     if exts.is_empty() { "a supported media extension".to_string() } else { exts.join(", ") }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unusable_output_locations_are_invalid_arguments_and_other_failures_io_errors() {
+        let path = Path::new("/somewhere/out");
+        for kind in [
+            io::ErrorKind::PermissionDenied,
+            io::ErrorKind::ReadOnlyFilesystem,
+            io::ErrorKind::NotADirectory,
+            io::ErrorKind::NotFound,
+            io::ErrorKind::IsADirectory,
+        ] {
+            let e = location_error(
+                format_args!("cannot create output directory /somewhere/out"),
+                path,
+                &kind.into(),
+            );
+            assert_eq!(e.code, ErrorCode::InvalidArgument, "{kind:?}");
+            assert_eq!(e.exit_code(), crate::error::exit::USAGE, "{kind:?}");
+            assert_eq!(e.details.get("path"), Some(&serde_json::json!("/somewhere/out")), "{kind:?}");
+            assert!(e.hint.is_some(), "{kind:?}");
+        }
+        for kind in [io::ErrorKind::StorageFull, io::ErrorKind::Other, io::ErrorKind::Interrupted] {
+            let e = location_error(
+                format_args!("output directory /somewhere/out is not writable"),
+                path,
+                &kind.into(),
+            );
+            assert_eq!(e.code, ErrorCode::IoError, "{kind:?}");
+            assert_eq!(e.details.get("path"), Some(&serde_json::json!("/somewhere/out")), "{kind:?}");
+        }
+    }
 }

@@ -142,6 +142,10 @@ machine-readable contract for agents.
   it: billing tier, prepaid credit, and organization verification are not checked. `doctor`'s
   help, the README, and the JSON contract now say that it exits 0 whenever its checks ran, so
   callers must read `healthy`.
+- An output location that cannot be used as given (a file in the way, no permission, a read-only
+  file system, a directory that cannot be created) is now `invalid_argument` (exit 2) with
+  `details.path` and a hint, found before anything is sent; it was `io_error` (exit 1) for
+  everything except a file in the way.
 
 ### Known limitations
 

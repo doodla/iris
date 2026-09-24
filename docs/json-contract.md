@@ -347,6 +347,14 @@ a definite provider-side rejection of a malformed request as given (e.g. an Open
 request before running again"; agents that need to distinguish them check `error.provider_status`:
 `null` means nothing was sent, a non-null value means the provider rejected it outright.
 
+Output locations are checked the same way before anything is sent: an existing file is
+`output_exists` (unless `--overwrite`), and a location that cannot be used as given (a file where a
+directory should be, no permission, a read-only file system, a directory that cannot be created) is
+`invalid_argument` with `details.path` naming the offending path. A real run creates the output
+directory and proves it writable before the paid request; `--dry-run` writes nothing, so it catches
+a file in the way but not a missing permission. Other I/O failures there (e.g. a full disk) stay
+`io_error` (exit 1).
+
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint
 that Iris did not retry it, and `job_id: null` — Iris has no way to resume a synchronous call,
@@ -363,6 +371,7 @@ A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retry
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
 errors are not charged. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
 with `retryable: false` and `details.charge_possible: true`.
+
 `interrupted` (exit 130) covers SIGINT (Ctrl-C), SIGTERM, and SIGHUP alike, once Iris has started
 an interruptible phase (a provider call, a poll, a wait, a download); it is always reported as one
 envelope. Its default `retryable: true` means running the same command again is harmless — except

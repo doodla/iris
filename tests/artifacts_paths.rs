@@ -249,28 +249,45 @@ fn preflight_dirs_rejects_a_file_in_the_way_before_anything_is_sent() {
     }
 }
 
+/// A location that cannot be used as given is a request to fix (exit 2), like a file
+/// in the way: nothing was sent, and retrying the same path cannot succeed.
 #[cfg(target_os = "linux")]
 #[test]
-fn preflight_dirs_reports_uncreatable_and_unwritable_directories() {
+fn preflight_dirs_reports_uncreatable_and_unwritable_directories_as_invalid_arguments() {
     // procfs refuses new entries even for root, so this works in any sandbox.
     if !Path::new("/proc/self").exists() {
         return;
     }
     let uncreatable = PathBuf::from("/proc/iris-preflight-test/cat.png");
     let err = preflight_dirs(std::slice::from_ref(&uncreatable), true).unwrap_err();
-    assert_eq!(err.code, ErrorCode::IoError);
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_eq!(err.exit_code(), 2);
     assert!(
         err.message.contains("cannot create output directory /proc/iris-preflight-test"),
         "{}",
         err.message
     );
     assert!(err.hint.as_deref().unwrap().contains("-d/--out-dir"));
+    assert_eq!(err.details["path"], "/proc/iris-preflight-test");
 
     let unwritable = PathBuf::from("/proc/cat.png");
     let err = preflight_dirs(std::slice::from_ref(&unwritable), true).unwrap_err();
-    assert_eq!(err.code, ErrorCode::IoError);
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
     assert!(err.message.contains("output directory /proc is not writable"), "{}", err.message);
     assert_eq!(err.details["path"], "/proc");
+}
+
+#[test]
+fn preflight_names_the_file_in_the_way_of_an_output_path() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("afile");
+    std::fs::write(&blocker, b"x").unwrap();
+    for path in [blocker.join("x.png"), blocker.join("sub").join("x.png")] {
+        let err = preflight(std::slice::from_ref(&path), false).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument, "{path:?}");
+        assert_eq!(err.details["path"], blocker.to_str().unwrap(), "{path:?}");
+        assert!(err.message.contains("not a directory"), "{}", err.message);
+    }
 }
 
 #[test]

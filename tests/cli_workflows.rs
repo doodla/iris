@@ -594,6 +594,51 @@ async fn dry_run_plans_through_the_cli_need_no_credentials() {
 }
 
 #[tokio::test]
+async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
+    let f = Fixture::new();
+    let afile = f.sandbox.path("afile");
+    std::fs::write(&afile, b"not a directory").unwrap();
+    for args in [
+        &["image", "generate", "x", "-d", "afile/sub", "--json"][..],
+        &["image", "generate", "x", "-o", "afile/x.png", "--json"],
+        &["image", "generate", "x", "-o", "afile/x.png", "--dry-run", "--json"],
+        &["video", "generate", "x", "-d", "afile/sub", "--json"],
+        &["video", "generate", "x", "-o", "afile/x.mp4", "--detach", "--json"],
+    ] {
+        let run = f.run(args).await;
+        assert_eq!(run.code, 2, "{args:?}: {}", run.stdout);
+        let v = run.json();
+        assert_eq!(v["error"]["code"], "invalid_argument", "{args:?}: {v}");
+        assert_eq!(v["error"]["details"]["path"], afile.to_str().unwrap(), "{args:?}: {v}");
+        assert!(v["error"]["provider_status"].is_null());
+        assert!(v["error"]["hint"].as_str().unwrap().contains("-d/--out-dir"), "{v}");
+    }
+
+    // A directory that cannot be created (Linux refuses new entries in /proc).
+    if cfg!(target_os = "linux") {
+        let v = f.run(&["image", "generate", "x", "-d", "/proc/iris-nope/sub", "--json"]).await.json();
+        assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
+        assert_eq!(v["error"]["details"]["path"], "/proc/iris-nope/sub");
+    }
+
+    // No write permission (skipped when the tests run with privileges that bypass it).
+    use std::os::unix::fs::PermissionsExt;
+    let locked = f.sandbox.path("locked");
+    std::fs::create_dir(&locked).unwrap();
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
+    if std::fs::create_dir(locked.join("probe")).is_err() {
+        let v = f.run(&["image", "generate", "x", "-d", "locked/sub", "--json"]).await.json();
+        assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
+        assert_eq!(v["error"]["details"]["path"], locked.join("sub").to_str().unwrap());
+    }
+    std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(f.image_calls(), 0, "nothing was sent");
+    assert_eq!(f.gemini.videos().submit_calls.load(Ordering::SeqCst), 0);
+    assert!(!f.sandbox.state().join("jobs").exists() || files_in(&f.sandbox.state().join("jobs")).is_empty());
+}
+
+#[tokio::test]
 async fn human_errors_still_list_images_saved_before_the_failure() {
     let f = Fixture::new();
     f.openai.images().push(Ok(image_output(vec![png(4, 4), b"not an image".to_vec()])));
