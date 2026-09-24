@@ -835,9 +835,10 @@ impl JobRecord {
         self.record_output_problem(index, error, DownloadState::Failed, now)
     }
 
-    /// Record that output `index` is no longer available remotely (retention passed,
-    /// or the file host answered 403/404/410): `pending`/`failed` → `expired` with
-    /// `last_error`. The job status is unchanged. As with
+    /// Record that output `index` is gone at the provider: the file host answered
+    /// 410, or 403/404 once `remote_expires_at` has passed (see `refused_or_gone` in
+    /// `app::jobs`): `pending`/`failed` → `expired` with `last_error`. The retention
+    /// estimate alone never expires an output. The job status is unchanged. As with
     /// [`mark_output_failed`](Self::mark_output_failed), a `downloaded` output stays
     /// `downloaded` and only gets `last_error`.
     pub fn mark_output_expired(
