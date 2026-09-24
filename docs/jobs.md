@@ -128,10 +128,12 @@ A record still `submitting` more than (the full paid-submission timeout budget +
 `created_at` is treated as abandoned — the process that submitted it died inside the uncertainty
 window — and is reported as `submission_unknown` the next time anything touches it.
 
-A finished operation with output URIs is always `succeeded` with every URI recorded (the raw URI
-only in the private record): whether Iris trusts a URI enough to fetch it is a download decision,
-made anew by every download (see [Downloads](#downloads)). Only a provider-reported error, or a
-finished operation without any output, makes a job `failed`.
+A finished operation with output URIs is `succeeded` with every URI recorded (the raw URI only in
+the private record): whether Iris trusts a URI enough to fetch it is a download decision, made anew
+by every download (see [Downloads](#downloads)). Only a provider-reported error (including a
+safety block), a finished operation without any output, or an output "URI" that is not even an
+http(s) URL without user information or a fragment (`provider_bad_response`) makes a job
+`failed`.
 
 **There is deliberately no transition that turns a `running` or `succeeded` job into `failed`
 because of something *local*.** Ctrl-C, a wait-limit expiry, a local network error while polling,
