@@ -1,10 +1,14 @@
 //! Output path planning (see `iris --help` and docs/jobs.md).
 //!
 //! * The output directory precedence (`-d` > `IRIS_OUTPUT_DIR` > config > cwd) is
-//!   resolved by the caller and passed in; planned paths are absolute.
+//!   resolved by the caller and passed in; planned paths are absolute and lexically
+//!   normalized (`.` and `..` components removed without resolving symbolic links),
+//!   and the real write uses exactly the planned path.
 //! * Default names: images `iris-<ulid>.<ext>` (`iris-<ulid>-<i>.<ext>` when several),
 //!   videos `<job_id>.<ext>` (`<job_id>-<i>.<ext>`), `i` starting at 1. Generated
 //!   names use only `[a-z0-9_.-]`; remote data never contributes to local names.
+//!   Each plan generates a fresh ULID, so the image names a `--dry-run` shows are
+//!   indicative: the real run plans again under a new id.
 //! * `-o PATH` is used literally; with several artifacts it becomes
 //!   `<stem>-<i>.<ext>`. Its extension must agree with `--format` and with what
 //!   the model can produce; without `--format` it selects the format.
@@ -18,7 +22,7 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::domain::Warning;
 use crate::error::{ErrorCode, IrisError};
@@ -117,26 +121,25 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
     let mut implied_format = None;
     let (media_type, paths) = match req.output {
         Some(output) => {
+            let names_directory = output.as_os_str().to_string_lossy().ends_with(std::path::MAIN_SEPARATOR);
             let output = absolute(output)?;
-            if output.as_os_str().to_string_lossy().ends_with(std::path::MAIN_SEPARATOR) || output.is_dir() {
+            if names_directory || output.is_dir() {
                 return Err(IrisError::invalid(format!(
                     "-o/--output expects a file path, but {} is a directory; use -d/--out-dir for directories",
                     output.display()
                 )));
             }
             let ext = output.extension().map(|e| e.to_string_lossy().into_owned());
+            let shown = output.display().to_string();
+            let mut extension_added = false;
             let (media_type, base) = match ext {
                 None => {
                     let t = format_type.unwrap_or(default_type);
                     let ext = media::extension_for(t).unwrap_or("bin");
                     let mut name = output.file_name().unwrap_or_default().to_os_string();
                     name.push(format!(".{ext}"));
-                    let adjusted = output.with_file_name(name);
-                    warnings.push(Warning::new(
-                        "output_extension_adjusted",
-                        format!("{} has no extension; saving as {}", output.display(), adjusted.display()),
-                    ));
-                    (t, adjusted)
+                    extension_added = true;
+                    (t, output.with_file_name(name))
                 }
                 Some(ext) => {
                     let ext_type = media::media_type_for_extension(&ext).ok_or_else(|| {
@@ -149,7 +152,7 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                     if let Some(t) = format_type {
                         if !same_type(t, ext_type) {
                             return Err(IrisError::invalid(format!(
-                                "-o/--output extension '.{ext}' contradicts --format {}",
+                                "-o/--output extension '.{ext}' contradicts the requested output format {}",
                                 req.format.unwrap_or_default()
                             )));
                         }
@@ -164,11 +167,25 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                     (ext_type, output)
                 }
             };
-            let paths = if req.count == 1 {
+            let paths: Vec<PathBuf> = if req.count == 1 {
                 vec![base]
             } else {
                 (1..=req.count).map(|i| indexed(&base, i)).collect()
             };
+            if extension_added {
+                let saving_as = match paths.as_slice() {
+                    [one] => one.display().to_string(),
+                    [first, last] => format!("{} and {}", first.display(), last.display()),
+                    [first, .., last] => {
+                        format!("the {} outputs {} … {}", paths.len(), first.display(), last.display())
+                    }
+                    [] => String::new(),
+                };
+                warnings.push(Warning::new(
+                    "output_extension_adjusted",
+                    format!("{shown} has no extension; saving as {saving_as}"),
+                ));
+            }
             (media_type, paths)
         }
         None => {
@@ -397,13 +414,36 @@ fn indexed(path: &Path, i: u32) -> PathBuf {
     path.with_file_name(name)
 }
 
+/// `path` made absolute (against the current directory) and lexically normalized.
 fn absolute(path: &Path) -> Result<PathBuf, IrisError> {
     let abs = std::path::absolute(path)
         .map_err(|e| IrisError::io(format_args!("cannot resolve path {}", path.display()), &e))?;
+    let abs = normalize_lexically(&abs);
     if abs.to_str().is_none() {
         return Err(IrisError::invalid(format!("output path {} is not valid UTF-8", abs.to_string_lossy())));
     }
     Ok(abs)
+}
+
+/// Remove `.` and resolve `..` against the preceding component, without touching
+/// the file system (symbolic links are not followed; `..` at the root stays at the
+/// root). Planned paths are shown and used in this form.
+pub fn normalize_lexically(path: &Path) -> PathBuf {
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                if matches!(out.components().next_back(), Some(Component::Normal(_))) {
+                    out.pop();
+                } else if !out.has_root() {
+                    out.push(component.as_os_str());
+                }
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 fn canonical(media_type: &str) -> Option<&'static str> {
@@ -436,6 +476,21 @@ fn extension_list(media_types: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn lexical_normalization_removes_dot_and_dot_dot() {
+        for (raw, normalized) in [
+            ("/w/../x.png", "/x.png"),
+            ("/w/a/./b/../c.png", "/w/a/c.png"),
+            ("/../../x.png", "/x.png"),
+            ("/w/a/b/../../c.png", "/w/c.png"),
+            ("/w", "/w"),
+            ("../x", "../x"),
+            ("a/../../x", "../x"),
+        ] {
+            assert_eq!(normalize_lexically(Path::new(raw)), Path::new(normalized), "{raw}");
+        }
+    }
 
     #[test]
     fn unusable_output_locations_are_invalid_arguments_and_other_failures_io_errors() {

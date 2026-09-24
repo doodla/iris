@@ -594,6 +594,21 @@ async fn dry_run_plans_through_the_cli_need_no_credentials() {
 }
 
 #[tokio::test]
+async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() {
+    let f = Fixture::new();
+    let v = f.run(&["image", "generate", "x", "-o", "../up/./x.png", "--dry-run", "--json"]).await.json();
+    let parent = f.sandbox.work().parent().unwrap().to_path_buf();
+    assert_eq!(v["result"]["outputs"][0], parent.join("up").join("x.png").to_str().unwrap(), "{v}");
+
+    // Default image names carry a fresh id per plan (indicative); video plans show a placeholder.
+    let v = f.run(&["image", "generate", "x", "-d", "a/../out", "--dry-run", "--json"]).await.json();
+    let planned = v["result"]["outputs"][0].as_str().unwrap().to_string();
+    assert!(planned.starts_with(f.sandbox.path("out").join("iris-").to_str().unwrap()), "{planned}");
+    let v = f.run(&["video", "generate", "x", "--dry-run", "--json"]).await.json();
+    assert_eq!(v["result"]["outputs"][0], f.sandbox.path("<job_id>.mp4").to_str().unwrap(), "{v}");
+}
+
+#[tokio::test]
 async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
     let f = Fixture::new();
     let afile = f.sandbox.path("afile");

@@ -231,6 +231,12 @@ The `command` stays the generation command (`image.generate`, `image.edit`, or
 }
 ```
 
+`outputs` are absolute, lexically normalized paths (`.` and `..` removed without resolving
+symbolic links); a real run writes to the same normalized paths. An explicit `-o` path is exactly
+what the real run uses. Default names are indicative: image names contain an id generated for each
+plan (`iris-<ulid>.png`), so the real run picks a new one, and video plans show a `<job_id>`
+placeholder because the job id is assigned when the real run records the job.
+
 ### Shared objects
 
 - **`Artifact`**: `{ "index", "path" (absolute), "media_type", "bytes", "sha256" (hex),

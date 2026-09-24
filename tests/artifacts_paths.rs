@@ -125,7 +125,7 @@ fn output_extension_selects_or_must_match_the_format() {
     // Contradiction.
     let err = plan_outputs(&image_req(dir.path(), 1, Some(&jpeg), Some("png"))).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);
-    assert!(err.message.contains("contradicts --format"), "{}", err.message);
+    assert!(err.message.contains("contradicts the requested output format png"), "{}", err.message);
 
     // An extension the model cannot produce, or no media extension at all.
     let err = plan_outputs(&image_req(dir.path(), 1, Some(&dir.path().join("x.mp4")), None)).unwrap_err();
@@ -151,6 +151,54 @@ fn output_without_extension_gets_one_with_a_warning() {
     assert_eq!(plan.paths, vec![dir.path().join("cat.webp")]);
     assert_eq!(plan.warnings.len(), 1);
     assert_eq!(plan.warnings[0].code, "output_extension_adjusted");
+    let shown = |p: PathBuf| p.display().to_string();
+    assert!(plan.warnings[0].message.ends_with(&format!("saving as {}", shown(dir.path().join("cat.webp")))));
+
+    // With several outputs the warning names the files actually written.
+    let plan = plan_outputs(&image_req(dir.path(), 2, Some(&dir.path().join("cat")), None)).unwrap();
+    assert_eq!(plan.paths, vec![dir.path().join("cat-1.png"), dir.path().join("cat-2.png")]);
+    let message = &plan.warnings[0].message;
+    assert!(
+        message.ends_with(&format!(
+            "saving as {} and {}",
+            shown(dir.path().join("cat-1.png")),
+            shown(dir.path().join("cat-2.png"))
+        )),
+        "{message}"
+    );
+    let plan = plan_outputs(&image_req(dir.path(), 4, Some(&dir.path().join("cat")), None)).unwrap();
+    let message = &plan.warnings[0].message;
+    assert!(
+        message.ends_with(&format!(
+            "saving as the 4 outputs {} … {}",
+            shown(dir.path().join("cat-1.png")),
+            shown(dir.path().join("cat-4.png"))
+        )),
+        "{message}"
+    );
+    assert!(!message.contains(&format!("{} ", shown(dir.path().join("cat.png")))), "{message}");
+}
+
+#[test]
+fn planned_paths_are_lexically_normalized() {
+    let dir = tempfile::tempdir().unwrap();
+    let work = dir.path().join("work");
+    let up = work.join("..").join("x.png");
+    let plan = plan_outputs(&image_req(dir.path(), 1, Some(&up), None)).unwrap();
+    assert_eq!(plan.paths, vec![dir.path().join("x.png")]);
+
+    let odd_dir = work.join(".").join("a").join("..").join("renders");
+    let plan = plan_outputs(&PathRequest {
+        naming: Naming::Video { job_id: "job_01jbz9k3m4n5p6q7r8s9t0v1w2" },
+        count: 1,
+        output: None,
+        dir: &odd_dir,
+        format: None,
+        media_types: &["video/mp4"],
+    })
+    .unwrap();
+    assert_eq!(plan.paths, vec![work.join("renders").join("job_01jbz9k3m4n5p6q7r8s9t0v1w2.mp4")]);
+    assert_eq!(paths::normalize_lexically(Path::new("/a/b/../../../c")), Path::new("/c"));
 }
 
 #[test]
