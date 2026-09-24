@@ -52,7 +52,9 @@ pub struct JobView {
     pub updated_at: String,
     pub completed_at: Option<String>,
     pub last_checked_at: Option<String>,
-    /// Estimated time after which the provider no longer serves the outputs.
+    /// Earliest time the provider may stop serving the outputs: submission time plus
+    /// the provider's documented retention (it may keep them longer). `null` until
+    /// the job has succeeded, and when the provider documents no retention.
     pub remote_expires_at: Option<String>,
     pub outputs: Vec<JobOutputView>,
     /// Downloaded artifacts (subset of `outputs[].artifact`).

@@ -902,6 +902,11 @@ async fn human_text_says_where_model_text_is_and_completion_only_for_reported_ou
     f.gemini.videos().push_poll(Ok(remote_success("http://127.0.0.1:9/v1beta/files/x:download")));
     let run = f.run(&["jobs", "status", &id]).await;
     assert!(run.stdout.contains(" succeeded\n") && run.stdout.contains("completed:"), "{}", run.stdout);
+    // The retention estimate is a lower bound, never an expiry the provider promised.
+    let v = f.run(&["jobs", "status", &id, "--no-refresh", "--json"]).await.json();
+    let kept = v["result"]["job"]["remote_expires_at"].as_str().unwrap().to_string();
+    assert!(run.stdout.contains(&format!("kept until: at least {kept}\n")), "{}", run.stdout);
+    assert!(!run.stdout.contains("expires:"), "{}", run.stdout);
 }
 
 #[tokio::test]

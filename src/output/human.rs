@@ -190,8 +190,10 @@ fn job_block(j: &JobView) -> String {
     {
         field("completed", t);
     }
+    // The earliest time the provider may stop serving the outputs, not a deadline
+    // it promises: it may keep them longer.
     if let Some(t) = &j.remote_expires_at {
-        field("expires", t);
+        field("kept until", &format!("at least {t}"));
     }
     if let Some(op) = &j.remote_operation_id {
         field("remote op", op);

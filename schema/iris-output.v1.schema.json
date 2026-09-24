@@ -1464,7 +1464,7 @@
           "$ref": "#/$defs/ProviderId"
         },
         "remote_expires_at": {
-          "description": "Estimated time after which the provider no longer serves the outputs.",
+          "description": "Earliest time the provider may stop serving the outputs: submission time plus\nthe provider's documented retention (it may keep them longer). `null` until\nthe job has succeeded, and when the provider documents no retention.",
           "type": [
             "string",
             "null"

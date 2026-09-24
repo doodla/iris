@@ -185,6 +185,9 @@ machine-readable contract for agents.
   "Model text" line instead of a JSON field.
 - `iris --help` and the README's exit-code table name every signal behind exit 130 (Ctrl-C/SIGINT,
   SIGTERM, SIGHUP), as the JSON contract already did.
+- Human `jobs status` shows the retention estimate as `kept until: at least <time>` instead of
+  `expires: <time>`, and the schema describes `job.remote_expires_at` as the earliest time the
+  provider may stop serving the outputs (it may keep them longer). The JSON value is unchanged.
 
 ### Removed
 
