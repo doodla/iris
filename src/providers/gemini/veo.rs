@@ -215,8 +215,14 @@ fn uncertain(message: String) -> IrisError {
 }
 
 /// Operation names are placed in the poll URL path, so they must be exactly
-/// `models/<segment>/operations/<segment>` where each segment is
-/// `[A-Za-z0-9][A-Za-z0-9._-]*` (no `/`, `..`, `?`, `#`, `%`, or spaces).
+/// `models/<segment>/operations/<segment>` (C-06: `^models/[^/]+/operations/[^/]+$`).
+/// A segment may hold any RFC 3986 unreserved character (`A-Z a-z 0-9 - . _ ~`) but
+/// must not be a dot segment (`.` or `..`). Those characters mean nothing in a URL
+/// and are never percent-decoded. Everything that could change the requested URL
+/// is refused: `/`, `\`, `?`, `#`, `%`, spaces, control characters, and `:`, which
+/// selects a custom method in Google APIs (`…/operations/x:cancel`). A real id with
+/// another character would turn an accepted, paid submit into
+/// `submission_uncertain`, so the set is kept as wide as that safety allows.
 pub fn is_operation_name(name: &str) -> bool {
     if name.len() > MAX_OPERATION_NAME {
         return false;
@@ -225,8 +231,17 @@ pub fn is_operation_name(name: &str) -> bool {
     matches!(
         (parts.next(), parts.next(), parts.next(), parts.next(), parts.next()),
         (Some("models"), Some(model), Some("operations"), Some(id), None)
-            if client::is_path_segment(model, 128) && client::is_path_segment(id, 256)
+            if is_operation_segment(model, 128) && is_operation_segment(id, 256)
     )
+}
+
+/// 1..=`max` unreserved characters, and not `.` or `..`.
+fn is_operation_segment(segment: &str, max: usize) -> bool {
+    !segment.is_empty()
+        && segment.len() <= max
+        && segment != "."
+        && segment != ".."
+        && segment.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_' | b'~'))
 }
 
 /// Poll an operation once (`IdempotentRead`: 429/5xx/timeouts retried with backoff).
@@ -404,16 +419,35 @@ mod tests {
 
     #[test]
     fn operation_names_are_strictly_shaped() {
-        assert!(is_operation_name("models/veo-3.1-lite-generate-preview/operations/abc123xyz"));
+        for ok in [
+            "models/veo-3.1-lite-generate-preview/operations/abc123xyz",
+            "models/veo-3.1-generate-preview/operations/_Op.id~2-x",
+            "models/veo/operations/-leading-dash",
+            "models/veo/operations/.x",
+            "models/veo/operations/a..b",
+            "models/veo/operations/...",
+        ] {
+            assert!(is_operation_name(ok), "{ok}");
+        }
         for bad in [
             "",
             "models/veo/operations",
+            "models/veo/operations/",
             "models/veo/operations/abc/extra",
             "models/../operations/abc",
+            "models/./operations/abc",
             "models/veo/operations/..",
+            "models/veo/operations/.",
             "models/veo/operations/a?b",
             "models/veo/operations/a#b",
             "models/veo/operations/a%2Fb",
+            "models/veo/operations/a\\b",
+            "models/veo/operations/abc:cancel",
+            "models/veo/operations/a b",
+            "models/veo/operations/a\tb",
+            "models/veo/operations/a;b",
+            "models/veo/operations/a@b",
+            "models/veo/operations/é",
             "operations/abc",
             "models/veo/other/abc",
             "/models/veo/operations/abc",
@@ -421,6 +455,8 @@ mod tests {
         ] {
             assert!(!is_operation_name(bad), "{bad}");
         }
+        assert!(is_operation_name(&format!("models/veo/operations/{}", "a".repeat(256))));
+        assert!(!is_operation_name(&format!("models/veo/operations/{}", "a".repeat(257))));
     }
 
     #[test]

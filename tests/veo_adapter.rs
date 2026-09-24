@@ -342,6 +342,8 @@ async fn unusable_success_bodies_are_uncertain() {
         ResponseTemplate::new(200).set_body_json(json!({"name": "operations/abc"})),
         ResponseTemplate::new(200).set_body_json(json!({"name": "models/veo/operations/../../files/x"})),
         ResponseTemplate::new(200).set_body_json(json!({"name": "models/veo/operations/abc?alt=1"})),
+        ResponseTemplate::new(200).set_body_json(json!({"name": "models/veo/operations/abc:cancel"})),
+        ResponseTemplate::new(200).set_body_json(json!({"name": "models/veo/operations/.."})),
     ];
     for template in cases {
         let (err, sent) = uncertain_case(template).await;
@@ -587,6 +589,28 @@ async fn operation_names_are_validated_before_any_url_is_built() {
     }
     assert!(requests(&server).await.is_empty());
     assert!(is_operation_name(OPERATION));
+}
+
+#[tokio::test]
+async fn any_unreserved_operation_id_is_accepted_and_polled_verbatim() {
+    // The grammar is wider than the documented lowercase examples so that a real id
+    // with other URL-safe characters is not reported as an uncertain submit.
+    let name = "models/veo-3.1-lite-generate-preview/operations/_Op.id~2-X";
+    let server = MockServer::start().await;
+    mount_submit(&server, LITE, ResponseTemplate::new(200).set_body_json(json!({"name": name}))).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/v1beta/{name}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"name": name, "done": false})))
+        .mount(&server)
+        .await;
+    let op = submit(&server, &request(LITE, &[])).await.unwrap();
+    assert_eq!(op.remote_id, name);
+    let status = GeminiProvider::new().poll(&op.remote_id, &ctx(&server)).await.unwrap();
+    assert!(matches!(status, RemoteStatus::Running { .. }));
+    let reqs = requests(&server).await;
+    assert_eq!(reqs.len(), 2);
+    assert_eq!(reqs[1].url.path(), format!("/v1beta/{name}"));
+    assert!(reqs[1].url.query().is_none());
 }
 
 #[tokio::test]
