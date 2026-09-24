@@ -198,8 +198,8 @@ pub fn validate_request(
 
     validate_inputs(spec, operation, inputs)?;
 
-    if let Some(check) = spec.validate {
-        check(&ValidationInput {
+    if let Some(rules) = spec.validate {
+        (rules.check)(&ValidationInput {
             operation,
             options: &resolved,
             input_images: inputs.images,

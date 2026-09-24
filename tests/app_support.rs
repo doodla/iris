@@ -18,8 +18,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use iris::app::{AppContext, Catalog, Clock, Deps, Interrupt, Progress};
 use iris::catalog::{
-    EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelSpec, OptionKind, OptionSpec, OutputSpec,
-    PriceRule, RequestSizeLimit, ValidationInput,
+    Constraint, EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelSpec, OptionKind, OptionSpec,
+    OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
 use iris::config::{CliOverrides, EnvSnapshot, Platform, Resolved, SettingSource, Settings};
 use iris::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
@@ -250,9 +250,16 @@ pub static FAKE_VIDEO_OPTIONS: &[OptionSpec] = &[
     },
 ];
 
+pub const FAKE_LAST_FRAME_RULE: Constraint = Constraint {
+    id: "last_frame_requires_first_frame",
+    options: &[],
+    inputs: &["last_frame", "first_frame"],
+    description: "a last frame requires a first frame",
+};
+
 fn fake_video_rules(v: &ValidationInput<'_>) -> Result<(), IrisError> {
     if v.has_last_frame && !v.has_first_frame {
-        return Err(IrisError::invalid("--last-frame requires --image (first frame)"));
+        return Err(FAKE_LAST_FRAME_RULE.violation("--last-frame requires --image (first frame)"));
     }
     Ok(())
 }
@@ -298,7 +305,7 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
     }],
     access_notes: &["Preview model (fake)"],
     docs_url: "https://example.invalid/video",
-    validate: Some(fake_video_rules),
+    validate: Some(RequestRules { constraints: &[FAKE_LAST_FRAME_RULE], check: fake_video_rules }),
     estimate: Some(fake_video_estimate),
     estimate_usage: None,
 };

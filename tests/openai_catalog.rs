@@ -10,6 +10,9 @@ use iris::domain::{Operation, ProviderId, Usage};
 use iris::error::ErrorCode;
 use serde_json::json;
 
+#[path = "catalog_support.rs"]
+mod catalog_support;
+
 const IDS: [&str; 3] = ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"];
 
 fn model(id: &str) -> &'static ModelSpec {
@@ -446,4 +449,15 @@ fn cost_from_usage_prices_text_image_and_output_tokens() {
 
     // No output tokens: nothing to estimate.
     assert!(openai::cost_from_usage(spec, &Usage { output_tokens: None, ..usage }).is_none());
+}
+
+/// The rules `validate_options` enforces are exactly the constraints `models show`
+/// publishes (checked over every combination of declared values).
+#[test]
+fn every_cross_option_rule_is_a_declared_constraint() {
+    for m in openai::MODELS {
+        catalog_support::assert_constraints_cover_the_validator(m);
+        let ids: Vec<&str> = m.validate.unwrap().constraints.iter().map(|c| c.id).collect();
+        assert_eq!(ids, ["compression_requires_jpeg_or_webp", "transparent_background_requires_png_or_webp"]);
+    }
 }

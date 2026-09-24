@@ -365,6 +365,12 @@ fn model_show(m: &ModelCapabilities) -> String {
             let _ = writeln!(out, "      {}", o.description);
         }
     }
+    if !m.constraints.is_empty() {
+        let _ = writeln!(out, "  constraints:");
+        for c in &m.constraints {
+            let _ = writeln!(out, "    - {} [{}]", c.description, c.id);
+        }
+    }
     if !m.pricing.is_empty() {
         let _ = writeln!(out, "  pricing (published prices; Iris shows estimates only):");
         for p in &m.pricing {

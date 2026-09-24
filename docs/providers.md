@@ -111,7 +111,7 @@ pub static MODELS: &[ModelSpec] = &[
         pricing: PRICING,                              // &[PriceRule { .. }], with source_url + as_of
         access_notes: &["Preview model", "Paid tier required"],
         docs_url: "https://…",
-        validate: Some(validate_options),              // cross-field rules (e.g. "1080p requires duration=8")
+        validate: Some(RULES),                         // cross-field rules and their published constraints
         estimate: Some(estimate_pre_call),              // pre-call cost estimate, or None if unsupportable
         estimate_usage: None,                           // post-call estimate from reported usage, if any
     },
@@ -147,8 +147,13 @@ Then:
    are only a second line of defense, and a dry run must never accept a request the adapter would
    refuse.
 5. If the model needs cross-field validation (Iris's Veo catalog has "1080p or 4k requires an
-   8-second duration", "a last frame requires a first frame"), write a `validate` function with
-   the same shape as `catalog::veo::validate_video`.
+   8-second duration", "a last frame requires a first frame"), write a check function with the
+   same shape as `catalog::veo::validate_video`, declare every rule it enforces as a `Constraint`
+   next to it, and set `validate: Some(RequestRules { constraints, check })`. The check reports a
+   broken rule with `Constraint::violation`, so the error names it, and `models show` publishes
+   the constraints. Call `catalog_support::assert_constraints_cover_the_validator` from your
+   catalog tests: it tries every combination of declared values and fails if the check rejects
+   something that is not a declared constraint, or a declared constraint is never enforced.
 6. Cite your sources: `pricing` entries carry `source_url` and `as_of`; `access_notes` state
    documented account requirements in the provider's own words, never inferred ones.
 

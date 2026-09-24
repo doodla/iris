@@ -8,6 +8,9 @@ use iris::catalog::{
 use iris::domain::{Operation, ProviderId};
 use iris::error::ErrorCode;
 
+#[path = "catalog_support.rs"]
+mod catalog_support;
+
 const FAST: &str = "veo-3.1-fast-generate-preview";
 const STANDARD: &str = "veo-3.1-generate-preview";
 const LITE: &str = "veo-3.1-lite-generate-preview";
@@ -251,4 +254,32 @@ fn pricing_is_per_second_with_source_and_date() {
             assert!(p.description.contains("audio"));
         }
     }
+}
+
+/// The rules `validate_video` enforces are exactly the constraints `models show`
+/// publishes for each model (checked over every combination of declared values and
+/// inputs); Lite, which takes no reference images, publishes no reference rules.
+#[test]
+fn every_cross_option_rule_is_a_declared_constraint() {
+    for m in catalog::veo::MODELS {
+        catalog_support::assert_constraints_cover_the_validator(m);
+    }
+    let ids = |id: &str| spec(id).validate.unwrap().constraints.iter().map(|c| c.id).collect::<Vec<_>>();
+    let full = [
+        "high_resolution_requires_duration_8",
+        "references_exclude_frames",
+        "references_require_duration_8",
+        "last_frame_requires_first_frame",
+        "person_generation_depends_on_image_inputs",
+    ];
+    assert_eq!(ids(FAST), full);
+    assert_eq!(ids(STANDARD), full);
+    assert_eq!(
+        ids(LITE),
+        [
+            "high_resolution_requires_duration_8",
+            "last_frame_requires_first_frame",
+            "person_generation_depends_on_image_inputs"
+        ]
+    );
 }

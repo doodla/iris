@@ -20,8 +20,8 @@ use crate::error::IrisError;
 
 use super::options::OptionValue;
 use super::types::{
-    EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
-    OutputSpec, PriceRule, ValidationInput,
+    Constraint, EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec, OptionKind,
+    OptionSpec, OutputSpec, PriceRule, RequestRules, ValidationInput,
 };
 
 /// Official pricing page the rates below come from.
@@ -234,7 +234,7 @@ pub static MODELS: &[ModelSpec] = &[
         pricing: PRICING,
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
-        validate: Some(validate_options),
+        validate: Some(RULES),
         estimate: Some(estimate_gpt_image_2_5),
         estimate_usage: Some(cost_from_usage),
     },
@@ -253,7 +253,7 @@ pub static MODELS: &[ModelSpec] = &[
         pricing: PRICING,
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
-        validate: Some(validate_options),
+        validate: Some(RULES),
         estimate: Some(estimate_gpt_image_2_5),
         estimate_usage: Some(cost_from_usage),
     },
@@ -272,7 +272,7 @@ pub static MODELS: &[ModelSpec] = &[
         pricing: PRICING,
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
-        validate: Some(validate_options),
+        validate: Some(RULES),
         estimate: Some(estimate_gpt_image_2),
         estimate_usage: Some(cost_from_usage),
     },
@@ -317,21 +317,43 @@ pub fn validate_size(raw: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// `output_compression` is documented for jpeg and webp output only.
+pub const COMPRESSION_REQUIRES_JPEG_OR_WEBP: Constraint = Constraint {
+    id: "compression_requires_jpeg_or_webp",
+    options: &["compression", "format"],
+    inputs: &[],
+    description: "compression applies only to jpeg or webp output (the default format is png)",
+};
+
+/// A transparent background is documented for png and webp output only.
+pub const TRANSPARENT_BACKGROUND_REQUIRES_PNG_OR_WEBP: Constraint = Constraint {
+    id: "transparent_background_requires_png_or_webp",
+    options: &["background", "format"],
+    inputs: &[],
+    description: "background=transparent requires png or webp output",
+};
+
+/// The cross-option rules of the GPT Image models.
+const RULES: RequestRules = RequestRules {
+    constraints: &[COMPRESSION_REQUIRES_JPEG_OR_WEBP, TRANSPARENT_BACKGROUND_REQUIRES_PNG_OR_WEBP],
+    check: validate_options,
+};
+
 /// Cross-option rules one option spec cannot express: `compression` needs jpeg or
 /// webp output, and a transparent background needs png or webp output. The
 /// effective format is the explicit one, else the provider default `png`.
 pub fn validate_options(input: &ValidationInput<'_>) -> Result<(), IrisError> {
     let format = input.options.get("format").and_then(OptionValue::as_str).unwrap_or("png");
     if input.options.contains("compression") && format == "png" {
-        return Err(IrisError::invalid(
-            "-O compression applies only to jpeg or webp output, and the output format is png",
-        )
-        .with_hint("add --format jpeg or --format webp, or remove -O compression")
-        .with_detail("option", "compression"));
+        return Err(COMPRESSION_REQUIRES_JPEG_OR_WEBP
+            .violation("-O compression applies only to jpeg or webp output, and the output format is png")
+            .with_hint("add --format jpeg or --format webp, or remove -O compression")
+            .with_detail("option", "compression"));
     }
     let background = input.options.get("background").and_then(OptionValue::as_str);
     if background == Some("transparent") && format == "jpeg" {
-        return Err(IrisError::invalid("-O background=transparent requires png or webp output, not jpeg")
+        return Err(TRANSPARENT_BACKGROUND_REQUIRES_PNG_OR_WEBP
+            .violation("-O background=transparent requires png or webp output, not jpeg")
             .with_hint("use --format png or --format webp, or choose another background")
             .with_detail("option", "background"));
     }

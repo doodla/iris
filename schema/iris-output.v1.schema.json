@@ -199,6 +199,39 @@
       ],
       "type": "object"
     },
+    "ConstraintView": {
+      "description": "A rule relating several options or inputs of one request. A request that breaks\nit fails with `invalid_argument` and this `id` in `details.constraint`.",
+      "properties": {
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "description": "Stable snake_case id, e.g. `high_resolution_requires_duration_8`.",
+          "type": "string"
+        },
+        "inputs": {
+          "description": "Inputs involved: `image`, `mask`, `first_frame`, `last_frame`, `reference`.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "options": {
+          "description": "Options involved (the `name`s in `options`).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "id",
+        "options",
+        "inputs",
+        "description"
+      ],
+      "type": "object"
+    },
     "CostEstimate": {
       "description": "A cost estimate. Always an estimate computed from Iris's published price table.",
       "properties": {
@@ -943,6 +976,13 @@
         "catalog_as_of": {
           "type": "string"
         },
+        "constraints": {
+          "description": "Rules relating several options or inputs (empty when there are none).",
+          "items": {
+            "$ref": "#/$defs/ConstraintView"
+          },
+          "type": "array"
+        },
         "default_for": {
           "items": {
             "$ref": "#/$defs/Operation"
@@ -1002,6 +1042,7 @@
         "default_for",
         "inputs",
         "options",
+        "constraints",
         "outputs",
         "limits",
         "pricing",

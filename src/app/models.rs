@@ -7,8 +7,9 @@ use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec};
 use crate::domain::{Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
-    AccessView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities, ModelListResult,
-    ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult, ProviderView,
+    AccessView, ConstraintView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities,
+    ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult,
+    ProviderView,
 };
 use crate::providers::AccountAccess;
 use crate::redact;
@@ -112,6 +113,18 @@ fn capabilities(
             max_request_bytes: m.inputs.max_request.map(|limit| limit.max_bytes),
         },
         options: m.options.iter().map(option_view).collect(),
+        constraints: m
+            .validate
+            .map(|rules| rules.constraints)
+            .unwrap_or_default()
+            .iter()
+            .map(|c| ConstraintView {
+                id: c.id.to_string(),
+                options: c.options.iter().map(|o| o.to_string()).collect(),
+                inputs: c.inputs.iter().map(|i| i.to_string()).collect(),
+                description: c.description.to_string(),
+            })
+            .collect(),
         outputs: OutputsView {
             media_types: m.outputs.media_types.iter().map(|t| t.to_string()).collect(),
             max_count: m.outputs.max_count,

@@ -9,6 +9,9 @@ use iris::catalog::{
 use iris::domain::{Operation, ProviderId, Usage};
 use iris::error::ErrorCode;
 
+#[path = "catalog_support.rs"]
+mod catalog_support;
+
 const FLASH: &str = "gemini-3.1-flash-image";
 const LITE: &str = "gemini-3.1-flash-lite-image";
 const PRO: &str = "gemini-3-pro-image";
@@ -324,4 +327,14 @@ fn post_call_estimate_splits_usage_metadata_by_modality() {
 
     let empty = Usage::default();
     assert!(catalog::gemini::estimate_from_usage(spec(FLASH), &empty).is_none());
+}
+
+/// The Gemini image models have no cross-option rules: nothing beyond per-option and
+/// input checks rejects any combination of declared values, and none is published.
+#[test]
+fn every_cross_option_rule_is_a_declared_constraint() {
+    for m in catalog::gemini::MODELS {
+        assert!(m.validate.is_none(), "{}", m.id);
+        catalog_support::assert_constraints_cover_the_validator(m);
+    }
 }

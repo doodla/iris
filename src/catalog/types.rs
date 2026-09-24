@@ -196,6 +196,36 @@ pub struct PriceRule {
 /// the number of inputs by role.
 pub type RequestValidator = fn(&ValidationInput<'_>) -> Result<(), IrisError>;
 
+/// A rule relating several options or inputs of one request, enforced by a model's
+/// validator and published by `models show` as `constraints`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Constraint {
+    /// Stable snake_case id; a request that breaks the rule fails with
+    /// `invalid_argument` and this id in `details.constraint`.
+    pub id: &'static str,
+    /// Options involved (catalog option names).
+    pub options: &'static [&'static str],
+    /// Inputs involved: `image`, `mask`, `first_frame`, `last_frame`, `reference`.
+    pub inputs: &'static [&'static str],
+    pub description: &'static str,
+}
+
+impl Constraint {
+    /// The `invalid_argument` error for a request that breaks this rule.
+    pub fn violation(&self, message: impl Into<String>) -> IrisError {
+        IrisError::invalid(message).with_detail("constraint", self.id)
+    }
+}
+
+/// A model's cross-option validation: the check, and the rules it enforces declared
+/// next to it (every rejection it makes names one of `constraints`; the catalog
+/// tests check that for every combination of declared values).
+#[derive(Debug, Clone, Copy)]
+pub struct RequestRules {
+    pub constraints: &'static [Constraint],
+    pub check: RequestValidator,
+}
+
 /// Cost estimator hook (before the call, from options).
 pub type CostEstimator = fn(&ModelSpec, &EstimateInput<'_>) -> Option<CostEstimate>;
 
@@ -244,7 +274,8 @@ pub struct ModelSpec {
     /// Account-level requirements (tier, verification, allowlists) as documented.
     pub access_notes: &'static [&'static str],
     pub docs_url: &'static str,
-    pub validate: Option<RequestValidator>,
+    /// Cross-option rules and the validator enforcing them, if any.
+    pub validate: Option<RequestRules>,
     pub estimate: Option<CostEstimator>,
     /// Post-call estimate from reported usage (preferred over `estimate` when it returns a value).
     pub estimate_usage: Option<UsageEstimator>,

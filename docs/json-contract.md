@@ -166,6 +166,8 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
                  "syntax": null, "default": "1", "flag": "--count",
                  "operations": ["image.generate","image.edit"],
                  "description": "Number of images to produce in one request (sent as `n`)." } ],
+  "constraints": [ { "id": "compression_requires_jpeg_or_webp", "options": ["compression", "format"],
+                     "inputs": [], "description": "compression applies only to jpeg or webp output (the default format is png)" } ],
   "outputs": { "media_types": ["image/png","image/jpeg","image/webp"], "max_count": 10 },
   "limits": { "max_prompt_chars": 32000 },
   "pricing": [ { "description": "Text input tokens (prompt)", "unit": "1M text input tokens",
@@ -178,6 +180,13 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
   "docs_url": "https://developers.openai.com/api/docs/guides/image-generation"
 }
 ```
+
+`constraints` lists the rules that relate several options or inputs (e.g. Veo's
+`high_resolution_requires_duration_8`, `references_exclude_frames`,
+`person_generation_depends_on_image_inputs`), each with the `options` and `inputs` (`image`,
+`mask`, `first_frame`, `last_frame`, `reference`) it involves. The list is what Iris enforces: a
+request that breaks one fails locally with `invalid_argument` and the rule's id in
+`details.constraint`.
 
 `inputs.mask_requirements` is `null` when the model takes no mask. `inputs.max_request_bytes` is
 the documented cap on a whole request whose inputs are sent inline (Gemini: 20,000,000 bytes; Veo:

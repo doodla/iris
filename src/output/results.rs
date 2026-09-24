@@ -153,6 +153,19 @@ pub struct OptionView {
     pub description: String,
 }
 
+/// A rule relating several options or inputs of one request. A request that breaks
+/// it fails with `invalid_argument` and this `id` in `details.constraint`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ConstraintView {
+    /// Stable snake_case id, e.g. `high_resolution_requires_duration_8`.
+    pub id: String,
+    /// Options involved (the `name`s in `options`).
+    pub options: Vec<String>,
+    /// Inputs involved: `image`, `mask`, `first_frame`, `last_frame`, `reference`.
+    pub inputs: Vec<String>,
+    pub description: String,
+}
+
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct OutputsView {
     pub media_types: Vec<String>,
@@ -198,6 +211,8 @@ pub struct ModelCapabilities {
     pub default_for: Vec<Operation>,
     pub inputs: InputsView,
     pub options: Vec<OptionView>,
+    /// Rules relating several options or inputs (empty when there are none).
+    pub constraints: Vec<ConstraintView>,
     pub outputs: OutputsView,
     pub limits: LimitsView,
     pub pricing: Vec<PriceView>,

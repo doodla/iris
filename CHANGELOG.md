@@ -171,6 +171,11 @@ machine-readable contract for agents.
   as `inputs.mask_requirements` and `inputs.max_request_bytes` (additive fields).
 - An `-o` extension that contradicts the requested format names the flag actually given
   (`-O format=jpeg` or `--format jpeg`) instead of always saying `--format`.
+- `models show` publishes a machine-readable `constraints` array: the rules that relate several
+  options or inputs (e.g. 1080p/4k and reference images require an 8-second Veo duration,
+  `compression` only with jpeg/webp), each with an id and the options and inputs involved. A
+  request breaking one fails with `invalid_argument` and the id in `details.constraint`
+  (additive fields).
 
 ### Known limitations
 

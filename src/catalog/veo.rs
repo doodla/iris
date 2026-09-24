@@ -11,8 +11,8 @@ use crate::error::IrisError;
 
 use super::CATALOG_AS_OF;
 use super::types::{
-    EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec, PriceRule,
-    RequestSizeLimit, ValidationInput,
+    Constraint, EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec,
+    PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
 
 /// Pricing page all Veo prices were taken from.
@@ -219,7 +219,7 @@ pub static MODELS: &[ModelSpec] = &[
             NOTE_EXTENSION,
         ],
         docs_url: DOCS_URL,
-        validate: Some(validate_video),
+        validate: Some(FULL_RULES),
         estimate: Some(estimate_video),
         estimate_usage: None,
     },
@@ -252,7 +252,7 @@ pub static MODELS: &[ModelSpec] = &[
             NOTE_EXTENSION,
         ],
         docs_url: DOCS_URL,
-        validate: Some(validate_video),
+        validate: Some(FULL_RULES),
         estimate: Some(estimate_video),
         estimate_usage: None,
     },
@@ -283,7 +283,7 @@ pub static MODELS: &[ModelSpec] = &[
             "No 4k output and no reference images on this model",
         ],
         docs_url: DOCS_URL,
-        validate: Some(validate_video),
+        validate: Some(LITE_RULES),
         estimate: Some(estimate_video),
         estimate_usage: None,
     },
@@ -294,11 +294,62 @@ fn effective<'a>(input: &'a ValidationInput<'_>, name: &str, default: &'a str) -
     input.options.get(name).and_then(|v| v.as_str()).unwrap_or(default)
 }
 
-fn invalid_option(option: &str, message: String) -> IrisError {
-    IrisError::invalid(message).with_detail("option", option)
-}
+/// Cross-field rules from the provider's parameter table, enforced by [`validate_video`].
+pub const HIGH_RESOLUTION_REQUIRES_DURATION_8: Constraint = Constraint {
+    id: "high_resolution_requires_duration_8",
+    options: &["resolution", "duration"],
+    inputs: &[],
+    description: "resolution 1080p or 4k requires duration 8 (the default)",
+};
+pub const REFERENCES_EXCLUDE_FRAMES: Constraint = Constraint {
+    id: "references_exclude_frames",
+    options: &[],
+    inputs: &["reference", "first_frame", "last_frame"],
+    description: "reference images cannot be combined with a first or last frame",
+};
+pub const REFERENCES_REQUIRE_DURATION_8: Constraint = Constraint {
+    id: "references_require_duration_8",
+    options: &["duration"],
+    inputs: &["reference"],
+    description: "reference images require duration 8 (the default)",
+};
+pub const LAST_FRAME_REQUIRES_FIRST_FRAME: Constraint = Constraint {
+    id: "last_frame_requires_first_frame",
+    options: &[],
+    inputs: &["last_frame", "first_frame"],
+    description: "a last frame requires a first frame (--image)",
+};
+pub const PERSON_GENERATION_DEPENDS_ON_IMAGE_INPUTS: Constraint = Constraint {
+    id: "person_generation_depends_on_image_inputs",
+    options: &["person_generation"],
+    inputs: &["first_frame", "last_frame", "reference"],
+    description: "person_generation=allow_all only without image inputs (text-to-video); allow_adult only \
+                  with a first frame, last frame, or reference images",
+};
 
-/// Cross-field rules from the provider's parameter table.
+/// Rules of the models that take reference images.
+const FULL_RULES: RequestRules = RequestRules {
+    constraints: &[
+        HIGH_RESOLUTION_REQUIRES_DURATION_8,
+        REFERENCES_EXCLUDE_FRAMES,
+        REFERENCES_REQUIRE_DURATION_8,
+        LAST_FRAME_REQUIRES_FIRST_FRAME,
+        PERSON_GENERATION_DEPENDS_ON_IMAGE_INPUTS,
+    ],
+    check: validate_video,
+};
+
+/// Rules of Veo 3.1 Lite (no reference images, so the reference rules cannot apply).
+const LITE_RULES: RequestRules = RequestRules {
+    constraints: &[
+        HIGH_RESOLUTION_REQUIRES_DURATION_8,
+        LAST_FRAME_REQUIRES_FIRST_FRAME,
+        PERSON_GENERATION_DEPENDS_ON_IMAGE_INPUTS,
+    ],
+    check: validate_video,
+};
+
+/// Cross-field rules from the provider's parameter table (the constraints above).
 fn validate_video(input: &ValidationInput<'_>) -> Result<(), IrisError> {
     let duration = effective(input, "duration", DEFAULT_DURATION);
     let resolution = effective(input, "resolution", DEFAULT_RESOLUTION);
@@ -306,45 +357,41 @@ fn validate_video(input: &ValidationInput<'_>) -> Result<(), IrisError> {
     let has_frames = input.has_first_frame || input.has_last_frame;
 
     if matches!(resolution, "1080p" | "4k") && duration != "8" {
-        return Err(invalid_option(
-            "duration",
-            format!("resolution {resolution} requires --duration 8 (got {duration})"),
-        ));
+        return Err(HIGH_RESOLUTION_REQUIRES_DURATION_8
+            .violation(format!("resolution {resolution} requires --duration 8 (got {duration})"))
+            .with_detail("option", "duration"));
     }
     if has_refs && has_frames {
-        return Err(IrisError::invalid(
-            "reference images (--ref) cannot be combined with --image or --last-frame",
-        ));
+        return Err(REFERENCES_EXCLUDE_FRAMES
+            .violation("reference images (--ref) cannot be combined with --image or --last-frame"));
     }
     if has_refs && duration != "8" {
-        return Err(invalid_option(
-            "duration",
-            format!("reference images (--ref) require --duration 8 (got {duration})"),
-        ));
+        return Err(REFERENCES_REQUIRE_DURATION_8
+            .violation(format!("reference images (--ref) require --duration 8 (got {duration})"))
+            .with_detail("option", "duration"));
     }
     if input.has_last_frame && !input.has_first_frame {
-        return Err(IrisError::invalid("--last-frame requires --image (the first frame)"));
+        return Err(
+            LAST_FRAME_REQUIRES_FIRST_FRAME.violation("--last-frame requires --image (the first frame)")
+        );
     }
     if let Some(person) = input.options.get("person_generation").and_then(|v| v.as_str()) {
         let has_images = has_refs || has_frames;
-        match person {
-            "allow_all" if has_images => {
-                return Err(invalid_option(
-                    "person_generation",
-                    "person_generation=allow_all is only accepted for text-to-video; use allow_adult with \
-                     image inputs"
-                        .to_string(),
-                ));
-            }
-            "allow_adult" if !has_images => {
-                return Err(invalid_option(
-                    "person_generation",
-                    "person_generation=allow_adult is only accepted with image inputs (--image, \
-                     --last-frame, or --ref); use allow_all for text-to-video"
-                        .to_string(),
-                ));
-            }
-            _ => {}
+        let message = match person {
+            "allow_all" if has_images => Some(
+                "person_generation=allow_all is only accepted for text-to-video; use allow_adult with image \
+                 inputs",
+            ),
+            "allow_adult" if !has_images => Some(
+                "person_generation=allow_adult is only accepted with image inputs (--image, --last-frame, or \
+                 --ref); use allow_all for text-to-video",
+            ),
+            _ => None,
+        };
+        if let Some(message) = message {
+            return Err(PERSON_GENERATION_DEPENDS_ON_IMAGE_INPUTS
+                .violation(message)
+                .with_detail("option", "person_generation"));
         }
     }
     Ok(())

@@ -533,7 +533,50 @@ fn models_list_is_consistent_with_the_catalog() {
             inputs["max_request_bytes"],
             serde_json::json!(spec.inputs.max_request.map(|l| l.max_bytes))
         );
+        // Cross-option rules are machine-readable too.
+        let declared: Vec<&str> =
+            spec.validate.map(|r| r.constraints.iter().map(|c| c.id).collect()).unwrap_or_default();
+        let shown: Vec<&str> = v["result"]["model"]["constraints"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(shown, declared, "{}", spec.id);
     }
+}
+
+/// A request breaking a published constraint names it in `details.constraint`.
+#[test]
+fn constraint_violations_name_the_published_constraint() {
+    let Some(video) = builtin_default(ProviderId::Gemini, Operation::VideoGenerate) else { return };
+    let Some(rules) = video.validate else { return };
+    let sandbox = Sandbox::new();
+    let v = run(iris(&sandbox).args(["models", "show", video.id, "--json"])).json();
+    let constraints = v["result"]["model"]["constraints"].as_array().unwrap().clone();
+    assert_eq!(constraints.len(), rules.constraints.len());
+    let high = constraints.iter().find(|c| c["id"] == "high_resolution_requires_duration_8").unwrap();
+    assert_eq!(high["options"], serde_json::json!(["resolution", "duration"]));
+    assert_eq!(high["inputs"], serde_json::json!([]));
+    assert!(high["description"].as_str().unwrap().contains("1080p"));
+    let human = run(iris(&sandbox).args(["models", "show", video.id]));
+    assert!(human.stdout.contains("[high_resolution_requires_duration_8]"), "{}", human.stdout);
+
+    let out = run(iris(&sandbox).args([
+        "video",
+        "generate",
+        "x",
+        "--resolution",
+        "1080p",
+        "--duration",
+        "4",
+        "--dry-run",
+        "--json",
+    ]));
+    assert_nothing_sent(&out, "invalid_argument", 2);
+    let v = out.json();
+    assert_eq!(v["error"]["details"]["constraint"], "high_resolution_requires_duration_8", "{v}");
+    assert_eq!(v["error"]["details"]["option"], "duration");
 }
 
 // ----- jobs from an earlier process --------------------------------------------------------
