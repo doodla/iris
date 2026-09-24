@@ -184,8 +184,8 @@ async fn run_checked(
             .with_retryable(Some(false))
             .with_detail("charge_possible", true)
             .with_hint(
-                "the provider may still have processed (and billed) the request; Iris did not retry it. Check \
-                 your provider usage before running the command again",
+                "the provider may still have processed (and billed) the request; Iris did not retry it. \
+                 Check your provider usage before running the command again",
             ));
         }
     };
@@ -310,14 +310,12 @@ fn save_all(
                     Ok(artifact) => {
                         let wanted = requested
                             .map_or("the requested location".to_string(), |p| p.display().to_string());
-                        warnings.push(Warning::new(
-                        WARNING_SAVED_ELSEWHERE,
-                        format!(
-                            "image {index} could not be saved to {wanted} ({}); it was saved to {} instead so \
-                             the paid output is not lost",
+                        let message = format!(
+                            "image {index} could not be saved to {wanted} ({}); it was saved to {} \
+                             instead so the paid output is not lost",
                             e.message, artifact.path
-                        ),
-                    ));
+                        );
+                        warnings.push(Warning::new(WARNING_SAVED_ELSEWHERE, message));
                         saving.elsewhere.push(artifact.path.clone());
                         saving.saved.push(artifact);
                         continue;

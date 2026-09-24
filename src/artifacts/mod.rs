@@ -26,7 +26,7 @@ pub mod media;
 pub mod paths;
 
 pub use download::{DownloadDecision, RecordedFile, copy_local, decide_download, is_intact};
-pub use fallback::{UNSAVED_DIR, save_unsaved, unsaved_dir};
+pub use fallback::save_unsaved;
 pub use finalize::{
     FinalizeMode, PartFile, SaveOutcome, SavedArtifact, already_present_warning, build_artifact,
     finalize_download, place, save_image, sha256_bytes, sha256_file,

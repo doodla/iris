@@ -22,10 +22,10 @@ use super::media;
 
 /// Directory under the state directory that holds paid outputs Iris could not save
 /// where they were requested.
-pub const UNSAVED_DIR: &str = "unsaved";
+const UNSAVED_DIR: &str = "unsaved";
 
 /// `<state_dir>/unsaved`.
-pub fn unsaved_dir(state_dir: &Path) -> PathBuf {
+fn unsaved_dir(state_dir: &Path) -> PathBuf {
     state_dir.join(UNSAVED_DIR)
 }
 
