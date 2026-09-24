@@ -334,8 +334,8 @@ async fn a_new_context_resumes_a_job_submitted_by_an_earlier_one() {
 }
 
 #[tokio::test]
-async fn expired_outputs_map_to_artifact_expired() {
-    // The file host answers 410.
+async fn outputs_are_artifact_expired_only_on_410_or_after_the_retention_period() {
+    // The file host answers 410: gone for good.
     let f = Fixture::new().await;
     Mock::given(method("GET"))
         .and(path(FILE_PATH))
@@ -351,22 +351,90 @@ async fn expired_outputs_map_to_artifact_expired() {
     assert_eq!(rec.status(), JobStatus::Succeeded);
     assert_eq!(rec.outputs()[0].download_state, DownloadState::Expired);
 
-    // Retention already passed: no request at all.
+    // A 403 inside the retention period is a retryable download failure; the
+    // output stays re-downloadable and a later download works.
     let f = Fixture::new().await;
-    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200)).expect(0).mount(&f.server).await;
+    Mock::given(method("GET"))
+        .and(path(FILE_PATH))
+        .respond_with(ResponseTemplate::new(403))
+        .up_to_n_times(1)
+        .with_priority(1)
+        .mount(&f.server)
+        .await;
+    f.mount_video(1).await;
+    f.gemini.videos().push_poll(Ok(remote_success(&f.uri())));
+    let ctx = f.ctx();
+    let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::DownloadFailed);
+    assert_eq!(e.retryable, Some(true));
+    assert_eq!(e.provider_status, Some(403));
+    assert_eq!(e.job_status, Some(JobStatus::Succeeded));
+    let id = e.job_id.clone().unwrap();
+    assert!(e.hint.as_deref().unwrap().contains(&format!("iris jobs download {id}")), "{e:?}");
+    let rec = store(&f.sandbox).load(&JobId::parse(&id).unwrap()).unwrap();
+    assert_eq!(rec.outputs()[0].download_state, DownloadState::Failed);
+    let res = jobs::status(&ctx, &id, true, &mut w).await.unwrap();
+    assert_eq!(res.next_steps, vec![format!("iris jobs download {id}")]);
+    let res = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
+    assert_eq!(res.job.outputs[0].download_state, DownloadState::Downloaded);
+    assert_eq!(f.submits(), 1);
+
+    // Past the retention period the fetch is still attempted (the provider may keep
+    // outputs longer); only then does a 404 mean the output is gone.
+    let past_retention = || {
+        Arc::new(FakeProvider {
+            video: Some(FakeVideo { retention: Some(Duration::ZERO), ..FakeVideo::default() }),
+            ..FakeProvider::gemini()
+        })
+    };
+    let f = Fixture::new().await;
+    Mock::given(method("GET"))
+        .and(path(FILE_PATH))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&f.server)
+        .await;
+    let gemini = past_retention();
+    gemini.videos().push_poll(Ok(remote_success(&f.uri())));
+    let ctx = context(f.settings(), vec![gemini]);
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    let mut w = Vec::new();
+    let status = jobs::status(&ctx, &id, true, &mut w).await.unwrap();
+    assert_eq!(status.job.status, JobStatus::Succeeded);
+    let warning = w.iter().find(|w| w.code == "retention_limited").unwrap();
+    assert!(warning.message.contains("may already be deleted"), "{}", warning.message);
+    let e = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::ArtifactExpired);
+    assert_eq!(e.retryable, Some(false));
+    assert_eq!(e.provider_status, Some(404));
+    let rec = store(&f.sandbox).load(&JobId::parse(&id).unwrap()).unwrap();
+    assert_eq!(rec.outputs()[0].download_state, DownloadState::Expired);
+
+    // Without a documented retention, a 404 never proves the output is gone.
+    let f = Fixture::new().await;
+    Mock::given(method("GET"))
+        .and(path(FILE_PATH))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&f.server)
+        .await;
     let gemini = Arc::new(FakeProvider {
-        video: Some(FakeVideo { retention: Some(Duration::ZERO), ..FakeVideo::default() }),
+        video: Some(FakeVideo { retention: None, ..FakeVideo::default() }),
         ..FakeProvider::gemini()
     });
     gemini.videos().push_poll(Ok(remote_success(&f.uri())));
     let ctx = context(f.settings(), vec![gemini]);
-    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
-    let status = jobs::status(&ctx, &id, true, &mut w).await.unwrap();
-    assert_eq!(status.job.status, JobStatus::Succeeded);
-    tokio::time::sleep(Duration::from_millis(1100)).await;
-    let e = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap_err();
-    assert_eq!(e.code, ErrorCode::ArtifactExpired);
-    assert_eq!(e.retryable, Some(false));
+    let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
+    assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(true)));
+    assert!(e.hint.as_deref().unwrap().contains("documents no retention period"), "{e:?}");
+
+    // ... and if the host still serves the file, it is saved.
+    let f = Fixture::new().await;
+    f.mount_video(1).await;
+    let gemini = past_retention();
+    gemini.videos().push_poll(Ok(remote_success(&f.uri())));
+    let ctx = context(f.settings(), vec![gemini]);
+    let res = completed(video::run(&ctx, vargs("x"), &mut w).await.unwrap());
+    assert_eq!(res.job.outputs[0].download_state, DownloadState::Downloaded);
 }
 
 #[tokio::test]

@@ -257,7 +257,14 @@ pub async fn poll(remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus
     let call = client::call(RetryClass::IdempotentRead, ctx.timeouts.poll);
     let resp = match ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), client::classify).await {
         Ok(resp) => resp,
-        Err(HttpError::Error(e)) if e.provider_status == Some(404) => return Ok(RemoteStatus::Gone),
+        Err(HttpError::Error(e)) if e.provider_status == Some(404) => {
+            let google_not_found =
+                e.provider_code.as_deref().is_some_and(|c| c.split(':').next() == Some("NOT_FOUND"));
+            let error = operation_not_found(e, remote_id);
+            // Only Google's own NOT_FOUND answer says the operation is unknown; any
+            // other 404 (an HTML page, a proxy, a wrong base URL) is just an error.
+            return if google_not_found { Ok(RemoteStatus::Gone { error }) } else { Err(error) };
+        }
         Err(e) => return Err(e.into_iris().with_remote_operation(remote_id)),
     };
     let request_id = client::request_id(&resp);
@@ -272,6 +279,20 @@ pub async fn poll(remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus
         .with_remote_operation(remote_id)
     })?;
     Ok(interpret(op, remote_id))
+}
+
+/// A 404 on a status request. Operations stay pollable for the provider's
+/// retention period, so inside it a 404 means the request did not reach the
+/// project that owns the job: the error (still `permission_denied`, not retryable
+/// as is) keeps the provider's status, code, and request id, and says what to check.
+fn operation_not_found(e: IrisError, remote_id: &str) -> IrisError {
+    let mut e = e.with_remote_operation(remote_id).with_hint(
+        "the job itself is unaffected; check that GEMINI_API_KEY belongs to the Google Cloud project that \
+         submitted this job, and that the Gemini base URL (IRIS_GEMINI_BASE_URL / providers.gemini.base_url) is \
+         the API the job was submitted through, then check the job again",
+    );
+    e.message = "the Gemini API answered the status request with not found (HTTP 404)".to_string();
+    e
 }
 
 /// Map a finished or running operation to [`RemoteStatus`].

@@ -144,8 +144,16 @@ pub enum RemoteStatus {
     Failed {
         error: IrisError,
     },
-    /// The provider no longer knows the operation (retention passed).
-    Gone,
+    /// The provider answered that it does not know the operation (for Google, an
+    /// RPC error with status `NOT_FOUND`). That proves the job is gone only once the
+    /// provider's retention period since submission has passed; earlier it points
+    /// at a wrong key, project, or base URL. The job record decides (see
+    /// `JobRecord::apply_poll`). `error` carries the provider's evidence (status,
+    /// code, request id) and is phrased for the not-yet-expired case, with a hint on
+    /// what to check.
+    Gone {
+        error: IrisError,
+    },
 }
 
 /// Whether the current account can use a model, from a free metadata call.

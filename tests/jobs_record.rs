@@ -260,10 +260,11 @@ fn poll_success_records_outputs_usage_and_retention() {
         }
     );
     assert_eq!(rec.status(), JobStatus::Succeeded);
-    assert_eq!(rec.completed_at(), Some(ts(100)));
-    assert_eq!(rec.remote_expires_at(), Some(ts(100 + 2 * 24 * 3600)));
-    assert!(!rec.remote_expired(ts(100 + 2 * 24 * 3600)));
-    assert!(rec.remote_expired(ts(100 + 2 * 24 * 3600 + 1)));
+    assert_eq!(rec.completed_at(), Some(ts(100)), "when Iris observed completion");
+    // Retention counts from submission (ts(1)), not from when Iris happened to poll.
+    assert_eq!(rec.remote_expires_at(), Some(ts(1 + 2 * 24 * 3600)));
+    assert!(!rec.remote_expired(ts(2 * 24 * 3600)));
+    assert!(rec.remote_expired(ts(1 + 2 * 24 * 3600)));
     assert_eq!(rec.usage(), Some(&usage));
     assert_eq!(rec.outputs().len(), 1);
     let out = &rec.outputs()[0];
@@ -293,11 +294,66 @@ fn poll_failure_and_gone() {
     assert_eq!(body.code, ErrorCode::ContentBlocked);
     assert_eq!(body.remote_operation_id.as_deref(), Some("models/veo-test/operations/op123"));
 
+    // Without a known retention, the provider's "not found" is final.
     let mut gone = running_record();
-    assert_eq!(gone.apply_poll(RemoteStatus::Gone, None, ts(50)).unwrap(), PollApplied::Expired);
+    assert_eq!(gone.apply_poll(not_found(), None, ts(50)).unwrap(), PollApplied::Expired);
     assert_eq!(gone.status(), JobStatus::Expired);
     assert_eq!(gone.error().unwrap().code, ErrorCode::ArtifactExpired);
     assert_eq!(gone.completed_at(), Some(ts(50)));
+}
+
+/// The adapter's "operation not found" answer (a Google NOT_FOUND 404).
+fn not_found() -> RemoteStatus {
+    RemoteStatus::Gone {
+        error: IrisError::new(ErrorCode::PermissionDenied, "not found (HTTP 404)")
+            .with_retryable(Some(false))
+            .with_provider(ProviderId::Gemini)
+            .with_provider_status(404)
+            .with_provider_code("NOT_FOUND")
+            .with_provider_request_id(Some("req-404".into()))
+            .with_detail("provider_message", "Operation not found.")
+            .with_hint("check the key's project and the base URL"),
+    }
+}
+
+#[test]
+fn not_found_means_expired_only_after_the_retention_period_since_submission() {
+    let retention = Some(Duration::from_secs(2 * 24 * 3600));
+    let submitted = ts(1);
+    let until = ts(1 + 2 * 24 * 3600);
+
+    // Well inside the retention period: nothing changes, the error comes back.
+    let mut rec = running_record();
+    assert_eq!(rec.submitted_at(), Some(submitted));
+    let before = serde_json::to_value(&rec).unwrap();
+    let err = rec.apply_poll(not_found(), retention, ts(60)).unwrap_err();
+    assert_eq!(serde_json::to_value(&rec).unwrap(), before, "the record is untouched");
+    assert_eq!(rec.status(), JobStatus::Running);
+    assert_eq!(err.code, ErrorCode::PermissionDenied);
+    assert_eq!(err.retryable, Some(false));
+    assert_eq!((err.provider, err.provider_status), (Some(ProviderId::Gemini), Some(404)));
+    assert_eq!(err.job_id.as_deref(), Some(rec.job_id().as_str()));
+    assert_eq!(err.job_status, Some(JobStatus::Running));
+    assert_eq!(err.remote_operation_id.as_deref(), Some("models/veo-test/operations/op123"));
+    assert!(err.message.contains(&until.to_string()), "{}", err.message);
+    assert_eq!(err.hint.as_deref(), Some("check the key's project and the base URL"));
+    // One second before the end of the period, still not expired.
+    assert!(rec.apply_poll(not_found(), retention, ts(2 * 24 * 3600)).is_err());
+
+    // Once the period has passed: expired, keeping the provider's evidence.
+    let applied = rec.apply_poll(not_found(), retention, until).unwrap();
+    assert_eq!(applied, PollApplied::Expired);
+    assert_eq!(rec.status(), JobStatus::Expired);
+    assert_eq!(rec.completed_at(), Some(until));
+    let body = rec.error().unwrap();
+    assert_eq!(body.code, ErrorCode::ArtifactExpired);
+    assert_eq!(body.retryable, Some(false));
+    assert_eq!(body.provider, Some(ProviderId::Gemini));
+    assert_eq!(body.provider_status, Some(404));
+    assert_eq!(body.provider_code.as_deref(), Some("NOT_FOUND"));
+    assert_eq!(body.provider_request_id.as_deref(), Some("req-404"));
+    assert_eq!(body.details.as_ref().unwrap()["provider_message"], "Operation not found.");
+    assert!(body.message.contains("retention period"), "{}", body.message);
 }
 
 #[test]

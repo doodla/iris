@@ -8,7 +8,7 @@
 //! submitting --definite rejection--> failed
 //! submitting --ambiguous--> submission_unknown        (also: stale submitting, see SUBMIT_GRACE)
 //! running --poll done+ok--> succeeded   running --poll done+error--> failed
-//! running --poll operation gone--> expired
+//! running --poll "not found" after submitted_at + retention--> expired
 //! succeeded: outputs[i].download_state pending -> downloaded | failed | expired
 //! ```
 //!
@@ -519,8 +519,9 @@ impl JobRecord {
     pub fn submitted_at(&self) -> Option<Timestamp> {
         self.submitted_at
     }
-    /// When the job reached a terminal status (`succeeded`, `failed`, `expired`,
-    /// `submission_unknown`); `None` while `submitting` or `running`.
+    /// When Iris observed that the job reached a terminal status (`succeeded`,
+    /// `failed`, `expired`, `submission_unknown`), not when the provider finished it;
+    /// `None` while `submitting` or `running`.
     pub fn completed_at(&self) -> Option<Timestamp> {
         self.completed_at
     }
@@ -534,7 +535,8 @@ impl JobRecord {
     pub fn provider_request_id(&self) -> Option<&str> {
         self.provider_request_id.as_deref()
     }
-    /// Estimated time after which the provider no longer serves the outputs.
+    /// Earliest time the provider may stop serving the outputs: submission time plus
+    /// the provider's documented retention (the provider may keep them longer).
     pub fn remote_expires_at(&self) -> Option<Timestamp> {
         self.remote_expires_at
     }
@@ -589,9 +591,10 @@ impl JobRecord {
         matches!(self.status, JobStatus::Submitting | JobStatus::Running)
     }
 
-    /// True if the provider's retention window (`remote_expires_at`) has passed.
+    /// True once `now` has reached `remote_expires_at` (the provider may have
+    /// deleted the outputs). Unknown retention is never "expired".
     pub fn remote_expired(&self, now: Timestamp) -> bool {
-        self.remote_expires_at.is_some_and(|t| now > t)
+        self.remote_expires_at.is_some_and(|t| now >= t)
     }
 
     // ----- submission --------------------------------------------------------
@@ -688,10 +691,14 @@ impl JobRecord {
     ///
     /// * `Running` → stays `running`, `last_checked_at = now`.
     /// * `Succeeded` → `succeeded`, outputs recorded as pending downloads, usage
-    ///   recorded, `remote_expires_at = now + retention` when the provider documents
-    ///   a retention period.
+    ///   recorded, `remote_expires_at = submitted_at + retention` when the provider
+    ///   documents a retention period (the earliest time the provider may delete
+    ///   the outputs; the observed completion time if `submitted_at` is missing).
     /// * `Failed` → `failed` with the provider's error.
-    /// * `Gone` → `expired`.
+    /// * `Gone` → `expired`, but only once `now` has reached `submitted_at +
+    ///   retention` (or the retention is unknown). Earlier, the provider's "not
+    ///   found" cannot mean the job is gone: nothing changes and the provider's
+    ///   error is returned (not retryable as is), carrying this job's identifiers.
     ///
     /// A record that is already terminal (another process got there first) is left
     /// unchanged ([`PollApplied::AlreadyTerminal`]). A record without an operation
@@ -714,6 +721,24 @@ impl JobRecord {
                 )));
             }
         }
+        let retained_until =
+            retention.and_then(|r| self.submitted_at.unwrap_or(self.created_at).checked_add(r).ok());
+        if let RemoteStatus::Gone { error } = &status
+            && let Some(until) = retained_until.filter(|until| now < *until)
+        {
+            let mut e = error.clone().with_job(self.job_id.to_string(), Some(self.status));
+            e.message = format!(
+                "{}; the provider keeps this job at least until about {until}, so Iris does not treat it as \
+                 expired and leaves it {}",
+                e.message, self.status
+            );
+            if e.remote_operation_id.is_none()
+                && let Some(remote) = &self.remote_operation_id
+            {
+                e = e.with_remote_operation(remote.clone());
+            }
+            return Err(e.with_retryable(Some(false)));
+        }
         self.last_checked_at = Some(now);
         self.updated_at = now;
         Ok(match status {
@@ -727,7 +752,8 @@ impl JobRecord {
                     .map(|(i, o)| JobOutput::pending(i as u32, o.uri, o.media_type))
                     .collect();
                 self.usage = usage.map(Preserved::new);
-                self.remote_expires_at = retention.and_then(|r| now.checked_add(r).ok());
+                self.remote_expires_at =
+                    retention.and_then(|r| self.submitted_at.unwrap_or(now).checked_add(r).ok());
                 self.error = None;
                 PollApplied::Succeeded { warnings }
             }
@@ -737,14 +763,27 @@ impl JobRecord {
                 self.error = Some(self.error_body(&error));
                 PollApplied::Failed
             }
-            RemoteStatus::Gone => {
+            RemoteStatus::Gone { error: evidence } => {
                 self.status = JobStatus::Expired;
                 self.completed_at = Some(now);
-                let error = IrisError::new(
-                    ErrorCode::ArtifactExpired,
-                    "the provider no longer has this operation (its retention period has passed); \
-                     the outputs cannot be retrieved",
-                );
+                let message = match retained_until {
+                    Some(until) => format!(
+                        "the provider no longer has this operation, and its retention period (until about \
+                         {until}) has passed; the outputs cannot be retrieved"
+                    ),
+                    None => "the provider no longer has this operation; the outputs cannot be retrieved"
+                        .to_string(),
+                };
+                let mut error =
+                    IrisError::new(ErrorCode::ArtifactExpired, message).with_retryable(Some(false));
+                // Keep the provider's evidence (status, code, request id, message).
+                error.provider = evidence.provider;
+                error.provider_status = evidence.provider_status;
+                error.provider_code = evidence.provider_code.clone();
+                error.provider_request_id = evidence.provider_request_id.clone();
+                if let Some(message) = evidence.details.get("provider_message") {
+                    error = error.with_detail("provider_message", message.clone());
+                }
                 self.error = Some(self.error_body(&error));
                 PollApplied::Expired
             }

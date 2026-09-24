@@ -101,7 +101,7 @@ $ iris --json version
   "created_at": "2026-09-24T16:13:32Z", "submitted_at": "2026-09-24T16:13:32Z",
   "updated_at": "2026-09-24T16:13:34Z", "completed_at": "2026-09-24T16:13:34Z",
   "last_checked_at": "2026-09-24T16:13:34Z",
-  "remote_expires_at": "2026-09-26T16:13:34Z",
+  "remote_expires_at": "2026-09-26T16:13:32Z",
   "outputs": [
     {
       "index": 0, "media_type": "video/mp4", "download_state": "downloaded",
@@ -344,6 +344,12 @@ A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retry
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
 errors are not charged. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
 with `retryable: false` and `details.charge_possible: true`.
+
+For job outputs, `artifact_expired` means the output is gone for good: the file host answered 410,
+or 403/404 after the provider's retention period (`job.remote_expires_at`). A 403/404 before that
+is `download_failed` with `retryable: true`, and a status check that finds the operation missing
+inside the retention period is `permission_denied` with `provider_status: 404` while the job stays
+`running` (see [jobs.md](jobs.md#retention-and-expiry)).
 
 Provider error strings and HTTP-status-specific provider codes are **never** the public taxonomy —
 they are mapped to one of the codes above by each adapter (see

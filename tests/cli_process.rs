@@ -138,21 +138,27 @@ fn store(sandbox: &Sandbox) -> JobStore {
 }
 
 fn create_running(sandbox: &Sandbox) -> JobId {
-    let mut rec = JobRecord::new(new_job(sandbox), iris::jobs::now()).unwrap();
+    create_running_at(sandbox, iris::jobs::now())
+}
+
+/// A job created and submitted at `at`.
+fn create_running_at(sandbox: &Sandbox, at: jiff::Timestamp) -> JobId {
+    let mut rec = JobRecord::new(new_job(sandbox), at).unwrap();
     rec.mark_submitted(
         &SubmittedOperation {
             remote_id: "models/veo-test-model/operations/op1".into(),
             provider_request_id: None,
         },
-        iris::jobs::now(),
+        at,
     )
     .unwrap();
     store(sandbox).create(&rec).unwrap();
     rec.job_id().clone()
 }
 
+/// A job submitted and finished at `at`.
 fn create_succeeded(sandbox: &Sandbox, uri: &str, retention: Duration, at: jiff::Timestamp) -> JobId {
-    let id = create_running(sandbox);
+    let id = create_running_at(sandbox, at);
     store(sandbox).update(&id, |r| r.apply_poll(remote_success(uri), Some(retention), at)).unwrap();
     id
 }
@@ -591,16 +597,19 @@ async fn a_new_process_downloads_a_finished_job_and_repeats_safely() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn expired_outputs_are_reported_as_artifact_expired() {
+async fn a_404_means_artifact_expired_only_after_the_retention_period() {
     let sandbox = Sandbox::new();
     let server = MockServer::start().await;
-    Mock::given(method("GET")).respond_with(ResponseTemplate::new(404)).expect(1).mount(&server).await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(404)).expect(2).mount(&server).await;
     let uri = format!("{}/v1beta/files/abc:download", server.uri());
-    let gone = create_succeeded(&sandbox, &uri, Duration::from_secs(48 * 3600), iris::jobs::now());
+    let recent = create_succeeded(&sandbox, &uri, Duration::from_secs(48 * 3600), iris::jobs::now());
     let past = jiff::Timestamp::from_second(iris::jobs::now().as_second() - 3 * 86400).unwrap();
     let retention_passed = create_succeeded(&sandbox, &uri, Duration::from_secs(48 * 3600), past);
 
-    for id in [&gone, &retention_passed] {
+    for (id, code, state) in [
+        (&recent, "download_failed", iris::domain::DownloadState::Failed),
+        (&retention_passed, "artifact_expired", iris::domain::DownloadState::Expired),
+    ] {
         let out = tokio::task::block_in_place(|| {
             run(iris(&sandbox)
                 .args(["jobs", "download", id.as_str(), "--json"])
@@ -609,11 +618,12 @@ async fn expired_outputs_are_reported_as_artifact_expired() {
         });
         assert_eq!(out.code, 1, "{}", out.stdout);
         let v = out.json();
-        assert_eq!(v["error"]["code"], "artifact_expired");
+        assert_eq!(v["error"]["code"], code);
+        assert_eq!(v["error"]["retryable"], code == "download_failed");
         assert_eq!(v["error"]["job_status"], "succeeded");
         let rec = store(&sandbox).load(id).unwrap();
         assert_eq!(rec.status(), JobStatus::Succeeded, "the job itself stays succeeded");
-        assert_eq!(rec.outputs()[0].download_state, iris::domain::DownloadState::Expired);
+        assert_eq!(rec.outputs()[0].download_state, state);
     }
 }
 

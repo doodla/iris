@@ -97,6 +97,18 @@ machine-readable contract for agents.
   `download_failed` and a hint, and a later download with a corrected base URL succeeds.
   Previously such a job was recorded as `failed` and could not be recovered.
 
+- Veo retention counts from submission: `remote_expires_at` is `submitted_at` plus the documented
+  retention, and `retention_limited` says the outputs are kept "at least until about" that time.
+  `completed_at` is documented as the time Iris observed completion.
+- A 404 while checking a running Veo job expires it only when Google answers `NOT_FOUND` after the
+  retention period; any other 404, or an earlier one, leaves the job `running` (a
+  `status_refresh_failed` warning from `jobs status`; `permission_denied` with
+  `provider_status: 404` and a hint from `jobs wait`). An expired job's error keeps the provider's
+  status and code.
+- Downloads always ask the file host instead of refusing on the local retention estimate. 410 is
+  `artifact_expired`; 403/404 are `artifact_expired` only after the retention period and a
+  retryable `download_failed` (output left re-downloadable) before it.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

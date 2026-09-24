@@ -247,7 +247,7 @@ async fn json_and_html_error_documents_served_as_200_are_rejected_and_not_writte
 }
 
 #[tokio::test]
-async fn gone_artifacts_map_to_artifact_expired_without_retry() {
+async fn refused_or_gone_artifacts_are_not_retried_and_only_410_is_artifact_expired() {
     for status in [403u16, 404, 410] {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -265,8 +265,14 @@ async fn gone_artifacts_map_to_artifact_expired_without_retry() {
         assert!(body_snippet.chars().count() <= 501, "snippet is bounded");
         assert_eq!(server.received_requests().await.unwrap().len(), 1);
         let e = err.into_iris();
-        assert_eq!(e.code, ErrorCode::ArtifactExpired);
         assert_eq!(e.provider_status, Some(status));
+        if status == 410 {
+            assert_eq!((e.code, e.retryable), (ErrorCode::ArtifactExpired, Some(false)));
+        } else {
+            // Whether a 403/404 means "gone" depends on the provider's retention,
+            // which the caller decides (see docs/jobs.md).
+            assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(true)), "{status}");
+        }
     }
 }
 

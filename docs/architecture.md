@@ -98,7 +98,8 @@ diagnosable local record (`submission_unknown`) instead of silence. This split i
 recovery for image calls: the provider itself gives image generation no operation id to recover.
 
 `RemoteStatus` is `Running { progress }`, `Succeeded { outputs, usage, warnings }`,
-`Failed { error }`, or `Gone` (the provider no longer knows the operation — retention passed) —
+`Failed { error }`, or `Gone { error }` (the provider says it does not know the operation; the job
+record turns that into `expired` only once the retention period since submission has passed) —
 the same shape regardless of provider, so `app::jobs` drives the poll loop once, independent of
 which provider a job belongs to. There is no `cancel` method on `VideoProvider` and no `jobs
 cancel` command: no provider Iris implements offers a way to cancel a job it accepted, so nothing

@@ -248,13 +248,65 @@ fn provider_side_outcomes_of_a_running_job_are_reported_by_later_processes() {
     assert!(v["error"]["hint"].as_str().unwrap().contains("not charged"), "{v}");
     veo.assert_no_credential_leaks();
 
-    // The operation is gone at the provider.
+    veo.assert_no_credential_leaks();
+}
+
+#[test]
+fn a_poll_404_expires_a_job_only_when_google_says_not_found_after_the_retention_period() {
     let sb = Sandbox::new();
     let veo = VeoMock::start();
     let id = submit_detached(&sb, &veo, &[]);
-    veo.operation.set(google_error(404, "NOT_FOUND", "Operation not found.", json!([])));
-    sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "artifact_expired");
-    assert_eq!(sb.record(&id)["status"], "expired");
+
+    // A 404 that is not Google's (a web server or proxy page, e.g. a wrong base
+    // URL), and Google's own NOT_FOUND seconds after submission: the job stays
+    // running. `jobs status` reports a refresh failure; `jobs wait` stops with the
+    // error, keeping the provider's status and the operation id.
+    let html =
+        wiremock::ResponseTemplate::new(404).set_body_raw("<html><h1>Not Found</h1></html>", "text/html");
+    let not_found = google_error(404, "NOT_FOUND", "Operation not found.", json!([]));
+    for answer in [html.clone(), not_found.clone()] {
+        veo.operation.set(answer);
+        let v = sb.iris().gemini(&veo.api).args(["jobs", "status", &id, "--json"]).run().ok();
+        assert_eq!(job_of(&v)["status"], "running", "{v}");
+        assert!(warning_codes(&v).contains(&"status_refresh_failed".to_string()), "{v}");
+
+        let v = sb
+            .iris()
+            .gemini(&veo.api)
+            .args(["jobs", "wait", &id, "--json"])
+            .run()
+            .err(3, "permission_denied");
+        let error = &v["error"];
+        assert_eq!(error["job_status"], "running");
+        assert_eq!(error["provider"], "gemini");
+        assert_eq!(error["provider_status"], 404);
+        assert_eq!(error["remote_operation_id"], veo.op_name.as_str());
+        let hint = error["hint"].as_str().unwrap();
+        assert!(hint.contains("GEMINI_API_KEY") && hint.contains("base URL"), "{hint}");
+        let rec = sb.record(&id);
+        assert_eq!(rec["status"], "running", "an early 404 never ends the job");
+        assert!(rec["error"].is_null() && rec["completed_at"].is_null(), "{rec}");
+    }
+
+    // Three days later (past the 2-day retention), a non-Google 404 still proves nothing.
+    backdate_record(&sb, &id, 3);
+    veo.operation.set(html);
+    sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(3, "permission_denied");
+    assert_eq!(sb.record(&id)["status"], "running");
+
+    // Google's NOT_FOUND past the retention period: the job is expired, and the
+    // record keeps the provider's evidence.
+    veo.operation.set(not_found);
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "artifact_expired");
+    assert_eq!(v["error"]["job_status"], "expired");
+    assert_eq!(v["error"]["provider"], "gemini");
+    assert_eq!(v["error"]["provider_status"], 404);
+    let rec = sb.record(&id);
+    assert_eq!(rec["status"], "expired");
+    assert_eq!(rec["error"]["provider"], "gemini");
+    assert_eq!(rec["error"]["provider_status"], 404);
+    assert_eq!(rec["error"]["provider_code"], "NOT_FOUND");
+    assert!(rec["error"]["message"].as_str().unwrap().contains("retention period"), "{rec}");
     assert_eq!(veo.submits(), 1);
     veo.assert_no_credential_leaks();
 }
@@ -524,7 +576,8 @@ fn an_error_document_served_as_media_is_invalid_media_and_nothing_is_saved() {
 }
 
 /// Shift every `*_at` timestamp of a job record back by `days`, as if the job had
-/// finished that long ago (the retention clock is the only thing that matters).
+/// been submitted (and finished) that long ago (the retention clock counts from
+/// `submitted_at`).
 fn backdate_record(sb: &Sandbox, id: &str, days: i64) {
     let path = sb.record_path(id);
     let mut rec = sb.record(id);
@@ -541,13 +594,42 @@ fn backdate_record(sb: &Sandbox, id: &str, days: i64) {
 }
 
 #[test]
-fn outputs_gone_from_the_file_host_or_past_retention_are_artifact_expired() {
-    // The file host no longer has the file.
+fn a_file_host_403_is_retryable_before_the_retention_period_ends_and_expired_after() {
+    // A 403 seconds after the job succeeded: a retryable download failure, the
+    // output stays re-downloadable, and the next download works.
     let sb = Sandbox::new();
     let veo = VeoMock::start();
     let id = submit_detached(&sb, &veo, &[]);
     veo.succeed();
-    sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--no-download", "--json"]).run().ok();
+    veo.file.set(json_response(403, json!({ "error": "denied" })));
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "download_failed");
+    let error = &v["error"];
+    assert_eq!(error["retryable"], true);
+    assert_eq!(error["job_status"], "succeeded");
+    assert_eq!(error["provider_status"], 403);
+    assert!(error["hint"].as_str().unwrap().contains(&format!("iris jobs download {id}")), "{error}");
+    assert_eq!(veo.file_fetches(), 1, "403 is never retried automatically");
+    let rec = sb.record(&id);
+    assert_eq!(rec["status"], "succeeded");
+    assert_eq!(rec["outputs"][0]["download_state"], "failed");
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "status", &id, "--json"]).run().ok();
+    assert_eq!(v["result"]["next_steps"], json!([format!("iris jobs download {id}")]));
+    assert!(warning_codes(&v).contains(&"retention_limited".to_string()), "{v}");
+    veo.file.set(wiremock::ResponseTemplate::new(200).set_body_raw(veo_video(), "video/mp4"));
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert_video(&job_of(&v)["artifacts"][0], &sb.path(&format!("{id}.mp4")));
+    assert!(files_in(&sb.work()).iter().all(|n| !n.contains("iris-part")), "no partial files");
+    veo.assert_no_credential_leaks();
+
+    // The job was submitted three days ago: past the 2-day retention, Iris still
+    // asks (never a local short-circuit), and a 403/404 then means gone.
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    veo.succeed();
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--no-download", "--json"]).run().ok();
+    assert!(warning_codes(&v).contains(&"retention_limited".to_string()), "{v}");
+    backdate_record(&sb, &id, 3);
     veo.file.set(json_response(404, json!({ "error": "not found" })));
     let v =
         sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(1, "artifact_expired");
@@ -556,24 +638,19 @@ fn outputs_gone_from_the_file_host_or_past_retention_are_artifact_expired() {
     let rec = sb.record(&id);
     assert_eq!(rec["status"], "succeeded", "the job itself stays succeeded");
     assert_eq!(rec["outputs"][0]["download_state"], "expired");
-    assert_eq!(veo.file_fetches(), 1, "404 is never retried");
+    assert_eq!((veo.api_downloads(), veo.file_fetches()), (1, 1), "the download was attempted once");
+    assert_eq!(veo.submits(), 1);
     veo.assert_no_credential_leaks();
 
-    // The job finished three days ago: the 2-day retention has passed, so Iris does
-    // not even ask.
+    // A 410 is gone at once, whatever the retention estimate says.
     let sb = Sandbox::new();
     let veo = VeoMock::start();
     let id = submit_detached(&sb, &veo, &[]);
     veo.succeed();
-    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--no-download", "--json"]).run().ok();
-    assert!(warning_codes(&v).contains(&"retention_limited".to_string()), "{v}");
-    backdate_record(&sb, &id, 3);
-    let v =
-        sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(1, "artifact_expired");
-    assert_eq!(v["error"]["job_status"], "succeeded");
+    veo.file.set(json_response(410, json!({ "error": "gone" })));
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "artifact_expired");
+    assert_eq!(v["error"]["retryable"], false);
     assert_eq!(sb.record(&id)["outputs"][0]["download_state"], "expired");
-    assert_eq!((veo.api_downloads(), veo.file_fetches()), (0, 0), "nothing was requested");
-    assert_eq!(veo.submits(), 1);
     veo.assert_no_credential_leaks();
 }
 

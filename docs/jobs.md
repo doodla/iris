@@ -79,7 +79,7 @@ Real record, captured from a completed job (`<state>/jobs/<job_id>.json`):
   "last_checked_at": "2026-09-24T16:13:34Z",
   "remote_operation_id": "models/veo-3.1-fast-generate-preview/operations/op_mockjob001",
   "provider_request_id": "req_mock_veo-3.1-",
-  "remote_expires_at": "2026-09-26T16:13:34Z",
+  "remote_expires_at": "2026-09-26T16:13:32Z",
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": "4", "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
   "prompt": { "sha256": "c039da7d...", "chars": 31, "text": null },
@@ -113,7 +113,7 @@ lock, so it can never be blocked by a stuck writer.
 submitting --definite rejection (HTTP error, or connection failed before sending)--> failed
 submitting --ambiguous (timeout/reset after sending, unparseable body)--> submission_unknown
 running --poll: done + success--> succeeded        running --poll: done + error--> failed
-running --poll: operation gone (404)--> expired
+running --poll: Google NOT_FOUND (404) after submitted_at + retention--> expired
 succeeded: outputs[i].download_state  pending -> downloaded | failed (retryable) | expired
 ```
 
@@ -218,8 +218,11 @@ Order of decision for each output, under the job's download lock:
    `download_state: failed`) and nothing is requested; the job stays `succeeded`, `next_steps`
    still offer `iris jobs download <id>`, and a later download with a corrected base URL checks
    again. Then stream it from the provider, hashing as it downloads. A non-2xx response is mapped
-   by status, not lumped into one generic failure: 403/404/410 → `artifact_expired` (the provider
-   no longer serves it — retryable is `false`, no point trying again); 401 →
+   by status, not lumped into one generic failure: 410 → `artifact_expired` (the provider no
+   longer serves it — retryable is `false`, no point trying again); 403/404 → `artifact_expired`
+   only once the provider's retention period has passed (`remote_expires_at`), and before that
+   `download_failed` with `retryable: true` and `download_state: failed` (the output stays
+   re-downloadable; see [Retention and expiry](#retention-and-expiry)); 401 →
    `authentication_failed`; 429, or any status whose `Retry-After` exceeds the automatic-wait
    limit, → `rate_limited`; any other status, or a transport failure, → `download_failed`
    (retryable unless the failure is permanent). Separately, a *successful* (2xx) response whose
@@ -277,11 +280,36 @@ $ echo $?
 
 ### Retention and expiry
 
-Veo generally retains outputs for about **2 days** (`remote_expires_at` on the job record, from
-the provider's documented retention). Download before then. A download after expiry — either
-because `remote_expires_at` has passed locally, or because the provider's file host answers
-403/404/410 — is reported as `artifact_expired` (`download_state: expired`), not as a generic
-download failure, so you can tell "gone for good" from "worth retrying."
+Veo retains outputs for about **2 days** after generation. Iris records that as
+`remote_expires_at` = `submitted_at` + the provider's documented retention: the *earliest* time the
+provider may delete them (generation starts at submission), so the `retention_limited` warning
+says the outputs are kept "at least until about" that time. `completed_at` is when Iris
+*observed* the job finish (its first poll after the provider finished), which can be much later
+than the provider finished if nobody polled, so retention is never counted from it. Download
+before `remote_expires_at`.
+
+Iris never refuses a download on its own estimate: `jobs download` and `jobs wait` always ask the
+file host, because the provider may keep the outputs longer. The answer decides:
+
+- 410 → `artifact_expired` (`download_state: expired`, `retryable: false`).
+- 403 or 404 after `remote_expires_at` → `artifact_expired` (`download_state: expired`).
+- 403 or 404 before it → `download_failed` with `retryable: true` (`download_state: failed`, so
+  `next_steps` still offer `iris jobs download <id>`): inside the retention period the output
+  should still exist, so this is a problem worth retrying or investigating (key, base URL,
+  proxy), not proof that it is gone.
+
+So you can tell "gone for good" from "worth retrying."
+
+The same rule protects a job that is still running. Veo operations stay pollable for the retention
+period, so when a status check answers 404, the job becomes `expired` only if the answer is
+Google's own `NOT_FOUND` error **and** `submitted_at` + retention has passed. Any other 404 — an
+HTML page from a web server or proxy, say, because the base URL points somewhere else — and a
+`NOT_FOUND` inside the retention period (for example with a key from a different Google Cloud
+project) leave the job `running`: `jobs status` shows the last known status with a
+`status_refresh_failed` warning, and `jobs wait` stops with the error (`permission_denied`, exit 3,
+keeping `provider_status: 404`, `provider`, and `remote_operation_id`, with a hint to check the
+key's project and the base URL). When a job does become `expired`, its recorded error keeps the
+provider's status, code, and request id.
 
 ## Local deletion vs. remote state
 

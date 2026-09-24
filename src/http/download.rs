@@ -74,8 +74,10 @@ pub struct Downloaded {
 #[derive(Debug, Clone)]
 pub enum DownloadError {
     /// The file host answered with a non-success status (after retries where the
-    /// status is retryable). Callers map 403/404/410 of a previously succeeded job
-    /// to `artifact_expired` ([`DownloadError::into_iris`] does so).
+    /// status is retryable). [`DownloadError::into_iris`] maps 410 to
+    /// `artifact_expired` and 403/404 to a retryable `download_failed`: whether a
+    /// 403/404 means the output is gone depends on the provider's retention, which
+    /// only the caller knows.
     Status {
         /// HTTP status of the failing hop.
         status: u16,
@@ -128,7 +130,9 @@ pub enum DownloadError {
 
 impl DownloadError {
     /// Map to the public taxonomy (see docs/json-contract.md and docs/jobs.md):
-    /// 403/404/410 → `artifact_expired`; 401 → `authentication_failed`;
+    /// 410 → `artifact_expired`; 403/404 → `download_failed`, retryable (callers
+    /// that know the output's retention report `artifact_expired` once it has
+    /// passed); 401 → `authentication_failed`;
     /// 429, or any status whose `Retry-After` exceeded the automatic-wait limit →
     /// `rate_limited` with `retry_after`; other statuses, policy refusals and
     /// transport failures → `download_failed` (retryable unless the failure is
@@ -138,10 +142,15 @@ impl DownloadError {
         match self {
             DownloadError::Status { status, body_snippet, retry_after, retry_after_limit, attempts, url } => {
                 let (code, retryable, message) = match status {
-                    403 | 404 | 410 => (
+                    410 => (
                         ErrorCode::ArtifactExpired,
                         Some(false),
                         format!("the file host no longer serves this artifact (HTTP {status})"),
+                    ),
+                    403 | 404 => (
+                        ErrorCode::DownloadFailed,
+                        Some(true),
+                        format!("the file host refused the download (HTTP {status})"),
                     ),
                     401 => (
                         ErrorCode::AuthenticationFailed,
@@ -170,10 +179,8 @@ impl DownloadError {
                     .with_detail("url", url)
                     .with_detail("attempts", attempts);
                 if code == ErrorCode::ArtifactExpired {
-                    err = err.with_hint(
-                        "the provider's retention period has probably passed; the output can no longer be \
-                         downloaded",
-                    );
+                    err = err
+                        .with_hint("the file host says the output is gone; it can no longer be downloaded");
                 }
                 if let Some(after) = retry_after {
                     err = err.with_retry_after(after);
@@ -600,8 +607,13 @@ mod tests {
             attempts: 1,
             url: "https://x/".into(),
         };
-        for s in [403, 404, 410] {
-            assert_eq!(status(s).into_iris().code, ErrorCode::ArtifactExpired, "{s}");
+        assert_eq!(status(410).into_iris().code, ErrorCode::ArtifactExpired);
+        for s in [403, 404] {
+            let e = status(s).into_iris();
+            assert_eq!(
+                (e.code, e.retryable, e.provider_status),
+                (ErrorCode::DownloadFailed, Some(true), Some(s))
+            );
         }
         assert_eq!(status(401).into_iris().code, ErrorCode::AuthenticationFailed);
         assert_eq!(status(429).into_iris().code, ErrorCode::RateLimited);

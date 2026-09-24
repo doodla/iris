@@ -112,7 +112,7 @@ pub async fn status(
             )),
         }
     }
-    warnings.extend(retention_warning(&rec));
+    warnings.extend(retention_warning(&rec, ctx.now()));
     Ok(job_result(&rec))
 }
 
@@ -204,7 +204,7 @@ pub(crate) async fn wait_parsed(
             Ok(job_result(&rec))
         }
         JobStatus::Succeeded => {
-            warnings.extend(retention_warning(&rec));
+            warnings.extend(retention_warning(&rec, ctx.now()));
             Ok(job_result(&rec))
         }
         _ => Err(job_error(&rec)),
@@ -233,17 +233,24 @@ fn has_downloadable(rec: &JobRecord) -> bool {
 }
 
 /// Warning `retention_limited` for a succeeded job with outputs still to download.
-fn retention_warning(rec: &JobRecord) -> Option<Warning> {
+/// `remote_expires_at` is the earliest time the provider may delete them
+/// (submission time plus the documented retention), hence "at least until".
+fn retention_warning(rec: &JobRecord, now: Timestamp) -> Option<Warning> {
     let until = rec.remote_expires_at()?;
     (rec.status() == JobStatus::Succeeded && has_downloadable(rec)).then(|| {
         let id = rec.job_id();
-        Warning::new(
-            "retention_limited",
+        let message = if rec.remote_expired(now) {
             format!(
-                "the provider keeps the outputs of {id} only until about {until}; download them before then with \
-                 `iris jobs download {id}`"
-            ),
-        )
+                "the provider's documented retention for the outputs of {id} ended at about {until}; they may \
+                 already be deleted, but `iris jobs download {id}` still tries"
+            )
+        } else {
+            format!(
+                "the provider keeps the outputs of {id} at least until about {until}; download them before then \
+                 with `iris jobs download {id}`"
+            )
+        };
+        Warning::new("retention_limited", message)
     })
 }
 
@@ -462,8 +469,10 @@ async fn wait_until_terminal(
                 match polled {
                     Ok(status) => {
                         let retention = video.output_retention();
-                        let (updated, applied) =
-                            ctx.store.update(id, |r| r.apply_poll(status, retention, ctx.now()))?;
+                        let (updated, applied) = ctx
+                            .store
+                            .update(id, |r| r.apply_poll(status, retention, ctx.now()))
+                            .map_err(|e| with_job_context(e, &rec))?;
                         rec = updated;
                         report_poll(ctx, &rec, &applied, warnings);
                         if rec.status().is_terminal() {
@@ -623,6 +632,8 @@ async fn download_outputs(
                 record_saved(ctx, id, out.index, saved, warnings)?;
             }
             DownloadDecision::Fetch => {
+                // No local short-circuit on the retention estimate: the provider may
+                // keep outputs longer, so the file host's answer decides.
                 // Download trust is decided now, against the base URL configured now:
                 // a refusal fails this output only, never the job, and a later
                 // download with another configuration checks again.
@@ -636,13 +647,6 @@ async fn download_outputs(
                     remote_failure.get_or_insert(e);
                     continue;
                 }
-                let now = ctx.now();
-                if rec.remote_expired(now) {
-                    let e = retention_passed(&rec);
-                    ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;
-                    remote_failure.get_or_insert(e);
-                    continue;
-                }
                 ctx.progress.line(format!("Downloading output {} of job {id}", out.index));
                 match fetch(ctx, out, path, &access).await {
                     Ok(saved) => record_saved(ctx, id, out.index, saved, warnings)?,
@@ -650,6 +654,7 @@ async fn download_outputs(
                     Err(FetchFailure::Local(e)) => return Err(with_job_context(e, &rec)),
                     Err(FetchFailure::Remote(e)) => {
                         let now = ctx.now();
+                        let e = refused_or_gone(e, &rec, now);
                         if e.code == ErrorCode::ArtifactExpired {
                             ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;
                         } else {
@@ -689,17 +694,55 @@ fn record_saved(
     Ok(())
 }
 
-fn retention_passed(rec: &JobRecord) -> IrisError {
-    let until = rec.remote_expires_at().map(|t| t.to_string()).unwrap_or_default();
-    IrisError::new(
-        ErrorCode::ArtifactExpired,
-        format!(
-            "the provider's retention period for the outputs of {} ended at {until}; they can no longer be \
-             downloaded",
-            rec.job_id()
-        ),
-    )
-    .with_retryable(Some(false))
+/// A file host's 403/404 (reported by the downloader as retryable
+/// `download_failed`) means the output is gone only once the provider's retention
+/// period has passed (`remote_expires_at`): then it is `artifact_expired`. Before
+/// that it stays a retryable `download_failed` (the output is re-downloadable),
+/// with a hint on what to check. 410 is already `artifact_expired`.
+fn refused_or_gone(e: IrisError, rec: &JobRecord, now: Timestamp) -> IrisError {
+    let status = e.provider_status;
+    if e.code != ErrorCode::DownloadFailed || !matches!(status, Some(403 | 404)) {
+        return e;
+    }
+    let id = rec.job_id();
+    let status = status.unwrap_or_default();
+    match rec.remote_expires_at() {
+        Some(until) if rec.remote_expired(now) => {
+            let mut gone = IrisError::new(
+                ErrorCode::ArtifactExpired,
+                format!(
+                    "the file host no longer serves this output (HTTP {status}), and the provider's retention \
+                     period for the outputs of {id} ended at about {until}"
+                ),
+            )
+            .with_retryable(Some(false))
+            .with_hint(
+                "the output can no longer be downloaded; getting it again means submitting (and paying for) a \
+                 new job",
+            );
+            gone.provider = e.provider;
+            gone.provider_status = e.provider_status;
+            gone.details = e.details.clone();
+            gone
+        }
+        until => {
+            let why = match until {
+                Some(t) => format!(
+                    "the provider's retention period has not passed (it lasts at least until about {t}), so the \
+                     output should still exist"
+                ),
+                None => {
+                    "the provider documents no retention period, so the output may still exist".to_string()
+                }
+            };
+            let mut e = e.with_retryable(Some(true)).with_hint(format!(
+                "{why}; retry with `iris jobs download {id}` (nothing is regenerated); if it keeps failing, \
+                 check the API key and the base URL"
+            ));
+            e.message = format!("{}; the output is not treated as expired", e.message);
+            e
+        }
+    }
 }
 
 /// Declared output types of the job's model, or the operation's default.

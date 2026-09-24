@@ -626,12 +626,36 @@ async fn done_without_video_or_error_is_a_bad_response() {
 }
 
 #[tokio::test]
-async fn a_vanished_operation_is_gone() {
+async fn only_a_google_not_found_answer_reports_the_operation_gone() {
     let (status, reqs, _server) =
         poll_with(ResponseTemplate::new(404).set_body_json(google_error(404, "NOT_FOUND", "not found")))
             .await;
-    assert!(matches!(status.unwrap(), RemoteStatus::Gone));
+    let RemoteStatus::Gone { error } = status.unwrap() else { panic!("expected Gone") };
     assert_eq!(reqs.len(), 1);
+    // The provider's evidence travels with it, phrased for the not-yet-expired case.
+    assert_eq!(error.provider, Some(ProviderId::Gemini));
+    assert_eq!(error.provider_status, Some(404));
+    assert_eq!(error.provider_code.as_deref(), Some("NOT_FOUND"));
+    assert_eq!(error.remote_operation_id.as_deref(), Some(OPERATION));
+    assert_eq!(error.retryable, Some(false));
+    let hint = error.hint.as_deref().unwrap();
+    assert!(hint.contains("GEMINI_API_KEY") && hint.contains("base URL"), "{hint}");
+
+    // Any other 404 (a proxy's or web server's page, an empty body) is an error, not "gone".
+    for template in [
+        ResponseTemplate::new(404).set_body_raw("<html><body>Not Found</body></html>", "text/html"),
+        ResponseTemplate::new(404),
+        ResponseTemplate::new(404).set_body_json(json!({"error": {"code": 404, "message": "nope"}})),
+    ] {
+        let (status, reqs, _server) = poll_with(template).await;
+        let err = status.unwrap_err();
+        assert_eq!(err.code, ErrorCode::PermissionDenied);
+        assert_eq!(err.provider_status, Some(404));
+        assert_eq!(err.provider, Some(ProviderId::Gemini));
+        assert_eq!(err.remote_operation_id.as_deref(), Some(OPERATION));
+        assert!(err.hint.as_deref().unwrap().contains("base URL"), "{err:?}");
+        assert_eq!(reqs.len(), 1, "a 404 is not retried");
+    }
 }
 
 #[tokio::test]
