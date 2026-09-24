@@ -804,6 +804,10 @@ async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() 
     assert!(planned.starts_with(f.sandbox.path("out").join("iris-").to_str().unwrap()), "{planned}");
     let v = f.run(&["video", "generate", "x", "--dry-run", "--json"]).await.json();
     assert_eq!(v["result"]["outputs"][0], f.sandbox.path("<job_id>.mp4").to_str().unwrap(), "{v}");
+    // The placeholder path of a video plan is normalized like every other planned path.
+    let v = f.run(&["video", "generate", "x", "-d", "a/../out", "--dry-run", "--json"]).await.json();
+    let expected = f.sandbox.path("out").join("<job_id>.mp4");
+    assert_eq!(v["result"]["outputs"][0], expected.to_str().unwrap(), "{v}");
 }
 
 #[tokio::test]

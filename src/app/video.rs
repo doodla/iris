@@ -464,7 +464,10 @@ fn as_uncertain(e: IrisError) -> IrisError {
 }
 
 /// Planned output paths for a dry run, where the job id does not exist yet.
+/// Lexically normalized like every other planned path (`-d a/../out` plans
+/// `<cwd>/out/<job_id>.mp4`), which is the form the real run writes to.
 fn placeholder_outputs(dir: &std::path::Path, media_type: &str, count: u32) -> Vec<String> {
+    let dir = artifacts::paths::normalize_lexically(dir);
     let ext = media::extension_for(media_type).unwrap_or("bin");
     let name = |suffix: String| dir.join(format!("<job_id>{suffix}.{ext}")).display().to_string();
     if count == 1 { vec![name(String::new())] } else { (1..=count).map(|i| name(format!("-{i}"))).collect() }
