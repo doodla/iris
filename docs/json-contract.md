@@ -328,7 +328,8 @@ $ iris image generate "x" --model does-not-exist --json
 `provider` names the provider an error concerns: the one that answered, or, for an error while
 following or downloading a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a
 download failure), the job's provider, even when the error itself is local. A refused
-`jobs delete` identifies the job only by `job_id` and `job_status` (`provider` is `null`).
+`jobs delete` identifies the job only by `job_id` and `job_status`: its `provider` and
+`remote_operation_id` are `null` even when the job has them (`iris jobs status <id>` shows both).
 
 `provider_code` and `details.provider_message` are informational and **unstable** — they come
 from the provider and can change without notice; `code` is Iris's own, stable, public taxonomy.
