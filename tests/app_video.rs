@@ -716,7 +716,10 @@ async fn list_filters_and_delete_refuses_active_jobs_without_force() {
     let ctx = f.ctx();
     let mut w = Vec::new();
     let running = completed(video::run(&ctx, detached("a"), &mut w).await.unwrap()).job.job_id;
-    f.gemini.videos().push_submit(Err(IrisError::new(ErrorCode::InvalidArgument, "rejected")));
+    // A provider's definite rejection (HTTP 400): the job is recorded as failed.
+    f.gemini
+        .videos()
+        .push_submit(Err(IrisError::new(ErrorCode::InvalidArgument, "rejected").with_provider_status(400)));
     let failed = video::run(&ctx, detached("b"), &mut w).await.unwrap_err().job_id.clone().unwrap();
 
     let all = jobs::list(&ctx, &ListFilter::default(), &mut w).unwrap();
@@ -814,6 +817,70 @@ async fn video_validation_and_dry_run_happen_before_any_record_or_request() {
     assert_eq!(e.code, ErrorCode::MissingCredentials);
     assert!(e.message.contains("GEMINI_API_KEY"));
     assert!(!f.sandbox.state().join("jobs").exists());
+}
+
+#[tokio::test]
+async fn a_submit_refused_before_sending_leaves_no_job_record() {
+    let f = Fixture::new().await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    // The adapter refuses the request locally (exit 2, no provider status): nothing
+    // was sent, so no job exists and no record is kept.
+    f.gemini.videos().push_submit(Err(IrisError::new(ErrorCode::InvalidArgument, "model id cannot be sent")));
+    let e = video::run(&ctx, detached("x"), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    assert_eq!(e.exit_code(), 2);
+    assert!(e.job_id.is_none(), "no job to point at: {e:?}");
+    let listing = JobStore::new(f.sandbox.state()).list().unwrap();
+    assert!(listing.records.is_empty(), "no record: {:?}", listing.records);
+
+    // A definite provider rejection is a failed job, as before.
+    f.gemini
+        .videos()
+        .push_submit(Err(IrisError::new(ErrorCode::InvalidArgument, "400").with_provider_status(400)));
+    let e = video::run(&ctx, detached("x"), &mut w).await.unwrap_err();
+    assert_eq!(e.job_status, Some(JobStatus::Failed));
+    assert_eq!(JobStore::new(f.sandbox.state()).list().unwrap().records.len(), 1);
+}
+
+#[tokio::test]
+async fn real_runs_check_the_credential_before_creating_output_directories() {
+    let f = Fixture::new().await;
+    let without_key = |out_dir: &std::path::Path| {
+        let mut s = settings_with(
+            &f.sandbox.env_without_keys(),
+            &CliOverrides { out_dir: Some(out_dir.to_path_buf()), ..CliOverrides::default() },
+        );
+        set_base_url(&mut s, ProviderId::Gemini, &f.server.uri());
+        context(s, vec![f.gemini.clone()])
+    };
+    let mut w = Vec::new();
+
+    // video generate: missing_credentials, and -d was not created.
+    let new_dir = f.sandbox.path("new/videos");
+    let e = video::run(&without_key(&new_dir), vargs("x"), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::MissingCredentials);
+    assert!(!f.sandbox.path("new").exists(), "no directory was created");
+    assert!(!f.sandbox.state().join("jobs").exists(), "no record was created");
+
+    // jobs download of a finished job that must be fetched from the provider: the
+    // same, before anything is created.
+    f.mount_video(1).await;
+    let ctx = f.ctx();
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    f.gemini.videos().push_poll(Ok(remote_success(&f.uri())));
+    jobs::status(&ctx, &id, true, &mut w).await.unwrap();
+    let other = f.sandbox.path("other/videos");
+    let e = jobs::download(&without_key(&other), &id, &Target::default(), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::MissingCredentials);
+    assert_eq!(e.job_id.as_deref(), Some(id.as_str()));
+    assert!(!f.sandbox.path("other").exists(), "no directory was created");
+
+    // A local copy of a downloaded output needs no credential.
+    jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
+    let res = jobs::download(&without_key(&other), &id, &Target::default(), &mut w).await.unwrap();
+    assert_eq!(res.job.artifacts[0].path, other.join(format!("{id}.mp4")).to_str().unwrap());
+    assert_eq!(f.submits(), 1);
 }
 
 #[tokio::test]

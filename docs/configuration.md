@@ -25,7 +25,10 @@ $ iris doctor
 
 A missing key for the provider a command needs is `missing_credentials` (exit 3), checked after
 every other local validation and before any network call — so a bad prompt or an unsupported
-option is still reported as such even with no key set. `--dry-run` never requires a credential;
+option is still reported as such even with no key set. `video generate`, `jobs wait`, and
+`jobs download` also check it before creating any output directory (only a fetch from the
+provider's own origin needs it: copying an already downloaded output does not), so a run that
+stops for a missing key leaves nothing behind. `--dry-run` never requires a credential;
 it reports whether one is present without requiring it.
 
 ## Config file

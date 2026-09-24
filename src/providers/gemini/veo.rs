@@ -36,6 +36,13 @@ const UNCERTAIN_HINT: &str = "the provider may have accepted this paid request; 
 /// Longest operation name accepted (they are short in practice).
 const MAX_OPERATION_NAME: usize = 512;
 
+/// The local checks of [`submit`]: a model id that is safe in a URL path and a
+/// request that encodes within the inline size limit. Nothing is sent.
+pub fn validate(req: &VideoRequest) -> Result<(), IrisError> {
+    client::validate_model_id(&req.model)?;
+    encode_request(req).map(|_| ())
+}
+
 /// Submit a Veo job. Returns the operation name as `remote_id`.
 pub async fn submit(req: &VideoRequest, ctx: &ProviderContext) -> Result<SubmittedOperation, IrisError> {
     client::validate_model_id(&req.model)?;

@@ -117,6 +117,13 @@ running --poll: Google NOT_FOUND (404) after submitted_at + retention--> expired
 succeeded: outputs[i].download_state  pending -> downloaded | failed (retryable) | expired
 ```
 
+The record is written only after every local check a real run makes: option and input
+validation, the provider adapter's own checks (for Veo, a model id that is safe in a URL and a
+request within the inline size limit), the credential's presence, and the output directories. A
+request refused locally therefore never leaves a job behind; if the adapter still refuses one
+while submitting (exit 2 with `provider_status: null`, so nothing was sent), the just-created
+record is deleted rather than kept as a `failed` job that was never submitted.
+
 A record still `submitting` more than (the full paid-submission timeout budget + 60 seconds) after
 `created_at` is treated as abandoned — the process that submitted it died inside the uncertainty
 window — and is reported as `submission_unknown` the next time anything touches it.

@@ -132,6 +132,11 @@ machine-readable contract for agents.
   carry the job's `provider`, and `invalid_media` from a job download is `retryable: true` with a
   hint to download again.
 
+- `video generate` runs the adapter's local checks (such as model-id syntax and the inline
+  request size) before writing the job record, and a submission the adapter still refuses before
+  sending no longer leaves a `failed` job. It also checks the credential before creating output
+  directories, as do `jobs wait` and `jobs download` when they must fetch from the provider.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

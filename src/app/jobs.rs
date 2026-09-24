@@ -627,11 +627,26 @@ async fn download_outputs(
     })
     .map_err(|e| with_job_context(e, &rec))?;
     warnings.extend(plan.warnings.iter().cloned());
-    artifacts::preflight_dirs(&plan.paths, true).map_err(|e| with_job_context(e, &rec))?;
 
     let provider = rec.provider();
     let video = video_adapter(ctx, provider).map_err(|e| with_job_context(e, &rec))?;
     let base_url = ctx.settings.provider(provider).base_url.value.clone();
+    let decisions: Vec<DownloadDecision> = rec
+        .outputs()
+        .iter()
+        .zip(&plan.paths)
+        .map(|(out, path)| artifacts::decide_download(out.recorded_file(), path))
+        .collect();
+    // A fetch from the provider's own origin needs the credential: check that it
+    // is present before any output directory is created.
+    let needs_credential = rec.outputs().iter().zip(&decisions).any(|(out, decision)| {
+        *decision == DownloadDecision::Fetch
+            && Url::parse(&out.remote_uri).is_ok_and(|u| http::same_origin(&u, &base_url))
+    });
+    if needs_credential {
+        ctx.settings.require_credential(provider).map_err(|e| with_job_context(e, &rec))?;
+    }
+    artifacts::preflight_dirs(&plan.paths, true).map_err(|e| with_job_context(e, &rec))?;
     let access = Access {
         provider,
         base_url: &base_url,
@@ -645,9 +660,8 @@ async fn download_outputs(
     };
 
     let mut remote_failure: Option<IrisError> = None;
-    for (out, path) in rec.outputs().iter().zip(&plan.paths) {
+    for ((out, path), &decision) in rec.outputs().iter().zip(&plan.paths).zip(&decisions) {
         let recorded = out.recorded_file();
-        let decision = artifacts::decide_download(recorded, path);
         if decision != DownloadDecision::AlreadyDownloaded {
             // Partial files of this target left by a killed earlier run (this
             // process holds the job's download lock, so none is in use).

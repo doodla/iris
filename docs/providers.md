@@ -40,6 +40,7 @@ src/providers/seedance/
 
 Implement `Provider` (identity, default base URL, credential header, the free `check_access`
 metadata call) and `VideoProvider` (`submit`, `poll`, `output_retention`, and optionally
+`validate` — the local checks `submit` makes, run before the job record is written — and
 `check_output_uri`) — see
 [architecture.md](architecture.md#sync-vs-async-two-provider-traits-on-purpose) for the exact
 trait shapes. A provider that only does images implements `image()` instead of `video()`; a

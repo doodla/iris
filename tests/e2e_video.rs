@@ -410,6 +410,25 @@ fn an_output_uri_off_the_configured_origin_keeps_the_job_succeeded_until_the_bas
 }
 
 #[test]
+fn a_video_request_refused_locally_sends_nothing_and_leaves_no_job() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["video", "generate", PROMPT, "-m", "bad/../id", "--capabilities-from", VEO_LITE, "--json"])
+        .run()
+        .err(2, "invalid_argument");
+    assert!(v["error"]["provider_status"].is_null(), "nothing was sent: {v}");
+    assert!(v["error"]["job_id"].is_null(), "no job exists: {v}");
+    assert_eq!(veo.api.total(), 0);
+    let records = files_in(&sb.jobs_dir()).into_iter().filter(|n| n.ends_with(".json")).count();
+    assert_eq!(records, 0, "no failed job is left behind");
+    let v = sb.iris().args(["jobs", "list", "--json"]).run().ok();
+    assert_eq!(v["result"]["jobs"], json!([]));
+}
+
+#[test]
 fn a_rate_limited_veo_submission_is_retried_into_one_job() {
     let sb = Sandbox::new();
     let veo = VeoMock::start();

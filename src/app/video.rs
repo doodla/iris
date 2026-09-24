@@ -105,7 +105,9 @@ pub async fn run(
     })?;
     warnings.extend(plan.warnings.iter().cloned());
     artifacts::preflight(&plan.paths, common.overwrite)?;
-    artifacts::preflight_dirs(&plan.paths, !common.dry_run)?;
+    // Only checked here; directories are created once the credential is known to
+    // be present (below), so a run that cannot be sent leaves nothing behind.
+    artifacts::preflight_dirs(&plan.paths, false)?;
 
     let video = ctx
         .provider(provider)?
@@ -143,7 +145,19 @@ pub async fn run(
         }));
     }
 
+    let req = VideoRequest {
+        model: resolved.id.clone(),
+        prompt: common.prompt.clone(),
+        first_frame,
+        last_frame,
+        references,
+        options: opts.clone(),
+    };
+    // Everything the adapter would refuse before sending is refused now, before a
+    // job record exists.
+    video.validate(&req)?;
     let pctx = ctx.provider_context(provider)?;
+    artifacts::preflight_dirs(&plan.paths, true)?;
 
     // Persist the record BEFORE the paid request.
     let (plan_dir, plan_path) = match &common.output {
@@ -176,14 +190,6 @@ pub async fn run(
     let seen = ctx.interrupt.count();
     ctx.store.create(&record)?;
 
-    let req = VideoRequest {
-        model: resolved.id.clone(),
-        prompt: common.prompt.clone(),
-        first_frame,
-        last_frame,
-        references,
-        options: opts,
-    };
     ctx.progress
         .line(format!("Submitting job {job_id} to {provider} ({}); this is a paid request", resolved.id));
     let mut deferred = false;
@@ -279,12 +285,32 @@ pub async fn run(
                 Err(store_error) => Err(e.with_detail("record_error", record_error(&store_error))),
             }
         }
+        // A local refusal inside the adapter (exit 2 without any provider status):
+        // nothing was sent, so no job exists and its record is dropped.
+        Err(e) if e.exit_code() == exit::USAGE && e.provider_status.is_none() => {
+            Err(discard_unsent(ctx, &job_id, e, now))
+        }
         Err(e) => {
             let e = e.with_job(job_id.to_string(), Some(JobStatus::Failed));
             match ctx.store.update(&job_id, |r| r.mark_rejected(&e, now)) {
                 Ok(_) => Err(e),
                 Err(store_error) => Err(e.with_detail("record_error", record_error(&store_error))),
             }
+        }
+    }
+}
+
+/// `e` for a job whose request was never sent: its just-created record is deleted
+/// (a record would claim a submission that never happened), and `e` names no job.
+/// If the record cannot be deleted, it is marked `failed` with `e` (still true:
+/// nothing reached the provider) and `e` names the job.
+fn discard_unsent(ctx: &AppContext, job_id: &JobId, e: IrisError, now: jiff::Timestamp) -> IrisError {
+    match ctx.store.delete(job_id, true) {
+        Ok(()) => e,
+        Err(delete_error) => {
+            let e = e.with_job(job_id.to_string(), Some(JobStatus::Failed));
+            let recorded = ctx.store.update(job_id, |r| r.mark_rejected(&e, now)).map(|_| ());
+            e.with_detail("record_error", record_error(recorded.as_ref().err().unwrap_or(&delete_error)))
         }
     }
 }

@@ -236,6 +236,19 @@ async fn reference_images_are_sent_as_asset_references_in_order() {
 }
 
 #[tokio::test]
+async fn local_validation_refuses_what_submit_would_refuse_without_sending() {
+    let provider = GeminiProvider::new();
+    assert!(provider.validate(&request(LITE, &[])).is_ok());
+    for model in ["bad/../id", "a:b", "x?key=1", ""] {
+        let err = provider.validate(&request(model, &[])).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument, "{model}");
+        assert!(err.provider_status.is_none());
+    }
+    let err = provider.validate(&request(LITE, &[("seed", OptionValue::Int(1))])).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InternalError, "an unmapped option is never dropped");
+}
+
+#[tokio::test]
 async fn unmapped_options_and_unsafe_model_ids_fail_before_sending() {
     let server = MockServer::start().await;
     mount_submit(&server, LITE, accepted()).await;

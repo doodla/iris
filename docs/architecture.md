@@ -74,6 +74,8 @@ pub trait ImageProvider: Send + Sync {
 
 #[async_trait]
 pub trait VideoProvider: Send + Sync {
+    /// Local checks `submit` would make, run before the job record exists (default: none).
+    fn validate(&self, req: &VideoRequest) -> Result<(), IrisError> { Ok(()) }
     /// Paid, non-idempotent. On an ambiguous outcome returns `submission_uncertain`.
     async fn submit(&self, req: &VideoRequest, ctx: &ProviderContext) -> Result<SubmittedOperation, IrisError>;
     /// Idempotent status read (`IdempotentRead` retry class).

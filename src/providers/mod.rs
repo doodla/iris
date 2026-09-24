@@ -217,6 +217,15 @@ pub trait ImageProvider: Send + Sync {
 /// Provider-native asynchronous video jobs.
 #[async_trait]
 pub trait VideoProvider: Send + Sync {
+    /// Local checks `submit` would make before sending anything (identifier syntax,
+    /// request encoding and size limits), run before the job record is written, so
+    /// a request that cannot be sent never leaves a job behind. Never touches the
+    /// network. The default accepts every request.
+    fn validate(&self, req: &VideoRequest) -> Result<(), IrisError> {
+        let _ = req;
+        Ok(())
+    }
+
     /// Paid, non-idempotent submission. On an ambiguous failure (sent but no usable
     /// answer) returns `submission_uncertain`; on a definite rejection returns the
     /// mapped error. Never retries except as the `PaidSubmit` retry class allows.

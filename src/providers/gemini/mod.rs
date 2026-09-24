@@ -124,6 +124,10 @@ impl ImageProvider for GeminiProvider {
 
 #[async_trait]
 impl VideoProvider for GeminiProvider {
+    fn validate(&self, req: &VideoRequest) -> Result<(), IrisError> {
+        veo::validate(req)
+    }
+
     async fn submit(
         &self,
         req: &VideoRequest,
