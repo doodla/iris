@@ -729,6 +729,24 @@ async fn a_timeout_after_sending_is_not_retried_and_may_be_charged() {
 }
 
 #[tokio::test]
+async fn timeout_answers_are_sent_once_and_may_be_charged() {
+    for (status, rpc_status) in [(408u16, "DEADLINE_EXCEEDED"), (504, "DEADLINE_EXCEEDED")] {
+        let (err, sent) =
+            error_case(status, google_error(status, rpc_status, "Deadline exceeded.", json!([]))).await;
+        assert_eq!(err.code, ErrorCode::RequestTimeout, "HTTP {status}");
+        assert_eq!(sent, 1, "HTTP {status} must not be resent for a paid image call");
+        assert_eq!(err.provider_status, Some(status));
+        assert_eq!(err.retryable, Some(true));
+        assert_eq!(err.details["charge_possible"], true, "HTTP {status}");
+        assert!(err.hint.as_deref().unwrap().contains("did not retry"), "HTTP {status}: {:?}", err.hint);
+    }
+    // Other server errors keep the C-06 mapping (provider_error, no charge claim).
+    let (err, _) = error_case(500, google_error(500, "INTERNAL", "internal error", json!([]))).await;
+    assert_eq!(err.code, ErrorCode::ProviderError);
+    assert!(err.details.get("charge_possible").is_none());
+}
+
+#[tokio::test]
 async fn requests_above_twenty_megabytes_fail_locally_with_zero_requests() {
     let server = MockServer::start().await;
     mount_ok(&server, response_with(vec![image_part("image/png", &png())], "STOP")).await;

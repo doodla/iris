@@ -189,8 +189,14 @@ fn str_option<'a>(name: &str, value: &'a crate::catalog::OptionValue) -> Result<
         .ok_or_else(|| IrisError::internal(format!("option '{name}' must be a string, got {value}")))
 }
 
-/// Paid synchronous call failures: a transport failure after sending is
-/// `request_timeout` with `charge_possible` (C-04), never retried.
+/// Paid synchronous call failures (C-03, C-04). Neither case below is retried.
+/// * A transport failure after sending is `request_timeout` with `charge_possible`.
+/// * An HTTP 408 or 504 answer (`request_timeout` in the C-06 table) arrived after
+///   the request was sent. It gets the same `charge_possible` and no-retry hint.
+///   Google's billing page says a request that "fails with a 400 or 500 error" is
+///   not charged, and it does not name 408 or 504. C-03 treats every timeout
+///   after sending the same way, and a Veo submit that gets 408 or 504 is
+///   `submission_uncertain` too.
 fn paid_call_error(err: HttpError) -> IrisError {
     match err {
         HttpError::Transport(t) if t.after_send => {
@@ -198,6 +204,12 @@ fn paid_call_error(err: HttpError) -> IrisError {
             e.code = ErrorCode::RequestTimeout;
             e.retryable = ErrorCode::RequestTimeout.default_retryable();
             e
+        }
+        HttpError::Error(e) if e.code == ErrorCode::RequestTimeout => {
+            e.with_detail("charge_possible", true).with_hint(
+                "Iris did not retry automatically because the provider may already have processed (and \
+                 billed) this request; check usage in Google AI Studio before running it again",
+            )
         }
         other => other.into_iris(),
     }
