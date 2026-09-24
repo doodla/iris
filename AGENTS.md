@@ -79,3 +79,6 @@ rules, not a description of the code; read `docs/architecture.md` and the source
   body. Stage explicit paths and review the staged diff. Never commit secrets,
   generated media, or local state. Never amend, squash, or rewrite commits you did
   not create without permission.
+- Never fabricate a git identity: if none is configured, finish and verify the work,
+  then report that committing is blocked. Never reset or discard working-tree changes
+  you did not make.
