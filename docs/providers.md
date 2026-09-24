@@ -132,7 +132,7 @@ Then:
    the CLI's fixed typed-flag table (`--count`,
    `--duration`, …) must use that flag name; anything else is reachable only through
    `-O name=value` (the table itself is `raw_options`'s flag → option-name array in
-   `src/cli/mod.rs`, around line 397; `tests/openai_catalog.rs::typed_flags_follow_the_c06_flag_table`
+   `src/cli/mod.rs`, around line 397; `tests/openai_catalog.rs::typed_flags_follow_the_cli_flag_table`
    and the equivalent test in `tests/gemini_catalog.rs` are what enforces every declared model
    stays consistent with it). **Never accept an option Iris cannot map on the wire side** — if the
    provider takes it but your adapter has nowhere to put it yet, leave it out of the catalog

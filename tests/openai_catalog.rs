@@ -60,7 +60,7 @@ fn estimate(id: &str, pairs: &[(&str, &str)], count: u32) -> Option<iris::domain
 }
 
 #[test]
-fn models_ids_display_names_lifecycle_and_operations_match_c06() {
+fn models_ids_display_names_lifecycle_and_operations_are_declared() {
     let ids: Vec<&str> = openai::MODELS.iter().map(|m| m.id).collect();
     assert_eq!(ids, IDS);
     let names: Vec<&str> = openai::MODELS.iter().map(|m| m.display_name).collect();
@@ -114,7 +114,7 @@ fn dated_snapshots_are_aliases_of_their_base_model_and_retired_models_are_unknow
 }
 
 #[test]
-fn inputs_and_outputs_match_c06() {
+fn inputs_and_outputs_are_declared() {
     for m in openai::MODELS {
         let i = m.inputs;
         assert_eq!(i.max_input_images, 16);
@@ -132,7 +132,7 @@ fn inputs_and_outputs_match_c06() {
 }
 
 #[test]
-fn declared_options_have_the_c06_names_kinds_defaults_and_operations() {
+fn declared_options_have_the_documented_names_kinds_defaults_and_operations() {
     for m in openai::MODELS {
         let names: Vec<&str> = m.options.iter().map(|o| o.name).collect();
         assert_eq!(names, ["count", "size", "quality", "format", "compression", "background", "moderation"]);
@@ -179,7 +179,7 @@ fn every_declared_option_parses_its_own_default() {
 }
 
 #[test]
-fn typed_flags_follow_the_c06_flag_table() {
+fn typed_flags_follow_the_cli_flag_table() {
     for m in openai::MODELS {
         for o in m.options {
             let expected = FLAG_TABLE.iter().find(|(name, _)| *name == o.name).map(|(_, flag)| *flag);
