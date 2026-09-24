@@ -84,6 +84,10 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --all-targets --locked -- -D warnings
       - run: cargo test --locked
+        env:
+          # As in the build job, so the version test checks a binary that
+          # reports the tagged commit.
+          IRIS_GIT_COMMIT: ${{ github.sha }}
 
   build:
     name: build (${{ matrix.target }})
@@ -131,6 +135,10 @@ jobs:
           # Empty string on the Linux/musl leg is a no-op: this variable is
           # only consulted by Apple's linker/toolchain.
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
+          # The commit checked out above (the tagged commit), reported by the
+          # binary as version.git_commit. build.rs reads only this variable,
+          # never GITHUB_SHA itself.
+          IRIS_GIT_COMMIT: ${{ github.sha }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package release archive
@@ -144,8 +152,8 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
           TARGET: ${{ matrix.target }}
         # Runs the packaged binary, then installs the archive with install.sh
-        # from a server on 127.0.0.1 (see the script). The build step saw
-        # GITHUB_SHA, so the binary must report it as version.git_commit.
+        # from a server on 127.0.0.1 (see the script). The build step named
+        # this commit, so the binary must report it as version.git_commit.
         run: EXPECTED_GIT_COMMIT="$GITHUB_SHA" sh scripts/smoke-test-release.sh "$VERSION" "$TARGET" dist
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

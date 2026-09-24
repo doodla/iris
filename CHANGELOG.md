@@ -40,8 +40,9 @@ machine-readable contract for agents.
   [docs/configuration.md](docs/configuration.md).
 - **`iris completions`** for bash, zsh, fish, and elvish, and **`iris version`**.
 - `iris --json version` reports `git_commit`, the commit the binary was built from: set at build
-  time from `IRIS_GIT_COMMIT`, or else `GITHUB_SHA`, when the value is 7 to 40 hex digits
-  (release builds always set it), and `null` for any other build. See
+  time from `IRIS_GIT_COMMIT` when it is 7 to 40 hex digits (the release and CI workflows set it
+  to the commit they checked out), and `null` for any other build. `GITHUB_SHA` alone is not
+  used, since in another project's workflow it names that project's commit. See
   [docs/install.md](docs/install.md#verifying-what-you-installed).
 - **Cost estimates** (pre-call where supportable, post-call from reported usage otherwise),
   always explicitly labeled as estimates, never an invoice.

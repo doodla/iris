@@ -1,32 +1,37 @@
 //! Build-time facts for `iris --version` / `iris version`: the compilation
-//! target triple and, when the build environment names it, the git commit.
+//! target triple and, when the build names it, the git commit.
 
 use std::env;
 
-/// Variables that may name the commit being built, in order of precedence:
-/// an explicit override, then the commit GitHub Actions checked out.
-const COMMIT_VARS: [&str; 2] = ["IRIS_GIT_COMMIT", "GITHUB_SHA"];
+/// The variable that names the commit being built. Iris's CI and release
+/// workflows set it to the commit they checked out; anyone building from a
+/// checkout can set it too.
+const COMMIT_VAR: &str = "IRIS_GIT_COMMIT";
 
 fn main() {
     if let Ok(target) = env::var("TARGET") {
         println!("cargo:rustc-env=IRIS_TARGET={target}");
     }
 
-    // The commit comes from the environment rather than from running `git`,
-    // so a build from a source tarball or a crate package never reports a
-    // commit it cannot vouch for. The first variable that is set and
-    // non-empty decides. A value that is not a hex object name is dropped
-    // (the version then reports null) instead of passed on: besides being
-    // meaningless, a newline in it would end the `cargo:` line below early.
+    // The commit comes from a variable the builder sets on purpose, not from
+    // running `git` or from an ambient CI variable, so a build never reports
+    // a commit nobody vouched for: `git` would describe whatever repository
+    // happens to enclose the source (or none, for a crate package), and
+    // GitHub Actions' GITHUB_SHA names the commit of the repository whose
+    // workflow is running, which is not Iris's source when another project's
+    // workflow runs `cargo install`.
+    //
+    // A value that is not a hex object name is dropped (the version then
+    // reports null) instead of passed on: besides being meaningless, a
+    // newline in it would end the `cargo:` line below early. An empty value
+    // counts as unset.
     let mut commit = String::new();
-    let named =
-        COMMIT_VARS.iter().find_map(|name| env::var(name).ok().filter(|v| !v.is_empty()).map(|v| (name, v)));
-    if let Some((name, value)) = named {
+    if let Some(value) = env::var(COMMIT_VAR).ok().filter(|v| !v.is_empty()) {
         if is_commit_id(&value) {
             commit = value.to_ascii_lowercase();
         } else {
             println!(
-                "cargo:warning={name} is not 7 to 40 hexadecimal characters; `iris version` will report git_commit: null"
+                "cargo:warning={COMMIT_VAR} is not 7 to 40 hexadecimal characters; `iris version` will report git_commit: null"
             );
         }
     }
@@ -34,9 +39,7 @@ fn main() {
     // build environment can never reach `option_env!` unchecked.
     println!("cargo:rustc-env=IRIS_BUILD_GIT_COMMIT={commit}");
 
-    for name in COMMIT_VARS {
-        println!("cargo:rerun-if-env-changed={name}");
-    }
+    println!("cargo:rerun-if-env-changed={COMMIT_VAR}");
     println!("cargo:rerun-if-changed=build.rs");
 }
 

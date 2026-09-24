@@ -57,6 +57,12 @@ jobs:
           toolchain: stable
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked
+        env:
+          # Name the checked-out commit, as release builds do, so the version
+          # test covers a binary that reports one. The msrv job leaves it
+          # unset, so there the same test covers a build with only
+          # GITHUB_SHA set, which must report null.
+          IRIS_GIT_COMMIT: ${{ github.sha }}
 
   msrv:
     name: msrv (1.89)
@@ -133,6 +139,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y musl-tools
       - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+        env:
+          # The commit checked out above, reported as version.git_commit, as
+          # in a release build.
+          IRIS_GIT_COMMIT: ${{ github.sha }}
       - name: Package twice; the archives must be identical
         run: |
           set -euo pipefail
@@ -143,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           version=$(sh scripts/check-tag-version.sh)
-          # The build above saw GITHUB_SHA, so the binary must report it.
+          # The build above named this commit, so the binary must report it.
           EXPECTED_GIT_COMMIT="$GITHUB_SHA" \
             sh scripts/smoke-test-release.sh "$version" x86_64-unknown-linux-musl dist
 

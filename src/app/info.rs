@@ -31,8 +31,8 @@ const FALLBACK_TARGET: &str = "aarch64-apple-darwin";
 const FALLBACK_TARGET: &str = "unknown";
 
 /// The git commit this binary was built from, in lowercase hex, when the
-/// build named one through `IRIS_GIT_COMMIT` or `GITHUB_SHA` (validated by
-/// `build.rs`); `None` for any other build.
+/// build named one through `IRIS_GIT_COMMIT` (validated by `build.rs`); `None`
+/// for any other build.
 pub fn git_commit() -> Option<&'static str> {
     option_env!("IRIS_BUILD_GIT_COMMIT").filter(|commit| !commit.is_empty())
 }

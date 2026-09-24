@@ -11,7 +11,8 @@
 #      "iris <version> (<target-triple>)", `iris --json version` and
 #      `iris --json models list` each print one JSON document, and
 #      `iris schema` succeeds. If EXPECTED_GIT_COMMIT is set, version.git_commit
-#      must equal it (the release workflow passes the GITHUB_SHA the build saw);
+#      must equal it (the release workflow passes the commit it named to the
+#      build through IRIS_GIT_COMMIT);
 #   2. install.sh installs the archive: the archive and a SHA256SUMS file are
 #      served from 127.0.0.1 by tests/installer/server.py, the installer runs
 #      in a clean environment (env -i: no proxies or credentials) into a
