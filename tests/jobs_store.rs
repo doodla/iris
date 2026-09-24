@@ -293,6 +293,91 @@ fn unknown_fields_are_preserved_by_locked_updates() {
 }
 
 #[test]
+fn nested_fields_and_error_codes_from_a_newer_iris_survive_a_rewrite() {
+    use iris::domain::{CostEstimate, DownloadState, Usage};
+    use iris::error::ErrorCategory;
+    use iris::providers::{RemoteArtifact, RemoteStatus};
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let mut job = new_job();
+    job.cost_estimate =
+        Some(CostEstimate::usd(0.4, "4 s x $0.1/s", "https://example.invalid/p", "2026-09-24"));
+    let mut rec = JobRecord::new(job, now()).unwrap();
+    rec.mark_submitted(
+        &SubmittedOperation { remote_id: "operations/1".into(), provider_request_id: None },
+        now(),
+    )
+    .unwrap();
+    let outputs = vec![RemoteArtifact { uri: "https://example.invalid/v".into(), media_type: None }];
+    let usage = Some(Usage { input_tokens: Some(3), ..Usage::default() });
+    rec.apply_poll(RemoteStatus::Succeeded { outputs, usage, warnings: vec![] }, None, now()).unwrap();
+    rec.mark_output_failed(0, &IrisError::new(ErrorCode::DownloadFailed, "reset"), now()).unwrap();
+    store.create(&rec).unwrap();
+    let id = rec.job_id().clone();
+
+    // What a newer Iris could have written: unknown fields at every nested level
+    // and error codes this version does not know.
+    let path = store.record_path(&id);
+    let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["usage"]["future_usage"] = json!({"video_seconds": 4});
+    value["cost_estimate"]["future_cost"] = json!({"tier": "standard", "credits": [1, 2]});
+    let last_error = &mut value["outputs"][0]["last_error"];
+    last_error["code"] = json!("quota_exhausted");
+    last_error["category"] = json!("quota");
+    last_error["future_error_field"] = json!({"deep": {"deeper": true}});
+    last_error["details"] = json!({"future_detail": [1, {"x": "y"}]});
+    value["error"] = json!({
+        "code": "some_future_code", "category": "some_future_category", "message": "from the future",
+        "retryable": null, "retry_after_seconds": null, "hint": null, "provider": "gemini",
+        "provider_status": 404, "provider_code": "NOT_FOUND", "provider_request_id": null,
+        "job_id": id.as_str(), "remote_operation_id": null, "job_status": null, "details": null,
+        "future_error_field": "kept"
+    });
+    fs::write(&path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+
+    // A rewrite that does not touch those parts.
+    store.update(&id, |rec| rec.set_extra("x_touched", json!(true))).unwrap();
+    let after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    for part in ["usage", "cost_estimate", "error"] {
+        assert_eq!(after[part], value[part], "{part} changed on rewrite");
+        let text = |v: &Value| serde_json::to_string_pretty(&v[part]).unwrap();
+        assert_eq!(text(&after), text(&value), "{part} is written back byte for byte");
+    }
+    assert_eq!(after["outputs"][0]["last_error"], value["outputs"][0]["last_error"]);
+    assert_eq!(after["x_touched"], true);
+
+    // This version reads what it understands and shows unknown codes as
+    // internal_error, keeping the code as written in details.recorded_code.
+    let rec = store.load(&id).unwrap();
+    assert_eq!(rec.outputs()[0].download_state, DownloadState::Failed);
+    assert_eq!(rec.outputs()[0].last_error.as_ref().unwrap().code, ErrorCode::InternalError);
+    assert_eq!(rec.usage().unwrap().input_tokens, Some(3));
+    assert!((rec.cost_estimate().unwrap().amount - 0.4).abs() < 1e-9);
+    let view = rec.to_view();
+    let shown = view.outputs[0].last_error.as_ref().unwrap();
+    assert_eq!((shown.code, shown.category), (ErrorCode::InternalError, ErrorCategory::Internal));
+    assert_eq!(shown.details.as_ref().unwrap()["recorded_code"], "quota_exhausted");
+    assert_eq!(shown.details.as_ref().unwrap()["future_detail"], json!([1, {"x": "y"}]));
+    let job_error = view.error.unwrap();
+    assert_eq!(job_error.code, ErrorCode::InternalError);
+    assert_eq!(job_error.details.unwrap()["recorded_code"], "some_future_code");
+    let view_text = serde_json::to_string(&rec.to_view()).unwrap();
+    assert!(!view_text.contains("future_error_field"), "unknown fields stay in the record: {view_text}");
+
+    // Replacing an error writes the new one as this version knows it.
+    store
+        .update(&id, |rec| {
+            rec.mark_output_failed(0, &IrisError::new(ErrorCode::DownloadFailed, "again"), now())
+        })
+        .unwrap();
+    let after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(after["outputs"][0]["last_error"]["code"], "download_failed");
+    assert!(after["outputs"][0]["last_error"].get("future_error_field").is_none());
+    assert_eq!(after["usage"], value["usage"]);
+}
+
+#[test]
 fn a_record_whose_id_disagrees_with_its_file_name_is_invalid() {
     let (_dir, store, id) = store_with_running_job();
     let other = JobId::generate();

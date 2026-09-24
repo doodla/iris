@@ -261,7 +261,10 @@ Every string in an error is secret-scrubbed and signed-URL-redacted, and any pro
 truncated to 500 characters. Iris reads `ErrorCode`/`ErrorCategory` **tolerantly** when
 deserializing (an unrecognized value becomes `internal_error`/`internal`), so an older Iris binary
 can read a job record written by a newer one without crashing; on the wire, `--json` output always
-serializes the real, current value.
+serializes the real, current value. When a job's persisted error (`job.error`,
+`job.outputs[].last_error`) carries a code this binary does not know, the view shows
+`internal_error` with category `internal` and adds `details.recorded_code` with the code as
+written; the job record keeps the original code and any unknown fields untouched.
 
 ## Stable codes, categories, exit codes, and default retryability
 

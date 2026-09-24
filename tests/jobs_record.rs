@@ -471,6 +471,25 @@ fn unknown_fields_survive_a_round_trip() {
 }
 
 #[test]
+fn views_show_the_category_of_the_code_they_show() {
+    use iris::error::ErrorCategory;
+    let mut rec = succeeded_record(1);
+    rec.mark_output_failed(0, &IrisError::new(ErrorCode::DownloadFailed, "reset"), ts(40)).unwrap();
+    let mut value = serde_json::to_value(&rec).unwrap();
+    // A known code next to a category this version does not know.
+    value["outputs"][0]["last_error"]["category"] = json!("some_future_category");
+    let back: JobRecord = serde_json::from_value(value.clone()).unwrap();
+    let shown = back.to_view().outputs[0].last_error.clone().unwrap();
+    assert_eq!((shown.code, shown.category), (ErrorCode::DownloadFailed, ErrorCategory::Artifact));
+    assert!(shown.details.is_none(), "a known code needs no recorded_code: {shown:?}");
+    // The record itself keeps what was written.
+    assert_eq!(
+        serde_json::to_value(&back).unwrap()["outputs"][0]["last_error"],
+        value["outputs"][0]["last_error"]
+    );
+}
+
+#[test]
 fn extension_fields_cannot_shadow_record_fields() {
     let mut rec = running_record();
     assert_eq!(rec.set_extra("status", json!("failed")).unwrap_err().code, ErrorCode::InternalError);

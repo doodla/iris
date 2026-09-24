@@ -24,7 +24,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use jiff::Timestamp;
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
@@ -49,6 +50,80 @@ pub const JOB_RECORD_VERSION: u32 = 1;
 /// `submitting` is considered abandoned (the process died in the uncertainty
 /// window) and is reported as `submission_unknown`.
 pub const SUBMIT_GRACE: Duration = Duration::from_secs(60);
+
+/// A nested object of the record (a persisted error body, usage, or cost
+/// estimate): the value as this version understands it, plus the object exactly
+/// as it was read from disk.
+///
+/// Reading is tolerant (unknown fields are ignored, unknown error codes read as
+/// `internal_error`), but a rewrite writes the object back as it was read, so
+/// fields and error codes added by a newer Iris survive every rewrite of a record
+/// this version did not otherwise change. A value set by this version is written
+/// as this version serializes it. `Deref` gives the understood value.
+#[derive(Clone)]
+pub struct Preserved<T> {
+    value: T,
+    /// The object as read from disk; `None` for a value set by this version.
+    raw: Option<Value>,
+}
+
+impl<T> Preserved<T> {
+    /// A value set by this version.
+    pub fn new(value: T) -> Preserved<T> {
+        Preserved { value, raw: None }
+    }
+
+    /// The object as read from disk, if this value was read (not set by this version).
+    pub fn raw(&self) -> Option<&Value> {
+        self.raw.as_ref()
+    }
+}
+
+impl<T> std::ops::Deref for Preserved<T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.value
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for Preserved<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
+    }
+}
+
+impl<T: Serialize> Serialize for Preserved<T> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match &self.raw {
+            Some(raw) => raw.serialize(serializer),
+            None => self.value.serialize(serializer),
+        }
+    }
+}
+
+impl<'de, T: DeserializeOwned> Deserialize<'de> for Preserved<T> {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let raw = Value::deserialize(deserializer)?;
+        let value = T::deserialize(&raw).map_err(serde::de::Error::custom)?;
+        Ok(Preserved { value, raw: Some(raw) })
+    }
+}
+
+impl Preserved<ErrorBody> {
+    /// The error as the public view shows it. A code this version does not know
+    /// (written by a newer Iris) reads as `internal_error`, and the code as written
+    /// is kept in `details.recorded_code`. The category always follows the code, so
+    /// code and category agree with the published table.
+    pub fn view(&self) -> ErrorBody {
+        let mut body = self.value.clone();
+        body.category = body.code.category();
+        let written = self.raw.as_ref().and_then(|r| r.get("code")).and_then(Value::as_str);
+        if let Some(code) = written.filter(|c| *c != body.code.as_str()) {
+            body.details.get_or_insert_with(Map::new).insert("recorded_code".to_string(), json!(code));
+        }
+        body
+    }
+}
 
 /// What Iris remembers about the prompt: always a SHA-256 and a character count;
 /// the text itself only when `jobs.store_prompts = true`.
@@ -149,7 +224,7 @@ pub struct JobOutput {
     pub sha256: Option<String>,
     pub downloaded_at: Option<Timestamp>,
     /// Last download error (scrubbed), if the last attempt failed or found the output expired.
-    pub last_error: Option<ErrorBody>,
+    pub last_error: Option<Preserved<ErrorBody>>,
     /// Image width of the downloaded file, if applicable (Iris addition to the v1 schema).
     #[serde(default)]
     pub width: Option<u32>,
@@ -337,9 +412,9 @@ pub struct JobRecord {
     prompt: PromptRecord,
     output_plan: OutputPlan,
     outputs: Vec<JobOutput>,
-    error: Option<ErrorBody>,
-    usage: Option<Usage>,
-    cost_estimate: Option<CostEstimate>,
+    error: Option<Preserved<ErrorBody>>,
+    usage: Option<Preserved<Usage>>,
+    cost_estimate: Option<Preserved<CostEstimate>>,
     #[serde(flatten)]
     extra: Map<String, Value>,
 }
@@ -409,7 +484,7 @@ impl JobRecord {
             outputs: Vec::new(),
             error: None,
             usage: None,
-            cost_estimate: new.cost_estimate,
+            cost_estimate: new.cost_estimate.map(Preserved::new),
             extra: Map::new(),
         })
     }
@@ -476,14 +551,20 @@ impl JobRecord {
     pub fn outputs(&self) -> &[JobOutput] {
         &self.outputs
     }
+    /// The job's error as this version reads it (an unknown code reads as
+    /// `internal_error`); [`JobRecord::error_view`] is what the public view shows.
     pub fn error(&self) -> Option<&ErrorBody> {
-        self.error.as_ref()
+        self.error.as_deref()
+    }
+    /// The job's error as the public view shows it (see [`Preserved::view`]).
+    pub fn error_view(&self) -> Option<ErrorBody> {
+        self.error.as_ref().map(Preserved::view)
     }
     pub fn usage(&self) -> Option<&Usage> {
-        self.usage.as_ref()
+        self.usage.as_deref()
     }
     pub fn cost_estimate(&self) -> Option<&CostEstimate> {
-        self.cost_estimate.as_ref()
+        self.cost_estimate.as_deref()
     }
     /// Top-level fields this version does not understand (preserved on rewrite).
     pub fn extra(&self) -> &Map<String, Value> {
@@ -645,7 +726,7 @@ impl JobRecord {
                     .enumerate()
                     .map(|(i, o)| JobOutput::pending(i as u32, o.uri, o.media_type))
                     .collect();
-                self.usage = usage;
+                self.usage = usage.map(Preserved::new);
                 self.remote_expires_at = retention.and_then(|r| now.checked_add(r).ok());
                 self.error = None;
                 PollApplied::Succeeded { warnings }
@@ -742,7 +823,7 @@ impl JobRecord {
                 media_type: o.media_type.clone(),
                 download_state: o.download_state,
                 artifact: o.artifact(),
-                last_error: o.last_error.clone(),
+                last_error: o.last_error.as_ref().map(Preserved::view),
             })
             .collect();
         let artifacts = outputs.iter().filter_map(|o| o.artifact.clone()).collect();
@@ -761,9 +842,9 @@ impl JobRecord {
             remote_expires_at: self.remote_expires_at.map(|t| t.to_string()),
             outputs,
             artifacts,
-            error: self.error.clone(),
-            usage: self.usage.clone(),
-            cost_estimate: self.cost_estimate.clone(),
+            error: self.error_view(),
+            usage: self.usage().cloned(),
+            cost_estimate: self.cost_estimate().cloned(),
             request: self.request.clone(),
         }
     }
@@ -818,14 +899,14 @@ impl JobRecord {
     }
 
     /// Scrubbed error body carrying this job's identifiers.
-    fn error_body(&self, error: &IrisError) -> ErrorBody {
+    fn error_body(&self, error: &IrisError) -> Preserved<ErrorBody> {
         let mut e = error.clone().with_job(self.job_id.to_string(), None);
         if e.remote_operation_id.is_none()
             && let Some(remote) = &self.remote_operation_id
         {
             e = e.with_remote_operation(remote.clone());
         }
-        ErrorBody::from(&e)
+        Preserved::new(ErrorBody::from(&e))
     }
 }
 

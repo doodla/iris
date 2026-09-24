@@ -95,7 +95,12 @@ Real record, captured from a completed job (`<state>/jobs/<job_id>.json`):
 
 Records are versioned (`schema_version`, currently `1`); a reader refuses a record written by a
 *newer* Iris (`state_invalid`) rather than silently misinterpreting it, and preserves unknown
-extra fields on rewrite so an older binary never destroys a newer one's data.
+extra fields on rewrite so an older binary never destroys a newer one's data. That holds at every
+level: unknown fields inside `prompt`, `output_plan`, `outputs[]`, the persisted error bodies
+(`error`, `outputs[].last_error`), `usage`, and `cost_estimate` are written back as they were
+read, and so is an error `code` this version does not know. Views of such a record show the
+unknown code as `internal_error` (category `internal`) with the code as written in
+`details.recorded_code`; the record itself keeps the original.
 
 Writes are atomic: serialize → write to a temp file in the same directory → `sync_all` → rename
 over the record. A reader never observes a partial write, and `jobs list` reads without taking any

@@ -87,6 +87,9 @@ machine-readable contract for agents.
 - A Gemini image call that returns no image (and was not blocked) is now `provider_error`
   (retryable; running it again is billed again) instead of `remote_job_failed`: a synchronous call
   has no remote job.
+- Rewriting a job record keeps what a newer Iris wrote at every level: unknown fields inside
+  persisted error bodies, `usage`, and `cost_estimate`, and error codes this version does not
+  know. Views show such a code as `internal_error` with the original in `details.recorded_code`.
 
 ### Known limitations
 

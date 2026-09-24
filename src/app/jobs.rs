@@ -302,8 +302,8 @@ pub(crate) fn error_from_body(body: &ErrorBody) -> IrisError {
 /// The error a terminal, unsuccessful job reports (its recorded error when present).
 pub(crate) fn job_error(rec: &JobRecord) -> IrisError {
     let id = rec.job_id();
-    let base = match rec.error() {
-        Some(body) => error_from_body(body),
+    let base = match rec.error_view() {
+        Some(body) => error_from_body(&body),
         None => match rec.status() {
             JobStatus::Failed => IrisError::new(
                 ErrorCode::RemoteJobFailed,
