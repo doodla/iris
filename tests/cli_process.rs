@@ -708,3 +708,35 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
     assert_nothing_sent(&out, "missing_credentials", 3);
     assert!(!Path::new(&sandbox.state().join("jobs")).exists(), "no job record before a submission");
 }
+
+#[test]
+fn unsupported_operations_fail_locally_with_exit_2() {
+    let sandbox = Sandbox::new();
+    // OpenAI has no video model, whatever the catalog holds.
+    let out = run(iris(&sandbox)
+        .args(["video", "generate", "waves", "--provider", "openai", "--json"])
+        .env("OPENAI_API_KEY", OPENAI_KEY));
+    assert_nothing_sent(&out, "unsupported_operation", 2);
+    assert!(!sandbox.state().join("jobs").exists());
+    if let Some(video) = builtin_default(ProviderId::Gemini, Operation::VideoGenerate) {
+        let out = run(iris(&sandbox).args(["image", "generate", "x", "-m", video.id, "--json"]));
+        assert_nothing_sent(&out, "unsupported_operation", 2);
+    }
+}
+
+#[test]
+fn verbose_logs_never_contain_the_prompt_or_the_key() {
+    let Some(_) = builtin_default(ProviderId::OpenAi, Operation::ImageGenerate) else { return };
+    let sandbox = Sandbox::new();
+    // The provider port is closed: the request fails before anything is sent.
+    let out = run(iris(&sandbox)
+        .args(["-vv", "image", "generate", "UNIQUE-PROMPT-7f3a", "--json"])
+        .env("OPENAI_API_KEY", OPENAI_KEY));
+    assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
+    assert_eq!(out.error_code(), "network_error");
+    for text in [&out.stdout, &out.stderr] {
+        assert!(!text.contains("UNIQUE-PROMPT-7f3a"), "prompt leaked: {text}");
+        assert!(!text.contains(OPENAI_KEY), "key leaked: {text}");
+    }
+    assert!(files_in(&sandbox.work()).is_empty());
+}
