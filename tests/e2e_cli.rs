@@ -1,0 +1,247 @@
+//! End-to-end configuration and command-line scenarios: the built `iris` binary as
+//! a real process, with 127.0.0.1 mock providers attached so that any request that
+//! should not happen is recorded.
+//!
+//! Covers T-13 scenarios 11 (settings precedence flag > env > file > default, and
+//! credentials refused in the config file), 12 (usage errors in JSON mode), and 13
+//! (`--dry-run` never contacts a provider and needs no keys).
+
+mod support;
+
+use std::path::Path;
+
+use serde_json::Value;
+use support::*;
+
+/// `(value, source)` of one row of `config show --json`.
+fn setting(v: &Value, key: &str) -> (Value, String) {
+    let row = v["result"]["settings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["key"] == key)
+        .unwrap_or_else(|| panic!("config show has no {key}: {v}"));
+    (row["value"].clone(), row["source"].as_str().unwrap().to_string())
+}
+
+/// Directory of the single saved artifact.
+fn saved_dir(v: &Value) -> std::path::PathBuf {
+    let path = Path::new(v["result"]["artifacts"][0]["path"].as_str().unwrap());
+    assert!(path.is_file(), "{}", path.display());
+    path.parent().unwrap().to_path_buf()
+}
+
+/// A mock that answers every provider route with a success.
+fn answering_api() -> MockApi {
+    let api = MockApi::start();
+    let image = png(8, 8);
+    api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_cli"));
+    api.on("POST", OPENAI_EDITS, openai_images(&[&image], "req_e2e_cli"));
+    let part = serde_json::json!([inline_part("image/png", &image)]);
+    api.on("POST", &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL), gemini_parts(part));
+    api.on(
+        "POST",
+        &veo_submit_path(VEO_LITE),
+        json_response(200, serde_json::json!({ "name": format!("models/{VEO_LITE}/operations/never") })),
+    );
+    api
+}
+
+// ----- scenario 11: precedence ---------------------------------------------------------------------
+
+#[test]
+fn settings_follow_flag_over_env_over_file_over_default_end_to_end() {
+    let sb = Sandbox::new();
+    let (file_api, env_api) = (answering_api(), answering_api());
+    let config = sb.config(
+        "iris.toml",
+        &format!(
+            "output_dir = \"{}\"\n\n[providers.openai]\nbase_url = \"{}/v1\"\n",
+            sb.path("from-file").display(),
+            file_api.uri()
+        ),
+    );
+    let generate = ["image", "generate", "a fox", "--size", "1024x1024", "--quality", "low", "--json"];
+
+    // Default layer: no config file, no environment. Only inspected (config show and
+    // a dry run), because the default base URL is the real provider.
+    let mut default = sb.iris();
+    default.env_remove("IRIS_OPENAI_BASE_URL");
+    let v = default.clone().args(["config", "show", "--json"]).run().ok();
+    assert_eq!(setting(&v, "output_dir"), (sb.work().to_str().unwrap().into(), "default".into()));
+    assert_eq!(
+        setting(&v, "providers.openai.base_url"),
+        ("https://api.openai.com/v1".into(), "default".into())
+    );
+    assert_eq!(v["result"]["config_file_exists"], false);
+    let v = default.clone().args(["image", "generate", "a fox", "--dry-run", "--json"]).run().ok();
+    assert_eq!(Path::new(v["result"]["outputs"][0].as_str().unwrap()).parent().unwrap(), sb.work());
+
+    // File layer (IRIS_CONFIG names the file).
+    let mut file = default.clone();
+    file.env("IRIS_CONFIG", &config).env("OPENAI_API_KEY", OPENAI_KEY);
+    let v = file.clone().args(["config", "show", "--json"]).run().ok();
+    assert_eq!(v["result"]["config_file"], config.to_str().unwrap());
+    assert_eq!(setting(&v, "output_dir"), (sb.path("from-file").to_str().unwrap().into(), "file".into()));
+    assert_eq!(setting(&v, "providers.openai.base_url").1, "file");
+    let v = file.clone().args(generate).run().ok();
+    assert_eq!(saved_dir(&v), sb.path("from-file"));
+    assert_eq!((file_api.total(), env_api.total()), (1, 0), "the file's base URL was used");
+
+    // Environment layer beats the file.
+    let mut env = file.clone();
+    env.env("IRIS_OUTPUT_DIR", sb.path("from-env"))
+        .env("IRIS_OPENAI_BASE_URL", format!("{}/v1", env_api.uri()));
+    let v = env.clone().args(["config", "show", "--json"]).run().ok();
+    assert_eq!(setting(&v, "output_dir"), (sb.path("from-env").to_str().unwrap().into(), "env".into()));
+    assert_eq!(
+        setting(&v, "providers.openai.base_url"),
+        (format!("{}/v1", env_api.uri()).into(), "env".into())
+    );
+    let v = env.clone().args(generate).run().ok();
+    assert_eq!(saved_dir(&v), sb.path("from-env"));
+    assert_eq!((file_api.total(), env_api.total()), (1, 1), "the environment's base URL was used");
+
+    // Flag layer beats the environment: -d for the output directory, and --config
+    // for the config file (over IRIS_CONFIG).
+    let v = env.clone().args(generate).args(["-d", "from-flag"]).run().ok();
+    assert_eq!(saved_dir(&v), sb.path("from-flag"));
+    assert_eq!(env_api.total(), 2);
+    let other = sb.config("other.toml", &format!("output_dir = \"{}\"\n", sb.path("from-other").display()));
+    let v = file.clone().arg("--config").arg(&other).args(["config", "show", "--json"]).run().ok();
+    assert_eq!(v["result"]["config_file"], other.to_str().unwrap());
+    assert_eq!(setting(&v, "output_dir").0, sb.path("from-other").to_str().unwrap());
+    assert_eq!(setting(&v, "providers.openai.base_url").1, "default", "the IRIS_CONFIG file was not read");
+}
+
+#[test]
+fn a_credential_in_the_config_file_is_config_invalid_and_nothing_is_sent() {
+    let secret = "sk-e2e-config-secret-0f9d";
+    for toml in [
+        format!("[providers.openai]\napi_key = \"{secret}\"\n"),
+        format!("[image]\nprovider = \"openai\"\n\n[image.auth]\nToken = \"{secret}\"\n"),
+        format!("openai_key = \"{secret}\"\n"),
+    ] {
+        let sb = Sandbox::new();
+        let api = answering_api();
+        let config = sb.config("iris.toml", &toml);
+        let out = sb
+            .iris()
+            .openai(&api)
+            .env("IRIS_CONFIG", &config)
+            .args(["image", "generate", "a fox", "--size", "1024x1024", "--quality", "low", "--json"])
+            .run();
+        let v = out.err(2, "config_invalid");
+        let message = v["error"]["message"].as_str().unwrap();
+        assert!(message.contains("OPENAI_API_KEY"), "{toml}: {message}");
+        assert!(!out.stdout.contains(secret) && !out.stderr.contains(secret), "the value is never echoed");
+        assert_eq!(api.total(), 0, "{toml}: nothing was sent");
+    }
+}
+
+// ----- scenario 12: usage errors in JSON mode --------------------------------------------------------
+
+#[test]
+fn usage_errors_in_json_mode_are_a_single_envelope_with_exit_2() {
+    let sb = Sandbox::new();
+    let api = answering_api();
+    sb.write("p.txt", "a prompt from a file\n");
+    let cases: &[(&[&str], Option<&str>, Option<&str>)] = &[
+        (&["image", "generate", "a fox", "--bogus", "--json"], None, Some("image.generate")),
+        (&["--json", "image", "generate", "a fox", "-f", "p.txt"], None, Some("image.generate")),
+        (
+            &["image", "generate", "a fox", "--prompt-stdin", "--json"],
+            Some("from stdin"),
+            Some("image.generate"),
+        ),
+        (
+            &["video", "generate", "-f", "p.txt", "--prompt-stdin", "--json"],
+            Some("x"),
+            Some("video.generate"),
+        ),
+        (&["image", "generate", "a fox", "-o", "a.png", "-d", "out", "--json"], None, Some("image.generate")),
+        (&["image", "edit", "a fox", "--json"], None, Some("image.edit")),
+        (&["image", "generate", "--json"], None, Some("image.generate")),
+        (&["frobnicate", "--json"], None, None),
+        (&["--json"], None, None),
+    ];
+    for (args, stdin, command) in cases {
+        let mut iris = sb.iris();
+        iris.openai(&api).gemini(&api).args(*args);
+        if let Some(input) = stdin {
+            iris.stdin(*input);
+        }
+        let out = iris.run();
+        let v = out.err(2, "usage_error");
+        assert_eq!(v["error"]["category"], "usage", "{args:?}");
+        assert_eq!(v["error"]["retryable"], false, "{args:?}");
+        assert_eq!(v["command"].as_str(), *command, "{args:?}: {v}");
+        assert!(!v["error"]["message"].as_str().unwrap().is_empty());
+        assert!(out.stderr.is_empty(), "{args:?}: JSON mode keeps usage errors off stderr: {}", out.stderr);
+    }
+    assert_eq!(api.total(), 0, "usage errors never reach a provider");
+    assert_eq!(files_in(&sb.work()), ["p.txt"]);
+    assert!(!sb.jobs_dir().exists());
+}
+
+// ----- scenario 13: dry runs -----------------------------------------------------------------------
+
+#[test]
+fn dry_runs_never_contact_a_provider_and_need_no_keys() {
+    let sb = Sandbox::new();
+    let api = answering_api();
+    sb.write("a.png", png(64, 64));
+    sb.write("mask.png", mask_png(64, 64));
+
+    for with_keys in [false, true] {
+        let mut base = sb.iris();
+        base.env("IRIS_OPENAI_BASE_URL", format!("{}/v1", api.uri())).env("IRIS_GEMINI_BASE_URL", api.uri());
+        if with_keys {
+            base.keys();
+        }
+        let plan = |args: &[&str]| {
+            let v = base.clone().args(args).args(["--dry-run", "--json"]).run().ok();
+            let p = v["result"].clone();
+            assert_eq!(p["dry_run"], true, "{v}");
+            assert_eq!(p["credential_present"], with_keys, "{v}");
+            for out in p["outputs"].as_array().unwrap() {
+                assert!(out.as_str().unwrap().starts_with(sb.work().to_str().unwrap()), "{v}");
+            }
+            p
+        };
+
+        let p = plan(&["image", "generate", "a fox", "--size", "1024x1024", "--quality", "low"]);
+        assert_eq!(
+            (p["provider"].as_str(), p["model"].as_str()),
+            (Some("openai"), Some(OPENAI_DEFAULT_MODEL))
+        );
+        assert_eq!(p["async_job"], false);
+        assert_eq!(p["options"]["quality"], "low");
+        assert_eq!(p["cost_estimate"]["estimated"], true);
+        assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.00588).abs() < 1e-9, "{p}");
+
+        let p = plan(&["image", "generate", "a fox", "--provider", "gemini", "--resolution", "512"]);
+        assert_eq!(p["model"], GEMINI_DEFAULT_IMAGE_MODEL);
+        assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.045).abs() < 1e-9, "{p}");
+
+        let p = plan(&["image", "edit", "add a hat", "-i", "a.png", "--mask", "mask.png"]);
+        let inputs = p["inputs"].as_array().unwrap();
+        assert_eq!(inputs.len(), 2);
+        assert_eq!((inputs[0]["role"].as_str(), inputs[1]["role"].as_str()), (Some("image"), Some("mask")));
+        assert_eq!(inputs[0]["path"], sb.path("a.png").to_str().unwrap());
+        assert_eq!(inputs[0]["media_type"], "image/png");
+        assert_eq!(inputs[1]["bytes"], mask_png(64, 64).len() as u64);
+
+        let p = plan(&["video", "generate", "waves", "-m", VEO_LITE, "--duration", "4"]);
+        assert_eq!(p["async_job"], true);
+        assert_eq!(p["options"]["duration"], "4");
+        assert_eq!(p["options"]["resolution"], "720p", "effective defaults are shown");
+        assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.20).abs() < 1e-9, "{p}");
+
+        let out = base.clone().args(["image", "generate", "a fox", "--dry-run"]).run();
+        assert!(out.human().starts_with("Dry run: nothing was sent"), "{}", out.stdout);
+    }
+    assert_eq!(api.total(), 0, "a dry run never contacts a provider");
+    assert_eq!(files_in(&sb.work()), ["a.png", "mask.png"], "nothing was written");
+    assert!(!sb.jobs_dir().exists(), "no job record");
+}
