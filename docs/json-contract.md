@@ -1,8 +1,10 @@
 # JSON output contract
 
 `--json` mode is Iris's contract for agents and scripts: every command prints **exactly one JSON
-document on stdout**, newline-terminated; all progress lines, warnings-as-they-happen, and
-diagnostics go to stderr as plain text. Nothing else is ever written to stdout in `--json` mode.
+document on stdout**, newline-terminated; progress lines and diagnostics go to stderr as plain
+text. Warnings are **not** printed to stderr as they happen in `--json` mode — they are reported
+only in the envelope's `warnings` array, alongside the result or error they belong to. Nothing
+else is ever written to stdout in `--json` mode.
 Object keys are serialized in a fixed (alphabetical) order; don't rely on that order, but do rely
 on every documented key being present.
 
@@ -50,8 +52,10 @@ the envelope shape, every result type, the error object, and the stable code tab
   `providers.list`, `config.show`, `config.path`, `doctor`, `schema`, `completions`, `version` —
   or `null` when argument parsing itself failed before a command was identified (clap usage
   errors become this same envelope, at exit code 2, whenever `--json` appears anywhere in argv).
-  `--help`/`--version` combined with `--json` produce `ok: true` with a help/version result and
-  `command: null`.
+  `--help` combined with `--json` produces `ok: true` with a help result and `command: null` (the
+  help text is not any one command's result). `--version` combined with `--json` instead produces
+  `command: "version"` with the same result as running the `version` subcommand — it *is* that
+  command, so it gets a real `command` value.
 - Exactly one of `result` / `error` is non-null; both keys are always present.
 - Timestamps are RFC 3339 UTC (`2026-09-24T16:13:32Z`). Paths are absolute. Sizes are integer
   bytes.
@@ -129,7 +133,7 @@ A record that cannot be read (corrupt or written by a future Iris version) is sk
 
 ### `jobs.delete` → `{ "deleted": ["job_..."], "remote_effect": "none", "note": "Local records only; remote jobs and downloaded files are untouched." }`
 
-Real example (job deleted while a different job was still running, refused first):
+Real example (refusing to delete a running job without `--force`):
 
 ```console
 $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
@@ -184,8 +188,10 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
 ### `doctor` → `{ "healthy": true, "checks": [ { "id", "status": "ok|warning|error", "message" } ] }`
 
 `healthy` is `false` only when a `checks[].status` is `error` — a missing credential is a
-`warning`, not an `error` (you can still run `doctor` and every offline command without either
-key set; `healthy: false` there means "some provider can't be used yet", not "Iris is broken").
+`warning`, not an `error`. With no keys set at all, `doctor` still reports `healthy: true`
+(reproduced): you can run `doctor` and every offline command with neither key set, and the
+missing-credential checks show up as `warning` entries in `checks[]` for you to notice, not as a
+reason `healthy` flips to `false`.
 
 ### `schema` → `{ "schema": { "...": "the JSON Schema document itself" } }` (without `--json`, the raw schema is printed instead)
 
@@ -305,11 +311,17 @@ resubmits a paid request whose outcome it cannot prove.
 |---|---|
 | 0 | success |
 | 1 | runtime or provider failure |
-| 2 | usage/validation/conflict error — nothing was sent |
+| 2 | the request is invalid or conflicts as given; fix it before running again |
 | 3 | credentials, access, or quota problem |
 | 4 | not finished yet — the job continues remotely |
 | 5 | outcome uncertain — do not blindly resubmit |
 | 130 | interrupted (Ctrl-C) |
+
+Exit 2 covers *both* local validation (nothing was sent — the request never left the process) and
+a definite provider-side rejection of a malformed request as given (e.g. an OpenAI HTTP 400 →
+`invalid_argument`, which the provider documents as not generating output). Both are "fix the
+request before running again"; agents that need to distinguish them check `error.provider_status`:
+`null` means nothing was sent, a non-null value means the provider rejected it outright.
 
 A timeout on a paid **synchronous** request, after it was already sent, is reported as
 `request_timeout` with `details.charge_possible: true` and a hint that Iris did not retry it —
@@ -332,8 +344,11 @@ something the caller should know:
 `provider_text_output`, `already_downloaded`, `retention_limited`, `preview_model`,
 `non_default_base_url`, `content_filtered`, `unexpected_output_count`, `status_refresh_failed`.
 
-Real example — an output path with no extension, saved under the provider's actual media type
-(two warnings from one request, both real, from a mock-server run):
+Real example — an output path with no extension and a `--format` that didn't match what the
+provider actually returned (three warnings from one request, all real, from a mock-server run: the
+extension was picked from the requested format before the call, the response came back a different
+type than requested, and the extension was adjusted a second time to match what was actually
+saved):
 
 ```json
 "warnings": [

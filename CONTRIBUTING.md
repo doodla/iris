@@ -7,8 +7,10 @@ enforced, see [docs/architecture.md](docs/architecture.md); for adding a provide
 
 ## Dev setup
 
-You need a Rust toolchain — Rust 1.89 or newer (`rust-version` in `Cargo.toml`); `rustup` is the
-easiest way to get one, and will pick up the pinned toolchain automatically.
+You need a Rust toolchain — Rust 1.89 or newer (the `rust-version` declared in `Cargo.toml`, which
+CI's MSRV job also checks against); `rustup` is the easiest way to get one. This repository has no
+`rust-toolchain.toml`, so nothing is pinned automatically — install 1.89+ yourself (`rustup install
+1.89` or your usual up-to-date stable toolchain both work).
 
 ```console
 $ git clone https://github.com/doodla/iris && cd iris
@@ -21,8 +23,8 @@ any of the above — see [Tests](#tests) below.
 
 ## Checks to run before opening a pull request
 
-These are the same checks CI runs on every push and pull request; running them locally first
-saves a round trip:
+These are the same checks CI runs on pushes to `main` and on pull requests; running them locally
+first saves a round trip:
 
 ```console
 $ cargo fmt --all --check

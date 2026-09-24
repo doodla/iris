@@ -15,8 +15,11 @@ Estimated cost: ~$0.0082 USD (estimate from reported usage ...)
 
 **Provider usage is billed separately by OpenAI and Google, to your own API account.** A ChatGPT
 Plus/Pro subscription, the Gemini app, or a Google Flow subscription does **not** grant API access;
-you need an API key with billing enabled on the provider's developer platform. Iris only reports
-cost *estimates* from what the provider tells it — see [Limitations](#limitations).
+you need an API key with billing enabled on the provider's developer platform. A Google AI
+(Gemini app) subscription doesn't include Gemini API access either, but **Google Developer
+Program Cloud credits can be applied to API usage**. Iris reports cost *estimates*, from published
+prices before a call or from the provider's own reported usage after one — see
+[Limitations](#limitations).
 
 ## Contents
 
@@ -25,6 +28,7 @@ cost *estimates* from what the provider tells it — see [Limitations](#limitati
 - [Setup](#setup)
 - [First success](#first-success)
 - [More examples](#more-examples)
+- [Prompts, models, and output files](#prompts-models-and-output-files)
 - [Agent usage](#agent-usage-json-mode)
 - [Supported providers and models](#supported-providers-and-models)
 - [Limitations](#limitations)
@@ -77,8 +81,10 @@ $ cargo install --locked --path .
 ```
 
 This builds and installs the `iris` binary with `cargo` (Rust 1.89 or newer; `rustup` is the
-easiest way to get a toolchain). Verified for this release: `cargo build --locked --release`
-succeeds against the committed `Cargo.lock` and produces a working `iris --version`.
+easiest way to get a toolchain). Verified at this commit: `cargo build --locked --release`
+succeeds against the committed `Cargo.lock` and produces a working `iris --version`. Once
+releases are published, see [docs/install.md](docs/install.md#supported-platforms-and-runtime-requirements)
+for the supported platforms and their minimum OS/kernel versions.
 
 ## Setup
 
@@ -91,21 +97,29 @@ $ export GEMINI_API_KEY=...
 ```
 
 You need only the key for the provider(s) you use. Check what Iris sees (values are never
-printed, only presence):
+printed, only presence; real output, paths are absolute, never `~`):
 
 ```console
 $ iris doctor
-[ok]      config: no config file at ~/.config/iris/config.toml; built-in defaults apply
+[ok]      config: no config file at /home/you/.config/iris/config.toml; built-in defaults apply
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
-[ok]      state_dir: state directory ~/.local/state/iris is writable
+[ok]      state_dir: state directory /home/you/.local/state/iris is writable
 [ok]      output_dir: output directory /home/you is writable
+[ok]      base_url.openai: openai API base URL is the default (https://api.openai.com/v1)
+[ok]      base_url.gemini: gemini API base URL is the default (https://generativelanguage.googleapis.com/)
 [ok]      jobs: 0 local job record(s) readable
 Healthy.
 ```
 
-`iris doctor --check-access` additionally makes one free, unbilled metadata call per provider to
-confirm your account can actually reach the model, not just that a key is present.
+`iris doctor --check-access` additionally makes one free, unbilled metadata call per **default
+model** (openai image, gemini image, gemini video — three calls today) to confirm your account can
+actually reach each one, not just that a key is present.
+
+The Gemini API separately needs an auth key with **Prepay** billing enabled (there is no free tier
+for image or Veo models), and standard (legacy) API keys are rejected from September 2026 — run
+`iris models show <model>` for a model's exact, current access notes rather than assuming these
+generalize.
 
 Non-secret settings (default models, output directory, timeouts, a config file) follow
 `flag > environment variable > config file > built-in default`; see
@@ -155,14 +169,16 @@ Submit and come back later — from any process, even after the terminal closed:
 
 ```console
 $ iris video generate "a paper boat drifting on a pond" --duration 4 --detach
-Job job_01m3a333vp4pc80nb37svfgq7x accepted by gemini
-Submitted job job_01m3a333vp4pc80nb37svfgq7x: running (gemini veo-3.1-fast-generate-preview)
-Next: iris jobs status job_01m3a333vp4pc80nb37svfgq7x
-Next: iris jobs wait job_01m3a333vp4pc80nb37svfgq7x
+Submitting job job_01m3a59a5syx5aex0a0qv8qc3x to gemini (veo-3.1-fast-generate-preview); this is a paid request
+Job job_01m3a59a5syx5aex0a0qv8qc3x accepted by gemini
+warning[preview_model]: veo-3.1-fast-generate-preview is a preview model; its behavior, limits, and availability may change
+Submitted job job_01m3a59a5syx5aex0a0qv8qc3x: running (gemini veo-3.1-fast-generate-preview)
+Next: iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x
+Next: iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x
 
-$ iris jobs status job_01m3a333vp4pc80nb37svfgq7x
-$ iris jobs wait job_01m3a333vp4pc80nb37svfgq7x           # waits, then downloads
-$ iris jobs download job_01m3a333vp4pc80nb37svfgq7x        # safe to repeat; never regenerates
+$ iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x
+$ iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x           # waits, then downloads
+$ iris jobs download job_01m3a59a5syx5aex0a0qv8qc3x        # safe to repeat; never regenerates
 ```
 
 A wait limit or Ctrl-C only stops *waiting* — the remote job keeps running and stays resumable:
@@ -174,6 +190,28 @@ error[wait_timeout]: job job_01m3a3g5wb5mkqg2whke2e4k3q did not finish within 1m
 $ echo $?
 4
 ```
+
+## Prompts, models, and output files
+
+A prompt comes from exactly one of three mutually exclusive sources — Iris rejects two at once
+with a clear `usage_error`: inline text (`iris image generate "a fox" ...`), a UTF-8 file
+(`-f/--prompt-file PATH`, trailing whitespace trimmed), or standard input (`--prompt-stdin`, which
+must not be a terminal).
+
+`--model` picks a specific model id or alias (`iris models list` shows every one Iris knows); when
+omitted, Iris uses the catalog's default for the resolved provider and operation. For a model
+Iris doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
+known model's capabilities (sent to the provider as given, validated as that known model, and
+flagged with an `unverified_model_capabilities` warning) rather than refusing outright. Any option
+a model accepts but has no typed flag for is reachable through `-O key=value` (repeatable);
+`iris models show <model>` lists every option, typed or `-O`-only.
+
+Without `-o`/`-d`, Iris saves to the current directory under a predictable name: images as
+`iris-<ulid>.<ext>` (the extension follows the actual returned media type), and video job outputs
+as `<job_id>.mp4`. `-o/--output PATH` names an exact file (with several outputs:
+`<stem>-<i>.<ext>`); `-d/--out-dir DIR` picks a directory and keeps the default naming. An existing
+file at the target path is refused as `output_exists` unless `--overwrite` is passed — Iris never
+silently replaces a file.
 
 ## Agent usage (JSON mode)
 
@@ -202,17 +240,26 @@ Exit codes are a stable, documented contract — an agent can branch on them wit
 |---|---|
 | 0 | success |
 | 1 | runtime or provider failure |
-| 2 | usage/validation/conflict error — nothing was sent |
+| 2 | the request is invalid or conflicts as given; fix it before running again |
 | 3 | credentials, access, or quota problem |
 | 4 | not finished yet — the job continues remotely (wait timeout, or outputs not ready) |
 | 5 | outcome uncertain — a paid submission may or may not have gone through; Iris never resubmits automatically |
 | 130 | interrupted (Ctrl-C) |
 
+Exit 2 covers both local validation (nothing was sent) and a definite provider rejection of a
+malformed request (e.g. an OpenAI HTTP 400) — the request itself was bad either way. Tell them
+apart from `error.provider_status`: `null` means nothing was sent (full table in
+[docs/json-contract.md](docs/json-contract.md)).
+
 The video **recovery flow** an agent should implement: `--detach` to get a `job_id` immediately,
-then poll with `iris jobs status <id> --json` (exit 4 while `status: running`), and finally
-`iris jobs wait <id>` or `iris jobs download <id>` once it reports `succeeded`. Every step is
-idempotent: repeating a download never re-generates the video (see
-[docs/jobs.md](docs/jobs.md)).
+then poll with `iris jobs status <id> --json`, which exits **0** and reports the job's state in
+`result.job.status` (`running`, `succeeded`, `failed`, `expired`, or `submission_unknown`) —
+branch on that field, not on the exit code. `iris jobs wait <id> --timeout <D> --json` is a
+convenient alternative: it exits **4** (`wait_timeout`) while still running and **0** once the job
+reaches a terminal status, so an agent can loop on exit 4 instead of parsing `status` itself.
+Either way, finish with `iris jobs download <id>` once the job reports `succeeded`; downloading
+too early exits 4 (`job_not_ready`) rather than waiting or resubmitting. Every step is idempotent:
+repeating a download never re-generates the video (see [docs/jobs.md](docs/jobs.md)).
 
 ## Supported providers and models
 

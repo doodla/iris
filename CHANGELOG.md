@@ -6,11 +6,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
-Nothing yet.
+No release has been tagged yet. The entries below describe v1's capabilities as implemented at
+this commit; this section will be dated and renamed to a `[0.1.0]` release heading once a `v0.1.0`
+tag is actually cut, per [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [0.1.0] — initial release
-
-Iris's first release: a Rust CLI that generates and edits images and generates videos through
+Iris's planned first release: a Rust CLI that generates and edits images and generates videos through
 OpenAI and Google, with a durable job model for provider-native asynchronous work and a
 machine-readable contract for agents.
 
@@ -24,8 +24,8 @@ machine-readable contract for agents.
   asynchronous job: durable local job records, `--detach` submit-and-return, and
   `jobs status`/`wait`/`download`/`delete` recovery from any later process. First-frame,
   last-frame, and reference-image inputs where the model documents support for them.
-  Submission uncertainty (an ambiguous paid submit) is reported as `submission_unknown` and never
-  resubmitted automatically.
+  Submission uncertainty (an ambiguous paid submit) is reported as `submission_uncertain` (exit 5;
+  the job's own status field reads `submission_unknown`) and never resubmitted automatically.
 - **A versioned `--json` contract**: one JSON envelope per command, a published JSON Schema
   (`iris schema`), a stable error-code taxonomy with a documented exit-code mapping, and
   structured warnings. See [docs/json-contract.md](docs/json-contract.md).

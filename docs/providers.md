@@ -71,7 +71,8 @@ compiler alone):
   and no `jobs cancel` command in the CLI (see [jobs.md](jobs.md#local-deletion-vs-remote-state))
   because no provider Iris implements today offers one. If your provider *does* document a cancel
   endpoint, that is a CLI-contract change (a new command), not something to bolt onto the existing
-  trait — raise it as a contract revision rather than improvising.
+  trait — treat it as a deliberate, documented CLI/JSON compatibility change (see
+  [AGENTS.md#compatibility](../AGENTS.md#compatibility)) rather than improvising.
 - **Downloads use the shared credential-origin rule**, not a bespoke one: `http::download`
   already attaches `Provider::credential_header()` only when the download URL's scheme+host+port
   match the provider's configured base URL, and follows redirects manually so a redirect off that
@@ -126,10 +127,12 @@ Then:
    max }`, `Boolean`, `Text { max_chars }`, or `Pattern` with a custom validator). An option in
    the CLI's fixed typed-flag table (`--count`,
    `--duration`, …) must use that flag name; anything else is reachable only through
-   `-O name=value` (see C-06's "typed flag → option name mapping" for the exact table, and
-   `catalog::mod.rs`'s test that enforces it). **Never accept an option Iris cannot map on the
-   wire side** — if the provider takes it but your adapter has nowhere to put it yet, leave it out
-   of the catalog rather than declaring it and dropping it.
+   `-O name=value` (the table itself is `raw_options`'s flag → option-name array in
+   `src/cli/mod.rs`, around line 397; `tests/openai_catalog.rs::typed_flags_follow_the_c06_flag_table`
+   and the equivalent test in `tests/gemini_catalog.rs` are what enforces every declared model
+   stays consistent with it). **Never accept an option Iris cannot map on the wire side** — if the
+   provider takes it but your adapter has nowhere to put it yet, leave it out of the catalog
+   rather than declaring it and dropping it.
 4. If the model needs cross-field validation (Iris's Veo catalog has "1080p or 4k requires an
    8-second duration", "a last frame requires a first frame"), write a `validate` function with
    the same shape as `catalog::veo::validate_video`.
@@ -171,7 +174,7 @@ Mirror the existing per-provider test files (`tests/openai_catalog.rs` /
   field-by-field assertion against a built request, not just "it doesn't panic"); response
   parsing handles the documented success shape *and* the provider's error shapes (auth failure,
   rate limit, content block, malformed body); the `PaidSubmit` vs. `IdempotentRead` retry
-  classification matches what you decided in step 2, tested against a local `wiremock`/`httpmock`
+  classification matches what you decided in step 2, tested against a local `wiremock`
   server — **never** a real endpoint (see [live-testing.md](live-testing.md) for how the small,
   budgeted, opt-in live check is separated from the ordinary offline suite).
 - Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before
@@ -183,4 +186,5 @@ Mirror the existing per-provider test files (`tests/openai_catalog.rs` /
 If adding a provider requires changing `cli/args.rs` beyond adding the provider to a documented
 enum, or requires new branches in `app/image.rs` / `app/video.rs` keyed on which provider was
 selected, that is a sign the abstraction in `providers` needs to grow first — fix the trait or the
-shared catalog types, not the application layer, and record why in a contract revision.
+shared catalog types, not the application layer, and record why as a deliberate, documented
+CLI/JSON compatibility change (see [AGENTS.md#compatibility](../AGENTS.md#compatibility)).

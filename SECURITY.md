@@ -2,17 +2,18 @@
 
 ## Reporting a vulnerability
 
-Please **do not** open a public GitHub issue for a security vulnerability. Instead, use GitHub's
-private vulnerability reporting for this repository:
+Please **do not** open a public GitHub issue for a security vulnerability. Instead:
 
 1. Go to the [Security tab](https://github.com/doodla/iris/security) of `doodla/iris`.
-2. Click **"Report a vulnerability"** to open a private advisory. This starts a confidential
-   conversation with the maintainers, visible only to you and them, before anything is public.
+2. **If private vulnerability reporting is enabled for this repository** (a **"Report a
+   vulnerability"** button on that tab), use it to open a private advisory. This starts a
+   confidential conversation with the maintainers, visible only to you and them, before anything
+   is public.
 
-If private reporting isn't available or working for you, open a
-[security advisory](https://github.com/doodla/iris/security/advisories) directly, or a regular
-issue asking for another way to reach the maintainers **without describing the vulnerability
-itself** — a maintainer will follow up with a private channel.
+Drafting a security advisory directly is a maintainer-only action, so if you don't see that button
+— private reporting isn't enabled, or you don't have access to it — open a regular public issue
+asking for another way to reach the maintainers **without describing the vulnerability itself** (no
+technical details, no proof of concept); a maintainer will follow up with a private channel.
 
 Please include what you'd include in any good report: the affected version or commit, a minimal
 reproduction, and the impact as you understand it. You do not need to propose a fix.

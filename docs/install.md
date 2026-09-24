@@ -1,5 +1,24 @@
 # Installing Iris
 
+## Supported platforms and runtime requirements
+
+| platform | target triple | archive name | minimum OS/kernel |
+|---|---|---|---|
+| Linux x86_64 | `x86_64-unknown-linux-musl` | `iris-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz` | any x86_64 Linux kernel ≥ 3.2, regardless of the host's glibc version or its absence — the binary is statically linked (musl libc, static-pie) |
+| macOS x86_64 (Intel) | `x86_64-apple-darwin` | `iris-vX.Y.Z-x86_64-apple-darwin.tar.gz` | macOS 10.12+ (Sierra and later) |
+| macOS arm64 (Apple silicon) | `aarch64-apple-darwin` | `iris-vX.Y.Z-aarch64-apple-darwin.tar.gz` | macOS 11.0+ (Big Sur and later — also the first macOS version Apple silicon Macs shipped with, so this is not a practical additional restriction) |
+
+Anything else (Linux arm64, Windows/MSYS/Cygwin, a BSD, a 32-bit system) is not supported: the
+installer fails immediately with a clear message naming what it detected, rather than silently
+installing the wrong archive.
+
+The musl target for Linux is **provisional** (D-09 in this project's decisions log) and may change
+in a future release if it stops meeting the project's needs.
+
+HTTPS requests (installer download, and every provider API call `iris` itself makes) use the
+**system's CA trust store**, not a bundled one. On a minimal container or base image, install
+`ca-certificates` (or your distribution's equivalent) first, or TLS verification will fail.
+
 ## Status: no release has been published yet
 
 As of this writing, `doodla/iris` has **no published release**, so the installer paths below
@@ -94,17 +113,24 @@ $ curl -fsSL https://raw.githubusercontent.com/doodla/iris/v0.1.0/install.sh | s
 If you'd rather read the script before running it:
 
 ```console
-$ curl -fsSLO https://raw.githubusercontent.com/doodla/iris/main/install.sh
+$ curl -fsSLO https://raw.githubusercontent.com/doodla/iris/v0.1.0/install.sh
 $ less install.sh
 $ sh install.sh --version v0.1.0
 ```
+
+(Pin the installer ref in the `curl` URL to the same tag you pass to `--version` — as in
+[Pinned installation](#pinned-installation) above — or drop `--version` entirely and let it default
+to `latest`; fetching from `main` while pinning `--version` to an older tag mixes an unpinned
+script with a pinned binary.)
 
 **What the checksum proves, and what it doesn't:** `SHA256SUMS` is published in the same GitHub
 release as the archive it checksums. Verifying against it confirms the archive you downloaded
 matches what the release actually contains — it catches a corrupted or truncated download. It is
 **not independent authenticity**: both files come from the same origin, so this does not protect
-against a compromised release itself. Use GitHub's own release provenance if you need that
-guarantee.
+against a compromised release itself. Iris's release workflow currently publishes no signatures or
+provenance attestations for its archives — verify the tag and the release itself on GitHub
+yourself if you need stronger assurance of authenticity than "the checksum matches what GitHub
+currently serves."
 
 ### Upgrade
 
@@ -118,7 +144,8 @@ $ rm ~/.local/bin/iris        # or wherever --dir / IRIS_INSTALL_DIR pointed
 ```
 
 Removing the executable is a **separate action** from deleting your configuration and job
-history:
+history. Run `iris config path` first to see the real, absolute paths on your machine — they
+differ by platform:
 
 ```console
 $ iris config path
@@ -127,6 +154,22 @@ state dir:   ~/.local/state/iris
 jobs dir:    ~/.local/state/iris/jobs
 $ rm ~/.config/iris/config.toml
 $ rm -rf ~/.local/state/iris
+```
+
+**On macOS, be careful: the config file and the state directory are the same directory**
+(`~/Library/Application Support/iris`) — `config.toml` lives directly inside it, alongside the
+`jobs/` subdirectory. Deleting the whole state directory on macOS also deletes your config file,
+which is *not* a separate action there. To delete job history only on macOS, remove the `jobs/`
+subdirectory, not the whole state directory, and delete `config.toml` on its own if you also want
+that gone:
+
+```console
+$ iris config path
+config file: ~/Library/Application Support/iris/config.toml
+state dir:   ~/Library/Application Support/iris
+jobs dir:    ~/Library/Application Support/iris/jobs
+$ rm -rf ~/Library/Application\ Support/iris/jobs   # job history only
+$ rm ~/Library/Application\ Support/iris/config.toml   # config, separately
 ```
 
 `iris jobs delete --all` (see [jobs.md](jobs.md#local-deletion-vs-remote-state)) removes only

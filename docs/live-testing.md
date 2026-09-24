@@ -71,25 +71,42 @@ sends a real, billed request. Do not run them without your own `OPENAI_API_KEY` 
 `GEMINI_API_KEY`, without having checked current pricing yourself, and without intending to spend
 real money.
 
+Run every paid command with `--dry-run` first (no credential or network call required) to read
+its cost estimate before sending it for real — this also catches a `cost_estimate_unavailable`
+warning early, while it's still free to fix (see the budget rule above: an unbounded `auto`
+size/quality is exactly what that warning is for). For example:
+
+```console
+$ iris image edit -i openai.png "..." -o openai-edit.png --size 1024x1024 --quality low --dry-run --json
+```
+
 ```console
 # 1-2: image generation, cheapest bounded settings
 $ iris image generate "..." --size 1024x1024 --quality low -o openai.png --json
 $ iris image generate "..." --provider gemini --resolution 512 --aspect-ratio 1:1 -o gemini.png --json
 
-# 3: editing, reusing the images just generated (no extra generation cost)
-$ iris image edit -i openai.png "..." -o openai-edit.png --json
-$ iris image edit -i gemini.png "..." --provider gemini -o gemini-edit.png --json
+# 3: editing, reusing the images just generated (no extra generation cost) — bounded settings
+# here too: an unqualified edit defaults to size=auto/quality=auto on OpenAI, which Iris cannot
+# estimate the cost of before sending (a --dry-run of the unbounded form reproduces
+# cost_estimate_unavailable; don't send that form live)
+$ iris image edit -i openai.png "..." -o openai-edit.png --size 1024x1024 --quality low --json
+$ iris image edit -i gemini.png "..." --provider gemini -o gemini-edit.png --resolution 512 --json
 
 # 4: Veo submit-and-return (the one allowed submission)
 $ iris video generate "..." --model veo-3.1-lite-generate-preview --duration 4 --resolution 720p --detach --json
 # note the job_id printed above, then from here on nothing resubmits anything:
 
-# 5: resume from a separate invocation
+# 5: resume from a separate invocation, without downloading yet (so step 6 below is
+# `jobs download`'s own separate, non-resubmitting step, per SPEC §7 — `jobs wait` without
+# --no-download would already download and step 6 would just repeat it)
 $ iris jobs status <job_id> --json
-$ iris jobs wait <job_id> --json
+$ iris jobs wait <job_id> --no-download --json
 
-# 6-7: download, then repeat (both safe, neither resubmits or re-charges)
+# 6: download, as its own step (never resubmits or regenerates)
 $ iris jobs download <job_id> --json
+
+# 7: repeat the same download (safe; expect a warning `already_downloaded`, no network call,
+# no re-charge)
 $ iris jobs download <job_id> --json
 ```
 

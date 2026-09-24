@@ -16,7 +16,9 @@ Iris cannot know whether it succeeded and has no way to check — that outcome i
 limitation, not an Iris gap: OpenAI's Images API and Gemini's `generateContent` are both plain
 request/response calls with no job or operation concept, so there is nothing durable to recover.
 Only `video.generate` gets a job record, because Veo's `predictLongRunning` API is itself
-asynchronous — the provider gives back an operation id Iris can poll indefinitely.
+asynchronous — the provider gives back an operation id Iris can poll until the provider's own
+retention window ends (about 2 days; see [Retention and expiry](#retention-and-expiry) below), not
+indefinitely.
 
 ## Where state lives
 
@@ -30,10 +32,12 @@ jobs dir:    ~/.local/state/iris/jobs
 The state directory is `IRIS_STATE_DIR` > config `state_dir` > the platform default (Linux:
 `$XDG_STATE_HOME/iris`, else `~/.local/state/iris`; macOS: `~/Library/Application Support/iris`).
 Directories are created mode `0700`, record files mode `0600` (Unix permissions). Each job is one
-file, `<jobs_dir>/<job_id>.json`, plus two lock files used only transiently: `<job_id>.lock`
-(exclusive, held only for a read-modify-write) and `<job_id>.download.lock` (exclusive, held for
-the whole download of that job, so two concurrent `jobs download` calls for the same job cannot
-race).
+file, `<jobs_dir>/<job_id>.json`, plus two 0-byte lock files: `<job_id>.lock` (exclusive, its
+`flock` held only for one short read-modify-write) and `<job_id>.download.lock` (exclusive, its
+`flock` held for the whole download of that job, so two concurrent `jobs download` calls for the
+same job cannot race). It is the **lock** that is held only transiently — the lock *files*
+themselves are created on first use and stay on disk (0 bytes, harmless) until `iris jobs delete`
+removes them along with the record.
 
 ## What is persisted — and what is not
 
@@ -51,6 +55,11 @@ else:
   job is which, not what you asked for.
 - Output plan (directory/path/overwrite) and, once known, each output's remote URI, media type,
   download state, local path, size, and hash.
+
+**Local retention has no automatic pruning.** A job record stays in `<jobs_dir>` indefinitely —
+Iris never deletes or expires one on its own, regardless of provider-side retention or how old the
+job is. It stays until you remove it yourself with `iris jobs delete` (see
+[Local deletion vs. remote state](#local-deletion-vs-remote-state)).
 
 Real record, captured from a completed job (`<state>/jobs/<job_id>.json`):
 
@@ -180,32 +189,49 @@ Order of decision for each output, under the job's download lock:
    to run any number of times.
 2. If the recorded local file is intact but you asked for a *different* target path → copy it
    locally (no network call).
-3. Otherwise, stream it from the provider, hashing as it downloads. A non-2xx response, an
-   `application/json`/`text/*`/`application/xml` body (an API error page mistakenly treated as
-   media), or bytes whose magic number doesn't match the declared media type are all rejected
-   (`invalid_media`) rather than saved.
+3. Otherwise, stream it from the provider, hashing as it downloads. A non-2xx response is mapped
+   by status, not lumped into one generic failure: 403/404/410 → `artifact_expired` (the provider
+   no longer serves it — retryable is `false`, no point trying again); 401 →
+   `authentication_failed`; 429, or any status whose `Retry-After` exceeds the automatic-wait
+   limit, → `rate_limited`; any other status, or a transport failure, → `download_failed`
+   (retryable unless the failure is permanent). Separately, a *successful* (2xx) response whose
+   `Content-Type` says it's an error document (`application/json`/`text/*`/`application/xml`) —
+   an API error page mistakenly served as if it were media — or whose bytes' magic number doesn't
+   match the declared media type, is rejected as `invalid_media` rather than saved.
 4. Finalize through a temp file in the target directory and a no-clobber (or, with `--overwrite`,
    atomic-replace) rename — never a partial file under the final name.
 
-Real end-to-end sequence, run as three **separate process invocations** against the same job:
+Real end-to-end sequence, run as four **separate process invocations** against the same job:
 
 ```console
 $ iris video generate "waves crashing at dusk" --duration 4 --detach
-Job job_01m3a2nqbkpakg9e354jtadtq7 accepted by gemini
-Submitted job job_01m3a2nqbkpakg9e354jtadtq7: running (gemini veo-3.1-fast-generate-preview)
+Submitting job job_01m3a5ffjkdnar227bba60tfa2 to gemini (veo-3.1-fast-generate-preview); this is a paid request
+Job job_01m3a5ffjkdnar227bba60tfa2 accepted by gemini
+warning[preview_model]: veo-3.1-fast-generate-preview is a preview model; its behavior, limits, and availability may change
+Submitted job job_01m3a5ffjkdnar227bba60tfa2: running (gemini veo-3.1-fast-generate-preview)
+Next: iris jobs status job_01m3a5ffjkdnar227bba60tfa2
+Next: iris jobs wait job_01m3a5ffjkdnar227bba60tfa2
 
-$ iris jobs status job_01m3a2nqbkpakg9e354jtadtq7
-Job job_01m3a2nqbkpakg9e354jtadtq7 is running (40% done)
-...
+$ iris jobs status job_01m3a5ffjkdnar227bba60tfa2
+Job job_01m3a5ffjkdnar227bba60tfa2 is running (40% done)
+job_01m3a5ffjkdnar227bba60tfa2
+  status:     running
+  provider:   gemini
+  model:      veo-3.1-fast-generate-preview
+  created:    2026-09-24T16:55:15Z
+  submitted:  2026-09-24T16:55:15Z
+  checked:    2026-09-24T16:55:21Z
+  remote op:  models/veo-3.1-fast-generate-preview/operations/op_mockjob
+  cost:       ~$0.4000 USD (4 s × $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged)
 
-$ iris jobs wait job_01m3a2nqbkpakg9e354jtadtq7
-Job job_01m3a2nqbkpakg9e354jtadtq7 succeeded
-Downloading output 0 of job job_01m3a2nqbkpakg9e354jtadtq7
-Saved /home/you/job_01m3a2nqbkpakg9e354jtadtq7.mp4
+$ iris jobs wait job_01m3a5ffjkdnar227bba60tfa2
+Job job_01m3a5ffjkdnar227bba60tfa2 succeeded
+Downloading output 0 of job job_01m3a5ffjkdnar227bba60tfa2
+Saved /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4
 
-$ iris jobs download job_01m3a2nqbkpakg9e354jtadtq7      # repeat: safe, no network
-warning[already_downloaded]: an identical file is already at /home/you/job_01m3a2nqbkpakg9e354jtadtq7.mp4; nothing was written
-Saved /home/you/job_01m3a2nqbkpakg9e354jtadtq7.mp4
+$ iris jobs download job_01m3a5ffjkdnar227bba60tfa2      # repeat: safe, no network
+warning[already_downloaded]: an identical file is already at /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4; nothing was written
+Saved /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4
 ```
 
 `iris jobs download` on a job that has not finished yet exits **4** (`job_not_ready`) — never
@@ -238,9 +264,16 @@ offers a way to cancel a job it has accepted** — Veo's `predictLongRunning` op
 `get`/`list`, no `cancel` or `delete` — so there is no `iris jobs cancel` command, and Iris never
 implies one exists.
 
+Remote deletion of a generated video *file* is a separate question from cancelling a running job,
+and Iris draws it the same honest way: **remote deletion of generated video files is not supported
+by Iris; whether the provider's Files API `delete` method applies to Veo outputs is unverified**
+(Google's Files API documents a `files.delete` method, but Iris has not confirmed it covers Veo
+generations specifically, so it does not claim the capability).
+
 Deleting a job that is still `submitting` or `running` would make it **unrecoverable** locally
-(you would keep paying for a video Iris can no longer find), so it is refused unless you pass
-`--force`:
+(you may still be charged for a video Iris can no longer find — Veo bills once per generated
+video, so this is about losing track of what you paid for, not an ongoing charge), so it is
+refused unless you pass `--force`:
 
 ```console
 $ iris jobs delete job_01m3a3eg0fgm3qsnw4eybjd7v5

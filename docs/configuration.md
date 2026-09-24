@@ -11,12 +11,16 @@ file, never from a command-line flag, and never with a fallback name:
 | Google Gemini (images and Veo) | `GEMINI_API_KEY` (not `GOOGLE_API_KEY` — Iris explicitly ignores that name; `doctor` warns when `GOOGLE_API_KEY` is set, so a common mistake doesn't fail silently) |
 
 Credentials are held in a `Secret` type that never prints or serializes its contents — Iris
-reports only *presence*, never a value:
+reports only *presence*, never a value. Real `doctor` output, abridged to the credential rows
+(`doctor` also reports `config`, `state_dir`, `output_dir`, `base_url.openai`, `base_url.gemini`,
+and `jobs` — see [Setup](../README.md#setup) in the README for the full, real block):
 
 ```console
 $ iris doctor
+...
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
+...
 ```
 
 A missing key for the provider a command needs is `missing_credentials` (exit 3), checked after
@@ -111,6 +115,7 @@ $ iris --config ./bad.toml doctor
 [error]   config: config file ./bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
+...
 Problems found (see [error] lines).
 ```
 
