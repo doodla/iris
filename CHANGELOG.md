@@ -133,6 +133,10 @@ machine-readable contract for agents.
 - `iris --help` no longer says exit code 2 means "nothing was sent": exit 2 is an invalid request
   that must be fixed before retrying, rejected either locally (`error.provider_status` is null,
   nothing was sent) or by the provider as given.
+- The Gemini and Veo access notes (`iris models show`) and key-related error hints now state only
+  what Google documents: no free tier (a paid-tier billing plan is needed), and standard API keys
+  "will" be rejected from September 2026 with no exact day given, so Iris recommends an auth key
+  instead of claiming the cutoff is already enforced. Both catalogs share one wording.
 
 ### Known limitations
 

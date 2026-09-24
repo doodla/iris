@@ -116,10 +116,10 @@ Healthy.
 model** (openai image, gemini image, gemini video — three calls today) to confirm your account can
 actually reach each one, not just that a key is present.
 
-The Gemini API separately needs an auth key with **Prepay** billing enabled (there is no free tier
-for image or Veo models), and standard (legacy) API keys are rejected from September 2026 — run
-`iris models show <model>` for a model's exact, current access notes rather than assuming these
-generalize.
+Gemini image and Veo models have **no free tier**: the key's project needs a paid-tier billing plan
+(on Prepay, a positive credit balance). Use an auth API key: Google says the Gemini API will reject
+standard keys from September 2026 (no exact day given). Run `iris models show <model>` for a
+model's exact, current access notes rather than assuming these generalize.
 
 Non-secret settings (default models, output directory, timeouts, a config file) follow
 `flag > environment variable > config file > built-in default`; see
@@ -294,7 +294,7 @@ veo-3.1-lite-generate-preview  gemini    preview    video.generate              
 `iris models show <model>` prints one model's full contract: every accepted option (with its
 typed flag or `-O key=value` form), input/output limits, published prices, and documented access
 requirements (e.g. "API Organization Verification may be required for GPT Image models", "No
-free tier for image models: billing (Prepay) required"). `iris providers list` shows which
+free tier: the key's project needs a paid-tier billing plan"). `iris providers list` shows which
 credential each provider reads and whether it's set.
 
 ## Limitations

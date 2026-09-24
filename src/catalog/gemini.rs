@@ -44,8 +44,21 @@ const OUTPUTS: OutputSpec = OutputSpec { media_types: &["image/jpeg", "image/png
 
 const LIMITS: Limits = Limits { max_prompt_chars: None };
 
-const NOTE_BILLING: &str = "No free tier for image models: billing (Prepay) required";
-const NOTE_AUTH_KEY: &str = "Standard (legacy) API keys are rejected from September 2026; use an auth key";
+/// Account note shared by every Gemini API model (images and Veo). Source: the
+/// pricing page ("Free Tier: Not available" for these models) and the billing page
+/// (<https://ai.google.dev/gemini-api/docs/billing>: the paid tier needs a billing plan;
+/// Prepay is the default and stops at a zero balance; some accounts are on Postpay),
+/// checked 2026-09-24.
+pub const ACCESS_NOTE_PAID_TIER: &str =
+    "No free tier: the key's project needs a paid-tier billing plan (on Prepay, a positive credit balance)";
+/// Key-type note shared by every Gemini API model. Source:
+/// <https://ai.google.dev/gemini-api/docs/api-key>, checked 2026-09-24. The page says
+/// new keys are auth keys, unrestricted standard keys are rejected, and "On September
+/// 2026" the API "will reject requests from standard keys", without an exact day, so
+/// Iris does not claim that the cutoff is already enforced.
+pub const ACCESS_NOTE_AUTH_KEY: &str = "Use an auth API key: Google says the Gemini API will reject standard keys \
+                                        from September 2026 (no exact day given); unrestricted standard keys are \
+                                        already rejected";
 
 const FLASH_ASPECT_RATIOS: &[&str] =
     &["1:1", "1:4", "1:8", "2:3", "3:2", "3:4", "4:1", "4:3", "4:5", "5:4", "8:1", "9:16", "16:9", "21:9"];
@@ -199,7 +212,7 @@ pub static MODELS: &[ModelSpec] = &[
         outputs: OUTPUTS,
         limits: LIMITS,
         pricing: FLASH_PRICING,
-        access_notes: &[NOTE_BILLING, NOTE_AUTH_KEY],
+        access_notes: &[ACCESS_NOTE_PAID_TIER, ACCESS_NOTE_AUTH_KEY],
         docs_url: DOCS_URL,
         validate: None,
         estimate: Some(estimate_image),
@@ -219,8 +232,8 @@ pub static MODELS: &[ModelSpec] = &[
         limits: LIMITS,
         pricing: LITE_PRICING,
         access_notes: &[
-            NOTE_BILLING,
-            NOTE_AUTH_KEY,
+            ACCESS_NOTE_PAID_TIER,
+            ACCESS_NOTE_AUTH_KEY,
             "Provider note: not optimized for multiple reference images or multi-turn editing",
         ],
         docs_url: DOCS_URL,
@@ -241,7 +254,7 @@ pub static MODELS: &[ModelSpec] = &[
         outputs: OUTPUTS,
         limits: LIMITS,
         pricing: PRO_PRICING,
-        access_notes: &[NOTE_BILLING, NOTE_AUTH_KEY],
+        access_notes: &[ACCESS_NOTE_PAID_TIER, ACCESS_NOTE_AUTH_KEY],
         docs_url: DOCS_URL,
         validate: None,
         estimate: Some(estimate_image),

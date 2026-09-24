@@ -73,11 +73,7 @@ fn the_three_nano_banana_models_are_declared_with_ids_names_and_aliases() {
         assert_eq!(m.outputs.media_types, &["image/jpeg", "image/png"]);
         assert_eq!(m.outputs.max_count, 1);
         assert_eq!(m.limits.max_prompt_chars, None);
-        // Fixed wording; change it deliberately for both catalogs.
-        for note in [
-            "No free tier for image models: billing (Prepay) required",
-            "Standard (legacy) API keys are rejected from September 2026; use an auth key",
-        ] {
+        for note in [catalog::gemini::ACCESS_NOTE_PAID_TIER, catalog::gemini::ACCESS_NOTE_AUTH_KEY] {
             assert!(m.access_notes.contains(&note), "{}: {note}", m.id);
         }
     }
@@ -89,6 +85,34 @@ fn the_three_nano_banana_models_are_declared_with_ids_names_and_aliases() {
     assert_eq!(spec("nano-banana-2-lite").id, LITE);
     assert_eq!(spec("nano-banana-pro").id, PRO);
     assert!(spec(LITE).access_notes.iter().any(|n| n.contains("not optimized for multiple reference")));
+}
+
+/// The account notes state only what Google documents (checked 2026-09-24): no free
+/// tier, and standard keys "will" be rejected "On September 2026" with no exact day, so
+/// the notes must not claim the cutoff is already enforced. Veo shares the same notes.
+#[test]
+fn account_notes_state_only_the_documented_key_and_billing_rules() {
+    assert_eq!(
+        catalog::gemini::ACCESS_NOTE_PAID_TIER,
+        "No free tier: the key's project needs a paid-tier billing plan (on Prepay, a positive credit balance)"
+    );
+    assert_eq!(
+        catalog::gemini::ACCESS_NOTE_AUTH_KEY,
+        "Use an auth API key: Google says the Gemini API will reject standard keys from September 2026 (no \
+         exact day given); unrestricted standard keys are already rejected"
+    );
+    for m in gemini_models() {
+        for note in [catalog::gemini::ACCESS_NOTE_PAID_TIER, catalog::gemini::ACCESS_NOTE_AUTH_KEY] {
+            assert!(m.access_notes.contains(&note), "{}: {note}", m.id);
+        }
+        for note in m.access_notes {
+            assert!(
+                !note.contains("since September") && !note.contains("are rejected from"),
+                "{}: {note}",
+                m.id
+            );
+        }
+    }
 }
 
 #[test]

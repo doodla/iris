@@ -145,12 +145,10 @@ const LITE_OPTIONS: &[OptionSpec] = &[
 ];
 
 const NOTE_PREVIEW: &str = "Preview model";
-// The billing and key notes are fixed wording, like the image notes in
-// `catalog::gemini`. Postpay plans exist too, and the standard-key cutoff date
-// is unconfirmed, which softer wording might reflect; changing it is a
-// deliberate edit for both catalogs, not an adapter decision.
-const NOTE_PAID: &str = "Paid tier with Prepay credits required (no free tier)";
-const NOTE_AUTH_KEY: &str = "Auth API key required (standard keys rejected since September 2026)";
+// The billing and key notes are shared with the Gemini image models (see their
+// sources in `catalog::gemini`), so both catalogs say the same thing.
+const NOTE_PAID: &str = super::gemini::ACCESS_NOTE_PAID_TIER;
+const NOTE_AUTH_KEY: &str = super::gemini::ACCESS_NOTE_AUTH_KEY;
 const NOTE_AUDIO: &str = "Audio is always generated and cannot be disabled";
 const NOTE_RETENTION: &str =
     "Generated videos are deleted by the provider after 2 days; download before then";

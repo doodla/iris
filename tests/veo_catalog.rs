@@ -83,11 +83,11 @@ fn the_three_veo_31_preview_models_are_declared() {
         assert!(m.inputs.first_frame && m.inputs.last_frame && !m.inputs.mask);
         assert_eq!(m.inputs.input_media_types, &["image/png", "image/jpeg"]);
         assert_eq!(m.inputs.max_input_bytes, 20_000_000);
-        // Fixed wording; change it deliberately for both catalogs.
+        // The billing and key notes are the Gemini image models' (one wording for both catalogs).
         for note in [
             "Preview model",
-            "Paid tier with Prepay credits required (no free tier)",
-            "Auth API key required (standard keys rejected since September 2026)",
+            catalog::gemini::ACCESS_NOTE_PAID_TIER,
+            catalog::gemini::ACCESS_NOTE_AUTH_KEY,
             "Audio is always generated and cannot be disabled",
             "Generated videos are deleted by the provider after 2 days; download before then",
             "No remote cancellation (the provider offers none for Veo operations)",

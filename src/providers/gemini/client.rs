@@ -235,8 +235,8 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
                 google.reason.as_deref().unwrap_or("")
             ),
             Some(format!(
-                "check that {key_env} holds a valid Gemini API key; the provider rejects standard (legacy) \
-                 keys from September 2026, so create an auth key in Google AI Studio"
+                "check that {key_env} holds a valid Gemini API key; Google says standard keys will be \
+                 rejected from September 2026, so use an auth key created in Google AI Studio"
             )),
         ),
         400 if status_is("FAILED_PRECONDITION") => (
@@ -280,7 +280,7 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
             "the Gemini API key is not permitted to make this request (HTTP 403)".to_string(),
             Some(
                 "check the key's API restrictions and that the Gemini API is enabled for its project; \
-                 standard (legacy) keys are rejected from September 2026, so use an auth key"
+                 Google says standard keys will be rejected from September 2026, so use an auth key"
                     .to_string(),
             ),
         ),
