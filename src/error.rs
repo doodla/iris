@@ -17,7 +17,9 @@ pub mod exit {
     pub const SUCCESS: i32 = 0;
     /// Runtime or provider failure.
     pub const FAILURE: i32 = 1;
-    /// Usage, validation, configuration, or conflict error; nothing was sent.
+    /// Invalid request (usage, validation, configuration, or conflict): fix it before
+    /// retrying. Either local validation rejected it (nothing was sent; the error has
+    /// no `provider_status`) or the provider rejected it as given (`provider_status` set).
     pub const USAGE: i32 = 2;
     /// Credentials, access, or quota problem that needs account/config action.
     pub const ACCOUNT: i32 = 3;

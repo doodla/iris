@@ -130,6 +130,9 @@ machine-readable contract for agents.
   request size) before writing the job record, and a submission the adapter still refuses before
   sending no longer leaves a `failed` job. It also checks the credential before creating output
   directories, as do `jobs wait` and `jobs download` when they must fetch from the provider.
+- `iris --help` no longer says exit code 2 means "nothing was sent": exit 2 is an invalid request
+  that must be fixed before retrying, rejected either locally (`error.provider_status` is null,
+  nothing was sent) or by the provider as given.
 
 ### Known limitations
 

@@ -252,6 +252,17 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
     ] {
         assert!(top.stdout.contains(needle), "top-level help lacks {needle:?}:\n{}", top.stdout);
     }
+    // Exit 2 also covers a provider's outright rejection, so the help must not claim that
+    // nothing was sent; `error.provider_status` tells the two apart.
+    let words = top.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(
+        words.contains(
+            "2 invalid request: fix it before retrying (error.provider_status null means nothing was sent; \
+             otherwise the provider rejected it)"
+        ),
+        "{}",
+        top.stdout
+    );
     let leaves: &[&[&str]] = &[
         &["image", "generate"],
         &["image", "edit"],
