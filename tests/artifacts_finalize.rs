@@ -449,11 +449,35 @@ fn same_kind_types_are_kept_and_other_kinds_rejected_for_downloads() {
     assert_eq!(listing(dir.path()), vec!["job_x.mov"]);
 }
 
+/// A minimal valid 1x1 GIF: header, screen, 2-color table, one image, trailer.
+const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\x00\x00\x00\xff\xff\xff\
+    \x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
+
 #[test]
 fn undeclared_but_valid_paid_images_are_kept() {
     let dir = tempfile::tempdir().unwrap();
-    let gif = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;";
-    let saved = save_image(gif, &dir.path().join("x.png"), 0, FinalizeMode::RenameOnConflict).unwrap();
+    let saved = save_image(GIF_1X1, &dir.path().join("x.png"), 0, FinalizeMode::RenameOnConflict).unwrap();
     assert_eq!(Path::new(&saved.artifact.path), dir.path().join("x.gif"));
-    assert_eq!(saved.artifact.width, None);
+    assert_eq!(saved.artifact.media_type, "image/gif");
+    assert_eq!((saved.artifact.width, saved.artifact.height), (Some(1), Some(1)));
+}
+
+#[test]
+fn truncated_paid_images_of_sniff_only_types_are_not_saved_as_valid() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("x.png");
+    let err =
+        save_image(&GIF_1X1[..GIF_1X1.len() - 1], &target, 0, FinalizeMode::RenameOnConflict).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidMedia);
+    assert!(err.message.contains("trailer"), "{}", err.message);
+
+    // HEIC whose image data box is cut short.
+    let mut heic = bx(b"ftyp", b"heic\0\0\0\0mif1heic");
+    heic.extend(bx(b"meta", &[0u8; 24]));
+    let mdat = bx(b"mdat", &[0x5A; 64]);
+    heic.extend_from_slice(&mdat[..40]);
+    let err = save_image(&heic, &target, 0, FinalizeMode::RenameOnConflict).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidMedia);
+    assert!(err.message.contains("truncated"), "{}", err.message);
+    assert!(listing(dir.path()).is_empty());
 }

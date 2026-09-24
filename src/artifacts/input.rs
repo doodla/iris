@@ -18,7 +18,8 @@ use super::media;
 /// * its size is at most `max_input_bytes`;
 /// * its media type, sniffed from the content (never the extension), is in
 ///   `input_media_types`;
-/// * PNG, JPEG, and WebP inputs decode fully (corrupt files are caught locally).
+/// * the content is intact (corrupt or truncated files are caught locally): PNG,
+///   JPEG, and WebP decode fully; GIF and HEIC/HEIF pass a structural walk.
 ///
 /// Every failure is `input_file_invalid` naming the file (and the accepted types
 /// where relevant). The returned `path` is absolute; `file_name` is a sanitized
@@ -65,10 +66,8 @@ pub fn read_input_image(path: &Path, role: InputRole, spec: &InputSpec) -> Resul
     if !media::is_image(media_type) || !media::accepts(spec.input_media_types, media_type) {
         return Err(invalid(format!("{label} {shown} is {media_type}; this model accepts {accepted}")));
     }
-    if media::is_decodable_image(media_type) {
-        media::inspect_image(&bytes)
-            .map_err(|e| invalid(format!("{label} {shown} is corrupt or truncated: {}", e.message)))?;
-    }
+    media::validate_bytes(&bytes, &[])
+        .map_err(|e| invalid(format!("{label} {shown} is corrupt or truncated: {}", e.message)))?;
 
     Ok(InputImage {
         role,

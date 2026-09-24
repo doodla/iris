@@ -109,17 +109,45 @@ fn corrupt_images_are_caught_locally() {
     assert!(err.message.contains("corrupt or truncated"), "{}", err.message);
 }
 
+/// ftyp(heic) + meta + mdat: the structure Iris checks for HEIC inputs.
+fn heic() -> Vec<u8> {
+    let bx = |kind: &[u8; 4], payload: &[u8]| {
+        let mut out = ((8 + payload.len()) as u32).to_be_bytes().to_vec();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(payload);
+        out
+    };
+    [bx(b"ftyp", b"heic\0\0\0\0mif1heic"), bx(b"meta", &[0u8; 32]), bx(b"mdat", &[0x33; 256])].concat()
+}
+
 #[test]
 fn heic_is_accepted_by_sniffing_when_declared() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("photo.heic");
-    let mut ftyp = 24u32.to_be_bytes().to_vec();
-    ftyp.extend_from_slice(b"ftypheic\0\0\0\0mif1heic");
-    fs::write(&path, &ftyp).unwrap();
+    fs::write(&path, heic()).unwrap();
     let spec = InputSpec { input_media_types: &["image/png", "image/heif"], ..SPEC };
     let img = read_input_image(&path, InputRole::Image, &spec).unwrap();
     assert_eq!(img.media_type, "image/heic");
     assert_eq!(img.file_name, "photo.heic");
+}
+
+#[test]
+fn truncated_heic_and_gif_inputs_are_caught_locally() {
+    let dir = tempfile::tempdir().unwrap();
+    let spec = InputSpec { input_media_types: &["image/heif", "image/gif"], ..SPEC };
+
+    let path = dir.path().join("cut.heic");
+    let full = heic();
+    fs::write(&path, &full[..full.len() - 100]).unwrap();
+    let err = read_input_image(&path, InputRole::Reference, &spec).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InputFileInvalid);
+    assert!(err.message.contains("cut.heic is corrupt or truncated"), "{}", err.message);
+
+    let path = dir.path().join("cut.gif");
+    fs::write(&path, b"GIF89a\x01\x00\x01\x00\x00\x00\x00").unwrap();
+    let err = read_input_image(&path, InputRole::Image, &spec).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InputFileInvalid);
+    assert!(err.message.contains("corrupt or truncated"), "{}", err.message);
 }
 
 #[test]

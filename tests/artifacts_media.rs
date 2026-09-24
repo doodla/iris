@@ -259,10 +259,85 @@ fn broken_iso_bmff_is_rejected() {
     assert!(inspect_iso_bmff(&mut Cursor::new(&[] as &[u8])).unwrap_err().contains("empty"));
 }
 
+/// GIF with a global color table, a graphic control extension, a comment
+/// extension, and one 3x2 image; `cut` bytes are removed from the end.
+fn gif(cut: usize) -> Vec<u8> {
+    let mut g = b"GIF89a".to_vec();
+    g.extend_from_slice(&[3, 0, 2, 0, 0x80, 0, 0]); // 3x2, GCT of 2 entries
+    g.extend_from_slice(&[0, 0, 0, 255, 255, 255]);
+    g.extend_from_slice(&[0x21, 0xF9, 4, 0, 0, 0, 0, 0]); // graphic control extension
+    g.extend_from_slice(&[0x21, 0xFE, 3, b'h', b'i', b'!', 0]); // comment extension
+    g.extend_from_slice(&[0x2C, 0, 0, 0, 0, 3, 0, 2, 0, 0]); // image descriptor
+    g.extend_from_slice(&[2, 3, 0x84, 0x1D, 0x05, 0]); // LZW min code size + data
+    g.push(0x3B);
+    g.truncate(g.len() - cut);
+    g
+}
+
+fn heic(boxes: &[Vec<u8>]) -> Vec<u8> {
+    [&[ftyp(b"heic", &[b"mif1", b"heic"])], boxes].concat().concat()
+}
+
 #[test]
-fn sniff_only_types_validate_without_dimensions() {
-    let gif = b"GIF89a\x01\x00\x01\x00\x00\x00\x00;";
-    let info = media::validate_bytes(gif, &["image/gif"]).unwrap();
+fn gif_structure_is_walked_to_the_trailer() {
+    let info = media::validate_bytes(&gif(0), &["image/gif"]).unwrap();
     assert_eq!(info.media_type, "image/gif");
-    assert_eq!(info.width, None);
+    assert_eq!((info.width, info.height), (Some(3), Some(2)));
+    assert_eq!(media::inspect_gif(&gif(0)), Ok((3, 2)));
+
+    // Cut anywhere: missing trailer, inside the data sub-blocks, inside the
+    // descriptor, inside the color table.
+    for cut in [1, 3, 8, 20, 30] {
+        let bytes = gif(cut);
+        let err = media::validate_bytes(&bytes, &[]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidMedia, "cut {cut}");
+        assert!(err.message.contains("not a valid image/gif image"), "{}", err.message);
+    }
+    // Header and screen only: no image.
+    let empty = [&gif(0)[..19], &[0x3B]].concat();
+    assert!(media::inspect_gif(&empty).unwrap_err().contains("no image"));
+    // An unknown block type.
+    let mut odd = gif(1);
+    odd.extend_from_slice(&[0x99, 0x3B]);
+    assert!(media::inspect_gif(&odd).unwrap_err().contains("unexpected block 0x99"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("anim.gif");
+    std::fs::write(&path, gif(2)).unwrap();
+    assert_eq!(media::validate_file(&path, &[]).unwrap_err().code, ErrorCode::InvalidMedia);
+}
+
+#[test]
+fn heic_structure_is_walked_and_needs_image_items() {
+    let meta = bx(b"meta", &[0u8; 32]);
+    let good = heic(&[meta.clone(), bx(b"mdat", &[0x11; 128])]);
+    let info = media::validate_bytes(&good, &["image/heif"]).unwrap();
+    assert_eq!(info.media_type, "image/heic");
+    assert_eq!((info.width, info.height), (None, None));
+    let walked = media::inspect_heif(&mut Cursor::new(&good)).unwrap();
+    assert_eq!(walked.major_brand, "heic");
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("photo.heic");
+    std::fs::write(&path, &good).unwrap();
+    assert_eq!(media::validate_file(&path, &[]).unwrap().media_type, "image/heic");
+
+    let truncated = &good[..good.len() - 30];
+    let err = media::validate_bytes(truncated, &[]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidMedia);
+    assert!(err.message.contains("not a valid image/heic image"), "{}", err.message);
+    assert!(err.message.contains("truncated"), "{}", err.message);
+
+    let no_items = heic(&[bx(b"mdat", &[0x11; 128])]);
+    assert!(media::inspect_heif(&mut Cursor::new(&no_items)).unwrap_err().contains("'meta'"));
+    let only_ftyp = heic(&[]);
+    assert_eq!(media::validate_bytes(&only_ftyp, &[]).unwrap_err().code, ErrorCode::InvalidMedia);
+
+    // Plain HEIF brand, and a video brand refused by the image walker.
+    let heif = [ftyp(b"mif1", &[b"mif1"]), meta].concat();
+    assert_eq!(media::validate_bytes(&heif, &[]).unwrap().media_type, "image/heif");
+    let video = minimal_mp4(1000, 1000);
+    assert!(
+        media::inspect_heif(&mut Cursor::new(&video)).unwrap_err().contains("not a HEIC/HEIF image brand")
+    );
 }

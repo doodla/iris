@@ -5,14 +5,20 @@
 //!   classified by their brands into HEIC/HEIF images or MP4/QuickTime video.
 //! * Images of the decodable types (PNG, JPEG, WebP) are fully decoded with the
 //!   `image` crate so truncated or corrupt data is rejected and dimensions are known.
+//! * GIF and HEIC/HEIF have no decoder in this build (the `image` crate is built
+//!   with png/jpeg/webp only, D-07), so their structure is walked instead: GIF
+//!   blocks up to the `0x3B` trailer ([`inspect_gif`]), and HEIC/HEIF boxes with
+//!   the ISO-BMFF walker ([`inspect_heif`]). Truncated files fail either way.
 //! * Videos are checked with a small ISO-BMFF box walker: the first top-level box
 //!   is `ftyp`, a `moov` box is present, every top-level box fits in the file (a
 //!   truncated download fails), and the duration is read from `moov/mvhd`.
 //!
+//! No sniffed type is accepted without one of these checks.
+//!
 //! The box walker is hand-rolled on purpose: Iris needs three facts (first box,
-//! `moov` presence, `mvhd` duration) and a truncation check. Existing crates are
-//! either unmaintained (`mp4`), MPL-licensed (`mp4parse`), or bind to native
-//! FFmpeg; ~100 lines of bounds-checked parsing are simpler to audit.
+//! `moov`/`meta` presence, `mvhd` duration) and a truncation check. Existing
+//! crates are either unmaintained (`mp4`), MPL-licensed (`mp4parse`), or bind to
+//! native FFmpeg; ~100 lines of bounds-checked parsing are simpler to audit.
 
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
@@ -42,7 +48,8 @@ const SNIFF_LEN: usize = 64;
 pub struct MediaInfo {
     /// Media type sniffed from the content (one of [`KNOWN_MEDIA_TYPES`]).
     pub media_type: &'static str,
-    /// Pixel dimensions (decoded images only).
+    /// Pixel dimensions (decoded images; GIF: the logical screen; `None` for
+    /// HEIC/HEIF and videos).
     pub width: Option<u32>,
     pub height: Option<u32>,
     /// Duration in seconds (videos whose `mvhd` is parseable).
@@ -218,7 +225,8 @@ pub fn png_info(bytes: &[u8]) -> Result<ImageDetails, IrisError> {
 }
 
 /// Validate in-memory media: sniff, check against `expected` (empty = any known
-/// type), then decode images / walk ISO-BMFF video. Errors are `invalid_media`.
+/// type), then decode PNG/JPEG/WebP, walk GIF blocks, or walk ISO-BMFF boxes
+/// (HEIC/HEIF, video). Errors are `invalid_media`.
 pub fn validate_bytes(bytes: &[u8], expected: &[&str]) -> Result<MediaInfo, IrisError> {
     let media_type = sniff(bytes).ok_or_else(|| unrecognized(bytes))?;
     check_expected(media_type, expected)?;
@@ -231,6 +239,21 @@ pub fn validate_bytes(bytes: &[u8], expected: &[&str]) -> Result<MediaInfo, Iris
             duration_seconds: None,
         });
     }
+    if media_type == GIF {
+        let (width, height) = inspect_gif(bytes)
+            .map_err(|why| invalid_media(format!("content is not a valid {media_type} image: {why}")))?;
+        return Ok(MediaInfo {
+            media_type,
+            width: Some(width),
+            height: Some(height),
+            duration_seconds: None,
+        });
+    }
+    if media_type == HEIC || media_type == HEIF {
+        inspect_heif(&mut Cursor::new(bytes))
+            .map_err(|why| invalid_media(format!("content is not a valid {media_type} image: {why}")))?;
+        return Ok(MediaInfo { media_type, width: None, height: None, duration_seconds: None });
+    }
     if is_video(media_type) {
         let info = inspect_iso_bmff(&mut Cursor::new(bytes))
             .map_err(|why| invalid_media(format!("content is not a valid {media_type} video: {why}")))?;
@@ -241,7 +264,7 @@ pub fn validate_bytes(bytes: &[u8], expected: &[&str]) -> Result<MediaInfo, Iris
             duration_seconds: info.duration_seconds,
         });
     }
-    Ok(MediaInfo { media_type, width: None, height: None, duration_seconds: None })
+    Err(invalid_media(format!("Iris cannot validate {media_type} content")))
 }
 
 /// Validate a media file on disk (see [`validate_bytes`]). Videos are walked
@@ -278,12 +301,10 @@ pub fn validate_reader<R: Read + Seek>(
             duration_seconds: info.duration_seconds,
         });
     }
-    if is_decodable_image(media_type) {
-        let mut bytes = Vec::new();
-        reader.read_to_end(&mut bytes).map_err(io_err)?;
-        return validate_bytes(&bytes, expected);
-    }
-    Ok(MediaInfo { media_type, width: None, height: None, duration_seconds: None })
+    // Images are small: validate them in memory.
+    let mut bytes = Vec::new();
+    reader.read_to_end(&mut bytes).map_err(io_err)?;
+    validate_bytes(&bytes, expected)
 }
 
 fn check_expected(media_type: &str, expected: &[&str]) -> Result<(), IrisError> {
@@ -312,6 +333,81 @@ fn unrecognized(head: &[u8]) -> IrisError {
     invalid_media(format!("content is not a recognized image or video format{looks_like}"))
 }
 
+/// Walk the block structure of a GIF: header, logical screen descriptor, color
+/// tables, extensions, and image descriptors with their LZW data sub-blocks, up to
+/// the `0x3B` trailer. Every block must fit in the data and at least one image must
+/// be present, so truncated files fail. The LZW data is not decoded (no GIF
+/// decoder in this build). Returns the logical screen width and height.
+pub fn inspect_gif(bytes: &[u8]) -> Result<(u32, u32), String> {
+    if !(bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a")) {
+        return Err("missing GIF87a/GIF89a header".to_string());
+    }
+    let screen = bytes.get(6..13).ok_or("truncated logical screen descriptor")?;
+    let width = u16::from_le_bytes([screen[0], screen[1]]);
+    let height = u16::from_le_bytes([screen[2], screen[3]]);
+    if width == 0 || height == 0 {
+        return Err(format!("invalid logical screen size {width}x{height}"));
+    }
+    let mut pos = 13usize;
+    if screen[4] & 0x80 != 0 {
+        pos = gif_skip(bytes, pos, gif_color_table_len(screen[4]), "global color table")?;
+    }
+    let mut images = 0u32;
+    loop {
+        let Some(&block) = bytes.get(pos) else {
+            return Err(format!("truncated after {images} image(s): the 0x3B trailer is missing"));
+        };
+        pos += 1;
+        match block {
+            // Extension: label byte, then data sub-blocks.
+            0x21 => {
+                pos = gif_skip(bytes, pos, 1, "extension label")?;
+                pos = gif_skip_sub_blocks(bytes, pos)?;
+            }
+            // Image: descriptor (left, top, width, height, flags), optional local
+            // color table, LZW minimum code size, data sub-blocks.
+            0x2C => {
+                let flags = *bytes.get(pos + 8).ok_or("truncated image descriptor")?;
+                pos += 9;
+                if flags & 0x80 != 0 {
+                    pos = gif_skip(bytes, pos, gif_color_table_len(flags), "local color table")?;
+                }
+                let min_code_size = *bytes.get(pos).ok_or("truncated image data")?;
+                if min_code_size > 11 {
+                    return Err(format!("invalid LZW minimum code size {min_code_size}"));
+                }
+                pos = gif_skip_sub_blocks(bytes, pos + 1)?;
+                images += 1;
+            }
+            0x3B if images == 0 => return Err("the file contains no image".to_string()),
+            0x3B => return Ok((u32::from(width), u32::from(height))),
+            other => return Err(format!("unexpected block 0x{other:02x} at offset {}", pos - 1)),
+        }
+    }
+}
+
+fn gif_color_table_len(flags: u8) -> usize {
+    3 * (1usize << ((flags & 0x07) + 1))
+}
+
+fn gif_skip(bytes: &[u8], pos: usize, len: usize, what: &str) -> Result<usize, String> {
+    match pos.checked_add(len) {
+        Some(end) if end <= bytes.len() => Ok(end),
+        _ => Err(format!("truncated {what} at offset {pos}")),
+    }
+}
+
+fn gif_skip_sub_blocks(bytes: &[u8], mut pos: usize) -> Result<usize, String> {
+    loop {
+        let size = *bytes.get(pos).ok_or_else(|| format!("truncated data sub-block at offset {pos}"))?;
+        pos += 1;
+        if size == 0 {
+            return Ok(pos);
+        }
+        pos = gif_skip(bytes, pos, usize::from(size), "data sub-block")?;
+    }
+}
+
 /// Walk the top-level boxes of an ISO-BMFF file (MP4/QuickTime).
 ///
 /// Checks that the first box is `ftyp` with a video brand, that every box header is
@@ -319,6 +415,24 @@ fn unrecognized(head: &[u8]) -> IrisError {
 /// `moov` box is present. Reports the duration from `moov/mvhd` when parseable.
 /// Returns a human-readable reason on failure.
 pub fn inspect_iso_bmff<R: Read + Seek>(reader: &mut R) -> Result<IsoBmffInfo, String> {
+    walk_iso_bmff(reader, BmffKind::Video)
+}
+
+/// Walk the top-level boxes of a HEIC/HEIF still image: the first box is `ftyp`
+/// with a HEIC/HEIF brand, every box fits inside the file (so truncated files
+/// fail), and a `meta` box (the image items) is present; image sequences may carry
+/// a `moov` box instead. Pixels are not decoded and no dimensions are reported.
+pub fn inspect_heif<R: Read + Seek>(reader: &mut R) -> Result<IsoBmffInfo, String> {
+    walk_iso_bmff(reader, BmffKind::Image)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BmffKind {
+    Video,
+    Image,
+}
+
+fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBmffInfo, String> {
     let io = |e: io::Error| format!("read error: {e}");
     let len = reader.seek(SeekFrom::End(0)).map_err(io)?;
     reader.seek(SeekFrom::Start(0)).map_err(io)?;
@@ -329,6 +443,7 @@ pub fn inspect_iso_bmff<R: Read + Seek>(reader: &mut R) -> Result<IsoBmffInfo, S
     let mut pos = 0u64;
     let mut ftyp: Option<(&'static str, String)> = None;
     let mut saw_moov = false;
+    let mut saw_meta = false;
     let mut duration = None;
     while pos < len {
         let header = read_box_header(reader, pos, len)?;
@@ -343,13 +458,19 @@ pub fn inspect_iso_bmff<R: Read + Seek>(reader: &mut R) -> Result<IsoBmffInfo, S
             }
             let major: [u8; 4] = payload[0..4].try_into().map_err(|_| "bad ftyp")?;
             let brand = String::from_utf8_lossy(&major).into_owned();
+            let (wanted, what): (fn(&str) -> bool, &str) = match want {
+                BmffKind::Video => (is_video, "a video"),
+                BmffKind::Image => (is_image, "a HEIC/HEIF image"),
+            };
             let media_type = classify_brands(&major, &payload[8..])
-                .filter(|t| is_video(t))
-                .ok_or_else(|| format!("the 'ftyp' brand '{brand}' is not a video brand"))?;
+                .filter(|t| wanted(t))
+                .ok_or_else(|| format!("the 'ftyp' brand '{brand}' is not {what} brand"))?;
             ftyp = Some((media_type, brand));
+        } else if &header.kind == b"meta" {
+            saw_meta = true;
         } else if &header.kind == b"moov" {
             saw_moov = true;
-            if duration.is_none() && header.payload_len() <= MAX_MOOV_BYTES {
+            if want == BmffKind::Video && duration.is_none() && header.payload_len() <= MAX_MOOV_BYTES {
                 let payload = read_payload(reader, &header, MAX_MOOV_BYTES)?;
                 duration = mvhd_duration(&payload);
             }
@@ -358,10 +479,17 @@ pub fn inspect_iso_bmff<R: Read + Seek>(reader: &mut R) -> Result<IsoBmffInfo, S
         reader.seek(SeekFrom::Start(pos)).map_err(io)?;
     }
     let (media_type, major_brand) = ftyp.ok_or("no 'ftyp' box")?;
-    if !saw_moov {
-        return Err(
-            "no 'moov' box (movie metadata) was found; the file is incomplete or not playable".to_string()
-        );
+    match want {
+        BmffKind::Video if !saw_moov => {
+            return Err("no 'moov' box (movie metadata) was found; the file is incomplete or not playable"
+                .to_string());
+        }
+        BmffKind::Image if !saw_meta && !saw_moov => {
+            return Err(
+                "no 'meta' box (image items) was found; the file is incomplete or not an image".to_string()
+            );
+        }
+        _ => {}
     }
     Ok(IsoBmffInfo { media_type, major_brand, duration_seconds: duration })
 }
