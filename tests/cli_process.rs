@@ -93,7 +93,13 @@ impl Out {
     /// The single JSON envelope on stdout, validated against the committed schema.
     fn json(&self) -> Value {
         let lines: Vec<&str> = self.stdout.lines().collect();
-        assert_eq!(lines.len(), 1, "expected one JSON line on stdout:\n{}\nstderr:\n{}", self.stdout, self.stderr);
+        assert_eq!(
+            lines.len(),
+            1,
+            "expected one JSON line on stdout:\n{}\nstderr:\n{}",
+            self.stdout,
+            self.stderr
+        );
         let v: Value = serde_json::from_str(lines[0]).unwrap();
         assert_matches_schema(&v);
         v
@@ -134,7 +140,10 @@ fn store(sandbox: &Sandbox) -> JobStore {
 fn create_running(sandbox: &Sandbox) -> JobId {
     let mut rec = JobRecord::new(new_job(sandbox), iris::jobs::now()).unwrap();
     rec.mark_submitted(
-        &SubmittedOperation { remote_id: "models/veo-test-model/operations/op1".into(), provider_request_id: None },
+        &SubmittedOperation {
+            remote_id: "models/veo-test-model/operations/op1".into(),
+            provider_request_id: None,
+        },
         iris::jobs::now(),
     )
     .unwrap();
@@ -151,7 +160,9 @@ fn create_succeeded(sandbox: &Sandbox, uri: &str, retention: Duration, at: jiff:
 fn create_failed(sandbox: &Sandbox) -> JobId {
     let id = create_running(sandbox);
     let error = IrisError::new(ErrorCode::RemoteJobFailed, "the provider reported an internal failure");
-    store(sandbox).update(&id, |r| r.apply_poll(RemoteStatus::Failed { error }, None, iris::jobs::now())).unwrap();
+    store(sandbox)
+        .update(&id, |r| r.apply_poll(RemoteStatus::Failed { error }, None, iris::jobs::now()))
+        .unwrap();
     id
 }
 
@@ -160,7 +171,9 @@ async fn video_server(expected_fetches: u64) -> MockServer {
     Mock::given(method("GET"))
         .and(path("/v1beta/files/abc:download"))
         .and(header("x-goog-api-key", GEMINI_KEY))
-        .respond_with(ResponseTemplate::new(200).insert_header("content-type", "video/mp4").set_body_bytes(mp4(4)))
+        .respond_with(
+            ResponseTemplate::new(200).insert_header("content-type", "video/mp4").set_body_bytes(mp4(4)),
+        )
         .expect(expected_fetches)
         .mount(&server)
         .await;
@@ -289,27 +302,36 @@ fn prompt_sources_are_validated_before_anything_else() {
 
     let file = sandbox.path("p.txt");
     std::fs::write(&file, "from a file\n").unwrap();
-    let out = run(iris(&sandbox).args(["video", "generate", "x", "--prompt-stdin", "--json"]).write_stdin("y"));
+    let out =
+        run(iris(&sandbox).args(["video", "generate", "x", "--prompt-stdin", "--json"]).write_stdin("y"));
     assert_eq!(out.error_code(), "usage_error");
-    let out = run(iris(&sandbox).args(["image", "edit", "-i", "a.png", "-f", "p.txt", "--prompt-stdin", "--json"]));
+    let out =
+        run(iris(&sandbox).args(["image", "edit", "-i", "a.png", "-f", "p.txt", "--prompt-stdin", "--json"]));
     assert_eq!(out.error_code(), "usage_error");
 
-    let out = run(iris(&sandbox).args(["image", "generate", "--prompt-stdin", "--json"]).write_stdin(" \n\n"));
-    assert_eq!(out.error_code(), "invalid_argument");
     let out =
-        run(iris(&sandbox).args(["image", "generate", "--prompt-stdin", "--json"]).write_stdin(vec![0xffu8, 0xfe]));
+        run(iris(&sandbox).args(["image", "generate", "--prompt-stdin", "--json"]).write_stdin(" \n\n"));
+    assert_eq!(out.error_code(), "invalid_argument");
+    let out = run(iris(&sandbox)
+        .args(["image", "generate", "--prompt-stdin", "--json"])
+        .write_stdin(vec![0xffu8, 0xfe]));
     assert_eq!(out.error_code(), "invalid_argument");
     let out = run(iris(&sandbox).args(["image", "generate", "-f", "missing.txt", "--json"]));
     assert_eq!(out.error_code(), "input_file_invalid");
 
     use std::os::unix::ffi::OsStrExt;
-    let out = run(iris(&sandbox).args(["image", "generate", "--json"]).arg(std::ffi::OsStr::from_bytes(b"\xff\xfe")));
+    let out = run(iris(&sandbox)
+        .args(["image", "generate", "--json"])
+        .arg(std::ffi::OsStr::from_bytes(b"\xff\xfe")));
     assert_eq!(out.error_code(), "invalid_argument");
 
     // A valid prompt gets past prompt validation (what follows depends on the catalog).
-    let out = run(iris(&sandbox).args(["image", "generate", "-f", "p.txt", "--model", "no-such-model", "--json"]));
+    let out =
+        run(iris(&sandbox).args(["image", "generate", "-f", "p.txt", "--model", "no-such-model", "--json"]));
     assert_eq!(out.error_code(), "unknown_model");
-    let out = run(iris(&sandbox).args(["video", "generate", "--prompt-stdin", "-m", "nope", "--json"]).write_stdin("x"));
+    let out = run(iris(&sandbox)
+        .args(["video", "generate", "--prompt-stdin", "-m", "nope", "--json"])
+        .write_stdin("x"));
     assert_eq!(out.error_code(), "unknown_model");
 }
 
@@ -319,7 +341,8 @@ fn schema_output_is_the_committed_file_byte_for_byte() {
     let out = run(iris(&sandbox).arg("schema"));
     assert_eq!(out.code, 0);
     let committed =
-        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/schema/iris-output.v1.schema.json")).unwrap();
+        std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/schema/iris-output.v1.schema.json"))
+            .unwrap();
     assert!(out.stdout == committed, "`iris schema` differs from schema/iris-output.v1.schema.json");
     let v = run(iris(&sandbox).args(["schema", "--json"])).json();
     assert_eq!(&v["result"]["schema"], committed_schema());
@@ -328,7 +351,8 @@ fn schema_output_is_the_committed_file_byte_for_byte() {
 #[test]
 fn completions_are_generated_for_each_supported_shell() {
     let sandbox = Sandbox::new();
-    for (shell, needle) in [("bash", "_iris()"), ("zsh", "#compdef iris"), ("fish", "complete -c iris"), ("elvish", "iris")]
+    for (shell, needle) in
+        [("bash", "_iris()"), ("zsh", "#compdef iris"), ("fish", "complete -c iris"), ("elvish", "iris")]
     {
         let out = run(iris(&sandbox).args(["completions", shell]));
         assert_eq!(out.code, 0, "{shell}");
@@ -369,11 +393,13 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
         "Linux default without XDG_CONFIG_HOME"
     );
 
-    let out = run(iris(&sandbox).args(["doctor", "--json"]).env("GOOGLE_API_KEY", "google-key-should-be-ignored"));
+    let out =
+        run(iris(&sandbox).args(["doctor", "--json"]).env("GOOGLE_API_KEY", "google-key-should-be-ignored"));
     assert_eq!(out.code, 0);
     let v = out.json();
     let checks = v["result"]["checks"].as_array().unwrap();
-    let status = |id: &str| checks.iter().find(|c| c["id"] == id).map(|c| c["status"].as_str().unwrap().to_string());
+    let status =
+        |id: &str| checks.iter().find(|c| c["id"] == id).map(|c| c["status"].as_str().unwrap().to_string());
     assert_eq!(status("credentials.google_api_key").as_deref(), Some("warning"));
     assert_eq!(status("credentials.openai").as_deref(), Some("warning"));
     assert_eq!(status("base_url.gemini").as_deref(), Some("warning"));
@@ -381,7 +407,8 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
     assert!(!out.stdout.contains("google-key-should-be-ignored"));
 
     // An explicitly requested config file that does not exist is config_invalid.
-    let out = run(iris(&sandbox).args(["jobs", "list", "--json"]).env("IRIS_CONFIG", sandbox.path("nope.toml")));
+    let out =
+        run(iris(&sandbox).args(["jobs", "list", "--json"]).env("IRIS_CONFIG", sandbox.path("nope.toml")));
     assert_eq!(out.code, 2);
     assert_eq!(out.error_code(), "config_invalid");
 }
@@ -390,7 +417,8 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
 fn models_list_is_consistent_with_the_catalog() {
     let sandbox = Sandbox::new();
     let v = run(iris(&sandbox).args(["models", "list", "--json"])).json();
-    let ids: Vec<&str> = v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> =
+        v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     let expected: Vec<&str> = iris::catalog::all().map(|m| m.id).collect();
     assert_eq!(ids, expected);
     let out = run(iris(&sandbox).args(["models", "show", "definitely-not-a-model", "--json"]));
@@ -415,12 +443,14 @@ fn jobs_list_status_delete_on_records_from_the_jobs_api() {
     let running = create_running(&sandbox);
     std::thread::sleep(Duration::from_millis(1100));
     let failed = create_failed(&sandbox);
-    std::fs::write(sandbox.state().join("jobs").join("job_0000000000000000000000000z.json"), b"{ not json").unwrap();
+    std::fs::write(sandbox.state().join("jobs").join("job_0000000000000000000000000z.json"), b"{ not json")
+        .unwrap();
 
     let out = run(iris(&sandbox).args(["jobs", "list", "--json"]));
     assert_eq!(out.code, 0);
     let v = out.json();
-    let ids: Vec<&str> = v["result"]["jobs"].as_array().unwrap().iter().map(|j| j["job_id"].as_str().unwrap()).collect();
+    let ids: Vec<&str> =
+        v["result"]["jobs"].as_array().unwrap().iter().map(|j| j["job_id"].as_str().unwrap()).collect();
     assert_eq!(ids, [failed.as_str(), running.as_str()], "newest first");
     assert!(v["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "job_record_unreadable"));
     let v = run(iris(&sandbox).args(["jobs", "list", "--status", "failed", "--json"])).json();
@@ -433,7 +463,9 @@ fn jobs_list_status_delete_on_records_from_the_jobs_api() {
     assert!(!serde_json::to_string(&v).unwrap().contains("lighthouse"), "prompt text is never shown");
 
     // A refresh that cannot reach the provider keeps the last known status.
-    let out = run(iris(&sandbox).args(["jobs", "status", running.as_str(), "--json"]).env("GEMINI_API_KEY", GEMINI_KEY));
+    let out = run(iris(&sandbox)
+        .args(["jobs", "status", running.as_str(), "--json"])
+        .env("GEMINI_API_KEY", GEMINI_KEY));
     assert_eq!(out.code, 0);
     let v = out.json();
     assert_eq!(v["result"]["job"]["status"], "running");
@@ -625,7 +657,8 @@ fn image_generation_is_validated_locally_before_any_request() {
     assert!(v["result"]["outputs"][0].as_str().unwrap().starts_with(sandbox.work().to_str().unwrap()));
     assert!(files_in(&sandbox.work()).is_empty());
 
-    let out = run(iris(&sandbox).args(["image", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
+    let out =
+        run(iris(&sandbox).args(["image", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
     assert_nothing_sent(&out, "unsupported_option", 2);
     let flag = undeclared_flag(spec, op);
     let out = run(iris(&sandbox).args(["image", "generate", "x", flag, "1", "--json"]));
@@ -633,7 +666,9 @@ fn image_generation_is_validated_locally_before_any_request() {
     assert!(out.json()["error"]["message"].as_str().unwrap().contains(flag));
 
     std::fs::write(sandbox.path("taken.png"), b"existing").unwrap();
-    let out = run(iris(&sandbox).args(["image", "generate", "x", "-o", "taken.png", "--json"]).env("OPENAI_API_KEY", OPENAI_KEY));
+    let out = run(iris(&sandbox)
+        .args(["image", "generate", "x", "-o", "taken.png", "--json"])
+        .env("OPENAI_API_KEY", OPENAI_KEY));
     assert_nothing_sent(&out, "output_exists", 2);
     assert_eq!(std::fs::read(sandbox.path("taken.png")).unwrap(), b"existing");
 
@@ -641,7 +676,9 @@ fn image_generation_is_validated_locally_before_any_request() {
     assert_nothing_sent(&out, "missing_credentials", 3);
     assert!(out.json()["error"]["message"].as_str().unwrap().contains("OPENAI_API_KEY"));
 
-    let out = run(iris(&sandbox).args(["image", "edit", "-i", "missing.png", "x", "--json"]).env("OPENAI_API_KEY", OPENAI_KEY));
+    let out = run(iris(&sandbox)
+        .args(["image", "edit", "-i", "missing.png", "x", "--json"])
+        .env("OPENAI_API_KEY", OPENAI_KEY));
     assert_nothing_sent(&out, "input_file_invalid", 2);
 }
 
@@ -656,9 +693,13 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
     let v = out.json();
     assert_eq!(v["result"]["async_job"], true);
     assert_eq!(v["result"]["model"], spec.id);
-    assert!(v["warnings"].as_array().unwrap().iter().all(|w| w["code"] != "cost_estimate_unavailable") || spec.estimate.is_none());
+    assert!(
+        v["warnings"].as_array().unwrap().iter().all(|w| w["code"] != "cost_estimate_unavailable")
+            || spec.estimate.is_none()
+    );
 
-    let out = run(iris(&sandbox).args(["video", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
+    let out =
+        run(iris(&sandbox).args(["video", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
     assert_nothing_sent(&out, "unsupported_option", 2);
     let flag = undeclared_flag(spec, op);
     let out = run(iris(&sandbox).args(["video", "generate", "x", flag, "1", "--json"]));

@@ -108,8 +108,9 @@ fn saved_lines(artifacts: &[Artifact]) -> String {
     artifacts.iter().map(|a| format!("Saved {}\n", a.path)).collect()
 }
 
+/// A cost estimate; the basis always says how it was estimated.
 fn cost(c: &CostEstimate) -> String {
-    format!("~${:.4} {} (estimate: {})", c.amount, c.currency, c.basis)
+    format!("~${:.4} {} ({})", c.amount, c.currency, c.basis)
 }
 
 fn image(res: &ImageResult, r: &mut Rendered) {
@@ -128,7 +129,6 @@ fn job(command: Option<CommandName>, res: &JobResult, r: &mut Rendered) {
         r.stdout = job_block(j);
     } else if !j.artifacts.is_empty() {
         r.stdout = saved_lines(&j.artifacts);
-        let _ = writeln!(r.stderr, "Job {} {}", j.job_id, j.status.as_str());
     } else {
         let verb = if command == Some(CommandName::VideoGenerate) { "Submitted job" } else { "Job" };
         let _ = writeln!(
