@@ -285,7 +285,7 @@ impl Settings {
             let var = provider.credential_env();
             IrisError::new(
                 ErrorCode::MissingCredentials,
-                format!("{var} is not set; Iris reads the {} API key only from this variable", provider.display_name()),
+                format!("{var} is not set; Iris reads the {} key only from this variable", provider.display_name()),
             )
             .with_provider(provider)
             .with_detail("env_var", var)

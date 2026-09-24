@@ -12,6 +12,7 @@ categories = ["command-line-utilities", "multimedia"]
 include = [
     "/src/**",
     "/schema/**",
+    "/build.rs",
     "/Cargo.toml",
     "/Cargo.lock",
     "/README.md",
