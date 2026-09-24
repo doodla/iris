@@ -467,18 +467,21 @@ fn platform_default_paths_have_the_documented_shape() {
 }
 
 #[test]
-fn platform_paths_agree_with_the_directories_crate_for_this_process() {
+fn platform_paths_agree_with_the_dirs_crate_for_this_process() {
     // Reads only HOME/XDG_* (never credentials) and never mutates the environment.
-    let Some(dirs) = directories::BaseDirs::new() else { return };
+    let (Some(home), Some(config), Some(data)) = (dirs::home_dir(), dirs::config_dir(), dirs::data_dir())
+    else {
+        return;
+    };
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.is_empty());
     let ours = platform_paths(
         Platform::current(),
-        dirs.home_dir(),
+        &home,
         var("XDG_CONFIG_HOME").as_deref(),
         var("XDG_STATE_HOME").as_deref(),
     );
-    assert_eq!(ours.config_file, dirs.config_dir().join("iris").join("config.toml"));
-    let state_base = dirs.state_dir().unwrap_or(dirs.data_dir());
+    assert_eq!(ours.config_file, config.join("iris").join("config.toml"));
+    let state_base = dirs::state_dir().unwrap_or(data);
     assert_eq!(ours.state_dir, state_base.join("iris"));
 }
 

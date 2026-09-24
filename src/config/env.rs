@@ -67,11 +67,11 @@ pub struct EnvSnapshot {
 
 impl EnvSnapshot {
     /// Capture the current process environment. The home directory comes from the
-    /// `directories` crate (`$HOME`, else the password database).
+    /// `dirs` crate (`$HOME`, else the password database).
     pub fn from_process() -> Result<Self, IrisError> {
         let cwd = std::env::current_dir()
             .map_err(|e| IrisError::io("cannot determine the current directory", &e))?;
-        let home = directories::BaseDirs::new().map(|b| b.home_dir().to_path_buf());
+        let home = dirs::home_dir();
         let mut snap = EnvSnapshot::new(Platform::current(), home, cwd);
         for name in SETTING_VARS {
             match std::env::var(name) {
