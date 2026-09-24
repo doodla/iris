@@ -162,8 +162,8 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f install.sh ]; then
-            echo "::warning::install.sh not present yet (owned by a separate task); skipping the install.sh smoke test leg."
-            exit 0
+            echo "::error::install.sh is missing; the release must ship a working installer"
+            exit 1
           fi
 
           # shellcheck disable=SC2153 # intentional lowercase alias of the env-provided VERSION/TARGET
