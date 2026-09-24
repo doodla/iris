@@ -6,19 +6,24 @@
 //! length → input files → output planning and preflight (`output_exists`, output
 //! directory) → `--dry-run` plan → credential → provider call → save every image
 //! (never discarding paid output: a file that appeared meanwhile makes the image go
-//! to `<stem>.<n>.<ext>`).
+//! to `<stem>.<n>.<ext>`, and an image that cannot be saved there at all goes to
+//! `<state_dir>/unsaved/`).
 
 use std::path::PathBuf;
 
 use crate::artifacts::{self, FinalizeMode, Naming, PathRequest};
 use crate::catalog::{self, InputCounts, OptionSource, RawOption};
-use crate::domain::{JobStatus, Operation, Warning};
+use crate::domain::{Artifact, JobStatus, Operation, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{ImageResult, PlanResult};
 use crate::providers::{ImageOutput, ImageRequest, InputRole};
 
 use super::context::AppContext;
 use super::request::{self, GenerationArgs, GenerationOutcome};
+
+/// Warning: a paid image could not be saved where it was requested and was saved
+/// in `<state_dir>/unsaved/` instead. Listed in docs/json-contract.md's warning codes.
+const WARNING_SAVED_ELSEWHERE: &str = "output_saved_elsewhere";
 
 /// Arguments of `image generate` / `image edit`.
 #[derive(Debug, Clone, Default)]
@@ -185,7 +190,11 @@ async fn run_checked(
             "the provider reported success but returned no image",
         )
         .with_provider(provider)
-        .with_provider_request_id(output.provider_request_id.clone()));
+        .with_provider_request_id(output.provider_request_id.clone())
+        .with_detail("charge_possible", true)
+        .with_hint(
+            "the request completed, so the provider may have billed it; Iris did not retry automatically",
+        ));
     }
     warnings.extend(output.warnings.iter().cloned());
 
@@ -193,41 +202,36 @@ async fn run_checked(
     // than planned, plan names for what arrived; those paths were not preflighted,
     // so they never overwrite anything.
     let returned = output.images.len() as u32;
-    let (paths, mode) = if returned == count {
-        (plan.paths.clone(), FinalizeMode::for_generated(common.overwrite))
+    let planned = if returned == count {
+        Ok((plan.paths.clone(), FinalizeMode::for_generated(common.overwrite)))
     } else {
         let format = opts.get("format").and_then(|v| v.as_str()).map(str::to_string);
-        let replanned = artifacts::plan_outputs(&path_request(
+        artifacts::plan_outputs(&path_request(
             returned,
             format.as_deref(),
             output_path,
             &out_dir,
             media_types,
-        ))?;
-        (replanned.paths, FinalizeMode::RenameOnConflict)
+        ))
+        .map(|replanned| (replanned.paths, FinalizeMode::RenameOnConflict))
     };
-    let mut saved = Vec::new();
-    let mut failure: Option<IrisError> = None;
-    for (index, (image, path)) in output.images.iter().zip(&paths).enumerate() {
-        match artifacts::save_image(&image.bytes, path, index as u32, mode) {
-            Ok(artifact) => {
-                warnings.extend(artifact.warnings);
-                saved.push(artifact.artifact);
-            }
-            Err(e) => {
-                if failure.is_none() {
-                    failure = Some(e.with_detail("index", index as u64));
-                }
-            }
-        }
-    }
-    if let Some(e) = failure {
-        let saved_paths: Vec<String> = saved.iter().map(|a| a.path.clone()).collect();
+    let saving = save_all(ctx, &output, &planned, warnings);
+    if let Some(e) = saving.failure {
+        let paths = |artifacts: &[Artifact]| artifacts.iter().map(|a| a.path.clone()).collect::<Vec<_>>();
         return Err(e
             .with_provider(provider)
             .with_provider_request_id(output.provider_request_id.clone())
-            .with_detail("saved", saved_paths));
+            .with_detail("saved", paths(&saving.saved))
+            .with_detail("fallback_paths", saving.elsewhere)
+            .with_detail("charge_possible", true)
+            .with_hint(
+                "the provider completed this request and may have billed it; Iris did not retry \
+                 automatically. Every image that could be saved is listed in details.saved \
+                 (details.fallback_paths lists those saved in Iris's state directory instead of where \
+                 they were requested)",
+            ));
     }
+    let saved = saving.saved;
 
     // Prefer the provider-reported usage (covers every returned image); fall back to
     // the pre-call estimate for the number of images actually returned.
@@ -254,4 +258,72 @@ async fn run_checked(
         usage: output.usage,
         cost_estimate,
     }))
+}
+
+/// What happened to the images of one paid response.
+struct Saving {
+    /// Every saved image, at the requested location or in the fallback directory.
+    saved: Vec<Artifact>,
+    /// Paths of the images saved in the fallback directory instead.
+    elsewhere: Vec<String>,
+    /// The first image that could not be saved anywhere.
+    failure: Option<IrisError>,
+}
+
+/// Save every returned image at its planned path (`planned`: paths and mode, or the
+/// error that prevented planning them). A valid image that cannot be saved there
+/// (an I/O failure after preflight) goes to `<state_dir>/unsaved/` with warning
+/// `output_saved_elsewhere`: paid output is never discarded. Content that is not a
+/// valid image stays `invalid_media` and is not saved.
+fn save_all(
+    ctx: &AppContext,
+    output: &ImageOutput,
+    planned: &Result<(Vec<PathBuf>, FinalizeMode), IrisError>,
+    warnings: &mut Vec<Warning>,
+) -> Saving {
+    let run_id = ulid::Ulid::generate().to_string().to_ascii_lowercase();
+    let mut saving = Saving { saved: Vec::new(), elsewhere: Vec::new(), failure: None };
+    for (index, image) in output.images.iter().enumerate() {
+        let index = index as u32;
+        let requested = planned.as_ref().ok().and_then(|(paths, _)| paths.get(index as usize));
+        let attempt = match (planned, requested) {
+            (Ok((_, mode)), Some(path)) => artifacts::save_image(&image.bytes, path, index, *mode),
+            (Err(e), _) => Err(e.clone()),
+            (Ok(_), None) => {
+                Err(IrisError::internal(format!("no output path was planned for image {index}")))
+            }
+        };
+        let error = match attempt {
+            Ok(artifact) => {
+                warnings.extend(artifact.warnings);
+                saving.saved.push(artifact.artifact);
+                continue;
+            }
+            Err(e) if e.code == ErrorCode::InvalidMedia => e,
+            Err(e) => {
+                match artifacts::save_unsaved(&ctx.settings.state_dir.value, &run_id, index, &image.bytes) {
+                    Ok(artifact) => {
+                        let wanted = requested
+                            .map_or("the requested location".to_string(), |p| p.display().to_string());
+                        warnings.push(Warning::new(
+                        WARNING_SAVED_ELSEWHERE,
+                        format!(
+                            "image {index} could not be saved to {wanted} ({}); it was saved to {} instead so \
+                             the paid output is not lost",
+                            e.message, artifact.path
+                        ),
+                    ));
+                        saving.elsewhere.push(artifact.path.clone());
+                        saving.saved.push(artifact);
+                        continue;
+                    }
+                    Err(fallback) => e.with_detail("fallback_error", fallback.message.clone()),
+                }
+            }
+        };
+        if saving.failure.is_none() {
+            saving.failure = Some(error.with_detail("index", index));
+        }
+    }
+    saving
 }

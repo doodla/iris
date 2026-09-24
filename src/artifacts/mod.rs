@@ -11,18 +11,22 @@
 //!   `--overwrite`) finalization through `.<name>.iris-part-*` temp files, with the
 //!   rename fallback that keeps paid synchronous outputs.
 //! * [`decide_download`], [`copy_local`] — repeat downloads without the network.
+//! * [`save_unsaved`] — the last-resort location (`<state_dir>/unsaved/`) for a paid
+//!   image that could not be saved where it was requested.
 //!
 //! Nothing here talks to the network: streaming a remote artifact is
 //! `crate::http::download`, which writes into a [`PartFile`] through its open
 //! handle (never by reopening its path).
 
 mod download;
+mod fallback;
 mod finalize;
 mod input;
 pub mod media;
 pub mod paths;
 
 pub use download::{DownloadDecision, RecordedFile, copy_local, decide_download, is_intact};
+pub use fallback::{UNSAVED_DIR, save_unsaved, unsaved_dir};
 pub use finalize::{
     FinalizeMode, PartFile, SaveOutcome, SavedArtifact, already_present_warning, build_artifact,
     finalize_download, place, save_image, sha256_bytes, sha256_file,

@@ -77,6 +77,11 @@ machine-readable contract for agents.
   it; it gets the new `output_item_unusable` warning instead. A Gemini image whose `mimeType` is
   wrong or missing is kept under its real type with `output_format_mismatch` instead of failing
   the command. Only a response with no usable image is `provider_bad_response`.
+- A valid paid image that cannot be written where it was requested (an I/O failure after
+  preflight) is saved under `<state_dir>/unsaved/` instead, reported in `artifacts` with the new
+  `output_saved_elsewhere` warning. Errors after a paid image call that could not save an image
+  now carry `details.charge_possible: true`, a billing hint, `details.saved`, and
+  `details.fallback_paths`.
 - A Gemini image call that returns no image (and was not blocked) is now `provider_error`
   (retryable; running it again is billed again) instead of `remote_job_failed`: a synchronous call
   has no remote job.

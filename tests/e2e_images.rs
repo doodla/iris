@@ -394,6 +394,44 @@ fn a_mislabeled_or_unlabeled_gemini_image_is_saved_under_its_real_type() {
     }
 }
 
+#[test]
+fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let image = png(10, 10);
+    api.on(
+        "POST",
+        OPENAI_GENERATIONS,
+        openai_images(&[&image], "req_e2e_fallback").set_delay(std::time::Duration::from_secs(3)),
+    );
+    let child = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low"])
+        .args(["-o", "out/pic.png", "--json"])
+        .spawn();
+    // The request is in flight, so preflight created out/: put a file in its place.
+    api.wait_for("POST", OPENAI_GENERATIONS, 1, std::time::Duration::from_secs(30));
+    std::fs::remove_dir_all(sb.path("out")).unwrap();
+    std::fs::write(sb.path("out"), b"in the way").unwrap();
+    let out = child.finish();
+
+    let v = out.ok();
+    assert_eq!(api.total(), 1, "the image is saved elsewhere, never generated again");
+    let art = &artifacts(&v)[0];
+    let path = Path::new(art["path"].as_str().unwrap());
+    assert_eq!(path.parent().unwrap(), sb.state().join("unsaved"), "{v}");
+    assert_artifact(art, path, &image, "image/png", (10, 10));
+    let warning = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["code"] == "output_saved_elsewhere")
+        .unwrap_or_else(|| panic!("no output_saved_elsewhere warning: {v}"));
+    assert!(warning["message"].as_str().unwrap().contains(path.to_str().unwrap()), "{v}");
+    assert_eq!(std::fs::read(sb.path("out")).unwrap(), b"in the way", "the file in the way is untouched");
+}
+
 // ----- scenario 4: error mapping through the process --------------------------------------------
 
 /// Run one OpenAI generation against `answer` and return the output and the mock.

@@ -357,7 +357,7 @@ something the caller should know:
 `output_format_mismatch`, `cost_estimate_unavailable`, `job_record_unreadable`,
 `provider_text_output`, `already_downloaded`, `retention_limited`, `preview_model`,
 `non_default_base_url`, `content_filtered`, `unexpected_output_count`, `status_refresh_failed`,
-`output_item_unusable`.
+`output_item_unusable`, `output_saved_elsewhere`.
 
 Paid image output is judged by its bytes, never by the provider's label, and one bad item never
 costs the others: a valid image of another type than requested or labeled (or with no label) is
@@ -366,6 +366,16 @@ image (a URL instead of inline data, missing or invalid base64, content that is 
 skipped with `output_item_unusable`, whose message names the item's index and the reason. Only a
 response with no usable image at all fails, as `provider_bad_response` with
 `details.charge_possible: true`.
+
+If a valid image cannot be written where it was requested after the paid call (an I/O failure
+after preflight, e.g. a full disk or an output directory removed meanwhile), Iris writes it to
+`<state_dir>/unsaved/<id>-<index>.<ext>` instead (a private directory; `iris config path` shows
+the state directory), lists that path in the result's `artifacts`, and adds an
+`output_saved_elsewhere` warning naming it. If an image cannot be saved at all (content that is
+not a valid image stays `invalid_media`; or the fallback location fails too), the error carries
+`details.charge_possible: true`, `details.saved` (every image that was saved, wherever),
+`details.fallback_paths` (those saved under `unsaved/`), and `details.index` of the first image
+that was lost.
 
 Real example — an output path with no extension and a `--format` that didn't match what the
 provider actually returned (three warnings from one request, all real, from a mock-server run: the

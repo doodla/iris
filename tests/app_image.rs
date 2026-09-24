@@ -311,7 +311,104 @@ async fn invalid_media_from_the_provider_is_not_saved() {
     let e = r.unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidMedia);
     assert_eq!(e.provider_request_id.as_deref(), Some("req_fake_1"));
+    assert_eq!(e.details.get("charge_possible"), Some(&serde_json::json!(true)), "{:?}", e.details);
+    assert_eq!(e.details.get("saved"), Some(&serde_json::json!([])));
+    assert_eq!(e.details.get("fallback_paths"), Some(&serde_json::json!([])));
+    assert!(e.hint.as_deref().unwrap().contains("may have billed"), "{:?}", e.hint);
+    assert_ne!(e.retryable, Some(true));
     assert!(files_in(&f.sandbox.work()).is_empty(), "{:?}", files_in(&f.sandbox.work()));
+    assert!(!f.sandbox.state().join("unsaved").exists(), "content that is not an image is not kept");
+}
+
+/// Make the next call replace the (preflighted) directory `dir` with a regular
+/// file, so saving there fails with an I/O error after the paid call.
+fn break_dir_during_call(f: &Fixture, dir: PathBuf) {
+    *f.openai.images().on_call.lock().unwrap() = Some(Box::new(move || {
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"not a directory").unwrap();
+    }));
+}
+
+#[tokio::test]
+async fn an_image_that_cannot_be_saved_where_requested_is_saved_in_the_state_directory() {
+    let f = Fixture::new();
+    let image = png(9, 7);
+    f.openai.images().push(Ok(image_output(vec![image.clone()])));
+    break_dir_during_call(&f, f.sandbox.path("sub"));
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("sub/out.png"));
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let res = completed(r.expect("the image was kept, so the command succeeds"));
+    assert_eq!(res.artifacts.len(), 1);
+    let art = &res.artifacts[0];
+    let path = PathBuf::from(&art.path);
+    let unsaved = f.sandbox.state().join("unsaved");
+    assert_eq!(path.parent().unwrap(), unsaved, "{}", art.path);
+    let name = path.file_name().unwrap().to_str().unwrap();
+    assert!(name.ends_with("-0.png") && name.len() == 26 + "-0.png".len(), "<ulid>-<index>.<ext>: {name}");
+    assert_eq!(std::fs::read(&path).unwrap(), image, "the file holds the provider's bytes");
+    assert_eq!(art.sha256, iris::artifacts::sha256_bytes(&image));
+    assert_eq!((art.width, art.height), (Some(9), Some(7)));
+    let warning = warnings.iter().find(|w| w.code == "output_saved_elsewhere").expect("warning");
+    assert!(
+        warning.message.contains(&art.path) && warning.message.contains("out.png"),
+        "{}",
+        warning.message
+    );
+    assert!(res.cost_estimate.is_some() || has_warning(&warnings, "cost_estimate_unavailable"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = std::fs::metadata(&unsaved).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700, "the fallback directory is private");
+    }
+    let leftovers: Vec<String> = files_in(&unsaved).into_iter().filter(|n| n.contains("iris-part")).collect();
+    assert!(leftovers.is_empty(), "no temp files are left: {leftovers:?}");
+}
+
+#[tokio::test]
+async fn a_save_error_lists_the_images_kept_elsewhere_and_says_it_may_be_charged() {
+    let f = Fixture::new();
+    let image = png(4, 4);
+    f.openai.images().push(Ok(image_output(vec![image.clone(), b"{\"error\": 1}".to_vec()])));
+    break_dir_during_call(&f, f.sandbox.path("pics"));
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("pics/p.png"));
+    a.common.options = vec![flag("count", "2", "--count")];
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidMedia, "the second item is not an image");
+    assert_eq!(e.details.get("index"), Some(&serde_json::json!(1)));
+    assert_eq!(e.details.get("charge_possible"), Some(&serde_json::json!(true)));
+    let fallback = e.details["fallback_paths"].as_array().unwrap();
+    assert_eq!(fallback.len(), 1, "{:?}", e.details);
+    let kept = PathBuf::from(fallback[0].as_str().unwrap());
+    assert_eq!(std::fs::read(&kept).unwrap(), image);
+    assert_eq!(e.details["saved"], serde_json::json!([kept.to_str().unwrap()]));
+    assert!(has_warning(&warnings, "output_saved_elsewhere"));
+    assert_eq!(e.provider_request_id.as_deref(), Some("req_fake_1"));
+}
+
+#[tokio::test]
+async fn when_even_the_fallback_fails_the_error_says_so_and_may_be_charged() {
+    let f = Fixture::new();
+    f.openai.images().push(Ok(image_output(vec![png(4, 4)])));
+    // Both the output directory and the fallback location become unusable.
+    let (dir, unsaved) = (f.sandbox.path("sub"), f.sandbox.state().join("unsaved"));
+    *f.openai.images().on_call.lock().unwrap() = Some(Box::new(move || {
+        std::fs::remove_dir_all(&dir).unwrap();
+        std::fs::write(&dir, b"x").unwrap();
+        std::fs::write(&unsaved, b"x").unwrap();
+    }));
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("sub/out.png"));
+    let (r, _) = f.run(Operation::ImageGenerate, a).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::IoError, "{}", e.message);
+    assert_eq!(e.details.get("charge_possible"), Some(&serde_json::json!(true)));
+    assert!(e.details.get("fallback_error").and_then(|v| v.as_str()).is_some(), "{:?}", e.details);
+    assert_eq!(e.details.get("fallback_paths"), Some(&serde_json::json!([])));
+    assert_ne!(e.retryable, Some(true));
 }
 
 #[tokio::test]
