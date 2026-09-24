@@ -184,14 +184,29 @@ pub async fn run(
     )?;
     // Interrupts (Ctrl-C, SIGTERM, SIGHUP) are handled from before the record
     // exists, so none can end the process by default between recording the job
-    // and recording the provider's answer; one that arrives before the request
-    // is sent is deferred like any other.
+    // and recording the provider's answer.
     ctx.interrupt.arm();
     let seen = ctx.interrupt.count();
     ctx.store.create(&record)?;
 
     ctx.progress
         .line(format!("Submitting job {job_id} to {provider} ({}); this is a paid request", resolved.id));
+    // One that arrived before the request is sent stops here, without sending it.
+    // Signals are counted by tasks of this (single-threaded) runtime, so yield once
+    // to let them record any signal already delivered.
+    tokio::task::yield_now().await;
+    if ctx.interrupt.count() > seen {
+        let e = IrisError::new(
+            ErrorCode::Interrupted,
+            format!("interrupted before job {job_id} was sent to {provider}; nothing was submitted"),
+        )
+        .with_retryable(Some(true))
+        .with_provider(provider)
+        .with_hint("nothing was sent or billed; run the same command again to submit the request");
+        return Err(discard_unsent(ctx, &job_id, e, ctx.now()));
+    }
+    // From here on the request may be in flight: the first interrupt is deferred
+    // until the provider answers.
     let mut deferred = false;
     let submission = {
         let submit = video.submit(&req, &pctx);

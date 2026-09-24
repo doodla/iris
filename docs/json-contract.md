@@ -352,8 +352,10 @@ with `retryable: false` and `details.charge_possible: true`.
 an interruptible phase (a provider call, a poll, a wait, a download); it is always reported as one
 envelope. Its default `retryable: true` means running the same command again is harmless — except
 while a paid request is in flight (a Veo `video generate` submit or an image call), which reports
-`retryable: false` and `details.charge_possible: true` because running it again could pay twice
-(see [jobs.md](jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
+`retryable: false` and `details.charge_possible: true` because running it again could pay twice.
+An interrupt that arrives before a Veo request is sent stops without sending it: it keeps
+`retryable: true`, names no job, and leaves no job record (see
+[jobs.md](jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
 
 For job outputs, `artifact_expired` means the output is gone for good: the file host answered 410,
 or 403/404 after the provider's retention period (`job.remote_expires_at`). A 403/404 before that
