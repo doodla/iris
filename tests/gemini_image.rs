@@ -374,14 +374,18 @@ async fn no_image_error(body: Value) -> IrisError {
 #[tokio::test]
 async fn text_only_answers_map_by_finish_reason() {
     let err = no_image_error(response_with(vec![json!({"text": "I can't draw that."})], "NO_IMAGE")).await;
-    assert_eq!(err.code, ErrorCode::RemoteJobFailed);
+    // A synchronous call has no remote job: an ordinary provider error that may be
+    // retried, with the billing note in the hint.
+    assert_eq!(err.code, ErrorCode::ProviderError);
+    assert_eq!(err.retryable, Some(true));
+    assert!(err.hint.as_deref().unwrap().contains("billed again"), "{:?}", err.hint);
     assert_eq!(err.provider_code.as_deref(), Some("NO_IMAGE"));
     assert_eq!(err.details["model_text"], "I can't draw that.");
     assert_eq!(err.provider_request_id.as_deref(), Some("resp-abc123"));
 
     // STOP with text only is still "no image".
     let err = no_image_error(response_with(vec![json!({"text": "Which kite?"})], "STOP")).await;
-    assert_eq!(err.code, ErrorCode::RemoteJobFailed);
+    assert_eq!(err.code, ErrorCode::ProviderError);
 
     for reason in ["IMAGE_SAFETY", "SAFETY", "PROHIBITED_CONTENT", "IMAGE_RECITATION", "SPII", "LANGUAGE"] {
         let mut body = response_with(vec![], reason);
@@ -397,7 +401,7 @@ async fn text_only_answers_map_by_finish_reason() {
     assert_eq!(err.code, ErrorCode::PermissionDenied);
 
     for reason in ["IMAGE_OTHER", "OTHER", "MAX_TOKENS", "MALFORMED_RESPONSE"] {
-        assert_eq!(no_image_error(response_with(vec![], reason)).await.code, ErrorCode::RemoteJobFailed);
+        assert_eq!(no_image_error(response_with(vec![], reason)).await.code, ErrorCode::ProviderError);
     }
 }
 

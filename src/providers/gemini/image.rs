@@ -416,7 +416,8 @@ fn usage_from_metadata(meta: &serde_json::Value) -> Option<Usage> {
 }
 
 /// Zero final images: blocked prompt/output → `content_blocked`; account limited →
-/// `permission_denied`; anything else → `remote_job_failed`.
+/// `permission_denied`; anything else → `provider_error`, retryable (a synchronous
+/// call has no remote job, and the model may produce an image on another try).
 fn no_image_error(resp: &GenerateContentResponse, text: Option<&str>) -> IrisError {
     let block_reason = resp
         .prompt_feedback
@@ -455,9 +456,10 @@ fn no_image_error(resp: &GenerateContentResponse, text: Option<&str>) -> IrisErr
         let reason = finish_reasons.first().copied();
         let described = reason.map(client::safe_text).unwrap_or_else(|| "no candidates".to_string());
         let mut e = IrisError::new(
-            ErrorCode::RemoteJobFailed,
+            ErrorCode::ProviderError,
             format!("the Gemini API returned no image ({described})"),
         )
+        .with_retryable(Some(true))
         .with_hint(
             "running the command again may succeed, but it is billed again; the provider may bill input and \
              thinking tokens for this attempt",
