@@ -87,7 +87,8 @@ pub struct VideoRequest {
 /// One generated image returned inline by a synchronous provider.
 #[derive(Clone)]
 pub struct GeneratedImage {
-    /// Media type as reported by the provider (validated by the caller against the bytes).
+    /// Media type sniffed from the bytes (the provider's label may differ; see
+    /// `output_format_mismatch`).
     pub media_type: String,
     pub bytes: Vec<u8>,
 }

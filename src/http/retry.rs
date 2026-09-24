@@ -426,7 +426,8 @@ impl TransportError {
     /// Map to the public taxonomy: `network_error` for connect/other failures,
     /// `request_timeout` for timeouts; paid submissions carry
     /// `details.charge_possible` and a hint that Iris did not retry automatically.
-    /// Video adapters turn `after_send` failures into `submission_uncertain` instead.
+    /// Paid-submit adapters (video and synchronous image) turn `after_send` failures
+    /// into `submission_uncertain` instead.
     pub fn to_iris(&self) -> IrisError {
         let attempts =
             if self.attempts > 1 { format!(" (after {} attempts)", self.attempts) } else { String::new() };
