@@ -128,19 +128,26 @@ that a duplicate paid video is worse than asking you to check. Real example (the
 answered a submit with HTTP 500, which "does not prove the job was not created"):
 
 ```console
-$ iris video generate "..." --detach --json
+$ iris video generate "a paper boat drifting on a pond" --duration 4 --detach --json
 ```
 ```json
 {"command":"video.generate","error":{"category":"uncertain","code":"submission_uncertain",
  "message":"the Gemini API answered the video request with HTTP 500, which does not prove the job was not created",
  "hint":"the provider may have accepted this paid request; check usage/billing in Google AI Studio before resubmitting; Iris will not resubmit automatically",
- "job_id":"job_01m3a2rq4yq4d381v6czqksdtg","job_status":"submission_unknown",
+ "job_id":"job_01m3a61aafgj1zg9ry7xgv8rvc","job_status":"submission_unknown",
+ "provider":"gemini","provider_code":"INTERNAL","provider_status":500,"provider_request_id":null,
+ "remote_operation_id":null,"retry_after_seconds":null,
  "details":{"charge_possible":true,"provider_message":"internal"},
- "retryable":false,"...":"..."},
- "ok":false,"result":null,"schema_version":1,"warnings":[]}
+ "retryable":false},
+ "ok":false,"result":null,"schema_version":1,
+ "warnings":[{"code":"preview_model","message":"veo-3.1-fast-generate-preview is a preview model; its behavior, limits, and availability may change"}]}
 $ echo $?
 5
 ```
+
+Note the `preview_model` warning is still there even though the request itself failed: warnings
+collected while resolving the model (before the paid call) are not discarded just because the
+call that followed them didn't succeed.
 
 ### Waiting, `--timeout`, and Ctrl-C
 
