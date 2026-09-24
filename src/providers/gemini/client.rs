@@ -98,6 +98,33 @@ pub struct GoogleError {
     pub retry_delay: Option<Duration>,
     /// Scrubbed, truncated provider message.
     pub message: Option<String>,
+    /// `google.rpc.QuotaFailure` violations, in body order.
+    pub quota_violations: Vec<QuotaViolation>,
+}
+
+/// One `google.rpc.QuotaFailure.violations[]` entry.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct QuotaViolation {
+    /// `quotaId`, e.g. `GenerateRequestsPerDayPerProjectPerModel-FreeTier` (kept only
+    /// when it is identifier-shaped).
+    pub quota_id: Option<String>,
+    /// `quotaValue`: the limit that was reached (a proto `int64`, so JSON sends it as
+    /// a string).
+    pub quota_value: Option<u64>,
+}
+
+/// Why a 429 is quota exhaustion rather than a rate limit that clears within the
+/// retry window. C-04 never retries quota exhaustion, and D-05 retries only
+/// rate-limit 429s.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuotaExhaustion<'a> {
+    /// The limit is 0: the project has no quota for this model at all. This is the
+    /// expected answer for a project without billing, because the image and Veo
+    /// models have no free tier (T-02 §7 infers it; not yet seen live).
+    ZeroLimit(&'a QuotaViolation),
+    /// A per-day quota is used up. It resets at midnight Pacific time, so retrying
+    /// within the executor's retry window cannot succeed.
+    Daily(&'a QuotaViolation),
 }
 
 impl GoogleError {
@@ -109,6 +136,19 @@ impl GoogleError {
             (None, Some(r)) => Some(r.clone()),
             (None, None) => None,
         }
+    }
+
+    /// Quota exhaustion shown by the `QuotaFailure` details, if any. Without such
+    /// details, a 429 stays a rate limit (C-06).
+    pub fn quota_exhaustion(&self) -> Option<QuotaExhaustion<'_>> {
+        let violations = &self.quota_violations;
+        if let Some(v) = violations.iter().find(|v| v.quota_value == Some(0)) {
+            return Some(QuotaExhaustion::ZeroLimit(v));
+        }
+        violations
+            .iter()
+            .find(|v| v.quota_id.as_deref().is_some_and(|id| id.contains("PerDay")))
+            .map(QuotaExhaustion::Daily)
     }
 }
 
@@ -125,6 +165,26 @@ fn identifier(text: &str) -> Option<String> {
     ok.then(|| t.to_string())
 }
 
+/// Quota ids mix cases and dashes (`GenerateRequestsPerDayPerProjectPerModel-FreeTier`);
+/// only ASCII letters, digits, `-`, `_`, and `.` are kept, up to 128 characters.
+fn quota_identifier(text: &str) -> Option<String> {
+    let t = text.trim();
+    let ok = !t.is_empty()
+        && t.len() <= 128
+        && t.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    ok.then(|| t.to_string())
+}
+
+/// A non-negative integer sent as a JSON number or as a decimal string (proto3 JSON
+/// encodes `int64` as a string).
+fn json_u64(value: &Value) -> Option<u64> {
+    match value {
+        Value::Number(n) => n.as_u64(),
+        Value::String(s) => s.trim().parse().ok(),
+        _ => None,
+    }
+}
+
 /// Parse a `google.rpc.Status` error body. Missing or unparseable bodies give an
 /// empty result (the HTTP status still drives the mapping).
 pub fn parse_google_error(resp: &HttpResponse) -> GoogleError {
@@ -138,11 +198,22 @@ pub fn parse_google_error(resp: &HttpResponse) -> GoogleError {
         .iter()
         .filter(|d| detail_type(d).ends_with("google.rpc.RetryInfo"))
         .find_map(|d| d.get("retryDelay").and_then(Value::as_str).and_then(parse_protobuf_duration));
+    let quota_violations = details
+        .iter()
+        .filter(|d| detail_type(d).ends_with("google.rpc.QuotaFailure"))
+        .filter_map(|d| d.get("violations").and_then(Value::as_array))
+        .flatten()
+        .map(|v| QuotaViolation {
+            quota_id: v.get("quotaId").and_then(Value::as_str).and_then(quota_identifier),
+            quota_value: v.get("quotaValue").and_then(json_u64),
+        })
+        .collect();
     GoogleError {
         status: status.status.as_deref().and_then(identifier),
         reason,
         retry_delay,
         message: status.message.as_deref().map(safe_text).filter(|m| !m.trim().is_empty()),
+        quota_violations,
     }
 }
 
@@ -154,6 +225,7 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
     let key_env = ProviderId::Gemini.credential_env();
     let reason_is_key = google.reason.as_deref().is_some_and(|r| r.starts_with("API_KEY_"));
     let status_is = |s: &str| google.status.as_deref() == Some(s);
+    let exhausted = if http == 429 { google.quota_exhaustion() } else { None };
 
     let (code, retryable, message, hint): (ErrorCode, Option<bool>, String, Option<String>) = match http {
         400 if reason_is_key => (
@@ -231,13 +303,42 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
             "the Gemini API rejected the request as too large (HTTP 413)".to_string(),
             Some("use fewer or smaller input images".to_string()),
         ),
+        // A 429 is a rate limit unless its QuotaFailure proves the quota is exhausted
+        // (C-04: quota exhaustion is never retried). Both forms stay definite
+        // rejections: nothing was processed or billed.
+        429 if matches!(exhausted, Some(QuotaExhaustion::ZeroLimit(_))) => (
+            ErrorCode::QuotaExceeded,
+            Some(false),
+            "the Gemini API refused the request: this project's quota for the model is 0 (HTTP 429 \
+             RESOURCE_EXHAUSTED)"
+                .to_string(),
+            Some(
+                "Gemini image and Veo models have no free tier, so a project without billing has no quota \
+                 for them; link a billing account to the key's project in Google AI Studio. Retrying \
+                 will not help"
+                    .to_string(),
+            ),
+        ),
+        429 if matches!(exhausted, Some(QuotaExhaustion::Daily(_))) => (
+            ErrorCode::QuotaExceeded,
+            Some(false),
+            "the Gemini API refused the request: the project's daily quota for this model is used up \
+             (HTTP 429 RESOURCE_EXHAUSTED)"
+                .to_string(),
+            Some(
+                "daily quotas reset at midnight Pacific time; retrying sooner will not help. Check the \
+                 project's limits and tier in Google AI Studio"
+                    .to_string(),
+            ),
+        ),
         429 => (
             ErrorCode::RateLimited,
             Some(true),
             "the Gemini API is rate limiting this project (HTTP 429 RESOURCE_EXHAUSTED)".to_string(),
             Some(
                 "rate and spend limits apply per project; wait and run the command again, or check the \
-                 project's limits in Google AI Studio"
+                 project's limits in Google AI Studio. Gemini image and Veo models have no free tier: if \
+                 every call gets HTTP 429, the key's project probably has no billing account"
                     .to_string(),
             ),
         ),
@@ -283,6 +384,17 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
             }
         }
     }
+    if let Some(QuotaExhaustion::ZeroLimit(v) | QuotaExhaustion::Daily(v)) = exhausted {
+        if let Some(id) = &v.quota_id {
+            err = err.with_detail("quota_id", id.clone());
+        }
+        if let Some(limit) = v.quota_value {
+            err = err.with_detail("quota_limit", limit);
+        }
+        // A RetryInfo delay next to an exhausted quota would tell the caller that
+        // waiting a few seconds helps; it does not.
+        return (err, None);
+    }
     if let Some(delay) = google.retry_delay {
         err = err.with_retry_after(delay);
     }
@@ -290,12 +402,13 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
 }
 
 /// Retry verdict for a non-success response (C-04 classes, D-05):
-/// 429 → retryable rejection honoring `RetryInfo` (Gemini signals billing
-/// exhaustion with 402, never 429); 408/5xx → transient (retried by reads only);
-/// everything else → final.
+/// 429 → retryable rejection honoring `RetryInfo`, unless its `QuotaFailure` shows
+/// an exhausted quota (`quota_exceeded`, final; Gemini's billing exhaustion is the
+/// 402); 408/5xx → transient (retried by reads only); everything else → final.
 pub fn classify(resp: &HttpResponse) -> Verdict {
     let (error, retry_after) = map_error(resp);
     match resp.status.as_u16() {
+        429 if error.code == ErrorCode::QuotaExceeded => Verdict::Final(error),
         429 => Verdict::RetryableRejection { error, retry_after },
         408 | 500..=599 => Verdict::Transient { error, retry_after },
         _ => Verdict::Final(error),
@@ -366,6 +479,50 @@ mod tests {
             let encoded = base64::engine::general_purpose::STANDARD.encode(vec![0u8; n]);
             assert_eq!(base64_len(n), encoded.len(), "{n}");
         }
+    }
+
+    #[test]
+    fn only_a_zero_limit_or_a_daily_quota_counts_as_exhausted() {
+        let violation = |id: &str, value: Option<u64>| QuotaViolation {
+            quota_id: quota_identifier(id),
+            quota_value: value,
+        };
+        let with = |violations: Vec<QuotaViolation>| GoogleError {
+            quota_violations: violations,
+            ..GoogleError::default()
+        };
+
+        let per_minute = violation("GenerateRequestsPerMinutePerProjectPerModel", Some(10));
+        let daily = violation("GenerateRequestsPerDayPerProjectPerModel", Some(250));
+        let zero = violation("GenerateRequestsPerMinutePerProjectPerModel-FreeTier", Some(0));
+
+        assert_eq!(with(vec![]).quota_exhaustion(), None);
+        assert_eq!(with(vec![per_minute.clone()]).quota_exhaustion(), None);
+        assert_eq!(
+            with(vec![per_minute.clone(), daily.clone()]).quota_exhaustion(),
+            Some(QuotaExhaustion::Daily(&daily))
+        );
+        assert_eq!(
+            with(vec![daily.clone(), zero.clone()]).quota_exhaustion(),
+            Some(QuotaExhaustion::ZeroLimit(&zero)),
+            "a zero limit is reported first: billing, not waiting, fixes it"
+        );
+        assert_eq!(with(vec![violation("", Some(5))]).quota_exhaustion(), None);
+    }
+
+    #[test]
+    fn quota_values_parse_from_proto_json_strings_and_numbers() {
+        assert_eq!(json_u64(&serde_json::json!("0")), Some(0));
+        assert_eq!(json_u64(&serde_json::json!(" 250 ")), Some(250));
+        assert_eq!(json_u64(&serde_json::json!(7)), Some(7));
+        assert_eq!(json_u64(&serde_json::json!(-1)), None);
+        assert_eq!(json_u64(&serde_json::json!("many")), None);
+        assert_eq!(
+            quota_identifier("GenerateRequestsPerDayPerProjectPerModel-FreeTier").as_deref(),
+            Some("GenerateRequestsPerDayPerProjectPerModel-FreeTier")
+        );
+        assert_eq!(quota_identifier("has space"), None);
+        assert_eq!(quota_identifier(&"a".repeat(129)), None);
     }
 
     #[test]

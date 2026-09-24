@@ -381,6 +381,28 @@ async fn definite_rejections_on_submit_map_like_image_errors() {
     assert_eq!(sent, 3);
 }
 
+#[tokio::test]
+async fn a_zero_quota_on_submit_is_a_definite_quota_rejection_sent_once() {
+    let (err, sent) = uncertain_case(ResponseTemplate::new(429).set_body_json(json!({"error": {
+        "code": 429,
+        "message": "You exceeded your current quota, please check your plan and billing details.",
+        "status": "RESOURCE_EXHAUSTED",
+        "details": [
+            {"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{
+                "quotaId": "PredictLongRunningRequestsPerDayPerProjectPerModel-FreeTier",
+                "quotaValue": "0"
+            }]},
+            {"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.01s"}
+        ]
+    }})))
+    .await;
+    assert_eq!(err.code, ErrorCode::QuotaExceeded, "{}", err.message);
+    assert_eq!(sent, 1);
+    assert_eq!(err.exit_code(), 3);
+    assert!(err.details.get("charge_possible").is_none(), "a rejection is not an uncertain submit");
+    assert!(err.hint.as_deref().unwrap().contains("no free tier"));
+}
+
 // ----- polling -------------------------------------------------------------------
 
 async fn poll_with(

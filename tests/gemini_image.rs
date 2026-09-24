@@ -619,6 +619,85 @@ async fn persistent_rate_limits_stop_after_three_attempts() {
     assert_eq!(err.code, ErrorCode::RateLimited);
     assert_eq!(sent, 3);
     assert_eq!(err.retryable, Some(true));
+    let hint = err.hint.as_deref().unwrap();
+    assert!(hint.contains("no free tier") && hint.contains("billing"), "{hint}");
+}
+
+/// `google.rpc.QuotaFailure` with one violation, in the proto3 JSON form Google
+/// sends (`quotaValue` is an int64, so a string).
+fn quota_failure(quota_id: &str, quota_value: &str) -> Value {
+    json!({"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": [{
+        "quotaMetric": "generativelanguage.googleapis.com/generate_content_free_tier_requests",
+        "quotaId": quota_id,
+        "quotaDimensions": {"location": "global", "model": MODEL},
+        "quotaValue": quota_value
+    }]})
+}
+
+#[tokio::test]
+async fn a_zero_quota_is_quota_exceeded_sent_once_with_billing_guidance() {
+    // What a project without billing is expected to get: the image models have no
+    // free tier, so the free-tier limit is 0. The RetryInfo must not be honored.
+    let (err, sent) = error_case(
+        429,
+        google_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "You exceeded your current quota, please check your plan and billing details.",
+            json!([
+                quota_failure("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "0"),
+                retry_info("0.01s")
+            ]),
+        ),
+    )
+    .await;
+    assert_eq!(err.code, ErrorCode::QuotaExceeded, "{}", err.message);
+    assert_eq!(sent, 1, "an exhausted quota is never retried (C-04)");
+    assert_eq!(err.retryable, Some(false));
+    assert_eq!(err.exit_code(), 3);
+    assert_eq!(err.retry_after, None);
+    assert_eq!(err.provider_status, Some(429));
+    assert_eq!(err.provider_code.as_deref(), Some("RESOURCE_EXHAUSTED"));
+    assert_eq!(err.details["quota_id"], "GenerateRequestsPerDayPerProjectPerModel-FreeTier");
+    assert_eq!(err.details["quota_limit"], 0);
+    let hint = err.hint.as_deref().unwrap();
+    assert!(hint.contains("no free tier") && hint.contains("billing account"), "{hint}");
+}
+
+#[tokio::test]
+async fn a_used_up_daily_quota_is_quota_exceeded_and_sent_once() {
+    let (err, sent) = error_case(
+        429,
+        google_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Quota exceeded.",
+            json!([quota_failure("GenerateRequestsPerDayPerProjectPerModel", "250"), retry_info("0.01s")]),
+        ),
+    )
+    .await;
+    assert_eq!(err.code, ErrorCode::QuotaExceeded);
+    assert_eq!(sent, 1);
+    assert_eq!(err.details["quota_limit"], 250);
+    assert!(err.hint.as_deref().unwrap().contains("midnight Pacific"));
+}
+
+#[tokio::test]
+async fn a_per_minute_quota_stays_a_retried_rate_limit() {
+    let (err, sent) = error_case(
+        429,
+        google_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Quota exceeded.",
+            json!([quota_failure("GenerateRequestsPerMinutePerProjectPerModel", "10"), retry_info("0.01s")]),
+        ),
+    )
+    .await;
+    assert_eq!(err.code, ErrorCode::RateLimited);
+    assert_eq!(sent, 3);
+    assert_eq!(err.retryable, Some(true));
+    assert!(err.details.get("quota_id").is_none());
 }
 
 #[tokio::test]
