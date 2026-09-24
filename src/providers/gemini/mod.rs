@@ -1,15 +1,46 @@
-//! Google Gemini API adapter (native image generation "Nano Banana" and Veo video).
-//! Implemented by task T-09 per contracts C-01/C-04/C-06.
+//! Google Gemini Developer API adapter: native image generation and editing
+//! ("Nano Banana", `generateContent`, synchronous) and Veo video generation
+//! (`predictLongRunning`, provider-native asynchronous operations).
+//!
+//! A thin REST client (D-03): Google publishes no Rust SDK, and no community crate
+//! was verified to cover `imageConfig`, `thinkingLevel`, and Veo on these API
+//! versions (T-02 §10); the surface is three calls. All Google wire types stay in
+//! this module. Contracts: C-01 (traits), C-04 (retry classes), C-06 (catalog values,
+//! wire mapping, response and error rules); decisions D-03, D-04, D-05, D-08, D-13.
+//!
+//! * The configured base URL is the origin (`https://generativelanguage.googleapis.com`,
+//!   D-04); the adapter appends `/v1` (images, image-model metadata) or `/v1beta`
+//!   (Veo, operations, files).
+//! * The key is sent only in the `x-goog-api-key` header, never as `?key=`.
+//! * Paid calls use the `PaidSubmit` retry class; polls and metadata use
+//!   `IdempotentRead`.
+
+mod client;
+mod image;
+mod veo;
+mod wire;
+
+use std::time::Duration;
 
 use async_trait::async_trait;
+
+pub use client::{API_V1, API_V1BETA};
+pub use image::{WARNING_OUTPUT_COUNT, WARNING_TEXT_OUTPUT};
+pub use veo::{WARNING_CONTENT_FILTERED, is_operation_name, validate_output_uri};
 
 use super::{
     AccountAccess, CredentialHeader, ImageOutput, ImageProvider, ImageRequest, Provider, ProviderContext,
     RemoteStatus, SubmittedOperation, VideoProvider, VideoRequest,
 };
-use crate::domain::ProviderId;
-use crate::error::IrisError;
+use crate::catalog;
+use crate::domain::{Operation, ProviderId};
+use crate::error::{ErrorCode, IrisError};
+use crate::http::{HttpError, RetryClass};
 
+/// Default API origin (D-04). Adapters append the API version.
+pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
+
+/// The Gemini API adapter (images and Veo).
 #[derive(Debug, Default)]
 pub struct GeminiProvider;
 
@@ -24,25 +55,56 @@ impl Provider for GeminiProvider {
     fn id(&self) -> ProviderId {
         ProviderId::Gemini
     }
+
     fn default_base_url(&self) -> &'static str {
-        "https://generativelanguage.googleapis.com/v1beta"
+        DEFAULT_BASE_URL
     }
+
     fn credential_header(&self) -> CredentialHeader {
-        CredentialHeader { name: "x-goog-api-key", prefix: "" }
+        client::CREDENTIAL_HEADER
     }
+
     fn docs_url(&self) -> &'static str {
         "https://ai.google.dev/gemini-api/docs"
     }
-    async fn check_access(
-        &self,
-        _model_id: &str,
-        _ctx: &ProviderContext,
-    ) -> Result<AccountAccess, IrisError> {
-        Err(IrisError::internal("gemini adapter not implemented yet"))
+
+    /// `models.get` (free, `IdempotentRead`): 200 → available, 404 → unavailable,
+    /// rejected credentials (401, 403, 400 `API_KEY_*`) → the error, anything else
+    /// (rate limits, server or network errors) → unknown.
+    ///
+    /// Image models are looked up on `v1` (the version their generation call uses),
+    /// Veo and unknown models on `v1beta` (Veo exists only there).
+    async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError> {
+        client::validate_model_id(model_id)?;
+        let version = match catalog::find(model_id) {
+            Some(spec) if spec.provider == ProviderId::Gemini && !spec.supports(Operation::VideoGenerate) => {
+                API_V1
+            }
+            _ => API_V1BETA,
+        };
+        let auth = client::auth(ctx)?;
+        let url = client::endpoint(ctx, version, &format!("models/{model_id}"));
+        let call = client::call(RetryClass::IdempotentRead, ctx.timeouts.poll);
+        match ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), client::classify).await {
+            Ok(_) => Ok(AccountAccess::Available),
+            Err(HttpError::Error(e)) if e.provider_status == Some(404) => Ok(AccountAccess::Unavailable),
+            Err(HttpError::Error(e))
+                if e.code == ErrorCode::AuthenticationFailed || e.provider_status == Some(403) =>
+            {
+                Err(e)
+            }
+            Err(other) => {
+                let err = other.into_iris();
+                tracing::debug!(code = %err.code, "gemini access check inconclusive");
+                Ok(AccountAccess::Unknown)
+            }
+        }
     }
+
     fn image(&self) -> Option<&dyn ImageProvider> {
         Some(self)
     }
+
     fn video(&self) -> Option<&dyn VideoProvider> {
         Some(self)
     }
@@ -50,11 +112,12 @@ impl Provider for GeminiProvider {
 
 #[async_trait]
 impl ImageProvider for GeminiProvider {
-    async fn generate(&self, _req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
-        Err(IrisError::internal("gemini adapter not implemented yet"))
+    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+        image::run(Operation::ImageGenerate, req, ctx).await
     }
-    async fn edit(&self, _req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
-        Err(IrisError::internal("gemini adapter not implemented yet"))
+
+    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+        image::run(Operation::ImageEdit, req, ctx).await
     }
 }
 
@@ -62,15 +125,18 @@ impl ImageProvider for GeminiProvider {
 impl VideoProvider for GeminiProvider {
     async fn submit(
         &self,
-        _req: &VideoRequest,
-        _ctx: &ProviderContext,
+        req: &VideoRequest,
+        ctx: &ProviderContext,
     ) -> Result<SubmittedOperation, IrisError> {
-        Err(IrisError::internal("veo adapter not implemented yet"))
+        veo::submit(req, ctx).await
     }
-    async fn poll(&self, _remote_id: &str, _ctx: &ProviderContext) -> Result<RemoteStatus, IrisError> {
-        Err(IrisError::internal("veo adapter not implemented yet"))
+
+    async fn poll(&self, remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus, IrisError> {
+        veo::poll(remote_id, ctx).await
     }
-    fn output_retention(&self) -> Option<std::time::Duration> {
-        None
+
+    /// "Generated videos are stored on the server for 2 days" (Veo guide).
+    fn output_retention(&self) -> Option<Duration> {
+        Some(Duration::from_secs(catalog::veo::OUTPUT_RETENTION_HOURS * 3600))
     }
 }
