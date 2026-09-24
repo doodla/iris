@@ -36,7 +36,7 @@
       "type": "object"
     },
     "AccountAccess": {
-      "description": "Whether the current account can use a model, from a free metadata call.",
+      "description": "Whether a model is visible to the API key, from one free metadata call\n(`--check-access`). `available` means only that the provider's model metadata\nread succeeded; it does not show that the account can use the model: billing\ntier, prepaid credit, and organization verification are not checked, so a paid\nrequest can still be refused.",
       "enum": [
         "not_checked",
         "available",

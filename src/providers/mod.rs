@@ -162,7 +162,11 @@ pub enum RemoteStatus {
     },
 }
 
-/// Whether the current account can use a model, from a free metadata call.
+/// Whether a model is visible to the API key, from one free metadata call
+/// (`--check-access`). `available` means only that the provider's model metadata
+/// read succeeded; it does not show that the account can use the model: billing
+/// tier, prepaid credit, and organization verification are not checked, so a paid
+/// request can still be refused.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum AccountAccess {
