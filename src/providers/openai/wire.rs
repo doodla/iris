@@ -239,6 +239,9 @@ pub(super) struct WireError {
     pub message: Option<String>,
     pub kind: Option<String>,
     pub code: Option<String>,
+    /// True if the error carries a `moderation_details` object (documented only for
+    /// `code = moderation_blocked`).
+    pub moderation_details: bool,
     /// `moderation_details.moderation_stage` (`input` / `output` / `unknown`).
     pub moderation_stage: Option<String>,
     /// `moderation_details.categories`.
@@ -260,11 +263,12 @@ impl WireError {
             Some(Value::Number(n)) => Some(n.to_string()),
             _ => None,
         };
-        let details = error.get("moderation_details");
+        let details = error.get("moderation_details").filter(|d| d.is_object());
         WireError {
             message: string(error.get("message")),
             kind: string(error.get("type")),
             code: string(error.get("code")),
+            moderation_details: details.is_some(),
             moderation_stage: string(details.and_then(|d| d.get("moderation_stage"))),
             categories: details
                 .and_then(|d| d.get("categories"))
@@ -323,5 +327,10 @@ mod tests {
         assert_eq!(e.message.as_deref(), Some("m"));
         assert_eq!(e.code.as_deref(), Some("42"));
         assert!(e.is("t") && e.is("42") && !e.is("m"));
+        assert!(!e.moderation_details);
+        let e = WireError::parse(br#"{"error": {"code": "x", "moderation_details": {}}}"#);
+        assert!(e.moderation_details && e.moderation_stage.is_none() && e.categories.is_empty());
+        let e = WireError::parse(br#"{"error": {"code": "x", "moderation_details": "input"}}"#);
+        assert!(!e.moderation_details, "only an object counts as moderation details");
     }
 }

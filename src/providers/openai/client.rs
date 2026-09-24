@@ -75,9 +75,9 @@ pub(super) async fn post_paid(
             |resp| classify_paid(resp, model),
         )
         .await;
-    match result {
-        Ok(response) => Ok(response),
-        Err(HttpError::Transport(t)) if t.after_send => Err(uncertain_transport(&t, &client_request_id)),
+    let error = match result {
+        Ok(response) => return Ok(response),
+        Err(HttpError::Transport(t)) if t.after_send => uncertain_transport(&t, &client_request_id),
         Err(e) => {
             let mut e = e.into_iris();
             if e.retryable == Some(false) {
@@ -88,9 +88,41 @@ pub(super) async fn post_paid(
                 // The outcome of a server error is unknown; the id lets OpenAI support look it up.
                 e = e.with_detail("client_request_id", client_request_id);
             }
-            Err(e)
+            e
+        }
+    };
+    Err(scrub_credential(error, ctx))
+}
+
+/// Remove the context's own credential from every string of an error.
+///
+/// Provider text is already passed through [`redact::scrub`], which covers the
+/// credentials in the environment (the only source the CLI uses, C-05). This pass
+/// also covers a key handed to the adapter another way, e.g. by a library caller.
+fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
+    let secrets = [ctx.credential.expose().trim().to_string()];
+    let scrub = |s: &mut String| {
+        if let std::borrow::Cow::Owned(clean) = redact::scrub_with(s, &secrets) {
+            *s = clean;
+        }
+    };
+    let data = &mut *e;
+    scrub(&mut data.message);
+    for field in [&mut data.hint, &mut data.provider_code, &mut data.provider_request_id] {
+        if let Some(s) = field.as_mut() {
+            scrub(s);
         }
     }
+    let mut stack: Vec<&mut serde_json::Value> = data.details.values_mut().collect();
+    while let Some(value) = stack.pop() {
+        match value {
+            serde_json::Value::String(s) => scrub(s),
+            serde_json::Value::Array(items) => stack.extend(items.iter_mut()),
+            serde_json::Value::Object(map) => stack.extend(map.values_mut()),
+            _ => {}
+        }
+    }
+    e
 }
 
 /// A paid request may have reached OpenAI but no complete answer arrived
@@ -118,12 +150,18 @@ fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError
 /// | 429 quota/billing code | `quota_exceeded` | no |
 /// | other 429 (rate limit) | `rate_limited` | yes, honoring `Retry-After` |
 /// | 503 `server_is_overloaded` | `provider_error` (retryable) | yes |
-/// | 400 `image_generation_user_error` / `moderation_blocked` | `content_blocked` | no |
+/// | 400 `code = moderation_blocked`, or with `moderation_details` | `content_blocked` | no |
+/// | other 400 `image_generation_user_error` | `invalid_argument` (fix the request) | no |
 /// | other 400, 409, 422, 413 | `invalid_argument` | no |
 /// | 401 | `authentication_failed` | no |
+/// | 402 (undocumented; "Payment Required") | `quota_exceeded` | no |
 /// | 403 | `permission_denied` (verification / region / project hint) | no |
 /// | 404 | `permission_denied` (model not available to this key) | no |
 /// | 408, 500–599 | `provider_error` (retryable by the caller) | no |
+///
+/// OpenAI's image guide uses `error.type = image_generation_user_error` for every
+/// user-correctable failure and names `error.code` the stable discriminator; only
+/// `moderation_blocked` is a content-policy block.
 fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
     let status = resp.status.as_u16();
     let wire = WireError::parse(&resp.body);
@@ -151,9 +189,17 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
             .with_hint("the request was not processed; run the command again later"),
             retry_after: None,
         },
-        400 if wire.is("image_generation_user_error") || wire.is("moderation_blocked") => {
-            Verdict::Final(content_blocked(resp, &wire))
-        }
+        400 if is_moderation_block(&wire) => Verdict::Final(content_blocked(resp, &wire)),
+        400 if wire.is("image_generation_user_error") => Verdict::Final(
+            err(
+                ErrorCode::InvalidArgument,
+                format!("OpenAI could not carry out this image request (HTTP 400){provider_says}"),
+            )
+            .with_hint(
+                "OpenAI reports a problem the request must fix (provider_code names it); change the \
+                 prompt, input images, mask, or options accordingly. Iris does not retry this error",
+            ),
+        ),
         400 | 409 | 422 => Verdict::Final(
             err(
                 ErrorCode::InvalidArgument,
@@ -181,6 +227,7 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
                      project (an IP allowlist can also cause this)",
             ),
         ),
+        402 => Verdict::Final(quota_error(resp, &wire)),
         403 => Verdict::Final(
             err(ErrorCode::PermissionDenied, format!("OpenAI denied access (HTTP 403){provider_says}"))
                 .with_hint(ACCESS_HINT),
@@ -225,6 +272,13 @@ fn is_quota(wire: &WireError) -> bool {
     QUOTA_CODES.iter().any(|c| wire.is(c))
 }
 
+/// A content-policy block: `code = moderation_blocked` (the documented
+/// discriminator), or a `moderation_details` object, which OpenAI attaches only to
+/// moderation blocks.
+fn is_moderation_block(wire: &WireError) -> bool {
+    wire.is("moderation_blocked") || wire.moderation_details
+}
+
 fn quota_error(resp: &HttpResponse, wire: &WireError) -> IrisError {
     let hint = match wire.code.as_deref() {
         Some("credit_balance_exhausted") => {
@@ -251,7 +305,8 @@ fn quota_error(resp: &HttpResponse, wire: &WireError) -> IrisError {
         wire,
         ErrorCode::QuotaExceeded,
         format!(
-            "OpenAI refused the request because of billing or quota limits (HTTP 429){}",
+            "OpenAI refused the request because of billing or quota limits (HTTP {}){}",
+            resp.status.as_u16(),
             provider_suffix(wire)
         ),
     )
@@ -367,16 +422,16 @@ pub(super) async fn check_access(model: &str, ctx: &ProviderContext) -> Result<A
         .http
         .execute(&call, |c| Ok(auth.apply(c.get(url.clone()))), |resp| classify_read(resp, model))
         .await;
-    match result {
-        Ok(_) => Ok(AccountAccess::Available),
+    let error = match result {
+        Ok(_) => return Ok(AccountAccess::Available),
         Err(HttpError::Error(e)) => match e.provider_status {
-            Some(404) => Ok(AccountAccess::Unavailable),
-            Some(401) => Err(e),
-            Some(_) => Ok(AccountAccess::Unknown),
-            None => Err(e),
+            Some(404) => return Ok(AccountAccess::Unavailable),
+            Some(401) | None => e,
+            Some(_) => return Ok(AccountAccess::Unknown),
         },
-        Err(e) => Err(e.into_iris()),
-    }
+        Err(e) => e.into_iris(),
+    };
+    Err(scrub_credential(error, ctx))
 }
 
 fn classify_read(resp: &HttpResponse, model: &str) -> Verdict {

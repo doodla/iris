@@ -1,11 +1,13 @@
 //! The OpenAI Images adapter against a local wiremock server (C-01, C-04, C-06):
 //! exact request bodies and headers, response decoding, usage, the error table, the
 //! paid-submit retry rules, and local input checks. Offline: every request goes to
-//! 127.0.0.1, the key is a fake set through `ProviderContext`, and nothing reads the
-//! process environment.
+//! 127.0.0.1 (wiremock, or a raw socket server for broken connections), the key is a
+//! fake set through `ProviderContext`, and nothing reads the process environment.
 
-use std::io::Cursor;
+use std::io::{Cursor, Read as _, Write as _};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -833,16 +835,48 @@ async fn error_table_maps_every_documented_status() {
             provider_code: Some("invalid_request_error"),
         },
         Case {
-            name: "400 image_generation_user_error (other code)",
+            name: "400 image_generation_user_error (not a moderation block)",
             status: 400,
             body: openai_error(
-                "Your request was rejected.",
+                "The mask does not match the image.",
                 "image_generation_user_error",
-                Some("user_error"),
+                Some("invalid_mask"),
             ),
-            code: ErrorCode::ContentBlocked,
+            code: ErrorCode::InvalidArgument,
             retryable: Some(false),
-            provider_code: Some("user_error"),
+            provider_code: Some("invalid_mask"),
+        },
+        Case {
+            name: "400 image_generation_user_error without a code",
+            status: 400,
+            body: openai_error("The request cannot be fulfilled.", "image_generation_user_error", None),
+            code: ErrorCode::InvalidArgument,
+            retryable: Some(false),
+            provider_code: Some("image_generation_user_error"),
+        },
+        Case {
+            name: "402 (undocumented; payment required)",
+            status: 402,
+            body: openai_error("Payment required.", "invalid_request_error", None),
+            code: ErrorCode::QuotaExceeded,
+            retryable: Some(false),
+            provider_code: Some("invalid_request_error"),
+        },
+        Case {
+            name: "408",
+            status: 408,
+            body: json!({}),
+            code: ErrorCode::ProviderError,
+            retryable: Some(true),
+            provider_code: None,
+        },
+        Case {
+            name: "413",
+            status: 413,
+            body: openai_error("Request entity too large.", "invalid_request_error", None),
+            code: ErrorCode::InvalidArgument,
+            retryable: Some(false),
+            provider_code: Some("invalid_request_error"),
         },
         Case {
             name: "401",
@@ -945,11 +979,47 @@ async fn error_table_maps_every_documented_status() {
         }
         assert!(err.hint.is_some(), "{name}: every mapped error carries a hint");
         assert_eq!(requests(&server).await.len(), 1, "{name}: never retried");
-        if case.status >= 500 {
+        if case.status == 408 || case.status >= 500 {
             assert!(err.hint.as_deref().unwrap().contains("did not retry automatically"), "{name}");
             assert!(err.details.get("client_request_id").is_some(), "{name}");
         }
+        if case.code == ErrorCode::QuotaExceeded {
+            assert!(err.hint.as_deref().unwrap().contains("billing"), "{name}: {:?}", err.hint);
+        }
     }
+}
+
+#[tokio::test]
+async fn image_generation_user_errors_other_than_moderation_are_invalid_argument() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        EDIT,
+        err_response(
+            400,
+            openai_error(
+                "The mask does not match the first image.",
+                "image_generation_user_error",
+                Some("invalid_mask"),
+            ),
+        ),
+    )
+    .await;
+    let images = vec![input(InputRole::Image, "a.png", "image/png", png_rgb(8, 8))];
+    let err = OpenAiProvider::new()
+        .edit(&edit_request(images, None, ResolvedOptions::new()), &ctx(&server))
+        .await
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_eq!(err.code.exit_code(), 2);
+    assert_eq!(err.provider_code.as_deref(), Some("invalid_mask"));
+    assert_eq!(err.details.get("provider_message"), Some(&json!("The mask does not match the first image.")));
+    assert!(!err.message.contains("content policy"), "not a moderation block: {}", err.message);
+    assert!(err.message.contains("mask does not match"), "{}", err.message);
+    let hint = err.hint.as_deref().unwrap();
+    assert!(hint.contains("prompt") && hint.contains("mask") && hint.contains("options"), "{hint}");
+    assert!(err.details.get("moderation_stage").is_none());
+    assert_eq!(requests(&server).await.len(), 1);
 }
 
 #[tokio::test]
@@ -987,7 +1057,33 @@ async fn moderation_blocks_become_content_blocked_with_stage_and_categories() {
         err_response(400, openai_error("Blocked.", "invalid_request_error", Some("moderation_blocked"))),
     )
     .await;
-    assert_eq!(generate_err(&server).await.code, ErrorCode::ContentBlocked);
+    let err = generate_err(&server).await;
+    assert_eq!(err.code, ErrorCode::ContentBlocked);
+    assert!(err.details.get("moderation_stage").is_none() && err.details.get("categories").is_none());
+    assert_eq!(requests(&server).await.len(), 1);
+
+    // moderation_details marks a moderation block even under another code.
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        GEN,
+        err_response(
+            400,
+            json!({"error": {
+                "message": "The generated image was blocked.",
+                "type": "image_generation_user_error",
+                "param": null,
+                "code": "output_blocked",
+                "moderation_details": {"moderation_stage": "output", "categories": []}
+            }}),
+        ),
+    )
+    .await;
+    let err = generate_err(&server).await;
+    assert_eq!(err.code, ErrorCode::ContentBlocked);
+    assert_eq!(err.provider_code.as_deref(), Some("output_blocked"));
+    assert_eq!(err.details.get("moderation_stage"), Some(&json!("output")));
+    assert_eq!(requests(&server).await.len(), 1);
 }
 
 #[tokio::test]
@@ -1186,6 +1282,99 @@ async fn a_timeout_after_sending_is_request_timeout_with_charge_possible_and_no_
     assert!(hint.contains(sent_id));
 }
 
+/// A raw HTTP/1.1 server on 127.0.0.1 for failures wiremock cannot produce. For
+/// every connection it reads the whole request (head and `Content-Length` body),
+/// records the request head, writes `reply` (possibly nothing), and closes the
+/// connection. Returns the `/v1` base URL, the connection count, and the heads.
+fn raw_server(reply: &'static [u8]) -> (String, Arc<AtomicUsize>, Arc<Mutex<Vec<String>>>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let connections = Arc::new(AtomicUsize::new(0));
+    let heads = Arc::new(Mutex::new(Vec::new()));
+    let (count, seen) = (connections.clone(), heads.clone());
+    std::thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            count.fetch_add(1, Ordering::SeqCst);
+            stream.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            if let Some(head) = read_request(&mut stream) {
+                seen.lock().unwrap().push(head);
+            }
+            let _ = stream.write_all(reply);
+            let _ = stream.flush();
+            // Dropping the stream closes the connection.
+        }
+    });
+    (format!("http://{addr}/v1"), connections, heads)
+}
+
+/// Read one request completely; returns its head in lowercase.
+fn read_request(stream: &mut std::net::TcpStream) -> Option<String> {
+    let mut buf = Vec::new();
+    let mut chunk = [0u8; 16 * 1024];
+    let head_end = loop {
+        let n = stream.read(&mut chunk).ok().filter(|n| *n > 0)?;
+        buf.extend_from_slice(&chunk[..n]);
+        if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+            break pos;
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_ascii_lowercase();
+    let body_len: usize = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0);
+    while buf.len() < head_end + 4 + body_len {
+        let n = stream.read(&mut chunk).ok().filter(|n| *n > 0)?;
+        buf.extend_from_slice(&chunk[..n]);
+    }
+    Some(head)
+}
+
+#[tokio::test]
+async fn a_connection_lost_after_sending_is_request_timeout_with_charge_possible_and_no_retry() {
+    let cases: [(&str, &'static [u8]); 2] = [
+        ("closed after the request, before any response", b""),
+        (
+            "2xx headers, then a truncated body",
+            b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 5000\r\n\
+              x-request-id: req_trunc\r\n\r\n{\"created\": 1, \"data\": [{\"b64_json\": \"iVBOR",
+        ),
+    ];
+    for (name, reply) in cases {
+        let (base, connections, heads) = raw_server(reply);
+        let err = OpenAiProvider::new()
+            .generate(&generate_request(ResolvedOptions::new()), &ctx_for(&base))
+            .await
+            .expect_err(name);
+        assert_eq!(err.code, ErrorCode::RequestTimeout, "{name}: {}", err.message);
+        assert_eq!(err.retryable, Some(true), "{name}");
+        assert_eq!(err.provider, Some(ProviderId::OpenAi), "{name}");
+        assert_eq!(err.details.get("charge_possible"), Some(&json!(true)), "{name}");
+        let hint = err.hint.as_deref().unwrap();
+        assert!(
+            hint.contains("Iris did not retry automatically; the provider may have billed this request"),
+            "{name}: {hint}"
+        );
+        assert!(err.message.contains("after the request was sent"), "{name}: {}", err.message);
+        assert_eq!(
+            connections.load(Ordering::SeqCst),
+            1,
+            "{name}: an ambiguous paid request is never resent"
+        );
+        let heads = heads.lock().unwrap().clone();
+        assert_eq!(heads.len(), 1, "{name}");
+        let sent_id = heads[0]
+            .lines()
+            .find_map(|l| l.strip_prefix("x-client-request-id:"))
+            .map(str::trim)
+            .unwrap_or_else(|| panic!("{name}: no x-client-request-id in {:?}", heads[0]));
+        let reported = err.details.get("client_request_id").and_then(Value::as_str).unwrap();
+        assert_eq!(reported.to_ascii_lowercase(), sent_id, "{name}");
+    }
+}
+
 #[tokio::test]
 async fn a_refused_connection_is_retried_and_reported_as_network_error_without_charge() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -1224,19 +1413,42 @@ async fn provider_messages_are_redacted_and_truncated() {
 
 #[tokio::test]
 async fn the_key_never_appears_in_errors_or_outputs() {
-    let server = MockServer::start().await;
-    mount(
-        &server,
-        GEN,
+    // The mock echoes the key back. The test never sets or reads the process
+    // environment, so only the adapter's scrub of the context credential can remove it.
+    let echoed = format!("Incorrect API key provided: {KEY}.");
+    let cases = [
+        err_response(401, openai_error(&echoed, "invalid_request_error", Some("invalid_api_key"))),
+        err_response(400, openai_error(&echoed, "invalid_request_error", Some(KEY))),
+        ResponseTemplate::new(502).set_body_string(format!("<html>upstream said {KEY}</html>")),
         err_response(
-            401,
-            openai_error("Incorrect API key provided.", "invalid_request_error", Some("invalid_api_key")),
+            429,
+            json!({"error": {"message": echoed, "type": "insufficient_quota", "code": "insufficient_quota"}}),
         ),
-    )
-    .await;
-    let err = generate_err(&server).await;
+    ];
+    for template in cases {
+        let server = MockServer::start().await;
+        mount(&server, GEN, template).await;
+        let err = generate_err(&server).await;
+        let dump =
+            format!("{err:?} {} {:?} {:?} {:?}", err.message, err.hint, err.provider_code, err.details);
+        assert!(!dump.contains(KEY), "{dump}");
+        assert!(dump.contains("[REDACTED]"), "the echo was replaced, not dropped: {dump}");
+    }
+
+    // check_access errors too.
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(openai_error(
+            &echoed,
+            "invalid_request_error",
+            None,
+        )))
+        .mount(&server)
+        .await;
+    let err = OpenAiProvider::new().check_access("gpt-image-2", &ctx(&server)).await.unwrap_err();
     let dump = format!("{err:?} {} {:?}", err.message, err.details);
-    assert!(!dump.contains(KEY), "{dump}");
+    assert!(!dump.contains(KEY) && dump.contains("[REDACTED]"), "{dump}");
+
     let ctx = ctx(&server);
     assert!(!format!("{ctx:?}").contains(KEY));
 }
@@ -1286,6 +1498,18 @@ async fn check_access_reads_the_free_model_endpoint() {
     let (result, reqs) = access(500, "gpt-image-2").await;
     assert_eq!(result.unwrap(), AccountAccess::Unknown);
     assert_eq!(reqs.len(), 5);
+}
+
+#[tokio::test]
+async fn check_access_keeps_the_v1_segment_of_a_base_url_with_a_trailing_slash() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+    let ctx = ctx_for(&format!("{}/v1/", server.uri()));
+    let access = OpenAiProvider::new().check_access("gpt-image-2", &ctx).await.unwrap();
+    assert_eq!(access, AccountAccess::Available);
+    let reqs = requests(&server).await;
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0].url.path(), "/v1/models/gpt-image-2");
 }
 
 #[tokio::test]
