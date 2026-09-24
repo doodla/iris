@@ -40,6 +40,10 @@ same job cannot race). It is the **lock** that is held only transiently — the 
 themselves are created on first use and stay on disk (0 bytes, harmless) until `iris jobs delete`
 removes them along with the record.
 
+`<state_dir>/unsaved/` may hold paid images Iris could not save where you asked (warning
+`output_saved_elsewhere`, see [json-contract.md](json-contract.md#warning-codes)); move them out
+before deleting the state directory.
+
 ## What is persisted — and what is not
 
 A job record holds enough to resume, diagnose, and download the job, and deliberately little

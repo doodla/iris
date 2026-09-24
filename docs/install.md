@@ -162,6 +162,10 @@ $ rm ~/.config/iris/config.toml
 $ rm -rf ~/.local/state/iris
 ```
 
+The state directory's `unsaved/` subdirectory may hold paid images Iris could not save where you
+asked (see [json-contract.md](json-contract.md#warning-codes), `output_saved_elsewhere`); move
+them out before deleting the state directory.
+
 **On macOS, be careful: the config file and the state directory are the same directory**
 (`~/Library/Application Support/iris`) — `config.toml` lives directly inside it, alongside the
 `jobs/` subdirectory. Deleting the whole state directory on macOS also deletes your config file,
