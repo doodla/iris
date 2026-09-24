@@ -67,3 +67,10 @@ wiremock = "0.6.5"
 codegen-units = 1
 lto = "thin"
 strip = "symbols"
+
+# Keep debug builds small: line tables for our code, no debuginfo for dependencies.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
