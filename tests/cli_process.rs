@@ -514,6 +514,26 @@ fn models_list_is_consistent_with_the_catalog() {
         assert_eq!(v["result"]["model"]["id"], spec.id);
         assert_eq!(v["result"]["model"]["access"]["account_access"], "not_checked");
     }
+    // Input rules are machine-readable: mask requirements and the inline request cap.
+    for spec in iris::catalog::all() {
+        let v = run(iris(&sandbox).args(["models", "show", spec.id, "--json"])).json();
+        let inputs = &v["result"]["model"]["inputs"];
+        assert_eq!(inputs["mask"], spec.inputs.mask.is_some(), "{}", spec.id);
+        match spec.inputs.mask {
+            Some(mask) => {
+                let m = &inputs["mask_requirements"];
+                assert_eq!(m["media_types"], serde_json::json!(mask.media_types), "{}", spec.id);
+                assert_eq!(m["max_bytes"], mask.max_bytes);
+                assert_eq!(m["alpha_channel_required"], mask.requires_alpha);
+                assert_eq!(m["same_size_as_first_image"], mask.same_size_as_first_image);
+            }
+            None => assert!(inputs["mask_requirements"].is_null(), "{}", spec.id),
+        }
+        assert_eq!(
+            inputs["max_request_bytes"],
+            serde_json::json!(spec.inputs.max_request.map(|l| l.max_bytes))
+        );
+    }
 }
 
 // ----- jobs from an earlier process --------------------------------------------------------
@@ -836,6 +856,41 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
     let out = run(iris(&sandbox).args(["video", "generate", "x", "--json"]));
     assert_nothing_sent(&out, "missing_credentials", 3);
     assert!(!Path::new(&sandbox.state().join("jobs")).exists(), "no job record before a submission");
+}
+
+/// OpenAI's mask rules (PNG, alpha channel, same size as the first image) are declared
+/// in the catalog and checked before a dry run returns and before the key is needed.
+#[test]
+fn mask_problems_fail_a_dry_run_and_come_before_missing_credentials() {
+    if builtin_default(ProviderId::OpenAi, Operation::ImageEdit).is_none_or(|m| m.inputs.mask.is_none()) {
+        return;
+    }
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.path("in.png"), png(16, 16)).unwrap();
+    std::fs::write(sandbox.path("mask.jpg"), jpeg(16, 16)).unwrap();
+    std::fs::write(sandbox.path("small.png"), png(8, 8)).unwrap();
+    for (mask, needle) in [("mask.jpg", "accepts image/png"), ("small.png", "8x8")] {
+        for extra in [&["--dry-run"][..], &[]] {
+            let out = run(iris(&sandbox)
+                .args(["image", "edit", "-i", "in.png", "--mask", mask, "x", "--json"])
+                .args(extra));
+            assert_nothing_sent(&out, "input_file_invalid", 2);
+            let v = out.json();
+            assert!(v["error"]["message"].as_str().unwrap().contains(needle), "{v}");
+        }
+    }
+    let out = run(iris(&sandbox).args([
+        "image",
+        "edit",
+        "-i",
+        "in.png",
+        "--mask",
+        "in.png",
+        "x",
+        "--dry-run",
+        "--json",
+    ]));
+    assert_eq!(out.code, 0, "{}", out.stdout);
 }
 
 /// Unknown models borrow a known model's capabilities, not its prices.

@@ -110,10 +110,29 @@ pub struct InputsView {
     pub max_input_images: u32,
     pub input_media_types: Vec<String>,
     pub max_input_bytes: u64,
+    /// Whether `--mask` is accepted (its rules are in `mask_requirements`).
     pub mask: bool,
+    /// Rules a `--mask` must meet; null when masks are not accepted.
+    pub mask_requirements: Option<MaskRequirementsView>,
     pub first_frame: bool,
     pub last_frame: bool,
     pub max_reference_images: u32,
+    /// Largest encoded request (prompt, options, and base64 inputs sent inline) the
+    /// provider accepts, if it documents one; Iris checks an upper bound of the size
+    /// locally.
+    pub max_request_bytes: Option<u64>,
+}
+
+/// Rules for the `--mask` of `image.edit`.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct MaskRequirementsView {
+    /// Accepted media types (sniffed from the content).
+    pub media_types: Vec<String>,
+    pub max_bytes: u64,
+    /// The mask needs an alpha channel: its fully transparent areas are edited.
+    pub alpha_channel_required: bool,
+    /// The mask must have the pixel dimensions of the first `--image`.
+    pub same_size_as_first_image: bool,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

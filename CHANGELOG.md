@@ -163,6 +163,12 @@ machine-readable contract for agents.
   template's provider (declared in the catalog; for Gemini and Veo the rule the adapter applies
   before sending), so `--dry-run` rejects ids such as `a:b` that the real run would refuse, and a
   rejected Veo id no longer leaves a failed job record.
+- Input rules that only the adapters enforced are declared in the catalog and checked before a
+  `--dry-run` returns and before the credential check: OpenAI's mask rules (PNG with an alpha
+  channel, under 4 MB, the dimensions of the first `--image`) and the Gemini and Veo caps on an
+  inline request. A dry run now fails where the real run would, and a real run without a key
+  reports the input problem (exit 2) instead of `missing_credentials`. `models show` reports them
+  as `inputs.mask_requirements` and `inputs.max_request_bytes` (additive fields).
 
 ### Known limitations
 

@@ -564,7 +564,19 @@
           "type": "boolean"
         },
         "mask": {
+          "description": "Whether `--mask` is accepted (its rules are in `mask_requirements`).",
           "type": "boolean"
+        },
+        "mask_requirements": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MaskRequirementsView"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Rules a `--mask` must meet; null when masks are not accepted."
         },
         "max_input_bytes": {
           "format": "uint64",
@@ -580,6 +592,15 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "max_request_bytes": {
+          "description": "Largest encoded request (prompt, options, and base64 inputs sent inline) the\nprovider accepts, if it documents one; Iris checks an upper bound of the size\nlocally.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
         }
       },
       "required": [
@@ -869,6 +890,38 @@
           ]
         }
       },
+      "type": "object"
+    },
+    "MaskRequirementsView": {
+      "description": "Rules for the `--mask` of `image.edit`.",
+      "properties": {
+        "alpha_channel_required": {
+          "description": "The mask needs an alpha channel: its fully transparent areas are edited.",
+          "type": "boolean"
+        },
+        "max_bytes": {
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "media_types": {
+          "description": "Accepted media types (sniffed from the content).",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "same_size_as_first_image": {
+          "description": "The mask must have the pixel dimensions of the first `--image`.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "media_types",
+        "max_bytes",
+        "alpha_channel_required",
+        "same_size_as_first_image"
+      ],
       "type": "object"
     },
     "ModelCapabilities": {

@@ -18,8 +18,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use iris::app::{AppContext, Catalog, Clock, Deps, Interrupt, Progress};
 use iris::catalog::{
-    EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec, PriceRule,
-    ValidationInput,
+    EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelSpec, OptionKind, OptionSpec, OutputSpec,
+    PriceRule, RequestSizeLimit, ValidationInput,
 };
 use iris::config::{CliOverrides, EnvSnapshot, Platform, Resolved, SettingSource, Settings};
 use iris::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
@@ -131,10 +131,16 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
         max_input_images: 2,
         input_media_types: &["image/png", "image/jpeg", "image/webp"],
         max_input_bytes: 1_000_000,
-        mask: true,
+        mask: Some(MaskSpec {
+            media_types: &["image/png"],
+            max_bytes: 1_000_000,
+            requires_alpha: true,
+            same_size_as_first_image: true,
+        }),
         first_frame: false,
         last_frame: false,
         max_reference_images: 0,
+        max_request: None,
     },
     options: FAKE_IMAGE_OPTIONS,
     outputs: OutputSpec { media_types: &["image/png", "image/jpeg", "image/webp"], max_count: 4 },
@@ -172,6 +178,11 @@ pub static FAKE_GEMINI_IMAGE_OPTIONS: &[OptionSpec] = &[
     },
 ];
 
+/// Inline request cap of the fake Gemini-like models: small enough for tests to
+/// exceed with one input, far above what the usual tiny fixtures need.
+pub const FAKE_REQUEST_LIMIT: RequestSizeLimit =
+    RequestSizeLimit { max_bytes: 100_000, framing_bytes: 1024, per_input_framing_bytes: 128 };
+
 /// A Gemini-like image model: no `format` option, no mask, no estimator.
 pub static FAKE_GEMINI_IMAGE: ModelSpec = ModelSpec {
     id: "fake-gemini-image",
@@ -185,10 +196,11 @@ pub static FAKE_GEMINI_IMAGE: ModelSpec = ModelSpec {
         max_input_images: 3,
         input_media_types: &["image/png", "image/jpeg"],
         max_input_bytes: 1_000_000,
-        mask: false,
+        mask: None,
         first_frame: false,
         last_frame: false,
         max_reference_images: 0,
+        max_request: Some(FAKE_REQUEST_LIMIT),
     },
     options: FAKE_GEMINI_IMAGE_OPTIONS,
     outputs: OutputSpec { media_types: &["image/png", "image/jpeg"], max_count: 1 },
@@ -268,10 +280,11 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
         max_input_images: 0,
         input_media_types: &["image/png", "image/jpeg"],
         max_input_bytes: 1_000_000,
-        mask: false,
+        mask: None,
         first_frame: true,
         last_frame: true,
         max_reference_images: 2,
+        max_request: Some(FAKE_REQUEST_LIMIT),
     },
     options: FAKE_VIDEO_OPTIONS,
     outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },

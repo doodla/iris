@@ -323,6 +323,19 @@ fn model_show(m: &ModelCapabilities) -> String {
             ),
         );
     }
+    if let Some(mask) = &i.mask_requirements {
+        let mut rules = vec![join(&mask.media_types), format!("at most {} bytes", mask.max_bytes)];
+        if mask.alpha_channel_required {
+            rules.push("an alpha channel (transparent areas are edited)".into());
+        }
+        if mask.same_size_as_first_image {
+            rules.push("the size of the first --image".into());
+        }
+        field("mask", rules.join("; "));
+    }
+    if let Some(max) = i.max_request_bytes {
+        field("request", format!("at most {max} bytes encoded (prompt and base64 inputs)"));
+    }
     field(
         "outputs",
         format!("{} (at most {} per request)", join(&m.outputs.media_types), m.outputs.max_count),

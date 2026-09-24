@@ -200,6 +200,20 @@ pub(crate) fn check_prompt(spec: &ModelSpec, prompt: &str) -> Result<(), IrisErr
     Ok(())
 }
 
+/// Local checks that need the request as a whole: the model's rules relating
+/// several inputs (a mask's dimensions, the cap on an inline request). Called by
+/// every generation command after its inputs are read and before a dry run returns
+/// or a credential is needed, so `--dry-run` rejects what the real run would
+/// reject before sending.
+pub(crate) fn check_inputs<'a>(
+    spec: &ModelSpec,
+    common: &GenerationArgs,
+    opts: &ResolvedOptions,
+    inputs: impl IntoIterator<Item = &'a InputImage>,
+) -> Result<(), IrisError> {
+    crate::artifacts::check_request_inputs(&spec.inputs, &common.prompt, opts, inputs)
+}
+
 /// Number of outputs requested: the explicit or default `count`, else 1.
 pub(crate) fn effective_count(spec: &ModelSpec, op: Operation, opts: &ResolvedOptions) -> u32 {
     if !spec.options_for(op).any(|o| o.name == "count") {

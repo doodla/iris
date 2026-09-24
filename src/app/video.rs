@@ -88,6 +88,7 @@ pub async fn run(
         .iter()
         .map(|p| artifacts::read_input_image(p, InputRole::Reference, &spec.inputs))
         .collect::<Result<Vec<_>, _>>()?;
+    request::check_inputs(spec, common, &opts, first_frame.iter().chain(&last_frame).chain(&references))?;
 
     // Output planning and preflight (see `iris --help`): every planned path is checked before
     // anything is sent, with --detach too, since the recorded plan is where

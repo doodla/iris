@@ -20,7 +20,7 @@ use crate::error::IrisError;
 
 use super::options::OptionValue;
 use super::types::{
-    EstimateInput, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
+    EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
     OutputSpec, PriceRule, ValidationInput,
 };
 
@@ -66,16 +66,30 @@ const BOTH: &[Operation] = &[Operation::ImageGenerate, Operation::ImageEdit];
 const SIZE_SYNTAX: &str =
     "auto or WxH: multiples of 16, max edge 3840, long:short ≤ 3:1, 655,360–8,294,400 pixels";
 
+/// Largest mask accepted: "less than 4MB" in the Images API reference, read as
+/// 4,000,000 bytes (the stricter reading, like the other decimal byte limits).
+pub const MASK_MAX_BYTES: u64 = 4_000_000;
+
 const INPUTS: InputSpec = InputSpec {
     max_input_images: 16,
     input_media_types: &["image/png", "image/jpeg", "image/webp"],
     // The JSON edit body carries each image as a data URL capped at 20,971,520
     // characters (OpenAPI `ImageRefParam`), which bounds the binary size at about 15.7 MB.
     max_input_bytes: 15_700_000,
-    mask: true,
+    // Images API reference and image generation guide: the mask is a PNG with an
+    // alpha channel (fully transparent areas are edited), under 4 MB, with the same
+    // dimensions as the first image, which it applies to.
+    mask: Some(MaskSpec {
+        media_types: &["image/png"],
+        max_bytes: MASK_MAX_BYTES,
+        requires_alpha: true,
+        same_size_as_first_image: true,
+    }),
     first_frame: false,
     last_frame: false,
     max_reference_images: 0,
+    // No documented cap on the whole JSON edit body beyond the per-image data URLs.
+    max_request: None,
 };
 
 const OUTPUTS: OutputSpec =

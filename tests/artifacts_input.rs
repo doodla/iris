@@ -5,19 +5,25 @@ use std::fs;
 use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
-use iris::artifacts::read_input_image;
-use iris::catalog::InputSpec;
+use iris::artifacts::{check_request_inputs, read_input_image};
+use iris::catalog::{InputSpec, MaskSpec, OptionValue, RequestSizeLimit, ResolvedOptions};
 use iris::error::ErrorCode;
-use iris::providers::InputRole;
+use iris::providers::{InputImage, InputRole};
 
 const SPEC: InputSpec = InputSpec {
     max_input_images: 4,
     input_media_types: &["image/png", "image/jpeg", "image/webp"],
     max_input_bytes: 50_000,
-    mask: true,
+    mask: Some(MaskSpec {
+        media_types: &["image/png"],
+        max_bytes: 20_000,
+        requires_alpha: true,
+        same_size_as_first_image: true,
+    }),
     first_frame: false,
     last_frame: false,
     max_reference_images: 0,
+    max_request: None,
 };
 
 fn png(width: u32, height: u32) -> Vec<u8> {
@@ -159,4 +165,116 @@ fn models_without_image_inputs_reject_everything() {
     let err = read_input_image(&path, InputRole::Image, &InputSpec::NONE).unwrap_err();
     assert_eq!(err.code, ErrorCode::InputFileInvalid);
     assert!(err.message.contains("does not accept input images"));
+}
+
+fn encode(img: DynamicImage, format: ImageFormat) -> Vec<u8> {
+    let mut buf = Cursor::new(Vec::new());
+    img.write_to(&mut buf, format).unwrap();
+    buf.into_inner()
+}
+
+/// A PNG with an alpha channel (an edit mask: transparent where the edit goes).
+fn mask(width: u32, height: u32) -> Vec<u8> {
+    encode(
+        DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(width, height, image::Rgba([0, 0, 0, 0]))),
+        ImageFormat::Png,
+    )
+}
+
+fn read(
+    dir: &std::path::Path,
+    name: &str,
+    bytes: &[u8],
+    role: InputRole,
+) -> Result<InputImage, iris::error::IrisError> {
+    let path = dir.join(name);
+    fs::write(&path, bytes).unwrap();
+    read_input_image(&path, role, &SPEC)
+}
+
+/// The mask rules the catalog declares (e.g. OpenAI's: PNG, alpha channel, size limit,
+/// same dimensions as the first image) are enforced locally, before any request.
+#[test]
+fn masks_follow_the_declared_mask_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let ok = read(dir.path(), "m.png", &mask(8, 8), InputRole::Mask).unwrap();
+    assert_eq!(ok.media_type, "image/png");
+
+    // A JPEG is a fine input image but not an acceptable mask.
+    let jpeg = encode(DynamicImage::ImageRgb8(RgbImage::new(8, 8)), ImageFormat::Jpeg);
+    assert!(read(dir.path(), "i.jpg", &jpeg, InputRole::Image).is_ok());
+    let err = read(dir.path(), "m.jpg", &jpeg, InputRole::Mask).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InputFileInvalid);
+    assert!(
+        err.message.contains("mask image") && err.message.contains("accepts image/png"),
+        "{}",
+        err.message
+    );
+
+    // No alpha channel.
+    let err = read(dir.path(), "opaque.png", &png(8, 8), InputRole::Mask).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InputFileInvalid);
+    assert!(err.message.contains("no alpha channel"), "{}", err.message);
+    assert!(err.details["path"].as_str().unwrap().ends_with("opaque.png"));
+
+    // The mask's own size limit, below the input-image limit.
+    let noisy = encode(
+        DynamicImage::ImageRgba8(image::RgbaImage::from_fn(90, 90, |x, y| {
+            let v = (x.wrapping_mul(7919) ^ y.wrapping_mul(104_729)).wrapping_mul(2_654_435_761);
+            image::Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8])
+        })),
+        ImageFormat::Png,
+    );
+    assert!(noisy.len() > 20_000 && noisy.len() <= 50_000, "{}", noisy.len());
+    assert!(read(dir.path(), "big.png", &noisy, InputRole::Image).is_ok());
+    let err = read(dir.path(), "big-mask.png", &noisy, InputRole::Mask).unwrap_err();
+    assert!(err.message.contains("at most 20000 bytes"), "{}", err.message);
+
+    // Same dimensions as the first input image.
+    let first = read(dir.path(), "first.png", &png(8, 8), InputRole::Image).unwrap();
+    let second = read(dir.path(), "second.png", &png(4, 4), InputRole::Image).unwrap();
+    let small = read(dir.path(), "small.png", &mask(4, 4), InputRole::Mask).unwrap();
+    let opts = ResolvedOptions::new();
+    check_request_inputs(&SPEC, "p", &opts, [&first, &second, &ok]).unwrap();
+    let err = check_request_inputs(&SPEC, "p", &opts, [&first, &second, &small]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InputFileInvalid);
+    assert!(err.message.contains("4x4") && err.message.contains("8x8"), "{}", err.message);
+    assert!(err.details["path"].as_str().unwrap().ends_with("small.png"));
+    let relaxed =
+        InputSpec { mask: SPEC.mask.map(|m| MaskSpec { same_size_as_first_image: false, ..m }), ..SPEC };
+    check_request_inputs(&relaxed, "p", &opts, [&first, &small]).unwrap();
+}
+
+/// A declared cap on the whole inline request is checked with an upper bound of the
+/// encoded size: prompt and option values as JSON strings, inputs as base64, plus
+/// the declared framing allowances.
+#[test]
+fn inline_request_caps_use_an_upper_bound_of_the_encoded_size() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = read(dir.path(), "a.png", &png(8, 8), InputRole::Image).unwrap();
+    let b = read(dir.path(), "b.png", &png(16, 16), InputRole::Image).unwrap();
+    let limit = RequestSizeLimit { max_bytes: 0, framing_bytes: 100, per_input_framing_bytes: 10 };
+    let mut opts = ResolvedOptions::new();
+    opts.insert("aspect_ratio", OptionValue::Str("16:9".into()));
+    let prompt = "a \"quoted\"\nprompt";
+    let b64 = |n: usize| n.div_ceil(3) * 4;
+    let expected = 100
+        + serde_json::to_string(prompt).unwrap().len()
+        + "\"aspect_ratio\"".len()
+        + "\"16:9\"".len()
+        + b64(a.bytes.len())
+        + 10
+        + b64(b.bytes.len())
+        + 10;
+    let bound = limit.upper_bound(prompt, &opts, [a.bytes.len() as u64, b.bytes.len() as u64]);
+    assert_eq!(bound, expected as u64);
+
+    let at = InputSpec { max_request: Some(RequestSizeLimit { max_bytes: bound, ..limit }), ..SPEC };
+    check_request_inputs(&at, prompt, &opts, [&a, &b]).unwrap();
+    let below = InputSpec { max_request: Some(RequestSizeLimit { max_bytes: bound - 1, ..limit }), ..SPEC };
+    let err = check_request_inputs(&below, prompt, &opts, [&a, &b]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_eq!(err.details["request_bytes"], bound);
+    assert_eq!(err.details["limit_bytes"], bound - 1);
+    assert!(err.hint.as_deref().unwrap().contains("smaller input images"));
 }

@@ -5,8 +5,10 @@
 //!   output-directory preflight.
 //! * [`media`] — sniff media types from magic bytes, decode images, validate
 //!   ISO-BMFF video structure, inspect PNG alpha/dimensions.
-//! * [`read_input_image`] — validate local input images against a model's
-//!   declared input capabilities before any paid request.
+//! * [`read_input_image`], [`check_request_inputs`] — validate local input images
+//!   (one by one, then the rules that relate them, such as mask dimensions and an
+//!   inline request cap) against a model's declared input capabilities before any
+//!   paid request.
 //! * [`save_image`], [`finalize_download`], [`PartFile`] — atomic, no-clobber (or
 //!   `--overwrite`) finalization through `.<name>.iris-part-*` temp files, with the
 //!   rename fallback that keeps paid synchronous outputs.
@@ -31,7 +33,7 @@ pub use finalize::{
     FinalizeMode, PartFile, SaveOutcome, SavedArtifact, already_present_warning, build_artifact,
     finalize_download, place, save_image, sha256_bytes, sha256_file,
 };
-pub use input::read_input_image;
+pub use input::{check_request_inputs, read_input_image};
 pub use media::{ImageDetails, IsoBmffInfo, MediaInfo};
 pub use paths::{
     Naming, PathRequest, PlannedOutputs, adjust_extension, plan_outputs, preflight, preflight_dirs,

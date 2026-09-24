@@ -656,6 +656,81 @@ async fn borrowed_capabilities_come_without_the_templates_prices() {
     assert!(v["result"]["cost_estimate"]["amount"].is_number(), "{v}");
 }
 
+fn encode_image(img: image::DynamicImage, format: image::ImageFormat) -> Vec<u8> {
+    let mut buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut buf, format).unwrap();
+    buf.into_inner()
+}
+
+/// An RGBA PNG of pseudo-random pixels (does not compress; about 4 bytes per pixel).
+fn noise_png(width: u32, height: u32) -> Vec<u8> {
+    let img = image::RgbaImage::from_fn(width, height, |x, y| {
+        let v = (x.wrapping_mul(7919) ^ y.wrapping_mul(104_729)).wrapping_mul(2_654_435_761);
+        image::Rgba([v as u8, (v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8])
+    });
+    encode_image(image::DynamicImage::ImageRgba8(img), image::ImageFormat::Png)
+}
+
+/// Every local rule a real run applies before sending, including the input rules
+/// adapters used to be the first to enforce (mask format, alpha channel, and size;
+/// the inline request cap), fails a `--dry-run` the same way, and fails a real run
+/// without a key as the input problem it is (exit 2), not as missing_credentials.
+#[tokio::test]
+async fn input_rules_fail_dry_runs_and_come_before_the_credential_check() {
+    let f = Fixture::new();
+    let write = |name: &str, bytes: Vec<u8>| std::fs::write(f.sandbox.path(name), bytes).unwrap();
+    write("a.png", png(8, 8));
+    write("mask.jpg", jpeg(8, 8));
+    let rgb = image::DynamicImage::ImageRgb8(image::RgbImage::new(8, 8));
+    write("opaque.png", encode_image(rgb, image::ImageFormat::Png));
+    let small = image::DynamicImage::ImageRgba8(image::RgbaImage::new(4, 4));
+    write("small.png", encode_image(small, image::ImageFormat::Png));
+    write("noise.png", noise_png(160, 160));
+    assert!(std::fs::metadata(f.sandbox.path("noise.png")).unwrap().len() > 75_000);
+
+    let cases: [(&[&str], &str, &str); 5] = [
+        (
+            &["image", "edit", "-i", "a.png", "--mask", "mask.jpg", "x"],
+            "input_file_invalid",
+            "accepts image/png",
+        ),
+        (
+            &["image", "edit", "-i", "a.png", "--mask", "opaque.png", "x"],
+            "input_file_invalid",
+            "no alpha channel",
+        ),
+        (&["image", "edit", "-i", "a.png", "--mask", "small.png", "x"], "input_file_invalid", "4x4"),
+        (
+            &["image", "edit", "--provider", "gemini", "-i", "noise.png", "x"],
+            "invalid_argument",
+            "at most 100000 bytes",
+        ),
+        (&["video", "generate", "x", "--image", "noise.png"], "invalid_argument", "at most 100000 bytes"),
+    ];
+    for (args, code, needle) in cases {
+        for (keys, dry_run) in [(true, true), (false, true), (false, false)] {
+            let env = if keys { f.sandbox.env() } else { f.sandbox.env_without_keys() };
+            let mut argv = args.to_vec();
+            argv.push("--json");
+            if dry_run {
+                argv.push("--dry-run");
+            }
+            let run = run_cli(CliSetup::new(env, vec![f.openai.clone(), f.gemini.clone()]), &argv).await;
+            assert_eq!(run.code, 2, "{argv:?}: {}", run.stdout);
+            let v = run.json();
+            assert_eq!(v["error"]["code"], code, "{argv:?}: {v}");
+            assert!(v["error"]["message"].as_str().unwrap().contains(needle), "{argv:?}: {v}");
+        }
+    }
+    assert_eq!(f.image_calls(), 0, "nothing was sent");
+    assert_eq!(f.gemini.videos().submit_calls.load(Ordering::SeqCst), 0);
+    assert!(!f.sandbox.state().join("jobs").exists() || files_in(&f.sandbox.state().join("jobs")).is_empty());
+
+    // Within the rules, the same inputs pass.
+    let run = f.run(&["image", "edit", "-i", "a.png", "--mask", "a.png", "x", "--dry-run", "--json"]).await;
+    assert_eq!(run.code, 0, "{}", run.stdout);
+}
+
 #[tokio::test]
 async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() {
     let f = Fixture::new();

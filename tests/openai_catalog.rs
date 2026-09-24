@@ -106,7 +106,11 @@ fn inputs_and_outputs_are_declared() {
         assert_eq!(i.max_input_images, 16);
         assert_eq!(i.input_media_types, ["image/png", "image/jpeg", "image/webp"]);
         assert_eq!(i.max_input_bytes, 15_700_000);
-        assert!(i.mask);
+        let mask = i.mask.expect("GPT Image models accept a mask");
+        assert_eq!(mask.media_types, ["image/png"]);
+        assert_eq!(mask.max_bytes, 4_000_000, "\"less than 4MB\", read strictly");
+        assert!(mask.requires_alpha && mask.same_size_as_first_image);
+        assert!(i.max_request.is_none(), "no documented cap on the whole edit body");
         assert!(!i.first_frame && !i.last_frame);
         assert_eq!(i.max_reference_images, 0);
         assert_eq!(m.outputs.media_types, ["image/png", "image/jpeg", "image/webp"]);

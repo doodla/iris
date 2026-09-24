@@ -317,3 +317,116 @@ fn borrowed_model_ids_are_checked_as_the_adapter_checks_them() {
         .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".json"));
     assert_eq!(records.count(), 1, "only the accepted Veo id left a job record");
 }
+
+/// The inline request cap is checked locally with the catalog's upper bound of the
+/// encoded body. That bound must never be below the body the real adapter sends,
+/// or a dry run could accept a request the adapter then refuses: compare it with
+/// the bodies the mock receives, for requests with every kind of framing (JSON
+/// escapes in the prompt and options, several inline images, every option set).
+#[test]
+fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
+    use iris::catalog::{self, OptionValue, ResolvedOptions};
+
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let (a, b, c) = (png(64, 48), jpeg(30, 20), png(16, 16));
+    sb.write("a.png", &a);
+    sb.write("b.jpg", &b);
+    sb.write("c.png", &c);
+    let prompt = "a \"quoted\" fox\\with a\nnewline, a tab\t, a control \u{1} char, and unicode é🦊";
+    let sizes = [a.len() as u64, b.len() as u64, c.len() as u64];
+    let options = |pairs: &[(&str, &str)]| {
+        let mut opts = ResolvedOptions::new();
+        for (k, v) in pairs {
+            opts.insert(*k, OptionValue::Str(v.to_string()));
+        }
+        opts
+    };
+    let body_len = |route: &str| api.hits("POST", route).last().unwrap().body.len() as u64;
+    let check = |bound: u64, sent: u64| {
+        assert!(sent <= bound, "the bound {bound} is below the {sent}-byte body the adapter sent");
+        assert!(bound < sent + 4096, "the bound {bound} is far above the {sent}-byte body");
+    };
+
+    // Gemini generateContent: three inline images, every image option.
+    let flash = catalog::find("gemini-3.1-flash-image").unwrap();
+    let limit = flash.inputs.max_request.expect("Gemini image models declare the inline cap");
+    let route = gemini_generate_path(flash.id);
+    api.on("POST", &route, gemini_parts(serde_json::json!([inline_part("image/png", &png(8, 8))])));
+    let pairs = [("aspect_ratio", "21:9"), ("resolution", "4K"), ("thinking_level", "high")];
+    sb.iris()
+        .gemini(&api)
+        .args(["image", "edit", "-m", flash.id, "-i", "a.png", "-i", "b.jpg", "-i", "c.png", prompt])
+        .args([
+            "--aspect-ratio",
+            "21:9",
+            "--resolution",
+            "4K",
+            "-O",
+            "thinking_level=high",
+            "-d",
+            "out",
+            "--json",
+        ])
+        .run()
+        .ok();
+    check(limit.upper_bound(prompt, &options(&pairs), sizes), body_len(&route));
+    sb.iris().gemini(&api).args(["image", "generate", "-m", flash.id, "x", "-d", "out", "--json"]).run().ok();
+    check(limit.upper_bound("x", &ResolvedOptions::new(), []), body_len(&route));
+
+    // Veo predictLongRunning: reference images plus every parameter, and the
+    // parameters the adapter always sends when none is given.
+    let veo = catalog::find("veo").unwrap();
+    let limit = veo.inputs.max_request.expect("Veo models declare the inline cap");
+    let route = veo_submit_path(veo.id);
+    api.on(
+        "POST",
+        &route,
+        json_response(200, serde_json::json!({ "name": format!("models/{}/operations/bound", veo.id) })),
+    );
+    let negative = "no \"text\"\nor logos \u{2}";
+    let pairs = [
+        ("aspect_ratio", "9:16"),
+        ("duration", "8"),
+        ("negative_prompt", negative),
+        ("person_generation", "allow_adult"),
+        ("resolution", "1080p"),
+    ];
+    sb.iris()
+        .gemini(&api)
+        .args([
+            "video", "generate", "-m", "veo", prompt, "--ref", "a.png", "--ref", "b.jpg", "--ref", "c.png",
+        ])
+        .args([
+            "--aspect-ratio",
+            "9:16",
+            "--duration",
+            "8",
+            "--resolution",
+            "1080p",
+            "--negative-prompt",
+            negative,
+        ])
+        .args(["-O", "person_generation=allow_adult", "--detach", "--json"])
+        .run()
+        .ok();
+    check(limit.upper_bound(prompt, &options(&pairs), sizes), body_len(&route));
+    sb.iris()
+        .gemini(&api)
+        .args([
+            "video",
+            "generate",
+            "-m",
+            "veo",
+            "x",
+            "--image",
+            "a.png",
+            "--last-frame",
+            "b.jpg",
+            "--detach",
+            "--json",
+        ])
+        .run()
+        .ok();
+    check(limit.upper_bound("x", &ResolvedOptions::new(), [sizes[0], sizes[1]]), body_len(&route));
+}

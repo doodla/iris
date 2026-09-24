@@ -239,7 +239,7 @@ fn validate_inputs(spec: &ModelSpec, op: Operation, inputs: InputCounts) -> Resu
                     spec.id, inputs.images
                 )));
             }
-            if inputs.mask && !spec.inputs.mask {
+            if inputs.mask && spec.inputs.mask.is_none() {
                 return Err(unsupported("--mask"));
             }
         }

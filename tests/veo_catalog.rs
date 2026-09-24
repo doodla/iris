@@ -80,7 +80,7 @@ fn the_three_veo_31_preview_models_are_declared() {
         assert_eq!(m.outputs.max_count, 1);
         assert_eq!(m.limits.max_prompt_chars, Some(16_384));
         assert_eq!(m.docs_url, "https://ai.google.dev/gemini-api/docs/video");
-        assert!(m.inputs.first_frame && m.inputs.last_frame && !m.inputs.mask);
+        assert!(m.inputs.first_frame && m.inputs.last_frame && m.inputs.mask.is_none());
         assert_eq!(m.inputs.input_media_types, &["image/png", "image/jpeg"]);
         assert_eq!(m.inputs.max_input_bytes, 20_000_000);
         // The billing and key notes are the Gemini image models' (one wording for both catalogs).

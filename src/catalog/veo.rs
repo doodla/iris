@@ -12,7 +12,7 @@ use crate::error::IrisError;
 use super::CATALOG_AS_OF;
 use super::types::{
     EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec, PriceRule,
-    ValidationInput,
+    RequestSizeLimit, ValidationInput,
 };
 
 /// Pricing page all Veo prices were taken from.
@@ -40,15 +40,25 @@ const VIDEO: &[Operation] = &[Operation::VideoGenerate];
 
 const INPUT_TYPES: &[&str] = &["image/png", "image/jpeg"];
 
+/// The cap for local validation: requests must stay *below* [`MAX_REQUEST_BYTES`].
+/// The allowances bound the JSON the adapter writes around the prompt, the
+/// parameters, and each inline image (a few hundred bytes in all).
+const REQUEST_LIMIT: RequestSizeLimit = RequestSizeLimit {
+    max_bytes: MAX_REQUEST_BYTES as u64 - 1,
+    framing_bytes: 1024,
+    per_input_framing_bytes: 256,
+};
+
 const fn inputs(max_reference_images: u32) -> InputSpec {
     InputSpec {
         max_input_images: 0,
         input_media_types: INPUT_TYPES,
         max_input_bytes: 20_000_000,
-        mask: false,
+        mask: None,
         first_frame: true,
         last_frame: true,
         max_reference_images,
+        max_request: Some(REQUEST_LIMIT),
     }
 }
 

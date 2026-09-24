@@ -16,7 +16,10 @@ pub enum Lifecycle {
     Deprecated,
 }
 
-/// Declared input capabilities for a model.
+/// Declared input capabilities for a model. Everything here is checked locally
+/// (`artifacts::read_input_image`, `artifacts::check_request_inputs`) before a dry
+/// run returns and before any credential is needed, so an adapter never has to be
+/// the first to refuse an input.
 #[derive(Debug, Clone, Copy)]
 pub struct InputSpec {
     /// Maximum number of `--image` inputs for `image.edit` (0 = edit unsupported).
@@ -25,14 +28,16 @@ pub struct InputSpec {
     pub input_media_types: &'static [&'static str],
     /// Maximum size of a single input file in bytes.
     pub max_input_bytes: u64,
-    /// Whether `--mask` is accepted for `image.edit`.
-    pub mask: bool,
+    /// `--mask` for `image.edit` and its rules; `None` if masks are not accepted.
+    pub mask: Option<MaskSpec>,
     /// Whether `--image` (first frame) is accepted for `video.generate`.
     pub first_frame: bool,
     /// Whether `--last-frame` is accepted for `video.generate`.
     pub last_frame: bool,
     /// Maximum number of `--ref` reference images for `video.generate`.
     pub max_reference_images: u32,
+    /// Cap on the whole encoded request when inputs are sent inline, if documented.
+    pub max_request: Option<RequestSizeLimit>,
 }
 
 impl InputSpec {
@@ -40,11 +45,63 @@ impl InputSpec {
         max_input_images: 0,
         input_media_types: &[],
         max_input_bytes: 0,
-        mask: false,
+        mask: None,
         first_frame: false,
         last_frame: false,
         max_reference_images: 0,
+        max_request: None,
     };
+}
+
+/// Rules for the `--mask` of `image.edit`.
+#[derive(Debug, Clone, Copy)]
+pub struct MaskSpec {
+    /// Accepted media types (sniffed from content).
+    pub media_types: &'static [&'static str],
+    /// Largest accepted mask file in bytes.
+    pub max_bytes: u64,
+    /// Whether the mask needs an alpha channel (its transparent areas mark the edit).
+    pub requires_alpha: bool,
+    /// Whether the mask must have the pixel dimensions of the first `--image`.
+    pub same_size_as_first_image: bool,
+}
+
+/// A documented cap on a whole request whose inputs travel inline (base64 in a
+/// JSON body). Iris cannot build the provider's body outside the adapter, so it
+/// checks an upper bound of its size: the JSON-escaped prompt and option values,
+/// the base64 of every input, and generous allowances for the JSON around them.
+/// The bound is never below the body the adapter encodes (tests compare them), so
+/// every request the adapter would refuse is refused before a dry run returns.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestSizeLimit {
+    /// Largest accepted request body in bytes.
+    pub max_bytes: u64,
+    /// Allowance for the fixed JSON of a request (keys, punctuation, enum values).
+    pub framing_bytes: u64,
+    /// Allowance for the JSON around each inline input (keys and its media type).
+    pub per_input_framing_bytes: u64,
+}
+
+impl RequestSizeLimit {
+    /// Upper bound of the encoded request size for `prompt`, `options`, and inputs
+    /// of `input_sizes` bytes each.
+    pub fn upper_bound(
+        &self,
+        prompt: &str,
+        options: &ResolvedOptions,
+        input_sizes: impl IntoIterator<Item = u64>,
+    ) -> u64 {
+        let json_len = |text: &str| serde_json::to_string(text).map_or(u64::MAX, |s| s.len() as u64);
+        let options: u64 = options
+            .iter()
+            .map(|(name, value)| json_len(name).saturating_add(json_len(&value.to_string())))
+            .fold(0, u64::saturating_add);
+        let inputs: u64 = input_sizes
+            .into_iter()
+            .map(|n| n.div_ceil(3).saturating_mul(4).saturating_add(self.per_input_framing_bytes))
+            .fold(0, u64::saturating_add);
+        self.framing_bytes.saturating_add(json_len(prompt)).saturating_add(options).saturating_add(inputs)
+    }
 }
 
 /// The syntax of model ids a provider's adapter can send, so that an unknown id

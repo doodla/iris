@@ -131,7 +131,7 @@ fn inputs_accept_fourteen_references_of_the_documented_types_and_no_mask() {
             &["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"]
         );
         assert_eq!(m.inputs.max_input_bytes, 14_000_000);
-        assert!(!m.inputs.mask);
+        assert!(m.inputs.mask.is_none());
         assert!(!m.inputs.first_frame && !m.inputs.last_frame);
         assert_eq!(m.inputs.max_reference_images, 0);
     }

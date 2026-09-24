@@ -11,7 +11,7 @@ use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
 use super::CATALOG_AS_OF;
 use super::types::{
     EstimateInput, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
-    OutputSpec, PriceRule,
+    OutputSpec, PriceRule, RequestSizeLimit,
 };
 
 /// Pricing page all Gemini image prices were taken from.
@@ -23,6 +23,15 @@ pub const DOCS_URL: &str = "https://ai.google.dev/gemini-api/docs/image-generati
 /// base64 reference images). The provider documents "20MB" for inline data; Iris
 /// reads that conservatively as 20,000,000 bytes.
 pub const MAX_REQUEST_BYTES: usize = 20_000_000;
+
+/// The same cap for local validation. The allowances bound the JSON the adapter
+/// writes around the prompt, the options, and each `inlineData` part (a few hundred
+/// bytes in all, well under these values).
+const REQUEST_LIMIT: RequestSizeLimit = RequestSizeLimit {
+    max_bytes: MAX_REQUEST_BYTES as u64,
+    framing_bytes: 1024,
+    per_input_framing_bytes: 128,
+};
 
 /// Model ids the Gemini adapter (images and Veo) can send: the id is a URL path
 /// segment (`models/{id}:generateContent`), so only characters that cannot change
@@ -42,10 +51,11 @@ const INPUTS: InputSpec = InputSpec {
     max_input_images: 14,
     input_media_types: INPUT_TYPES,
     max_input_bytes: 14_000_000,
-    mask: false,
+    mask: None,
     first_frame: false,
     last_frame: false,
     max_reference_images: 0,
+    max_request: Some(REQUEST_LIMIT),
 };
 
 /// The provider chooses the format. JPEG comes first because live runs of

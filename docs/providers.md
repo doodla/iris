@@ -103,7 +103,8 @@ pub static MODELS: &[ModelSpec] = &[
         lifecycle: Lifecycle::Preview,                 // ga | preview | deprecated, as documented
         operations: &[Operation::VideoGenerate],
         default_for: &[],                              // set once this is the provider's default
-        inputs: InputSpec { /* max_input_images, media types, mask, first/last frame, references */ },
+        inputs: InputSpec { /* image counts, media types, sizes, mask rules, frames, references,
+                               inline request cap */ },
         options: OPTIONS,                              // every accepted option, typed (see below)
         outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },
         limits: Limits { max_prompt_chars: Some(2000) },
@@ -139,10 +140,16 @@ Then:
    command from offering a flag no model accepts. **Never accept an option Iris cannot map on the wire side** — if the
    provider takes it but your adapter has nowhere to put it yet, leave it out of the catalog
    rather than declaring it and dropping it.
-4. If the model needs cross-field validation (Iris's Veo catalog has "1080p or 4k requires an
+4. Declare the input rules the provider documents in `InputSpec`: accepted types and sizes, mask
+   rules (`MaskSpec`), and a cap on the whole request when inputs are sent inline
+   (`RequestSizeLimit`, with allowances that bound the JSON your adapter adds). Iris enforces them
+   locally before a dry run returns and before a credential is needed; checks inside the adapter
+   are only a second line of defense, and a dry run must never accept a request the adapter would
+   refuse.
+5. If the model needs cross-field validation (Iris's Veo catalog has "1080p or 4k requires an
    8-second duration", "a last frame requires a first frame"), write a `validate` function with
    the same shape as `catalog::veo::validate_video`.
-5. Cite your sources: `pricing` entries carry `source_url` and `as_of`; `access_notes` state
+6. Cite your sources: `pricing` entries carry `source_url` and `as_of`; `access_notes` state
    documented account requirements in the provider's own words, never inferred ones.
 
 ## 4. Register the adapter

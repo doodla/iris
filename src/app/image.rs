@@ -86,6 +86,7 @@ async fn run_checked(
         .as_deref()
         .map(|p| artifacts::read_input_image(p, InputRole::Mask, &spec.inputs))
         .transpose()?;
+    request::check_inputs(spec, common, &opts, images.iter().chain(&mask))?;
 
     // Output planning. With no explicit format, a declared `format` option follows
     // the -o extension.

@@ -158,7 +158,10 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
   "operations": ["image.generate", "image.edit"], "default_for": ["image.generate", "image.edit"],
   "inputs": { "max_input_images": 16, "input_media_types": ["image/png","image/jpeg","image/webp"],
               "max_input_bytes": 15700000, "mask": true,
-              "first_frame": false, "last_frame": false, "max_reference_images": 0 },
+              "mask_requirements": { "media_types": ["image/png"], "max_bytes": 4000000,
+                                     "alpha_channel_required": true, "same_size_as_first_image": true },
+              "first_frame": false, "last_frame": false, "max_reference_images": 0,
+              "max_request_bytes": null },
   "options": [ { "name": "count", "type": "integer", "min": 1, "max": 10, "values": null,
                  "syntax": null, "default": "1", "flag": "--count",
                  "operations": ["image.generate","image.edit"],
@@ -175,6 +178,11 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
   "docs_url": "https://developers.openai.com/api/docs/guides/image-generation"
 }
 ```
+
+`inputs.mask_requirements` is `null` when the model takes no mask. `inputs.max_request_bytes` is
+the documented cap on a whole request whose inputs are sent inline (Gemini: 20,000,000 bytes; Veo:
+below 100,000,000), or `null`; Iris checks an upper bound of the encoded size (prompt and options as
+JSON, inputs as base64, plus a small allowance for the JSON around them) before sending.
 
 `account_access` is `not_checked` unless `--check-access` was passed, in which case it becomes
 `available` / `unavailable` / `unknown` from one free metadata call, and `checked_at` is set.
@@ -217,7 +225,12 @@ verification allow a paid request.
 ### `plan` (any generation command run with `--dry-run`)
 
 The `command` stays the generation command (`image.generate`, `image.edit`, or
-`video.generate`); `result` is the plan, and nothing is sent or charged:
+`video.generate`); `result` is the plan, and nothing is sent or charged. A dry run makes every
+local check the real run makes before sending — model and options, input files and the rules that
+relate them (mask format, alpha channel, size, and dimensions; an inline request cap), output
+paths — in the same order, before the credential check, so it fails exactly where the real run
+would fail locally. The one exception is the output directory: a real run creates it and proves it
+writable, which a dry run does not do because it writes nothing.
 
 ```json
 {

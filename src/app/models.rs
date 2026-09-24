@@ -7,8 +7,8 @@ use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec};
 use crate::domain::{Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
-    AccessView, InputsView, LimitsView, ModelCapabilities, ModelListResult, ModelShowResult, ModelSummary,
-    OptionView, OutputsView, PriceView, ProviderListResult, ProviderView,
+    AccessView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities, ModelListResult,
+    ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult, ProviderView,
 };
 use crate::providers::AccountAccess;
 use crate::redact;
@@ -99,10 +99,17 @@ fn capabilities(
             max_input_images: m.inputs.max_input_images,
             input_media_types: m.inputs.input_media_types.iter().map(|t| t.to_string()).collect(),
             max_input_bytes: m.inputs.max_input_bytes,
-            mask: m.inputs.mask,
+            mask: m.inputs.mask.is_some(),
+            mask_requirements: m.inputs.mask.map(|mask| MaskRequirementsView {
+                media_types: mask.media_types.iter().map(|t| t.to_string()).collect(),
+                max_bytes: mask.max_bytes,
+                alpha_channel_required: mask.requires_alpha,
+                same_size_as_first_image: mask.same_size_as_first_image,
+            }),
             first_frame: m.inputs.first_frame,
             last_frame: m.inputs.last_frame,
             max_reference_images: m.inputs.max_reference_images,
+            max_request_bytes: m.inputs.max_request.map(|limit| limit.max_bytes),
         },
         options: m.options.iter().map(option_view).collect(),
         outputs: OutputsView {
