@@ -584,6 +584,26 @@ tool_cases() {
     expect_err "download failed (HTTP 500)"
     end
 
+    begin "wget: connection dropped without a response (retries are bounded)"
+    TOOLS=$W/tools/wget
+    started=$(date +%s)
+    run drop/good --version v0.1.0
+    took=$(($(date +%s) - started))
+    # Unbounded, GNU wget retries 20 times with backoff: about 145 s of silence.
+    [ "$took" -le 30 ] || fail "took $took s; wget retries should be bounded"
+    expect_status 1
+    expect_err "network error: could not download $SERVER/drop/good/download/v0.1.0/SHA256SUMS"
+    end
+
+    begin "wget: archive download cut off halfway: old iris kept"
+    TOOLS=$W/tools/wget
+    seed_old "$BIN"
+    run truncate/good --version v0.1.0
+    expect_status 1
+    expect_err "network error: could not download $SERVER/truncate/good/download/v0.1.0/$NAME"
+    expect_old_kept "$BIN"
+    end
+
     begin "wget: connection refused"
     TOOLS=$W/tools/wget
     run http://127.0.0.1:1/releases --version v0.1.0

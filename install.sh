@@ -193,15 +193,19 @@ make_tmp_dir() {
 
 # http_get URL FILE: fetch URL (following redirects) into FILE and set
 # http_status and final_url. Returns 1 if no HTTP response arrived at all.
+# A stalled connection fails after about a minute instead of hanging: curl
+# gives up below 1 KB/s for 60 s, wget after 60 s without data, twice.
 http_get() {
   if [ "$fetcher" = curl ]; then
     curl_out=$(curl --silent --show-error --location --proto "$protocols" \
-      --connect-timeout 30 --output "$2" --write-out '%{http_code} %{url_effective}' "$1") ||
+      --connect-timeout 30 --speed-limit 1024 --speed-time 60 \
+      --output "$2" --write-out '%{http_code} %{url_effective}' "$1") ||
       return 1
     http_status=${curl_out%% *}
     final_url=${curl_out#* }
   else
-    wget --quiet --server-response --output-document="$2" "$1" 2>"$tmp_dir/headers"
+    wget --quiet --server-response --tries=2 --timeout=60 \
+      --output-document="$2" "$1" 2>"$tmp_dir/headers"
     wget_status=$? # 0 = success, 8 = HTTP error status, else network failure
     http_status=
     final_url=$1
