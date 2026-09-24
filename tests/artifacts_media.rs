@@ -220,6 +220,15 @@ fn iso_bmff_variants_are_accepted() {
     assert_eq!(inspect_iso_bmff(&mut Cursor::new(&unknown)).unwrap().duration_seconds, None);
     let no_mvhd = [ftyp(b"isom", &[]), bx(b"moov", &bx(b"trak", &[]))].concat();
     assert_eq!(inspect_iso_bmff(&mut Cursor::new(&no_mvhd)).unwrap().duration_seconds, None);
+    // Fragmented MP4: movie duration 0, samples in moof/mdat fragments.
+    let fragmented = [
+        ftyp(b"iso6", &[b"iso6", b"dash"]),
+        bx(b"moov", &mvhd_v0(1000, 0)),
+        bx(b"moof", &[]),
+        bx(b"mdat", &[1; 8]),
+    ]
+    .concat();
+    assert_eq!(inspect_iso_bmff(&mut Cursor::new(&fragmented)).unwrap().duration_seconds, None);
 }
 
 #[test]

@@ -593,7 +593,9 @@ fn mvhd_duration(moov: &[u8]) -> Option<f64> {
                 let d = u32::from_be_bytes(body.get(16..20)?.try_into().ok()?);
                 (ts, if d == u32::MAX { return None } else { u64::from(d) })
             };
-            if timescale == 0 {
+            // Fragmented MP4s leave the movie duration 0 (their length lives in the
+            // fragments): that is "unknown", not a zero-second video.
+            if timescale == 0 || duration == 0 {
                 return None;
             }
             let seconds = duration as f64 / f64::from(timescale);
