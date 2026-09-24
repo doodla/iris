@@ -738,6 +738,70 @@ async fn unusable_success_bodies_are_provider_bad_response_and_never_retried() {
 }
 
 #[tokio::test]
+async fn one_unusable_item_never_drops_the_usable_images() {
+    let good = png_rgb(8, 8);
+    let mp4_head = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isommp41";
+    // (case, the bad item, where it sits, text its warning must contain)
+    let cases: Vec<(&str, Value, usize, &str)> = vec![
+        ("a URL", json!({"url": "https://files.example/x.png?sig=abc"}), 1, "is a URL"),
+        ("missing data", json!({"revised_prompt": "x"}), 0, "has no b64_json"),
+        ("bad base64", json!({"b64_json": "@@not base64@@"}), 1, "not valid base64"),
+        (
+            "an error body",
+            json!({"b64_json": STANDARD.encode(b"{\"error\":1}")}),
+            0,
+            "not a recognized image",
+        ),
+        ("a video", json!({"b64_json": STANDARD.encode(mp4_head)}), 1, "video/mp4"),
+    ];
+    for (name, bad, at, reason) in cases {
+        let mut data = vec![json!({"b64_json": STANDARD.encode(&good)})];
+        data.insert(at, bad);
+        let server = MockServer::start().await;
+        mount(
+            &server,
+            GEN,
+            ok(json!({"created": 1, "data": data, "output_format": "png", "usage": {"output_tokens": 9}})),
+        )
+        .await;
+        let out = generate(&server, options(&[("count", OptionValue::Int(2))]))
+            .await
+            .unwrap_or_else(|e| panic!("{name}: {}", e.message));
+        assert_eq!(out.images.len(), 1, "{name}: the usable image is kept");
+        assert_eq!(out.images[0].bytes, good, "{name}");
+        let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
+        assert_eq!(codes, ["output_item_unusable"], "{name}: two items came back for n=2");
+        let message = &out.warnings[0].message;
+        assert!(message.contains(&format!("image {at} ")) && message.contains(reason), "{name}: {message}");
+        assert!(!message.contains("sig=abc"), "{name}: {message}");
+        assert_eq!(out.usage.as_ref().and_then(|u| u.output_tokens), Some(9), "{name}: usage is kept");
+        assert_eq!(out.provider_request_id.as_deref(), Some("req_ok_123"), "{name}");
+        assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
+    }
+
+    // With n=1, the unusable extra item is reported along with the count.
+    let server = MockServer::start().await;
+    let data = json!([{"b64_json": STANDARD.encode(&good)}, {"b64_json": "@@"}]);
+    mount(&server, GEN, ok(json!({"created": 1, "data": data}))).await;
+    let out = generate(&server, ResolvedOptions::new()).await.unwrap();
+    let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
+    assert_eq!(codes, ["output_item_unusable", "unexpected_output_count"]);
+
+    // Several items and none usable: one provider_bad_response naming each.
+    let server = MockServer::start().await;
+    let data = json!([{"url": "https://files.example/a.png"}, {"b64_json": "@@"}]);
+    mount(&server, GEN, ok(json!({"created": 1, "data": data}))).await;
+    let err = generate(&server, options(&[("count", OptionValue::Int(2))])).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
+    assert!(
+        err.message.contains("image 0 is a URL") && err.message.contains("image 1 is not valid"),
+        "{}",
+        err.message
+    );
+    assert_eq!(err.details.get("charge_possible"), Some(&json!(true)));
+}
+
+#[tokio::test]
 async fn usage_is_parsed_into_normalized_fields_and_a_numbers_only_provider_object() {
     let server = MockServer::start().await;
     let img = png_rgb(8, 8);

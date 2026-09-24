@@ -413,15 +413,87 @@ async fn a_blocked_prompt_is_content_blocked() {
     assert_eq!(err.details["block_reason"], "SAFETY");
 }
 
-#[tokio::test]
-async fn image_bytes_must_match_their_declared_type() {
-    let server = MockServer::start().await;
-    mount_ok(&server, response_with(vec![image_part("image/png", &jpeg())], "STOP")).await;
-    let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
-    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
-    assert_eq!(err.details["sniffed_media_type"], "image/jpeg");
-    assert_eq!(err.details["charge_possible"], true);
+/// Warning codes of an output, in order.
+fn codes(out: &ImageOutput) -> Vec<&str> {
+    out.warnings.iter().map(|w| w.code.as_str()).collect()
+}
 
+#[tokio::test]
+async fn images_are_typed_by_their_bytes_and_kept_whatever_their_label() {
+    // (case, part, kept media type, warning expected)
+    let jpeg_bytes = jpeg();
+    let cases: Vec<(&str, Value, &str, bool)> = vec![
+        ("labeled png, content jpeg", image_part("image/png", &jpeg_bytes), "image/jpeg", true),
+        ("no mimeType", json!({"inlineData": {"data": b64(&jpeg_bytes)}}), "image/jpeg", true),
+        (
+            "empty mimeType",
+            json!({"inlineData": {"mimeType": "", "data": b64(&jpeg_bytes)}}),
+            "image/jpeg",
+            true,
+        ),
+        ("a non-image label", image_part("application/octet-stream", &jpeg_bytes), "image/jpeg", true),
+        ("image/jpg alias", image_part("image/jpg", &jpeg_bytes), "image/jpeg", false),
+        ("correct label", image_part("image/jpeg", &jpeg_bytes), "image/jpeg", false),
+    ];
+    for (name, part, kept, warns) in cases {
+        let server = MockServer::start().await;
+        mount_ok(&server, response_with(vec![part], "STOP")).await;
+        let out = generate(&server, &generate_request(ResolvedOptions::new()))
+            .await
+            .unwrap_or_else(|e| panic!("{name}: {}", e.message));
+        assert_eq!(out.images.len(), 1, "{name}");
+        assert_eq!(out.images[0].media_type, kept, "{name}");
+        assert_eq!(out.images[0].bytes, jpeg_bytes, "{name}: kept verbatim");
+        if warns {
+            assert_eq!(codes(&out), ["output_format_mismatch"], "{name}");
+            let message = &out.warnings[0].message;
+            assert!(message.contains("image 0") && message.contains(kept), "{name}: {message}");
+        } else {
+            assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
+        }
+        assert_eq!(requests(&server).await.len(), 1, "{name}: never repeated");
+    }
+}
+
+#[tokio::test]
+async fn one_bad_item_never_drops_the_good_ones() {
+    let (good, odd) = (png(), jpeg());
+    // A correct image and a mislabeled one: both kept, only the second is reported.
+    let server = MockServer::start().await;
+    mount_ok(
+        &server,
+        response_with(vec![image_part("image/png", &good), image_part("image/png", &odd)], "STOP"),
+    )
+    .await;
+    let out = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap();
+    let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
+    assert_eq!(types, ["image/png", "image/jpeg"]);
+    assert_eq!(codes(&out), ["output_format_mismatch", "unexpected_output_count"]);
+    assert!(out.warnings[0].message.contains("image 1 "), "{}", out.warnings[0].message);
+
+    // A correct image next to items that are not images: the image is kept, each
+    // unusable item is named in its own warning.
+    let bad_items = vec![
+        json!({"inlineData": {"mimeType": "image/png", "data": "not base64 at all!!"}}),
+        image_part("image/png", b"{\"error\": \"not an image\"}"),
+        json!({"inlineData": {"mimeType": "image/png"}}),
+    ];
+    for (i, bad) in bad_items.into_iter().enumerate() {
+        let server = MockServer::start().await;
+        mount_ok(&server, response_with(vec![bad, image_part("image/png", &good)], "STOP")).await;
+        let out = generate(&server, &generate_request(ResolvedOptions::new()))
+            .await
+            .unwrap_or_else(|e| panic!("case {i}: {}", e.message));
+        assert_eq!(out.images.len(), 1, "case {i}");
+        assert_eq!(out.images[0].bytes, good, "case {i}");
+        assert_eq!(codes(&out), ["output_item_unusable", "unexpected_output_count"], "case {i}");
+        assert!(out.warnings[0].message.contains("image 0 "), "case {i}: {}", out.warnings[0].message);
+        assert!(out.usage.is_some(), "case {i}: usage is still reported");
+    }
+}
+
+#[tokio::test]
+async fn an_answer_without_any_usable_image_is_a_bad_response_that_may_be_charged() {
     for data in ["not base64 at all!!", &b64(b"{\"error\": \"not an image\"}")] {
         let server = MockServer::start().await;
         mount_ok(
@@ -431,7 +503,18 @@ async fn image_bytes_must_match_their_declared_type() {
         .await;
         let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{data}");
+        assert_eq!(err.details["charge_possible"], true, "{data}");
+        assert_eq!(err.details["declared_media_type"], "image/png", "{data}");
+        assert_ne!(err.retryable, Some(true), "{data}");
+        assert_eq!(requests(&server).await.len(), 1, "{data}");
     }
+    // Inline data of another kind is judged by its bytes too: a video is not an image.
+    let mp4_head = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isommp41";
+    let server = MockServer::start().await;
+    mount_ok(&server, response_with(vec![image_part("video/mp4", mp4_head)], "STOP")).await;
+    let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
+    assert_eq!(err.details["sniffed_media_type"], "video/mp4");
 }
 
 #[tokio::test]

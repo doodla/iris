@@ -72,6 +72,11 @@ machine-readable contract for agents.
   keep their codes without `charge_possible` (Google does not charge failed requests), and Ctrl-C
   during a paid image call reports `retryable: false`. No image error with
   `details.charge_possible: true` says `retryable: true`.
+- Paid image responses are decoded item by item and judged by their bytes: one unusable item
+  (a URL, bad base64, content that is not an image) no longer discards the valid images next to
+  it; it gets the new `output_item_unusable` warning instead. A Gemini image whose `mimeType` is
+  wrong or missing is kept under its real type with `output_format_mismatch` instead of failing
+  the command. Only a response with no usable image is `provider_bad_response`.
 
 ### Known limitations
 

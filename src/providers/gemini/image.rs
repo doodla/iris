@@ -38,6 +38,13 @@ const BLOCKING_FINISH_REASONS: &[&str] = &[
 pub const WARNING_TEXT_OUTPUT: &str = "provider_text_output";
 /// Warning code: the provider returned more images than requested (all are kept).
 pub const WARNING_OUTPUT_COUNT: &str = "unexpected_output_count";
+/// Warning code: a valid image was labeled with another media type, or with none;
+/// it is kept under the type its bytes show. Same code as the OpenAI adapter uses.
+const WARNING_FORMAT_MISMATCH: &str = "output_format_mismatch";
+/// Warning code: one returned inline item is not a usable image (not base64, or not
+/// a recognized image) while other images were kept. Same code as the OpenAI adapter
+/// uses.
+const WARNING_ITEM_UNUSABLE: &str = "output_item_unusable";
 
 /// Run `image.generate` or `image.edit` (`op`) against `generateContent`.
 pub async fn run(op: Operation, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
@@ -241,7 +248,24 @@ fn charged_bad_response(message: &str, status: u16) -> IrisError {
         .with_hint("the provider may have billed this request; Iris did not retry automatically")
 }
 
+/// Why one returned inline item is not a usable image.
+struct Unusable {
+    /// Human reason naming the item.
+    why: String,
+    /// The provider's label (scrubbed), if any.
+    declared: Option<String>,
+    /// Sniffed type of content that is not an image (e.g. a video), if any.
+    sniffed: Option<&'static str>,
+}
+
 /// Interpret a successful `generateContent` answer.
+///
+/// Every non-thought part with `inlineData` is a returned item, whatever its label.
+/// Each is judged by its bytes, never by its label, and paid output is never
+/// discarded because of another item: a valid image is kept under its sniffed type
+/// (with `output_format_mismatch` when the label differs or is missing); an item that
+/// is not a usable image is skipped with `output_item_unusable`. Only an answer
+/// without any usable image is an error.
 fn interpret(
     resp: GenerateContentResponse,
     status: u16,
@@ -252,6 +276,9 @@ fn interpret(
         header_request_id.or_else(|| resp.response_id.as_deref().and_then(crate::http::sanitize_request_id));
     let mut images = Vec::new();
     let mut texts = Vec::new();
+    let mut mismatches = Vec::new();
+    let mut unusable = Vec::new();
+    let mut returned = 0usize;
     let candidates = resp.candidates.as_deref().unwrap_or_default();
     for part in candidates.iter().filter_map(|c| c.content.as_ref()).flat_map(|c| c.parts.iter().flatten()) {
         if part.thought == Some(true) {
@@ -261,17 +288,37 @@ fn interpret(
             texts.push(text.to_string());
         }
         let Some(blob) = &part.inline_data else { continue };
-        let declared = blob.mime_type.as_deref().unwrap_or("");
-        if !media::is_image(declared) {
-            continue;
+        let index = returned;
+        returned += 1;
+        let declared = blob.mime_type.as_deref().map(str::trim).filter(|m| !m.is_empty());
+        match decode_image(index, declared, blob.data.as_deref().unwrap_or("")) {
+            Ok((image, mismatch)) => {
+                images.push(image);
+                mismatches.extend(mismatch);
+            }
+            Err(problem) => unusable.push(problem),
         }
-        images.push(decode_image(declared, blob.data.as_deref().unwrap_or(""), status, &request_id)?);
     }
 
     let text = (!texts.is_empty()).then(|| texts.join("\n"));
     let usage = resp.usage_metadata.as_ref().and_then(usage_from_metadata);
 
     if images.is_empty() {
+        if let Some(first) = unusable.first() {
+            let reasons: Vec<&str> = unusable.iter().map(|u| u.why.as_str()).collect();
+            let mut err = charged_bad_response(
+                &format!("the Gemini API returned no usable image: {}", reasons.join("; ")),
+                status,
+            )
+            .with_provider_request_id(request_id);
+            if let Some(declared) = &first.declared {
+                err = err.with_detail("declared_media_type", declared.clone());
+            }
+            if let Some(sniffed) = first.sniffed {
+                err = err.with_detail("sniffed_media_type", sniffed);
+            }
+            return Err(err);
+        }
         return Err(no_image_error(&resp, text.as_deref())
             .with_provider_status(status)
             .with_provider_request_id(request_id));
@@ -284,46 +331,71 @@ fn interpret(
             "the model also returned text; it is reported in the result's `text` field",
         ));
     }
-    if images.len() > requested {
+    warnings.extend(mismatches);
+    for problem in &unusable {
+        warnings.push(Warning::new(
+            WARNING_ITEM_UNUSABLE,
+            format!("{}; it was skipped and every usable image was kept", problem.why),
+        ));
+    }
+    if returned > requested {
         warnings.push(Warning::new(
             WARNING_OUTPUT_COUNT,
-            format!("the model returned {} images for a request of {requested}; all were kept", images.len()),
+            format!(
+                "the model returned {returned} images for a request of {requested}; every usable image was kept"
+            ),
         ));
     }
     Ok(ImageOutput { images, text, usage, provider_request_id: request_id, warnings })
 }
 
-/// Decode base64 image data and check its magic bytes against the declared type.
+/// Decode one returned inline item (item `index`, labeled `declared`) and type it by
+/// its magic bytes. A recognized image is kept under its sniffed type, with an
+/// `output_format_mismatch` warning when the label is missing or names another type;
+/// anything else (no data, not base64, not an image) is [`Unusable`].
 fn decode_image(
-    declared: &str,
+    index: usize,
+    declared: Option<&str>,
     data: &str,
-    status: u16,
-    request_id: &Option<String>,
-) -> Result<GeneratedImage, IrisError> {
-    let bad = |message: String| {
-        charged_bad_response(&message, status)
-            .with_provider_request_id(request_id.clone())
-            .with_detail("declared_media_type", client::safe_text(declared))
+) -> Result<(GeneratedImage, Option<Warning>), Unusable> {
+    let label = declared.map(client::safe_text);
+    let unusable =
+        |why: String, sniffed: Option<&'static str>| Unusable { why, declared: label.clone(), sniffed };
+    let labeled = match &label {
+        Some(l) => format!("labeled {l}"),
+        None => "without a media type".to_string(),
     };
+    if data.trim().is_empty() {
+        return Err(unusable(format!("image {index} ({labeled}) has no data"), None));
+    }
     let bytes = STANDARD_PAD_INDIFFERENT
         .decode(data)
         .or_else(|_| URL_SAFE_PAD_INDIFFERENT.decode(data))
-        .map_err(|_| bad("the Gemini API returned image data that is not valid base64".to_string()))?;
-    let Some(sniffed) = media::sniff(&bytes) else {
-        return Err(bad(format!(
-            "the Gemini API returned {} bytes labeled {} that are not a recognized image",
-            bytes.len(),
-            client::safe_text(declared)
-        )));
+        .map_err(|_| unusable(format!("image {index} ({labeled}) is not valid base64"), None))?;
+    let sniffed = match media::sniff(&bytes) {
+        Some(t) if media::is_image(t) => t,
+        other => {
+            return Err(unusable(
+                format!(
+                    "image {index} ({} bytes {labeled}) is {}",
+                    bytes.len(),
+                    other.map_or("not a recognized image".to_string(), |t| format!("{t}, not an image"))
+                ),
+                other,
+            ));
+        }
     };
-    if !media::is_image(sniffed) || !media::accepts(&[declared], sniffed) {
-        return Err(bad(format!(
-            "the Gemini API labeled an image {} but its content is {sniffed}",
-            client::safe_text(declared)
-        ))
-        .with_detail("sniffed_media_type", sniffed));
-    }
-    Ok(GeneratedImage { media_type: sniffed.to_string(), bytes })
+    let matches_label = declared.is_some_and(|d| media::is_image(d) && media::accepts(&[d], sniffed));
+    let warning = (!matches_label).then(|| {
+        Warning::new(
+            WARNING_FORMAT_MISMATCH,
+            format!(
+                "the Gemini API returned image {index} {labeled} but its content is {sniffed}; it is kept as \
+                 {sniffed} because the request completed and may have been billed"
+            ),
+        )
+    });
+    Ok((GeneratedImage { media_type: sniffed.to_string(), bytes }, warning))
 }
 
 /// Normalize `usageMetadata`: input = prompt tokens; output = candidate plus

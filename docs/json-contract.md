@@ -356,7 +356,16 @@ something the caller should know:
 `unverified_model_capabilities`, `output_extension_adjusted`, `output_renamed`,
 `output_format_mismatch`, `cost_estimate_unavailable`, `job_record_unreadable`,
 `provider_text_output`, `already_downloaded`, `retention_limited`, `preview_model`,
-`non_default_base_url`, `content_filtered`, `unexpected_output_count`, `status_refresh_failed`.
+`non_default_base_url`, `content_filtered`, `unexpected_output_count`, `status_refresh_failed`,
+`output_item_unusable`.
+
+Paid image output is judged by its bytes, never by the provider's label, and one bad item never
+costs the others: a valid image of another type than requested or labeled (or with no label) is
+kept under its real type with `output_format_mismatch`, and a returned item that is not a usable
+image (a URL instead of inline data, missing or invalid base64, content that is not an image) is
+skipped with `output_item_unusable`, whose message names the item's index and the reason. Only a
+response with no usable image at all fails, as `provider_bad_response` with
+`details.charge_possible: true`.
 
 Real example — an output path with no extension and a `--format` that didn't match what the
 provider actually returned (three warnings from one request, all real, from a mock-server run: the

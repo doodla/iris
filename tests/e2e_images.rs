@@ -346,6 +346,54 @@ fn gemini_blocks_are_content_blocked_and_save_nothing() {
     }
 }
 
+// ----- paid output is never discarded -------------------------------------------------------------
+
+#[test]
+fn an_unusable_openai_item_never_costs_the_good_image() {
+    let image = png(20, 20);
+    let body = json!({
+        "created": 1_790_000_000,
+        "data": [ { "b64_json": b64(&image) }, { "b64_json": b64(br#"{"error": {"message": "x"}}"#) } ],
+        "output_format": "png",
+        "usage": { "input_tokens": 50, "output_tokens": 196, "total_tokens": 246 }
+    });
+    let (sb, api, out) = openai_run(
+        json_response(200, body).insert_header("x-request-id", "req_e2e_mixed"),
+        &["-n", "2", "-o", "g.png"],
+    );
+    let v = out.ok();
+    assert_eq!(api.total(), 1);
+    assert_eq!(artifacts(&v).len(), 1, "{v}");
+    let art = &artifacts(&v)[0];
+    assert_artifact(art, Path::new(art["path"].as_str().unwrap()), &image, "image/png", (20, 20));
+    let unusable: Vec<&Value> =
+        v["warnings"].as_array().unwrap().iter().filter(|w| w["code"] == "output_item_unusable").collect();
+    assert_eq!(unusable.len(), 1, "{v}");
+    assert!(unusable[0]["message"].as_str().unwrap().contains("image 1 "), "{v}");
+    assert!(v["result"]["cost_estimate"]["amount"].as_f64().is_some(), "usage still gives an estimate: {v}");
+    assert_eq!(files_in(&sb.work()).len(), 1, "{:?}", files_in(&sb.work()));
+}
+
+#[test]
+fn a_mislabeled_or_unlabeled_gemini_image_is_saved_under_its_real_type() {
+    let image = jpeg(24, 16);
+    let parts = [
+        ("mislabeled", inline_part("image/png", &image)),
+        ("unlabeled", json!({ "inlineData": { "data": b64(&image) } })),
+    ];
+    for (name, part) in parts {
+        let (sb, api, out) = gemini_run(gemini_parts(json!([part])), &["-o", "gm.png"]);
+        let v = out.ok();
+        assert_eq!(api.total(), 1, "{name}");
+        let art = &artifacts(&v)[0];
+        assert_artifact(art, &sb.path("gm.jpg"), &image, "image/jpeg", (24, 16));
+        let codes = warning_codes(&v);
+        assert!(codes.contains(&"output_format_mismatch".to_string()), "{name}: {v}");
+        assert!(codes.contains(&"output_extension_adjusted".to_string()), "{name}: {v}");
+        assert!(!sb.path("gm.png").exists(), "{name}");
+    }
+}
+
 // ----- scenario 4: error mapping through the process --------------------------------------------
 
 /// Run one OpenAI generation against `answer` and return the output and the mock.
