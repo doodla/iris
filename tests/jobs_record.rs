@@ -177,6 +177,7 @@ fn submission_transitions() {
     assert_eq!(unknown.status(), JobStatus::SubmissionUnknown);
     assert!(unknown.status().is_terminal());
     assert_eq!(unknown.error().unwrap().code, ErrorCode::SubmissionUncertain);
+    assert_eq!(unknown.completed_at(), Some(ts(3)));
     // It cannot be polled.
     let poll = unknown.apply_poll(RemoteStatus::Running { progress: None }, None, ts(4));
     assert_eq!(poll.unwrap_err().code, ErrorCode::InternalError);
@@ -189,9 +190,11 @@ fn late_operation_id_resolves_a_stale_submission() {
     let mut rec = JobRecord::new(new_job(), ts(0)).unwrap();
     assert!(rec.resolve_stale_submitting(ts(1000), Duration::from_secs(60)));
     assert_eq!(rec.status(), JobStatus::SubmissionUnknown);
+    assert!(rec.completed_at().is_some());
     rec.mark_submitted(&submitted(), ts(1001)).unwrap();
     assert_eq!(rec.status(), JobStatus::Running);
     assert!(rec.error().is_none());
+    assert_eq!(rec.completed_at(), None, "a running job has not completed");
 }
 
 #[test]
@@ -209,6 +212,11 @@ fn stale_submitting_becomes_submission_unknown_after_timeout_plus_grace() {
     assert_eq!(err.code, ErrorCode::SubmissionUncertain);
     assert!(err.hint.as_deref().unwrap().contains("before resubmitting"));
     assert_eq!(rec.updated_at(), ts(121));
+    // Terminal from the moment it became stale; stable across repeated reports.
+    assert_eq!(rec.completed_at(), Some(ts(120)));
+    let mut later = JobRecord::with_id(rec.job_id().clone(), new_job(), ts(0)).unwrap();
+    later.resolve_stale_submitting(ts(5000), timeout);
+    assert_eq!(later.completed_at(), Some(ts(120)));
 
     // Idempotent, and never applies to other statuses.
     assert!(!rec.resolve_stale_submitting(ts(10_000), timeout));
@@ -280,6 +288,7 @@ fn poll_failure_and_gone() {
         PollApplied::Failed
     );
     assert_eq!(failed.status(), JobStatus::Failed);
+    assert_eq!(failed.completed_at(), Some(ts(50)));
     let body = failed.error().unwrap();
     assert_eq!(body.code, ErrorCode::ContentBlocked);
     assert_eq!(body.remote_operation_id.as_deref(), Some("models/veo-test/operations/op123"));
@@ -288,6 +297,7 @@ fn poll_failure_and_gone() {
     assert_eq!(gone.apply_poll(RemoteStatus::Gone, None, ts(50)).unwrap(), PollApplied::Expired);
     assert_eq!(gone.status(), JobStatus::Expired);
     assert_eq!(gone.error().unwrap().code, ErrorCode::ArtifactExpired);
+    assert_eq!(gone.completed_at(), Some(ts(50)));
 }
 
 #[test]
@@ -332,6 +342,35 @@ fn download_states_never_change_job_status() {
         rec.mark_output_downloaded(7, &artifact(7), ts(43)).unwrap_err().code,
         ErrorCode::InternalError
     );
+}
+
+#[test]
+fn downloaded_outputs_survive_later_failed_attempts() {
+    // E.g. `jobs download -o existing.mp4` without --overwrite after a successful
+    // download: the copy fails, but the intact recorded file stays the artifact.
+    let mut rec = succeeded_record(1);
+    rec.mark_output_downloaded(0, &artifact(0), ts(40)).unwrap();
+
+    let conflict = IrisError::new(ErrorCode::OutputExists, "output file /tmp/existing.mp4 already exists");
+    rec.mark_output_failed(0, &conflict, ts(41)).unwrap();
+    let out = &rec.outputs()[0];
+    assert_eq!(out.download_state, DownloadState::Downloaded);
+    assert_eq!(out.local_path.as_deref(), Some(std::path::Path::new("/tmp/out/job-0.mp4")));
+    assert_eq!(out.last_error.as_ref().unwrap().code, ErrorCode::OutputExists);
+    let view = rec.to_view();
+    assert_eq!(view.artifacts, vec![artifact(0)]);
+    assert_eq!(view.outputs[0].artifact, Some(artifact(0)));
+    assert_eq!(view.outputs[0].last_error.as_ref().unwrap().code, ErrorCode::OutputExists);
+
+    let expired = IrisError::new(ErrorCode::ArtifactExpired, "410 Gone");
+    rec.mark_output_expired(0, &expired, ts(42)).unwrap();
+    assert_eq!(rec.outputs()[0].download_state, DownloadState::Downloaded);
+    assert_eq!(rec.to_view().artifacts, vec![artifact(0)]);
+
+    // A later successful save replaces the record and clears the error.
+    rec.mark_output_downloaded(0, &artifact(0), ts(43)).unwrap();
+    assert!(rec.outputs()[0].last_error.is_none());
+    assert_eq!(rec.status(), JobStatus::Succeeded);
 }
 
 #[test]

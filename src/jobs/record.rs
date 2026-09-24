@@ -14,7 +14,10 @@
 //!
 //! There is deliberately no method that turns a `running` or `succeeded` job into
 //! `failed` because of something local (Ctrl-C, wait timeout, poll network error,
-//! download failure).
+//! download failure). A `downloaded` output stays `downloaded` when a later attempt
+//! fails (only its `last_error` changes), so a job never loses track of a saved file.
+//! Every transition into a terminal status (`succeeded`, `failed`, `expired`,
+//! `submission_unknown`) sets `completed_at`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -341,6 +344,8 @@ impl JobRecord {
     pub fn submitted_at(&self) -> Option<Timestamp> {
         self.submitted_at
     }
+    /// When the job reached a terminal status (`succeeded`, `failed`, `expired`,
+    /// `submission_unknown`); `None` while `submitting` or `running`.
     pub fn completed_at(&self) -> Option<Timestamp> {
         self.completed_at
     }
@@ -425,6 +430,8 @@ impl JobRecord {
         self.remote_operation_id = Some(op.remote_id.clone());
         self.provider_request_id = op.provider_request_id.clone();
         self.submitted_at = Some(now);
+        // Set if the stale rule had already declared the submission unknown.
+        self.completed_at = None;
         self.error = None;
         self.updated_at = now;
         Ok(())
@@ -447,6 +454,7 @@ impl JobRecord {
         self.require_awaiting_submission("record the uncertain submission")?;
         self.status = JobStatus::SubmissionUnknown;
         self.error = Some(self.error_body(error));
+        self.completed_at = Some(now);
         self.updated_at = now;
         Ok(())
     }
@@ -466,10 +474,16 @@ impl JobRecord {
     /// `submission_unknown` with a `submission_uncertain` error. Returns whether the
     /// record changed. [`JobStore`](super::JobStore) applies this on every load,
     /// list, and locked update.
+    ///
+    /// `completed_at` is set to the moment the record became stale
+    /// (`created_at + submit_timeout + SUBMIT_GRACE`), not to `now`, so repeated
+    /// in-memory reports of the same unpersisted record agree.
     pub fn resolve_stale_submitting(&mut self, now: Timestamp, submit_timeout: Duration) -> bool {
         if !self.is_stale_submitting(now, submit_timeout) {
             return false;
         }
+        let deadline = submit_timeout.saturating_add(SUBMIT_GRACE);
+        let became_stale = self.created_at.checked_add(deadline).ok().filter(|t| *t <= now).unwrap_or(now);
         let error = IrisError::new(
             ErrorCode::SubmissionUncertain,
             "Iris stopped while submitting this job, before the provider's operation id was recorded; \
@@ -480,6 +494,7 @@ impl JobRecord {
         );
         self.status = JobStatus::SubmissionUnknown;
         self.error = Some(self.error_body(&error));
+        self.completed_at = Some(became_stale);
         self.updated_at = now;
         true
     }
@@ -541,6 +556,7 @@ impl JobRecord {
             }
             RemoteStatus::Gone => {
                 self.status = JobStatus::Expired;
+                self.completed_at = Some(now);
                 let error = IrisError::new(
                     ErrorCode::ArtifactExpired,
                     "the provider no longer has this operation (its retention period has passed); \
@@ -577,36 +593,38 @@ impl JobRecord {
         Ok(())
     }
 
-    /// Record a failed (retryable) download of output `index`. The job status is
-    /// unchanged: a download failure never turns a succeeded job into a failed one.
+    /// Record a failed (retryable) fetch of output `index`: `pending`/`failed`/
+    /// `expired` → `failed` with `last_error`. The job status is unchanged: a
+    /// download failure never turns a succeeded job into a failed one.
+    ///
+    /// An output that is already `downloaded` stays `downloaded` (only `last_error`
+    /// is set): its recorded file (path, size, SHA-256) remains the job's artifact.
+    /// Whether that file is still intact is decided by
+    /// [`decide_download`](crate::artifacts::decide_download) when it matters, never
+    /// by a later failed attempt. Record only failures of a remote fetch here; purely
+    /// local failures (`output_exists`, `invalid_argument`, a failed local copy) are
+    /// returned to the user without touching the record.
     pub fn mark_output_failed(
         &mut self,
         index: u32,
         error: &IrisError,
         now: Timestamp,
     ) -> Result<(), IrisError> {
-        let body = self.error_body(error);
-        let out = self.output_mut(index)?;
-        out.download_state = DownloadState::Failed;
-        out.last_error = Some(body);
-        self.updated_at = now;
-        Ok(())
+        self.record_output_problem(index, error, DownloadState::Failed, now)
     }
 
     /// Record that output `index` is no longer available remotely (retention passed,
-    /// or the file host answered 403/404/410). The job status is unchanged.
+    /// or the file host answered 403/404/410): `pending`/`failed` → `expired` with
+    /// `last_error`. The job status is unchanged. As with
+    /// [`mark_output_failed`](Self::mark_output_failed), a `downloaded` output stays
+    /// `downloaded` and only gets `last_error`.
     pub fn mark_output_expired(
         &mut self,
         index: u32,
         error: &IrisError,
         now: Timestamp,
     ) -> Result<(), IrisError> {
-        let body = self.error_body(error);
-        let out = self.output_mut(index)?;
-        out.download_state = DownloadState::Expired;
-        out.last_error = Some(body);
-        self.updated_at = now;
-        Ok(())
+        self.record_output_problem(index, error, DownloadState::Expired, now)
     }
 
     // ----- views -------------------------------------------------------------
@@ -664,6 +682,23 @@ impl JobRecord {
                 self.job_id, self.status
             )))
         }
+    }
+
+    fn record_output_problem(
+        &mut self,
+        index: u32,
+        error: &IrisError,
+        state: DownloadState,
+        now: Timestamp,
+    ) -> Result<(), IrisError> {
+        let body = self.error_body(error);
+        let out = self.output_mut(index)?;
+        if out.download_state != DownloadState::Downloaded {
+            out.download_state = state;
+        }
+        out.last_error = Some(body);
+        self.updated_at = now;
+        Ok(())
     }
 
     fn output_mut(&mut self, index: u32) -> Result<&mut JobOutput, IrisError> {
