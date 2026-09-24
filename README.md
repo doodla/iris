@@ -262,8 +262,9 @@ convenient alternative: it exits **4** (`wait_timeout`) while still running and 
 reaches a terminal status, so an agent can loop on exit 4 instead of parsing `status` itself.
 Either way, finish with `iris jobs download <id>` once the job reports `succeeded`. A download
 checks a `running` record's status once first, so a stale local record is not a problem; if the
-job is still running it exits 4 (`job_not_ready`) rather than waiting or resubmitting. Every step is idempotent:
-repeating a download never re-generates the video (see [docs/jobs.md](docs/jobs.md)).
+job is still running it exits 4 (`job_not_ready`) rather than waiting or resubmitting. Every step
+is idempotent: repeating a download never re-generates the video (see
+[docs/jobs.md](docs/jobs.md)).
 
 ## Supported providers and models
 

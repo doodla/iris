@@ -90,13 +90,11 @@ machine-readable contract for agents.
 - Rewriting a job record keeps what a newer Iris wrote at every level: unknown fields inside
   persisted error bodies, `usage`, and `cost_estimate`, and error codes this version does not
   know. Views show such a code as `internal_error` with the original in `details.recorded_code`.
-
 - A finished Veo job is `succeeded` with its output URIs recorded even when Iris will not fetch
   them with the current base URL (for example behind a pass-through proxy). Download trust is
   checked on every `jobs wait`/`jobs download`; a refused URI fails that output with
   `download_failed` and a hint, and a later download with a corrected base URL succeeds.
   Previously such a job was recorded as `failed` and could not be recovered.
-
 - Veo retention counts from submission: `remote_expires_at` is `submitted_at` plus the documented
   retention, and `retention_limited` says the outputs are kept "at least until about" that time.
   `completed_at` is documented as the time Iris observed completion.
@@ -108,30 +106,23 @@ machine-readable contract for agents.
 - Downloads always ask the file host instead of refusing on the local retention estimate. 410 is
   `artifact_expired`; 403/404 are `artifact_expired` only after the retention period and a
   retryable `download_failed` (output left re-downloadable) before it.
-
 - `jobs download` on a record that still says `running` checks the job's status once first, so a
   job that finished since the last check downloads instead of reporting `job_not_ready`.
-
 - SIGTERM and SIGHUP are handled like Ctrl-C: during a paid Veo submission the first one is
   deferred until the operation id is recorded, and every interrupted command prints exactly one
   `interrupted` envelope and exits 130 (previously SIGTERM killed the process silently, possibly
   losing the operation id).
 - An interrupted Veo submission (the deferred first interrupt, or a second one) reports
   `retryable: false` and `details.charge_possible: true`.
-
 - Partial download files (`.<name>.iris-part-*`) that a killed process left for a target are
   removed before the next download of that target; docs/jobs.md lists what SIGKILL can leave.
-
 - Artifact downloads are capped at 4 GiB: a larger declared `Content-Length` or body is
   `download_failed` (not retryable) and nothing partial is kept.
-
 - A local copy for `jobs download -o/-d` whose source file changes while being copied now falls
   back to fetching the output, as documented, instead of failing with `io_error`.
-
 - Errors about a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, ...) now
   carry the job's `provider`, and `invalid_media` from a job download is `retryable: true` with a
   hint to download again.
-
 - `video generate` runs the adapter's local checks (such as model-id syntax and the inline
   request size) before writing the job record, and a submission the adapter still refuses before
   sending no longer leaves a `failed` job. It also checks the credential before creating output
