@@ -732,6 +732,37 @@ async fn input_rules_fail_dry_runs_and_come_before_the_credential_check() {
 }
 
 #[tokio::test]
+async fn a_format_contradicting_the_output_extension_names_the_flag_given() {
+    let f = Fixture::new();
+    let setup = || CliSetup::new(f.sandbox.env_without_keys(), vec![f.openai.clone(), f.gemini.clone()]);
+    for (args, given) in
+        [(&["-O", "format=jpeg"][..], "-O format=jpeg"), (&["--format", "jpeg"], "--format jpeg")]
+    {
+        for dry_run in [true, false] {
+            let mut argv = vec!["image", "generate", "x", "-o", "a.png", "--json"];
+            argv.extend_from_slice(args);
+            if dry_run {
+                argv.push("--dry-run");
+            }
+            let run = run_cli(setup(), &argv).await;
+            assert_eq!(run.code, 2, "{argv:?}: {}", run.stdout);
+            let v = run.json();
+            assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
+            let message = v["error"]["message"].as_str().unwrap();
+            assert_eq!(message, format!("-o/--output extension '.png' contradicts {given}"), "{argv:?}");
+            assert_eq!(v["error"]["details"]["option"], "format");
+        }
+    }
+    let run = run_cli(
+        setup(),
+        &["image", "generate", "x", "-o", "a.jpg", "-O", "format=jpeg", "--dry-run", "--json"],
+    )
+    .await;
+    assert_eq!(run.code, 0, "{}", run.stdout);
+    assert_eq!(f.image_calls(), 0);
+}
+
+#[tokio::test]
 async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() {
     let f = Fixture::new();
     let v = f.run(&["image", "generate", "x", "-o", "../up/./x.png", "--dry-run", "--json"]).await.json();

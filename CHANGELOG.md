@@ -169,6 +169,8 @@ machine-readable contract for agents.
   inline request. A dry run now fails where the real run would, and a real run without a key
   reports the input problem (exit 2) instead of `missing_credentials`. `models show` reports them
   as `inputs.mask_requirements` and `inputs.max_request_bytes` (additive fields).
+- An `-o` extension that contradicts the requested format names the flag actually given
+  (`-O format=jpeg` or `--format jpeg`) instead of always saying `--format`.
 
 ### Known limitations
 

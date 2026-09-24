@@ -8,9 +8,10 @@ use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Map, Value};
 
+use crate::artifacts::{media, paths};
 use crate::catalog::{
-    CapabilitySource, EstimateInput, InputCounts, Lifecycle, ModelSpec, RawOption, ResolvedModel,
-    ResolvedOptions,
+    CapabilitySource, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionSource, RawOption,
+    ResolvedModel, ResolvedOptions,
 };
 use crate::config::SettingSource;
 use crate::domain::{CostEstimate, Operation, ProviderId, Warning};
@@ -201,17 +202,45 @@ pub(crate) fn check_prompt(spec: &ModelSpec, prompt: &str) -> Result<(), IrisErr
 }
 
 /// Local checks that need the request as a whole: the model's rules relating
-/// several inputs (a mask's dimensions, the cap on an inline request). Called by
-/// every generation command after its inputs are read and before a dry run returns
-/// or a credential is needed, so `--dry-run` rejects what the real run would
-/// reject before sending.
-pub(crate) fn check_inputs<'a>(
+/// several inputs (a mask's dimensions, the cap on an inline request), and an
+/// explicit output format that contradicts the `-o` extension, named by where it
+/// came from. Called by every generation command after its inputs are read and
+/// before a dry run returns or a credential is needed, so `--dry-run` rejects what
+/// the real run would reject before sending.
+pub(crate) fn check_request<'a>(
     spec: &ModelSpec,
     common: &GenerationArgs,
     opts: &ResolvedOptions,
     inputs: impl IntoIterator<Item = &'a InputImage>,
 ) -> Result<(), IrisError> {
-    crate::artifacts::check_request_inputs(&spec.inputs, &common.prompt, opts, inputs)
+    crate::artifacts::check_request_inputs(&spec.inputs, &common.prompt, opts, inputs)?;
+    check_output_format(common, opts)
+}
+
+/// `-o x.png` with an explicit `--format jpeg` or `-O format=jpeg` is a
+/// contradiction; the message names the flag the user actually gave.
+fn check_output_format(common: &GenerationArgs, opts: &ResolvedOptions) -> Result<(), IrisError> {
+    let (Some(output), Some(format)) =
+        (common.output.as_deref(), opts.get("format").and_then(|v| v.as_str()))
+    else {
+        return Ok(());
+    };
+    let Some(ext) = output.extension().and_then(|e| e.to_str()) else { return Ok(()) };
+    let (Some(ext_type), Some(format_type)) =
+        (media::media_type_for_extension(ext), paths::media_type_for_format(format))
+    else {
+        return Ok(());
+    };
+    if ext_type == format_type {
+        return Ok(());
+    }
+    let given = match common.options.iter().find(|o| o.name == "format").map(|o| o.source) {
+        Some(OptionSource::Flag(flag)) => format!("{flag} {format}"),
+        Some(OptionSource::Generic) | None => format!("-O format={format}"),
+    };
+    Err(IrisError::invalid(format!("-o/--output extension '.{ext}' contradicts {given}"))
+        .with_hint("make the -o extension and the requested format agree, or give only one of them")
+        .with_detail("option", "format"))
 }
 
 /// Number of outputs requested: the explicit or default `count`, else 1.
