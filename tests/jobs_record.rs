@@ -412,6 +412,34 @@ fn view_hides_remote_uris_and_lists_downloaded_artifacts() {
 }
 
 #[test]
+fn debug_output_never_shows_signed_uris_or_prompts() {
+    let prompt = "a secret product launch teaser";
+    let mut job = new_job();
+    job.prompt = PromptRecord::new(prompt, true);
+    job.request.insert("negative_prompt".into(), json!("no competitor logos"));
+    let debug_new = format!("{job:?}");
+    assert!(!debug_new.contains("secret product"), "{debug_new}");
+    assert!(!debug_new.contains("competitor"), "{debug_new}");
+    assert!(debug_new.contains("negative_prompt"), "keys are still listed: {debug_new}");
+
+    let mut rec = JobRecord::new(job, ts(0)).unwrap();
+    rec.mark_submitted(&submitted(), ts(1)).unwrap();
+    let outputs = vec![RemoteArtifact { uri: REMOTE_URI.into(), media_type: Some("video/mp4".into()) }];
+    rec.apply_poll(RemoteStatus::Succeeded { outputs, usage: None, warnings: vec![] }, None, ts(2)).unwrap();
+    assert_eq!(rec.prompt().text.as_deref(), Some(prompt), "stored in the record itself");
+
+    for text in [format!("{rec:?}"), format!("{rec:#?}"), format!("{:?}", rec.outputs()[0])] {
+        assert!(!text.contains("s3cr3t"), "signed URI leaked: {text}");
+        assert!(!text.contains("secret product"), "prompt leaked: {text}");
+        assert!(!text.contains("competitor"), "free-text option leaked: {text}");
+    }
+    let text = format!("{rec:?}");
+    assert!(text.contains("sig=REDACTED"), "{text}");
+    assert!(text.contains(&format!("Some(<{} chars>)", prompt.chars().count())), "{text}");
+    assert!(format!("{:?}", rec.prompt()).contains(&rec.prompt().sha256));
+}
+
+#[test]
 fn record_round_trips_through_json() {
     let mut rec = succeeded_record(1);
     rec.mark_output_downloaded(0, &artifact(0), ts(70)).unwrap();

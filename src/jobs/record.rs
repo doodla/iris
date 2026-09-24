@@ -19,6 +19,7 @@
 //! Every transition into a terminal status (`succeeded`, `failed`, `expired`,
 //! `submission_unknown`) sets `completed_at`.
 
+use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -36,6 +37,7 @@ use crate::error::{ErrorCode, IrisError};
 use crate::output::ErrorBody;
 use crate::output::results::{JobOutputView, JobView};
 use crate::providers::{RemoteStatus, SubmittedOperation};
+use crate::redact;
 
 /// Version of the persisted record format written by this binary. Readers accept
 /// `schema_version <= JOB_RECORD_VERSION` and reject newer records (`state_invalid`).
@@ -48,7 +50,9 @@ pub const SUBMIT_GRACE: Duration = Duration::from_secs(60);
 
 /// What Iris remembers about the prompt: always a SHA-256 and a character count;
 /// the text itself only when `jobs.store_prompts = true`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// `Debug` never shows the text (only its length), so records can be logged.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PromptRecord {
     /// Lowercase hex SHA-256 of the UTF-8 prompt.
     pub sha256: String,
@@ -59,6 +63,17 @@ pub struct PromptRecord {
     /// Fields written by newer versions; preserved on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl fmt::Debug for PromptRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("PromptRecord")
+            .field("sha256", &self.sha256)
+            .field("chars", &self.chars)
+            .field("text", &TextLen(self.text.as_deref()))
+            .field("extra", &KeysOnly(&self.extra))
+            .finish()
+    }
 }
 
 impl PromptRecord {
@@ -115,8 +130,8 @@ impl OutputPlan {
 /// One remote output of a succeeded job and its local download state.
 ///
 /// Obtained read-only through [`JobRecord::outputs`]; changed only through the
-/// `mark_output_*` methods of [`JobRecord`].
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `mark_output_*` methods of [`JobRecord`]. `Debug` shows `remote_uri` redacted.
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JobOutput {
     pub index: u32,
     /// Provider download URI. Stored as-is in the 0600 record; never shown in
@@ -145,6 +160,26 @@ pub struct JobOutput {
     /// Fields written by newer versions; preserved on rewrite.
     #[serde(flatten)]
     pub extra: Map<String, Value>,
+}
+
+impl fmt::Debug for JobOutput {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JobOutput")
+            .field("index", &self.index)
+            .field("remote_uri", &redact::redact_url(&self.remote_uri))
+            .field("media_type", &self.media_type)
+            .field("download_state", &self.download_state)
+            .field("local_path", &self.local_path)
+            .field("bytes", &self.bytes)
+            .field("sha256", &self.sha256)
+            .field("downloaded_at", &self.downloaded_at)
+            .field("last_error", &self.last_error)
+            .field("width", &self.width)
+            .field("height", &self.height)
+            .field("duration_seconds", &self.duration_seconds)
+            .field("extra", &KeysOnly(&self.extra))
+            .finish()
+    }
 }
 
 impl JobOutput {
@@ -186,7 +221,8 @@ impl JobOutput {
 }
 
 /// Everything needed to create a record for a job about to be submitted.
-#[derive(Debug, Clone)]
+/// `Debug` lists the `request` keys only (free-text options may hold prompt text).
+#[derive(Clone)]
 pub struct NewJob {
     pub provider: ProviderId,
     /// Model id sent to the provider.
@@ -198,6 +234,20 @@ pub struct NewJob {
     pub prompt: PromptRecord,
     pub output_plan: OutputPlan,
     pub cost_estimate: Option<CostEstimate>,
+}
+
+impl fmt::Debug for NewJob {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("NewJob")
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("operation", &self.operation)
+            .field("request", &KeysOnly(&self.request))
+            .field("prompt", &self.prompt)
+            .field("output_plan", &self.output_plan)
+            .field("cost_estimate", &self.cost_estimate)
+            .finish()
+    }
 }
 
 /// What [`JobRecord::apply_poll`] changed.
@@ -246,7 +296,11 @@ const RECORD_FIELDS: &[&str] = &[
 ///
 /// Unknown fields (written by newer Iris versions with the same major record
 /// version) are kept in `extra` and written back unchanged.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `Debug` is safe to log: remote URIs are redacted, prompt text is replaced by
+/// its length, and `request`/`extra` are shown as key lists (free-text options
+/// are stored as text when `jobs.store_prompts` is on).
+#[derive(Clone, Serialize, Deserialize)]
 pub struct JobRecord {
     schema_version: u32,
     job_id: JobId,
@@ -271,6 +325,35 @@ pub struct JobRecord {
     cost_estimate: Option<CostEstimate>,
     #[serde(flatten)]
     extra: Map<String, Value>,
+}
+
+impl fmt::Debug for JobRecord {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("JobRecord")
+            .field("schema_version", &self.schema_version)
+            .field("job_id", &self.job_id)
+            .field("provider", &self.provider)
+            .field("model", &self.model)
+            .field("operation", &self.operation)
+            .field("status", &self.status)
+            .field("created_at", &self.created_at)
+            .field("updated_at", &self.updated_at)
+            .field("submitted_at", &self.submitted_at)
+            .field("completed_at", &self.completed_at)
+            .field("last_checked_at", &self.last_checked_at)
+            .field("remote_operation_id", &self.remote_operation_id)
+            .field("provider_request_id", &self.provider_request_id)
+            .field("remote_expires_at", &self.remote_expires_at)
+            .field("request", &KeysOnly(&self.request))
+            .field("prompt", &self.prompt)
+            .field("output_plan", &self.output_plan)
+            .field("outputs", &self.outputs)
+            .field("error", &self.error)
+            .field("usage", &self.usage)
+            .field("cost_estimate", &self.cost_estimate)
+            .field("extra", &KeysOnly(&self.extra))
+            .finish()
+    }
 }
 
 impl JobRecord {
@@ -763,6 +846,27 @@ pub fn request_metadata(
 
 fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
+}
+
+/// `Debug` of a JSON object that lists its keys but never its values.
+struct KeysOnly<'a>(&'a Map<String, Value>);
+
+impl fmt::Debug for KeysOnly<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_set().entries(self.0.keys()).finish()
+    }
+}
+
+/// `Debug` of optional text that shows only its length: `Some(<N chars>)`.
+struct TextLen<'a>(Option<&'a str>);
+
+impl fmt::Debug for TextLen<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            Some(text) => write!(f, "Some(<{} chars>)", text.chars().count()),
+            None => f.write_str("None"),
+        }
+    }
 }
 
 #[cfg(test)]
