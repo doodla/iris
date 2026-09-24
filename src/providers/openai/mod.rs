@@ -29,7 +29,7 @@ use super::{
     Provider, ProviderContext,
 };
 use crate::artifacts::media;
-use crate::domain::{Operation, ProviderId};
+use crate::domain::{Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, HttpResponse};
 use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireImagesResponse, WireOptions};
@@ -50,6 +50,14 @@ const CREDENTIAL_HEADER: CredentialHeader = CredentialHeader { name: "authorizat
 
 /// Input and mask media types the Images API accepts.
 const INPUT_MEDIA_TYPES: &[&str] = &[media::PNG, media::JPEG, media::WEBP];
+
+/// Warning: a returned image is a valid image of another type than the requested or
+/// echoed `output_format`. It is kept under its real type (D-12d: paid output is
+/// never discarded). Not yet in C-03's warning list (additive).
+const WARNING_FORMAT_MISMATCH: &str = "output_format_mismatch";
+/// Warning: the response holds a different number of images than `n` asked for.
+/// Same code as the Gemini adapter uses. Not yet in C-03's warning list (additive).
+const WARNING_OUTPUT_COUNT: &str = "unexpected_output_count";
 
 /// The OpenAI provider: image generation and editing through the Images API.
 #[derive(Debug, Default)]
@@ -110,13 +118,13 @@ impl ImageProvider for OpenAiProvider {
             ));
         }
         let options = WireOptions::from_resolved(&req.options)?;
-        let requested_format = options.output_format.clone();
+        let expect = Expected::of(&options);
         let body = GenerateBody { model: &req.model, prompt: &req.prompt, options };
         let body = serde_json::to_vec(&body)
             .map_err(|e| IrisError::internal(format!("could not encode the OpenAI request: {e}")))?;
         let auth = self.auth(ctx)?;
         let resp = client::post_paid(ctx, &auth, "images/generations", body.into(), &req.model).await?;
-        decode_images(&resp, requested_format.as_deref())
+        decode_images(&resp, &expect)
     }
 
     async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
@@ -136,7 +144,7 @@ impl ImageProvider for OpenAiProvider {
             )));
         }
         let options = WireOptions::from_resolved(&req.options)?;
-        let requested_format = options.output_format.clone();
+        let expect = Expected::of(&options);
         if let Some(mask) = &req.mask {
             check_mask(mask, &req.images[0])?;
         }
@@ -156,7 +164,7 @@ impl ImageProvider for OpenAiProvider {
             .map_err(|e| IrisError::internal(format!("could not encode the OpenAI request: {e}")))?;
         let auth = self.auth(ctx)?;
         let resp = client::post_paid(ctx, &auth, "images/edits", body.into(), &req.model).await?;
-        decode_images(&resp, requested_format.as_deref())
+        decode_images(&resp, &expect)
     }
 }
 
@@ -254,25 +262,58 @@ fn media_type_for_format(format: &str) -> Option<&'static str> {
     }
 }
 
-/// Decode an `ImagesResponse`: every `data[].b64_json` (standard base64), labeled
-/// with the echoed `output_format` (else the requested format, else the default
-/// png) and verified against its magic bytes.
-fn decode_images(resp: &HttpResponse, requested_format: Option<&str>) -> Result<ImageOutput, IrisError> {
+/// What a paid request asked for, to check the response against.
+struct Expected {
+    /// `output_format` sent; `None` means the provider default (png).
+    format: Option<String>,
+    /// `n` sent; `None` means the provider default (1).
+    count: Option<i64>,
+}
+
+impl Expected {
+    fn of(options: &WireOptions) -> Expected {
+        Expected { format: options.output_format.clone(), count: options.n }
+    }
+}
+
+/// Decode an `ImagesResponse`: every `data[].b64_json` (standard base64), typed by
+/// its magic bytes and checked against the requested and echoed `output_format`
+/// (with neither, the provider default png).
+///
+/// * A valid image of another type is kept under its real media type with warning
+///   `output_format_mismatch`: the request completed and may have been billed, and
+///   paid output is never discarded (D-12d, C-02).
+/// * Content that is not a recognized image is `provider_bad_response`.
+/// * A number of images other than the requested `n` is kept with warning
+///   `unexpected_output_count`.
+fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, IrisError> {
     let parsed = WireImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
     if parsed.data.is_empty() {
         return Err(client::bad_response(resp, "it contains no images"));
     }
-    let format = parsed
-        .output_format
-        .as_deref()
-        .filter(|f| OUTPUT_FORMATS.contains(f))
-        .or(requested_format)
-        .unwrap_or("png");
-    let expected = media_type_for_format(format)
-        .ok_or_else(|| IrisError::internal(format!("unexpected output format '{format}'")))?;
+    let format_media_type = |format: &str| {
+        media_type_for_format(format)
+            .ok_or_else(|| IrisError::internal(format!("unexpected output format '{format}'")))
+    };
+    // Every statement about the type the images should have: (why, media type).
+    let mut expectations: Vec<(String, &'static str)> = Vec::new();
+    if let Some(format) = expect.format.as_deref() {
+        expectations
+            .push((format!("the request asked for output_format {format}"), format_media_type(format)?));
+    }
+    if let Some(format) = parsed.output_format.as_deref().filter(|f| OUTPUT_FORMATS.contains(f)) {
+        expectations
+            .push((format!("the response declared output_format {format}"), format_media_type(format)?));
+    }
+    if expectations.is_empty() {
+        expectations.push(("OpenAI's default output_format is png".to_string(), media::PNG));
+    }
+    // The echo (pushed last) is the most specific statement.
+    let expected = expectations.last().map_or(media::PNG, |(_, media_type)| media_type);
 
     let mut images = Vec::with_capacity(parsed.data.len());
     let mut revised = Vec::new();
+    let mut warnings = Vec::new();
     for (index, item) in parsed.data.into_iter().enumerate() {
         let Some(b64) = item.b64_json else {
             let why = if item.has_url {
@@ -289,26 +330,51 @@ fn decode_images(resp: &HttpResponse, requested_format: Option<&str>) -> Result<
             .decode(b64.trim())
             .map_err(|_| client::bad_response(resp, &format!("image {index} is not valid base64")))?;
         drop(b64);
-        match media::sniff(&bytes) {
-            Some(actual) if actual == expected => {}
-            actual => {
+        let actual = match media::sniff(&bytes) {
+            Some(actual) if media::is_image(actual) => actual,
+            other => {
                 return Err(client::bad_response(
                     resp,
                     &format!(
-                        "image {index} should be {expected} (output_format {format}) but its content is {}",
-                        actual.unwrap_or("not a recognized image")
+                        "image {index} should be {expected} but its content is {}",
+                        other.unwrap_or("not a recognized image")
                     ),
                 )
                 .with_detail("expected_media_type", expected)
-                .with_detail("actual_media_type", actual.unwrap_or("unknown")));
+                .with_detail("actual_media_type", other.unwrap_or("unknown")));
             }
+        };
+        let unmet: Vec<&str> =
+            expectations.iter().filter(|(_, m)| *m != actual).map(|(why, _)| why.as_str()).collect();
+        if !unmet.is_empty() {
+            warnings.push(Warning::new(
+                WARNING_FORMAT_MISMATCH,
+                format!(
+                    "OpenAI returned image {index} as {actual}, but {}; it is kept as {actual} because the \
+                     request completed and may have been billed",
+                    unmet.join(" and ")
+                ),
+            ));
         }
         if let Some(text) = item.revised_prompt
             && !revised.contains(&text)
         {
             revised.push(text);
         }
-        images.push(GeneratedImage { media_type: expected.to_string(), bytes });
+        images.push(GeneratedImage { media_type: actual.to_string(), bytes });
+    }
+
+    let wanted = expect.count.unwrap_or(1);
+    if i64::try_from(images.len()).ok() != Some(wanted) {
+        let got = images.len();
+        let noun = if got == 1 { "image" } else { "images" };
+        warnings.push(Warning::new(
+            WARNING_OUTPUT_COUNT,
+            format!(
+                "OpenAI returned {got} {noun} but the request asked for {wanted} (n); every returned image is \
+                 kept"
+            ),
+        ));
     }
 
     Ok(ImageOutput {
@@ -316,6 +382,6 @@ fn decode_images(resp: &HttpResponse, requested_format: Option<&str>) -> Result<
         text: (!revised.is_empty()).then(|| revised.join("\n\n")),
         usage: parsed.usage,
         provider_request_id: resp.request_id.clone(),
-        warnings: Vec::new(),
+        warnings,
     })
 }

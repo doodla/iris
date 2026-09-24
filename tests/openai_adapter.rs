@@ -551,14 +551,14 @@ async fn input_images_of_unsupported_types_are_rejected_by_content_not_by_label(
 // ---------------------------------------------------------------- response decoding
 
 #[tokio::test]
-async fn output_media_type_comes_from_the_echo_or_the_requested_format_and_matches_magic_bytes() {
+async fn output_media_type_comes_from_the_magic_bytes_and_matches_the_echo_and_requested_format() {
     // (content, output_format echo, requested --format, expected media type)
     let cases = [
         (png_rgb(8, 8), Some("png"), None, "image/png"),
         (jpeg(8, 8), Some("jpeg"), None, "image/jpeg"),
         (webp(8, 8), Some("webp"), None, "image/webp"),
         (jpeg(8, 8), None, Some("jpeg"), "image/jpeg"), // no echo: requested format
-        (webp(8, 8), Some("WEBP"), Some("png"), "image/webp"), // echo wins, case-insensitive
+        (webp(8, 8), Some("WEBP"), Some("webp"), "image/webp"), // echo is case-insensitive
         (png_rgb(8, 8), None, None, "image/png"),       // no echo, no format: provider default png
     ];
     for (bytes, echo, requested, expected) in cases {
@@ -571,6 +571,106 @@ async fn output_media_type_comes_from_the_echo_or_the_requested_format_and_match
         let out = generate(&server, opts).await.unwrap();
         assert_eq!(out.images[0].media_type, expected, "{echo:?} {requested:?}");
         assert_eq!(out.images[0].bytes, bytes);
+        assert!(out.warnings.is_empty(), "{echo:?} {requested:?}: {:?}", out.warnings);
+    }
+}
+
+/// A minimal valid GIF (1x1). OpenAI never returns one; it stands for "a valid image
+/// of a type nobody asked for".
+const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
+
+#[tokio::test]
+async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warning() {
+    // (name, content, output_format echo, requested --format, kept media type, text the warning names)
+    let cases = [
+        ("echo png, bytes jpeg", jpeg(8, 8), Some("png"), None, "image/jpeg", "declared output_format png"),
+        (
+            "requested webp, bytes png",
+            png_rgb(8, 8),
+            None,
+            Some("webp"),
+            "image/png",
+            "asked for output_format webp",
+        ),
+        (
+            "echo png matches the bytes, requested jpeg",
+            png_rgb(8, 8),
+            Some("png"),
+            Some("jpeg"),
+            "image/png",
+            "asked for output_format jpeg",
+        ),
+        (
+            "no echo, no format, bytes gif",
+            GIF_1X1.to_vec(),
+            None,
+            None,
+            "image/gif",
+            "default output_format is png",
+        ),
+    ];
+    for (name, bytes, echo, requested, kept, names) in cases {
+        let server = MockServer::start().await;
+        mount(&server, GEN, ok(images_body(&[&bytes], echo))).await;
+        let opts = match requested {
+            Some(f) => options(&[("format", s(f))]),
+            None => ResolvedOptions::new(),
+        };
+        let out = generate(&server, opts).await.unwrap_or_else(|e| panic!("{name}: {}", e.message));
+        assert_eq!(out.images.len(), 1, "{name}");
+        assert_eq!(out.images[0].media_type, kept, "{name}");
+        assert_eq!(out.images[0].bytes, bytes, "{name}: kept verbatim");
+        assert_eq!(out.provider_request_id.as_deref(), Some("req_ok_123"), "{name}");
+        assert_eq!(out.warnings.len(), 1, "{name}: {:?}", out.warnings);
+        assert_eq!(out.warnings[0].code, "output_format_mismatch", "{name}");
+        let message = &out.warnings[0].message;
+        assert!(message.contains(kept) && message.contains(names), "{name}: {message}");
+        if name.starts_with("echo png matches") {
+            assert!(!message.contains("declared"), "{name}: the met echo is not a complaint: {message}");
+        }
+        assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
+    }
+
+    // Only the mismatched image of a multi-image answer is reported.
+    let server = MockServer::start().await;
+    let (good, odd) = (png_rgb(8, 8), jpeg(8, 8));
+    mount(&server, GEN, ok(images_body(&[&good, &odd], Some("png")))).await;
+    let out = generate(&server, options(&[("count", OptionValue::Int(2))])).await.unwrap();
+    let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
+    assert_eq!(types, ["image/png", "image/jpeg"]);
+    assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
+    assert!(out.warnings[0].message.contains("image 1 "), "{}", out.warnings[0].message);
+}
+
+#[tokio::test]
+async fn a_different_number_of_images_than_requested_is_kept_with_a_warning() {
+    let img = png_rgb(8, 8);
+    // (requested count, images returned, warning expected)
+    let cases = [(Some(4), 1, true), (None, 2, true), (Some(2), 2, false), (None, 1, false)];
+    for (count, returned, warns) in cases {
+        let server = MockServer::start().await;
+        let images: Vec<&[u8]> = (0..returned).map(|_| img.as_slice()).collect();
+        mount(&server, GEN, ok(images_body(&images, Some("png")))).await;
+        let opts = match count {
+            Some(n) => options(&[("count", OptionValue::Int(n))]),
+            None => ResolvedOptions::new(),
+        };
+        let out = generate(&server, opts).await.unwrap();
+        assert_eq!(out.images.len(), returned, "{count:?}: every returned image is kept");
+        let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
+        if warns {
+            assert_eq!(codes, ["unexpected_output_count"], "{count:?}");
+            let wanted = count.unwrap_or(1);
+            let message = &out.warnings[0].message;
+            assert!(
+                message.contains(&format!("returned {returned} "))
+                    && message.contains(&format!("for {wanted}")),
+                "{message}"
+            );
+        } else {
+            assert!(codes.is_empty(), "{count:?}: {codes:?}");
+        }
+        assert_eq!(requests(&server).await.len(), 1);
     }
 }
 
@@ -591,7 +691,8 @@ async fn unpadded_base64_is_accepted() {
 
 #[tokio::test]
 async fn unusable_success_bodies_are_provider_bad_response_and_never_retried() {
-    let png = png_rgb(8, 8);
+    // An ISO-BMFF `ftyp` box: sniffed as video/mp4, which is not an image.
+    let mp4_head = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isommp41";
     let cases: Vec<(&str, ResponseTemplate)> = vec![
         ("zero images", ok(json!({"created": 1, "data": []}))),
         ("no data", ok(json!({"created": 1}))),
@@ -612,18 +713,12 @@ async fn unusable_success_bodies_are_provider_bad_response_and_never_retried() {
             "not an image",
             ok(json!({"created": 1, "data": [{"b64_json": STANDARD.encode(b"{\"error\":1}")}]})),
         ),
-        ("echo png, bytes jpeg", ok(images_body(&[&jpeg(8, 8)], Some("png")))),
-        ("requested webp, bytes png", ok(images_body(&[&png], None))),
+        ("a video, not an image", ok(images_body(&[mp4_head], Some("png")))),
     ];
     for (name, template) in cases {
         let server = MockServer::start().await;
         mount(&server, GEN, template).await;
-        let opts = if name.starts_with("requested webp") {
-            options(&[("format", s("webp"))])
-        } else {
-            ResolvedOptions::new()
-        };
-        let err = generate(&server, opts).await.expect_err(name);
+        let err = generate(&server, ResolvedOptions::new()).await.expect_err(name);
         assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{name}: {}", err.message);
         assert_eq!(err.provider, Some(ProviderId::OpenAi), "{name}");
         assert_eq!(err.provider_status, Some(200), "{name}");
@@ -632,6 +727,12 @@ async fn unusable_success_bodies_are_provider_bad_response_and_never_retried() {
         assert!(!err.message.contains("sig=abc"), "{name}: {}", err.message);
         assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
     }
+    // The video case says what the content was.
+    let server = MockServer::start().await;
+    mount(&server, GEN, ok(images_body(&[mp4_head], Some("png")))).await;
+    let err = generate(&server, ResolvedOptions::new()).await.unwrap_err();
+    assert_eq!(err.details.get("actual_media_type"), Some(&json!("video/mp4")));
+    assert_eq!(err.details.get("expected_media_type"), Some(&json!("image/png")));
 }
 
 #[tokio::test]
