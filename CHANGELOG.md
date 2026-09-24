@@ -147,9 +147,10 @@ machine-readable contract for agents.
   `details.path` and a hint, found before anything is sent; it was `io_error` (exit 1) for
   everything except a file in the way.
 - Planned output paths are lexically normalized (`-o ../x.png` plans `/parent/x.png`, not
-  `/cwd/../x.png`), the JSON contract explains that default names in a `--dry-run` plan are
-  indicative, and the `output_extension_adjusted` warning for `-o` without an extension names the
-  files actually written when there are several outputs.
+  `/cwd/../x.png`; a video plan without `-o` still shows the output directory as configured), the
+  JSON contract explains that default names in a `--dry-run` plan are indicative, and the
+  `output_extension_adjusted` warning for `-o` without an extension names the files actually
+  written when there are several outputs.
 - **Removed** the `--seed`, `--audio`, and `--no-audio` flags: no built-in model accepts them, so
   they could only fail (`-O name=value` reaches options of future models). Image commands now offer
   only image flags (`--count`, `--size`, `--aspect-ratio`, `--resolution`, `--quality`,

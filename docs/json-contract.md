@@ -272,10 +272,13 @@ writable, which a dry run does not do because it writes nothing.
 }
 ```
 
-`outputs` are absolute, lexically normalized paths (`.` and `..` removed without resolving
-symbolic links); a real run writes to the same normalized paths. An explicit `-o` path is exactly
-what the real run uses. Default names are indicative: image names contain an id generated for each
-plan (`iris-<ulid>.png`), so the real run picks a new one, and video plans show a `<job_id>`
+`outputs` are absolute paths. Image plans, and any plan given `-o`, show them lexically normalized
+(`.` and `..` removed without resolving symbolic links), as the real run writes them; an explicit
+`-o` path is exactly what the real run uses. A video plan without `-o` shows the output directory
+as configured (`-d`, `IRIS_OUTPUT_DIR`, or `output_dir`, made absolute but not normalized)
+followed by the placeholder name; the real run writes to the normalized form of that path.
+Default names are indicative: image names contain an id generated for each plan
+(`iris-<ulid>.png`), so the real run picks a new one, and video plans show a `<job_id>`
 placeholder because the job id is assigned when the real run records the job.
 
 ### Shared objects
