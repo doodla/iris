@@ -243,11 +243,17 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
         let out = run(iris(&sandbox).args(*leaf).arg("--help"));
         assert_eq!(out.code, 0, "{leaf:?}");
         assert!(out.stdout.contains("Examples:\n  iris "), "{leaf:?} help has no examples:\n{}", out.stdout);
+        // Every command has a long_about: --help says more than -h.
+        let short = run(iris(&sandbox).args(*leaf).arg("-h"));
+        assert_eq!(short.code, 0, "{leaf:?}");
+        assert_ne!(short.stdout, out.stdout, "{leaf:?}: -h and --help are identical (no long_about)");
     }
     for group in ["image", "video", "jobs", "models", "providers", "config"] {
         let out = run(iris(&sandbox).args([group, "--help"]));
         assert_eq!(out.code, 0, "{group}");
         assert!(out.stdout.contains("Commands:"), "{group}");
+        assert!(out.stdout.contains("Examples:\n  iris "), "{group} help has no examples:\n{}", out.stdout);
+        assert_ne!(run(iris(&sandbox).args([group, "-h"])).stdout, out.stdout, "{group}");
     }
     let gen_help = run(iris(&sandbox).args(["image", "generate", "--help"])).stdout;
     for flag in [

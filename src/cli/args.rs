@@ -95,14 +95,18 @@ pub enum Command {
         subcommand,
         long_about = "Generate images from a prompt, or edit/compose images from local reference images. \
                       Both are synchronous paid requests: the images are validated and saved before the \
-                      command returns, and no job record is created."
+                      command returns, and no job record is created.",
+        after_help = "Examples:\n  iris image generate \"a watercolor fox\" -o fox.png\n  iris image edit -i \
+                      photo.png \"make it autumn\" --json"
     )]
     Image(ImageCommand),
     /// Generate videos (provider-native asynchronous jobs)
     #[command(
         subcommand,
         long_about = "Generate videos as provider-native asynchronous jobs. Iris records each job locally \
-                      before submitting it, so it can be resumed by later commands."
+                      before submitting it, so it can be resumed by later commands.",
+        after_help = "Examples:\n  iris video generate \"waves at dusk\" --duration 4 -o waves.mp4\n  iris video \
+                      generate \"a paper boat\" --detach --json"
     )]
     Video(VideoCommand),
     /// List, inspect, wait for, download, and delete local video jobs
@@ -110,28 +114,33 @@ pub enum Command {
         subcommand,
         long_about = "Work with local records of provider-native jobs (video generation). Records live in \
                       the state directory (`iris config path`). Deleting a record never cancels or deletes \
-                      anything remotely."
+                      anything remotely.",
+        after_help = "Examples:\n  iris jobs list\n  iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs \
+                      download job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4"
     )]
     Jobs(JobsCommand),
     /// List models and inspect their capabilities
     #[command(
         subcommand,
-        long_about = "List the models Iris knows and inspect their declared capabilities, \
-                                       options, defaults, and published prices."
+        long_about = "List the models Iris knows and inspect their declared capabilities, options, defaults, \
+                      and published prices.",
+        after_help = "Examples:\n  iris models list\n  iris models show nano-banana --json"
     )]
     Models(ModelsCommand),
     /// List providers, credential variables, and whether they are set
     #[command(
         subcommand,
-        long_about = "List providers with the environment variable each reads its API key \
-                                       from and whether it is set (never its value)."
+        long_about = "List providers with the environment variable each reads its API key from and whether \
+                      it is set (never its value).",
+        after_help = "Examples:\n  iris providers list\n  iris providers list --json"
     )]
     Providers(ProvidersCommand),
     /// Show effective configuration and file locations
     #[command(
         subcommand,
-        long_about = "Show the effective non-secret settings with the source of each \
-                                       value (flag, env, file, default), and where Iris keeps its files."
+        long_about = "Show the effective non-secret settings with the source of each value (flag, env, file, \
+                      default), and where Iris keeps its files.",
+        after_help = "Examples:\n  iris config show\n  iris config path --json"
     )]
     Config(ConfigCommand),
     /// Check credentials, configuration, and directories
@@ -555,17 +564,36 @@ pub struct ModelsShowArgs {
 #[derive(Debug, Subcommand)]
 pub enum ProvidersCommand {
     /// List providers, credential variables, presence, and base URLs
-    #[command(after_help = "Examples:\n  iris providers list\n  iris providers list --json")]
+    #[command(
+        long_about = "List every provider Iris supports with its operations, the environment variable its \
+                      API key is read from (OPENAI_API_KEY or GEMINI_API_KEY), whether that variable is set \
+                      (never its value), and the base URL requests go to. The key is sent to that base URL, \
+                      including an override from IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, or the config \
+                      file.",
+        after_help = "Examples:\n  iris providers list\n  iris providers list --json"
+    )]
     List,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum ConfigCommand {
     /// Show effective settings and the source of each value
-    #[command(after_help = "Examples:\n  iris config show\n  iris --config ./iris.toml config show --json")]
+    #[command(
+        long_about = "Show every non-secret setting Iris would use, with its value and where it came from: a \
+                      command-line flag, an environment variable (named), the config file, or the built-in \
+                      default. Credentials are listed by presence only, never by value. A non-default \
+                      provider base URL is flagged with a warning, since API keys are sent there.",
+        after_help = "Examples:\n  iris config show\n  iris --config ./iris.toml config show --json"
+    )]
     Show,
     /// Show the config file, state directory, and jobs directory paths
-    #[command(after_help = "Examples:\n  iris config path\n  iris config path --json")]
+    #[command(
+        long_about = "Show the absolute paths Iris uses: the config file (--config, IRIS_CONFIG, or the \
+                      platform default; it need not exist), the state directory (IRIS_STATE_DIR, config \
+                      state_dir, or the platform default), and the jobs directory inside it where local job \
+                      records are kept.",
+        after_help = "Examples:\n  iris config path\n  iris config path --json"
+    )]
     Path,
 }
 
