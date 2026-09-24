@@ -247,7 +247,8 @@ impl Settings {
     /// Settings of one provider.
     pub fn provider(&self, provider: ProviderId) -> &ProviderSettings {
         // `load` resolves every provider in `ProviderId::ALL`, and only `load` can
-        // build a `Settings`.
+        // build a `Settings`. A unit test in `domain` checks that `ALL` lists every
+        // `ProviderId` variant, so no provider can be missing here.
         &self.providers[&provider]
     }
 

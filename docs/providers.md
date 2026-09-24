@@ -129,15 +129,22 @@ Then:
 
 1. Give the provider its identity: a `Seedance` variant of the `ProviderId` enum
    (`src/domain.rs`), an entry in `ProviderId::ALL`, and a match arm in each of its identity
-   methods: `as_str` (`"seedance"`, which is also its serde name, `--provider` value, and config
-   table name), `display_name`, `credential_env` (the one environment variable its key is read
-   from, e.g. `SEEDANCE_API_KEY`), `default_base_url`, and `base_url_env`
-   (`IRIS_SEEDANCE_BASE_URL`). The compiler points at every missing arm. Configuration, `doctor`,
-   `providers list`, and credential redaction iterate `ProviderId::ALL` and read these methods,
-   so they pick the provider up without further edits (see
-   [the checklist below](#checklist-everything-a-new-provider-touches)). Then add the catalog
-   module to `src/catalog/mod.rs`: `pub mod seedance;`, its `MODELS` in the `all()` chain, and a
-   `model_id_syntax` arm for the ids its adapter can send.
+   methods: `as_str` (`"seedance"`, its `--provider` value and config table name),
+   `display_name`, `credential_env` (the one environment variable its key is read from, e.g.
+   `SEEDANCE_API_KEY`), `default_base_url`, and `base_url_env` (`IRIS_SEEDANCE_BASE_URL`).
+   `as_str` must equal the variant's serde name: the enum's `#[serde(rename_all = "snake_case")]`
+   names `Seedance` `seedance`, and a variant the rule would spell differently needs its own
+   `#[serde(rename = "…")]`, as `OpenAi` has for `openai`. The compiler points at every missing
+   match arm, but not at a missing `ALL` entry or a mismatched name; two unit tests in
+   `src/domain.rs` catch those. `all_lists_every_provider_once` fails until `ALL` lists every
+   variant exactly once, the registry has one adapter per provider in `ALL` order (step 4), and
+   the catalog has models for each provider. `identity_names_follow_the_id` checks that the
+   serde name, `--provider` parsing, and `IRIS_<ID>_BASE_URL` all follow `as_str`.
+   Configuration, `doctor`, and credential redaction iterate `ProviderId::ALL`, `providers list`
+   iterates the registry, and all of them read these methods, so they pick the provider up
+   without further edits (see [the checklist below](#checklist-everything-a-new-provider-touches)).
+   Then add the catalog module to `src/catalog/mod.rs`: `pub mod seedance;`, its `MODELS` in the
+   `all()` chain, and a `model_id_syntax` arm for the ids its adapter can send.
 2. Give the adapter a `CredentialHeader` (header name and value prefix, e.g. `Authorization` /
    `Bearer `) matching how the provider documents authentication.
 3. Declare every option the model accepts as an `OptionSpec` (`OptionKind::Enum`, `Integer { min,
@@ -224,7 +231,8 @@ The complete list, for a provider like the Seedance example.
 - `src/catalog/seedance.rs`, and in `src/catalog/mod.rs` its `pub mod`, its models in `all()`, and a
   `model_id_syntax` arm.
 - `ProviderId` in `src/domain.rs`: the variant, the `ALL` entry, and one arm in each of `as_str`,
-  `display_name`, `credential_env`, `default_base_url`, and `base_url_env`.
+  `display_name`, `credential_env`, `default_base_url`, and `base_url_env`. The compiler checks
+  the arms; the `domain` unit tests check the `ALL` entry and that the names agree (step 3).
 - Adapter and catalog tests (step 5).
 
 **Derived from those, with no further edits:** parsing `--provider seedance` and

@@ -200,7 +200,9 @@ another origin. The adapter only decides which output URIs Iris may fetch at all
 
 Adding a provider means a new adapter module, one line in `Registry::builtin()`, the provider's
 identity in `ProviderId`, catalog declarations, and tests — not changes scattered through `app`
-or `cli`. Configuration, `doctor`, `providers list`, and redaction iterate `ProviderId::ALL`, and
-the published schema and a few help texts that name providers are updated by hand. See
+or `cli`. Configuration, `doctor`, and redaction iterate `ProviderId::ALL`, and `providers list`
+iterates the registry. The compiler does not check that `ALL` lists every variant; a unit test in
+`domain` does, and also checks that `ALL` agrees with the registry and the catalog. The published
+schema and a few help texts that name providers are updated by hand. See
 [providers.md](providers.md) for the step-by-step guide and the complete checklist, worked
 through a hypothetical Seedance adapter.

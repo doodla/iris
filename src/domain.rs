@@ -24,7 +24,10 @@ pub enum ProviderId {
 /// Configuration, diagnostics, and redaction iterate [`ProviderId::ALL`] instead
 /// of listing providers themselves.
 impl ProviderId {
-    /// Every provider, in display order (config rows, `providers list`, `doctor`).
+    /// Every provider, in display order (config rows, `doctor`, and the order of
+    /// `Registry::builtin()`, which `providers list` iterates). The compiler does not
+    /// check that this list is complete; the `all_lists_every_provider_once` test
+    /// below compares it with the enum's variants, the registry, and the catalog.
     pub const ALL: &'static [ProviderId] = &[ProviderId::OpenAi, ProviderId::Gemini];
 
     /// The provider's id: its serde name, `--provider` value, and the name of its
@@ -278,4 +281,72 @@ pub struct Artifact {
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub duration_seconds: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeSet;
+
+    use serde_json::Value;
+
+    use super::ProviderId;
+
+    /// The provider names the enum itself declares, read from its derived JSON
+    /// Schema: the derive sees every variant, unlike the hand-written `ALL`.
+    fn declared_names() -> Vec<String> {
+        fn collect(v: &Value, out: &mut Vec<String>) {
+            match v {
+                Value::Object(map) => {
+                    if let Some(Value::String(name)) = map.get("const") {
+                        out.push(name.clone());
+                    }
+                    if let Some(Value::Array(names)) = map.get("enum") {
+                        out.extend(names.iter().filter_map(Value::as_str).map(str::to_string));
+                    }
+                    map.values().for_each(|v| collect(v, out));
+                }
+                Value::Array(items) => items.iter().for_each(|v| collect(v, out)),
+                _ => {}
+            }
+        }
+        let schema = serde_json::to_value(schemars::schema_for!(ProviderId)).unwrap();
+        let mut names = Vec::new();
+        collect(&schema, &mut names);
+        names
+    }
+
+    #[test]
+    fn all_lists_every_provider_once() {
+        let all: Vec<&str> = ProviderId::ALL.iter().map(|p| p.as_str()).collect();
+        let unique: BTreeSet<&str> = all.iter().copied().collect();
+        assert_eq!(unique.len(), all.len(), "ProviderId::ALL has a duplicate: {all:?}");
+
+        let declared = declared_names();
+        assert!(!declared.is_empty(), "no variants found in the ProviderId schema");
+        let declared: BTreeSet<&str> = declared.iter().map(String::as_str).collect();
+        assert_eq!(declared, unique, "ProviderId::ALL must list every ProviderId variant");
+
+        let registered: Vec<ProviderId> =
+            crate::providers::Registry::builtin().all().map(|p| p.id()).collect();
+        assert_eq!(registered, ProviderId::ALL, "every provider has one adapter, registered in ALL order");
+
+        let cataloged: BTreeSet<ProviderId> = crate::catalog::all().map(|m| m.provider).collect();
+        let all_set: BTreeSet<ProviderId> = ProviderId::ALL.iter().copied().collect();
+        assert_eq!(
+            cataloged, all_set,
+            "every provider has catalog models, and every model's provider is in ALL"
+        );
+    }
+
+    #[test]
+    fn identity_names_follow_the_id() {
+        for &p in ProviderId::ALL {
+            let id = p.as_str();
+            assert_eq!(serde_json::to_value(p).unwrap(), Value::from(id), "serde name of {p:?}");
+            assert_eq!(serde_json::from_value::<ProviderId>(Value::from(id)).unwrap(), p);
+            assert_eq!(id.parse::<ProviderId>().unwrap(), p, "--provider {id}");
+            assert_eq!(p.to_string(), id);
+            assert_eq!(p.base_url_env(), format!("IRIS_{}_BASE_URL", id.to_ascii_uppercase()));
+        }
+    }
 }
