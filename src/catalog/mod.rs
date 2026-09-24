@@ -60,6 +60,17 @@ pub struct ResolvedModel {
     pub source: CapabilitySource,
 }
 
+/// True if `candidate` is `base` followed by a `-YYYY-MM-DD` snapshot date.
+fn is_snapshot_of(base: &str, candidate: &str) -> bool {
+    let Some(suffix) = candidate.strip_prefix(base) else { return false };
+    let b = suffix.as_bytes();
+    b.len() == 11
+        && b[0] == b'-'
+        && b[5] == b'-'
+        && b[8] == b'-'
+        && [1, 2, 3, 4, 6, 7, 9, 10].iter().all(|&i| b[i].is_ascii_digit())
+}
+
 /// Resolve `--model` / `--capabilities-from` / `--provider` into a model.
 ///
 /// * Known id or alias → catalog spec. If `provider` is given and differs → `invalid_argument`.
@@ -85,7 +96,10 @@ pub fn resolve(
                 spec.id, spec.provider
             )));
         }
-        return Ok(ResolvedModel { id: spec.id.to_string(), spec, source: CapabilitySource::Catalog });
+        // A dated snapshot alias (`<id>-YYYY-MM-DD`) pins that snapshot, so send it as given;
+        // other aliases are Iris nicknames for the canonical id.
+        let id = if is_snapshot_of(spec.id, model) { model } else { spec.id };
+        return Ok(ResolvedModel { id: id.to_string(), spec, source: CapabilitySource::Catalog });
     }
 
     let Some(template) = capabilities_from else {
@@ -119,4 +133,27 @@ pub fn resolve(
         return Err(IrisError::invalid(format!("model id '{model}' contains unsupported characters")));
     }
     Ok(ResolvedModel { id: model.to_string(), spec, source: CapabilitySource::Borrowed { from: spec.id } })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn snapshot_aliases_are_sent_as_given_and_nicknames_are_canonicalized() {
+        for m in all() {
+            for alias in m.aliases {
+                let resolved = resolve(alias, None, None).unwrap();
+                assert_eq!(resolved.spec.id, m.id);
+                if is_snapshot_of(m.id, alias) {
+                    assert_eq!(resolved.id, *alias, "snapshot {alias} must be pinned");
+                } else {
+                    assert_eq!(resolved.id, m.id, "nickname {alias} must resolve to the canonical id");
+                }
+            }
+        }
+        assert!(is_snapshot_of("gpt-image-2", "gpt-image-2-2026-04-21"));
+        assert!(!is_snapshot_of("gpt-image-2", "gpt-image-2-2026-04"));
+        assert!(!is_snapshot_of("gpt-image-2", "gpt-image-2.5-sunburst"));
+    }
 }
