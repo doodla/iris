@@ -15,6 +15,7 @@ use crate::providers::AccountAccess;
 use crate::redact;
 
 use super::context::AppContext;
+use super::request::effective_default;
 
 /// `models list`, optionally filtered by provider and operation.
 pub fn list(ctx: &AppContext, provider: Option<ProviderId>, operation: Option<Operation>) -> ModelListResult {
@@ -24,12 +25,12 @@ pub fn list(ctx: &AppContext, provider: Option<ProviderId>, operation: Option<Op
         .into_iter()
         .filter(|m| provider.is_none_or(|p| m.provider == p))
         .filter(|m| operation.is_none_or(|op| m.supports(op)))
-        .map(summary)
+        .map(|m| summary(ctx, m))
         .collect();
     ModelListResult { models }
 }
 
-fn summary(m: &ModelSpec) -> ModelSummary {
+fn summary(ctx: &AppContext, m: &ModelSpec) -> ModelSummary {
     ModelSummary {
         id: m.id.to_string(),
         provider: m.provider,
@@ -37,8 +38,18 @@ fn summary(m: &ModelSpec) -> ModelSummary {
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
         operations: m.operations.to_vec(),
-        default_for: m.default_for.to_vec(),
+        default_for: default_for(ctx, m),
     }
+}
+
+/// Operations for which `m` is the model used without `--model`: the configured
+/// default of its provider when set, else the catalog default.
+fn default_for(ctx: &AppContext, m: &ModelSpec) -> Vec<Operation> {
+    m.operations
+        .iter()
+        .copied()
+        .filter(|op| effective_default(ctx, m.provider, *op).is_some_and(|d| d.id == m.id))
+        .collect()
 }
 
 /// `models show <MODEL>`: declared capabilities, options, defaults, pricing, and
@@ -95,7 +106,7 @@ fn capabilities(
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
         operations: m.operations.to_vec(),
-        default_for: m.default_for.to_vec(),
+        default_for: default_for(ctx, m),
         inputs: InputsView {
             max_input_images: m.inputs.max_input_images,
             input_media_types: m.inputs.input_media_types.iter().map(|t| t.to_string()).collect(),

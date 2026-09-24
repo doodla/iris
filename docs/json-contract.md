@@ -161,6 +161,10 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
 
 ### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [], "default_for": [] } ] }`
 
+`default_for` (here and in `models.show`) lists the operations for which the model is used when
+no `--model` is given: the configured `providers.<provider>.image_model` / `video_model` when set,
+otherwise the catalog default.
+
 ### `models.show` → `{ "model": ModelCapabilities }`
 
 ```json

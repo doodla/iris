@@ -180,6 +180,9 @@ machine-readable contract for agents.
   `required` (nullable where it may be `null`), `ok` decides which of `result`/`error` is null,
   `result` is tied to `command`, and an error's `category` to its `code`. Outputs are unchanged;
   the schema only rejects documents Iris never prints.
+- `default_for` in `models list`/`models show` reports the model a command uses without `--model`:
+  the configured `providers.<provider>.image_model`/`video_model` when set, else the catalog
+  default (it always showed the catalog default).
 
 ### Known limitations
 

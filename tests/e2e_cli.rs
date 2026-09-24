@@ -430,3 +430,43 @@ fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
         .ok();
     check(limit.upper_bound("x", &ResolvedOptions::new(), [sizes[0], sizes[1]]), body_len(&route));
 }
+
+/// `default_for` shows the model a command actually uses without `--model`: the
+/// configured `providers.<p>.image_model`/`video_model` when set, else the catalog
+/// default, in both `models list` and `models show`.
+#[test]
+fn models_report_the_effective_default_model() {
+    let sb = Sandbox::new();
+    let default_for = |v: &Value, id: &str| -> Vec<String> {
+        let models = v["result"]["models"].as_array().unwrap();
+        let m = models.iter().find(|m| m["id"] == id).unwrap_or_else(|| panic!("{id}: {v}"));
+        m["default_for"].as_array().unwrap().iter().map(|o| o.as_str().unwrap().to_string()).collect()
+    };
+    let both = ["image.generate".to_string(), "image.edit".to_string()];
+
+    let v = sb.iris().args(["models", "list", "--json"]).run().ok();
+    assert_eq!(default_for(&v, "gpt-image-2.5-sunburst"), both);
+    assert!(default_for(&v, "gpt-image-2").is_empty());
+    assert_eq!(default_for(&v, "veo-3.1-fast-generate-preview"), ["video.generate"]);
+
+    let config = sb.config(
+        "iris.toml",
+        "[providers.openai]\nimage_model = \"gpt-image-2\"\n\n[providers.gemini]\nvideo_model = \"veo-lite\"\n",
+    );
+    let mut configured = sb.iris();
+    configured.env("IRIS_CONFIG", &config);
+    let v = configured.clone().args(["models", "list", "--json"]).run().ok();
+    assert_eq!(default_for(&v, "gpt-image-2"), both);
+    assert!(default_for(&v, "gpt-image-2.5-sunburst").is_empty());
+    assert_eq!(default_for(&v, "veo-3.1-lite-generate-preview"), ["video.generate"]);
+    assert!(default_for(&v, "veo-3.1-fast-generate-preview").is_empty());
+    assert_eq!(default_for(&v, "gemini-3.1-flash-image"), both, "not configured: the catalog default");
+
+    let v = configured.clone().args(["models", "show", "gpt-image-2", "--json"]).run().ok();
+    assert_eq!(v["result"]["model"]["default_for"], serde_json::json!(both));
+    let plan = configured.clone().args(["image", "generate", "x", "--dry-run", "--json"]).run().ok();
+    assert_eq!(plan["result"]["model"], "gpt-image-2", "the listed default is the one used");
+    let human = configured.args(["models", "list"]).run();
+    let line = human.human().lines().find(|l| l.starts_with("gpt-image-2 ")).unwrap().to_string();
+    assert_eq!(line.matches("image.generate, image.edit").count(), 2, "operations and default for: {line}");
+}

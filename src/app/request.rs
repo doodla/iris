@@ -144,6 +144,18 @@ fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisE
         })
 }
 
+/// The model a generation command uses for `op` on `provider` when no `--model` is
+/// given: the configured `providers.<provider>.image_model`/`video_model` if set,
+/// else the catalog default. `None` when there is none for this provider and
+/// operation.
+pub(crate) fn effective_default(
+    ctx: &AppContext,
+    provider: ProviderId,
+    op: Operation,
+) -> Option<&'static ModelSpec> {
+    default_spec(ctx, provider, op).ok().filter(|m| m.provider == provider && m.supports(op))
+}
+
 fn default_spec(
     ctx: &AppContext,
     provider: ProviderId,

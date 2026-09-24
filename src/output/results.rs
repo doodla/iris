@@ -96,6 +96,9 @@ pub struct ModelSummary {
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
+    /// Operations for which this model is used when no `--model` is given: the
+    /// configured `providers.<provider>.image_model`/`video_model`, else the catalog
+    /// default.
     pub default_for: Vec<Operation>,
 }
 
@@ -208,6 +211,8 @@ pub struct ModelCapabilities {
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
+    /// Operations for which this model is used when no `--model` is given (the
+    /// configured default of its provider, else the catalog default).
     pub default_for: Vec<Operation>,
     pub inputs: InputsView,
     pub options: Vec<OptionView>,

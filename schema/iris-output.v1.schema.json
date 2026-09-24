@@ -1610,6 +1610,7 @@
           "type": "array"
         },
         "default_for": {
+          "description": "Operations for which this model is used when no `--model` is given (the\nconfigured default of its provider, else the catalog default).",
           "items": {
             "$ref": "#/$defs/Operation"
           },
@@ -1715,6 +1716,7 @@
           "type": "array"
         },
         "default_for": {
+          "description": "Operations for which this model is used when no `--model` is given: the\nconfigured `providers.<provider>.image_model`/`video_model`, else the catalog\ndefault.",
           "items": {
             "$ref": "#/$defs/Operation"
           },
