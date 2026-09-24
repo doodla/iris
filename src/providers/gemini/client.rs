@@ -13,7 +13,7 @@ use crate::http::{
     AuthHeader, Call, HttpResponse, RetryClass, Verdict, parse_protobuf_duration, redact_urls_in_text,
     sanitize_request_id,
 };
-use crate::providers::{CredentialHeader, ProviderContext};
+use crate::providers::{CredentialHeader, ProviderContext, USAGE_MAX_DEPTH, USAGE_MAX_ENTRIES};
 use crate::redact;
 
 /// API version for `generateContent` (images) and image-model metadata.
@@ -444,15 +444,13 @@ pub fn rpc_code_name(code: i64) -> String {
 /// Keep only numbers, booleans, and short enum-like strings from a provider usage
 /// object (`Usage::provider_usage` is informational and must not carry free text).
 /// Nesting and width are bounded like every adapter's usage object
-/// ([`USAGE_MAX_DEPTH`](crate::providers::USAGE_MAX_DEPTH) levels of objects or
-/// arrays, [`USAGE_MAX_ENTRIES`](crate::providers::USAGE_MAX_ENTRIES) entries each);
-/// anything deeper is dropped.
+/// ([`USAGE_MAX_DEPTH`] levels of objects or arrays, [`USAGE_MAX_ENTRIES`] entries
+/// each); anything deeper is dropped.
 pub fn sanitize_usage(value: &Value) -> Option<Value> {
     sanitize_usage_at(value, 0)
 }
 
 fn sanitize_usage_at(value: &Value, depth: usize) -> Option<Value> {
-    use crate::providers::{USAGE_MAX_DEPTH, USAGE_MAX_ENTRIES};
     match value {
         Value::Number(_) | Value::Bool(_) => Some(value.clone()),
         Value::String(s) => identifier(s).map(Value::String),
@@ -576,11 +574,8 @@ mod tests {
         let wide: serde_json::Map<String, Value> =
             (0..100).map(|i| (format!("k{i:03}"), Value::from(i))).collect();
         let clean = sanitize_usage(&Value::Object(wide)).unwrap();
-        assert_eq!(clean.as_object().unwrap().len(), crate::providers::USAGE_MAX_ENTRIES);
+        assert_eq!(clean.as_object().unwrap().len(), USAGE_MAX_ENTRIES);
         let long = Value::Array((0..100).map(Value::from).collect());
-        assert_eq!(
-            sanitize_usage(&long).unwrap().as_array().unwrap().len(),
-            crate::providers::USAGE_MAX_ENTRIES
-        );
+        assert_eq!(sanitize_usage(&long).unwrap().as_array().unwrap().len(), USAGE_MAX_ENTRIES);
     }
 }
