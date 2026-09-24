@@ -11,9 +11,10 @@
 #
 # and packages it into <output-dir>/iris-vX.Y.Z-<target-triple>.tar.gz (default
 # output-dir: "dist", relative to the repo root): a single top-level directory
-# containing exactly the binary, LICENSE, README.md and CHANGELOG.md, no other
-# paths, no symlinks, no absolute or ".." entries (checked by the installer;
-# see docs/install.md).
+# containing the binary, LICENSE, README.md, CHANGELOG.md and the docs/
+# directory that README.md links to. Nothing else: no links or special files,
+# no absolute or ".." entries (the installer checks this too; see
+# docs/install.md).
 #
 # The archive is reproducible: the same inputs give the same bytes on the same
 # kind of host. Entry order, owner, group, permissions and timestamps are fixed
@@ -83,6 +84,9 @@ for f in LICENSE README.md CHANGELOG.md; do
         missing="$missing $f"
     fi
 done
+if [ ! -d docs ]; then
+    missing="$missing docs/"
+fi
 if [ -n "$missing" ]; then
     echo "package-release: required file(s) missing from repo root:$missing" >&2
     exit 1
@@ -108,12 +112,16 @@ stage_dir="$work_dir/$archive_name"
 mkdir "$stage_dir"
 cp "$bin_path" "$stage_dir/iris"
 cp LICENSE README.md CHANGELOG.md "$stage_dir/"
+# -P copies a link as a link, so the check below refuses it instead of
+# packaging whatever it points to.
+cp -RP docs "$stage_dir/docs"
 
-# Refuse to publish a symlink under the staged tree — the release layout
-# requires none, and staging is entirely files this script just copied, so any
-# symlink here means a source file itself was a symlink.
-if find "$stage_dir" -type l | grep -q .; then
-    echo "package-release: refusing to package a symlink under $stage_dir" >&2
+# Only regular files and directories are published. Staging copied nothing
+# else, so anything else here is a link or special file in the source tree.
+odd=$(find "$stage_dir" ! -type f ! -type d)
+if [ -n "$odd" ]; then
+    echo "package-release: refusing to package links or special files:" >&2
+    echo "$odd" >&2
     exit 1
 fi
 
@@ -158,12 +166,11 @@ gzip -n -c "$work_dir/archive.tar" >"$work_dir/archive.tar.gz"
 # the intended entries under one top-level directory, nothing more. Directory
 # names are compared without the trailing slash that tar may print.
 listing=$(tar --list --file "$work_dir/archive.tar.gz" | sed 's:/*$::' | LC_ALL=C sort)
-expected=$(printf '%s\n' \
-    "$archive_name" \
-    "$archive_name/CHANGELOG.md" \
-    "$archive_name/LICENSE" \
-    "$archive_name/README.md" \
-    "$archive_name/iris" | LC_ALL=C sort)
+expected=$({
+    printf '%s\n' "$archive_name" "$archive_name/iris" "$archive_name/LICENSE" \
+        "$archive_name/README.md" "$archive_name/CHANGELOG.md"
+    find docs -print | sed "s|^|$archive_name/|"
+} | LC_ALL=C sort)
 if [ "$listing" != "$expected" ]; then
     echo "package-release: unexpected archive contents for ${archive_name}.tar.gz" >&2
     echo "--- got ---" >&2

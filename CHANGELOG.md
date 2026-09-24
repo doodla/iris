@@ -48,6 +48,9 @@ machine-readable contract for agents.
 - A one-command installer (`install.sh`) for Linux x86_64 and macOS x86_64/ARM64, with checksum
   verification, pinned installs, and no `sudo`. See [docs/install.md](docs/install.md). (No
   release has been published yet — see that document for what works today.)
+- Release archives hold `docs/` next to the binary, `LICENSE`, `README.md`, and `CHANGELOG.md`,
+  so the README's links work in an unpacked archive. The installer accepts archives with or
+  without `docs/` and still installs only the binary.
 - CI (formatting, Clippy, offline tests on Linux and macOS, a pinned MSRV check, dependency
   license/advisory scanning) and a tag-triggered release workflow producing checksummed archives.
 - `AGENTS.md`/`CLAUDE.md` durable agent instructions, and this project's documentation set under

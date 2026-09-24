@@ -209,6 +209,12 @@ expect_installed() {
   [ "$got" = "iris $2 ($3)" ] || fail "$1 --version says '$got', expected 'iris $2 ($3)'"
   expect_out "installed iris $2 ($3) to $1"
   expect_no_staging "$(dirname "$1")"
+  # Only the executable is installed, never the archive's docs or licenses.
+  for other in "$(dirname "$1")"/* "$(dirname "$1")"/.[!.]* "$(dirname "$1")"/..?*; do
+    if [ "$other" != "$1" ] && { [ -e "$other" ] || [ -L "$other" ]; }; then
+      fail "installed something besides iris: $other"
+    fi
+  done
 }
 
 expect_no_staging() {
@@ -380,6 +386,18 @@ version_cases() {
   run "$NONET" --version 'v1.2.3/../../x'
   expect_status 1
   expect_err "contains unexpected characters"
+  end
+
+  begin "an archive without docs/ installs (docs/ is optional)"
+  run ok/nodocs --version v0.1.0
+  expect_status 0
+  expect_installed "$BIN/iris" 0.1.0 "$LINUX"
+  end
+
+  begin "docs/ may contain subdirectories"
+  run ok/nesteddocs --version v0.1.0
+  expect_status 0
+  expect_installed "$BIN/iris" 0.1.0 "$LINUX"
   end
 
   begin "latest with no published release (404)"
@@ -558,7 +576,9 @@ verification_cases() {
   bad_release dotdot "unexpected entry in $NAME: '../evil'"
   bad_release dotdotinside "unexpected entry in $NAME: '$TOP/../evil'"
   bad_release absolute "unexpected entry in $NAME: '/"
+  bad_release docsdotdot "unexpected entry in $NAME: '$TOP/docs/../../evil'"
   bad_release symlink "unexpected link or special file in $NAME"
+  bad_release docslink "unexpected link or special file in $NAME"
   bad_release hardlink "unexpected link or special file in $NAME"
   bad_release fifo "unexpected link or special file in $NAME"
   bad_release noiris "$NAME does not contain $TOP/iris"

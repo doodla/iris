@@ -24,12 +24,13 @@
 #      temporary directory, removed on exit or interruption.
 #   5. Verifies the archive's SHA-256 against its line in SHA256SUMS.
 #   6. Accepts only the release layout: regular files iris, LICENSE, README.md
-#      and CHANGELOG.md in the single directory iris-<tag>-<target>/. Absolute
-#      paths, "..", links, other entries, or a missing iris are rejected.
+#      and CHANGELOG.md, and a docs/ directory of regular files, in the single
+#      directory iris-<tag>-<target>/. Absolute paths, "..", links, other
+#      entries, or a missing iris are rejected.
 #   7. Extracts it and checks that `iris --version` runs on this machine.
-#   8. Copies iris into DIR under a temporary name, then renames it over any
-#      existing iris (atomic on one filesystem). DIR is created if needed;
-#      sudo is never used.
+#   8. Copies iris, and only iris, into DIR under a temporary name, then
+#      renames it over any existing iris (atomic on one filesystem). DIR is
+#      created if needed; sudo is never used.
 #   9. Prints the installed version, and the line to add to your shell
 #      startup file if DIR is not on PATH.
 # It never reads standard input, so piping it into sh is safe. On any failure
@@ -286,6 +287,7 @@ verify_checksum() {
 }
 
 # Rejects any archive that is not exactly the documented release layout.
+# docs/ is optional: only the executable is ever installed.
 check_layout() {
   if ! tar -tzf "$archive" >"$tmp_dir/names" 2>/dev/null ||
     ! tar -tvzf "$archive" >"$tmp_dir/details" 2>/dev/null; then
@@ -295,8 +297,10 @@ check_layout() {
   while IFS= read -r entry; do
     case $entry in
       "$top" | "$top/" | "$top/LICENSE" | "$top/README.md" | "$top/CHANGELOG.md") ;;
+      "$top/docs" | "$top/docs/") ;;
+      "$top/docs/"*) check_docs_entry "$entry" ;;
       "$top/iris") found_iris=yes ;;
-      *) die "unexpected entry in $archive_name: '$entry' (only $top/ with iris, LICENSE, README.md and CHANGELOG.md is allowed)" ;;
+      *) unexpected_entry "$entry" ;;
     esac
   done <"$tmp_dir/names"
   [ "$found_iris" = yes ] || die "$archive_name does not contain $top/iris"
@@ -306,6 +310,19 @@ check_layout() {
       *' -> '* | *' link to '* | [!d-]*) die "unexpected link or special file in $archive_name: $entry" ;;
     esac
   done <"$tmp_dir/details"
+}
+
+unexpected_entry() {
+  die "unexpected entry in $archive_name: '$1' (only $top/ with iris, LICENSE, README.md, CHANGELOG.md and docs/ is allowed)"
+}
+
+# Documentation may sit at any depth under docs/, but never behind an empty,
+# "." or ".." path component.
+check_docs_entry() {
+  docs_path=${1#"$top/docs/"}
+  case /${docs_path%/}/ in
+    *//* | */./* | */../*) unexpected_entry "$1" ;;
+  esac
 }
 
 # Extracts the archive and sets new_bin and new_version from `iris --version`.

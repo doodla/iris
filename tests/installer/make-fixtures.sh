@@ -9,6 +9,8 @@
 #   good         v0.1.0, v0.2.0 (latest) for every target, plus v0.3.0-rc.1 for Linux
 #   nolatest     v0.1.0 but no latest release
 #   badlatest    latest points at a tag that is not a version
+#   nodocs       v0.1.0 for Linux, without docs/ (it is optional)
+#   nesteddocs   v0.1.0 for Linux, with a subdirectory under docs/
 #   <bad case>   v0.1.0 for the Linux target only, broken as the name says; the
 #                SHA256SUMS line matches unless the checksum itself is the defect
 set -eu
@@ -58,11 +60,13 @@ EOF
 
 # stage DIR TAG TARGET [MODE]: fill DIR with the files of a release archive.
 stage() {
-  mkdir -p "$1"
+  mkdir -p "$1/docs"
   fake_iris "$1/iris" "${2#v}" "$3" "${4:-ok}"
   printf 'MIT License (fixture)\n' >"$1/LICENSE"
   printf '# iris (fixture)\n' >"$1/README.md"
   printf '# Changelog (fixture)\n' >"$1/CHANGELOG.md"
+  printf '# Installing iris (fixture)\n' >"$1/docs/install.md"
+  printf '# JSON contract (fixture)\n' >"$1/docs/json-contract.md"
 }
 
 # release_dir REPO TAG: print (and create) the asset directory of a release.
@@ -105,6 +109,18 @@ write_sums nolatest v0.1.0
 good_archive badlatest v0.1.0 "$LINUX"
 write_sums badlatest v0.1.0
 echo nightly >"$ROOT/badlatest/LATEST"
+
+# Archives without docs/, and with a subdirectory in docs/.
+stage "$WORK/nodocs/iris-v0.1.0-$LINUX" v0.1.0 "$LINUX"
+rm -r "$WORK/nodocs/iris-v0.1.0-$LINUX/docs"
+(cd "$WORK/nodocs" && tar -czf "$(release_dir nodocs v0.1.0)/iris-v0.1.0-$LINUX.tar.gz" "iris-v0.1.0-$LINUX")
+write_sums nodocs v0.1.0
+
+stage "$WORK/nesteddocs/iris-v0.1.0-$LINUX" v0.1.0 "$LINUX"
+mkdir "$WORK/nesteddocs/iris-v0.1.0-$LINUX/docs/assets"
+printf '<svg/>\n' >"$WORK/nesteddocs/iris-v0.1.0-$LINUX/docs/assets/diagram.svg"
+(cd "$WORK/nesteddocs" && tar -czf "$(release_dir nesteddocs v0.1.0)/iris-v0.1.0-$LINUX.tar.gz" "iris-v0.1.0-$LINUX")
+write_sums nesteddocs v0.1.0
 
 # --- checksum defects ----------------------------------------------------------
 TOP=iris-v0.1.0-$LINUX
@@ -172,10 +188,19 @@ stage "$WORK/absolute/$TOP" v0.1.0 "$LINUX"
 printf 'evil\n' >"$WORK/absolute/evil"
 bad_archive absolute "$WORK/absolute" "$TOP" "$WORK/absolute/evil"
 
+# ".." inside docs/ that climbs out of the top-level directory.
+stage "$WORK/docsdotdot/$TOP" v0.1.0 "$LINUX"
+printf 'evil\n' >"$WORK/docsdotdot/evil"
+bad_archive docsdotdot "$WORK/docsdotdot" "$TOP" "$TOP/docs/../../evil"
+
 stage "$WORK/symlink/$TOP" v0.1.0 "$LINUX"
 rm "$WORK/symlink/$TOP/LICENSE"
 ln -s /etc/passwd "$WORK/symlink/$TOP/LICENSE"
 bad_archive symlink "$WORK/symlink" "$TOP"
+
+stage "$WORK/docslink/$TOP" v0.1.0 "$LINUX"
+ln -s /etc/passwd "$WORK/docslink/$TOP/docs/passwd.md"
+bad_archive docslink "$WORK/docslink" "$TOP"
 
 stage "$WORK/hardlink/$TOP" v0.1.0 "$LINUX"
 rm "$WORK/hardlink/$TOP/README.md"

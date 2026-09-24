@@ -15,6 +15,12 @@ installing the wrong archive.
 The musl target for Linux is the release target: musl gives a static binary that runs on any
 x86_64 Linux kernel, regardless of the host's glibc version or its absence.
 
+Each archive holds a single directory, `iris-vX.Y.Z-<target>/`, containing the `iris` executable,
+`LICENSE`, `README.md`, `CHANGELOG.md`, and `docs/` (this documentation, which the README links
+to). The installer installs only `iris`; the rest is there for a manual install and for reading
+offline. Unpacking an archive by hand works too: copy the `iris` executable anywhere on your
+`PATH`.
+
 HTTPS requests (installer download, and every provider API call `iris` itself makes) use the
 **system's CA trust store**, not a bundled one. On a minimal container or base image, install
 `ca-certificates` (or your distribution's equivalent) first, or TLS verification will fail.
@@ -57,13 +63,14 @@ What it does, in order:
 5. Verifies the archive's SHA-256 against its line in `SHA256SUMS`; a missing line or a mismatch
    aborts with nothing installed.
 6. Lists the archive before extracting and rejects anything unexpected: absolute paths, `..`
-   entries, symlinks, files outside the single top-level `iris-vX.Y.Z-<target>/` directory, or a
-   missing `iris` executable.
+   entries, symlinks or other special files, anything outside the single top-level
+   `iris-vX.Y.Z-<target>/` directory or besides the files listed above, or a missing `iris`
+   executable.
 7. Extracts it and runs the extracted `iris --version` to confirm it actually executes on your
    machine before installing anything.
-8. Copies `iris` into the target directory under a temporary name, then renames it over any
-   existing `iris` — an atomic replace on the same filesystem. The directory is created if
-   needed. **`sudo` is never used.**
+8. Copies `iris`, and nothing else from the archive, into the target directory under a
+   temporary name, then renames it over any existing `iris` — an atomic replace on the same
+   filesystem. The directory is created if needed. **`sudo` is never used.**
 9. Prints the installed version and, if the install directory isn't already on your `PATH`, the
    exact line to add to your shell's startup file.
 
