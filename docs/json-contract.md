@@ -246,7 +246,9 @@ placeholder because the job id is assigned when the real run records the job.
 - **`CostEstimate`**: `{ "estimated": true, "currency": "USD", "amount", "basis" (human string
   explaining the math), "source_url", "as_of" }` — **always** labeled an estimate. When no point
   estimate is supportable (e.g. `quality=auto` or `size=auto` on OpenAI), the field is `null` and
-  a `cost_estimate_unavailable` warning is emitted instead of a guess.
+  a `cost_estimate_unavailable` warning is emitted instead of a guess. A model resolved with
+  `--capabilities-from` never gets an estimate (before or after the call): it borrows the known
+  model's capabilities, not its prices, and the warning says so.
 
 ## Error object
 

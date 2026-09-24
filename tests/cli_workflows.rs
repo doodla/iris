@@ -598,6 +598,64 @@ async fn dry_run_plans_through_the_cli_need_no_credentials() {
     assert_eq!(run.error_code(), "missing_credentials");
 }
 
+/// A model resolved with --capabilities-from borrows the template's capabilities,
+/// never its prices: no estimate before the call, none from reported usage after it.
+#[tokio::test]
+async fn borrowed_capabilities_come_without_the_templates_prices() {
+    let f = Fixture::new();
+    let borrowed_warning = |v: &Value| {
+        let w = v["warnings"].as_array().unwrap();
+        assert!(w.iter().any(|w| w["code"] == "unverified_model_capabilities"), "{v}");
+        let cost: Vec<&Value> = w.iter().filter(|w| w["code"] == "cost_estimate_unavailable").collect();
+        assert_eq!(cost.len(), 1, "{v}");
+        cost[0]["message"].as_str().unwrap().to_string()
+    };
+
+    // The template would estimate this request ($0.01 with an explicit quality).
+    let template = f.run(&["image", "generate", "x", "--quality", "low", "--dry-run", "--json"]).await.json();
+    assert!(template["result"]["cost_estimate"]["amount"].is_number(), "{template}");
+
+    let args = [
+        "image",
+        "generate",
+        "x",
+        "-m",
+        "fake-image-9",
+        "--capabilities-from",
+        "fake-image-1",
+        "--quality",
+        "low",
+    ];
+    let v = f.run(&[&args[..], &["--dry-run", "--json"]].concat()).await.json();
+    assert!(v["result"]["cost_estimate"].is_null(), "{v}");
+    let message = borrowed_warning(&v);
+    assert!(message.contains("'fake-image-1'") && message.contains("prices are not assumed"), "{message}");
+
+    // After the call too, even when the provider reports usage the template would price.
+    let mut output = image_output(vec![png(8, 8)]);
+    output.usage = Some(iris::domain::Usage { output_tokens: Some(100), ..Default::default() });
+    f.openai.images().push(Ok(output));
+    let v = f.run(&[&args[..], &["--json"]].concat()).await.json();
+    assert_eq!(v["ok"], true, "{v}");
+    assert!(v["result"]["cost_estimate"].is_null(), "{v}");
+    assert!(v["result"]["usage"]["output_tokens"].is_number(), "usage is still reported: {v}");
+    borrowed_warning(&v);
+
+    // Video: the plan and the persisted job carry no estimate either.
+    let args = ["video", "generate", "x", "-m", "fake-video-9", "--capabilities-from", "fake-video-1"];
+    let v = f.run(&[&args[..], &["--dry-run", "--json"]].concat()).await.json();
+    assert!(v["result"]["cost_estimate"].is_null(), "{v}");
+    borrowed_warning(&v);
+    let v = f.run(&[&args[..], &["--detach", "--json"]].concat()).await.json();
+    assert!(v["result"]["job"]["cost_estimate"].is_null(), "{v}");
+    assert_eq!(v["result"]["job"]["model"], "fake-video-9");
+    borrowed_warning(&v);
+
+    // The template itself still has its estimate.
+    let v = f.run(&["video", "generate", "x", "-m", "fake-video-1", "--dry-run", "--json"]).await.json();
+    assert!(v["result"]["cost_estimate"]["amount"].is_number(), "{v}");
+}
+
 #[tokio::test]
 async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() {
     let f = Fixture::new();

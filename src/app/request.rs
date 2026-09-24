@@ -4,6 +4,7 @@
 
 use std::fmt;
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Map, Value};
 
@@ -71,6 +72,11 @@ pub enum GenerationOutcome<T> {
 /// `image.provider` > `openai` (video: the video provider); model = `--model` >
 /// file `providers.<p>.<kind>_model` > catalog default. Adds the warnings
 /// `unverified_model_capabilities` and `preview_model`.
+///
+/// A model resolved with `--capabilities-from` runs against the template's
+/// capabilities but not its prices: its spec is a copy without price rules or
+/// estimators, so every cost estimate for it (before and after the call) is `null`
+/// with a `cost_estimate_unavailable` warning that says why.
 pub(crate) fn resolve_model(
     ctx: &AppContext,
     op: Operation,
@@ -92,6 +98,12 @@ pub(crate) fn resolve_model(
             let spec = default_spec(ctx, provider, op)?;
             ResolvedModel { id: spec.id.to_string(), spec, source: CapabilitySource::Catalog }
         }
+    };
+    let resolved = match resolved.source {
+        CapabilitySource::Borrowed { .. } => {
+            ResolvedModel { spec: without_prices(resolved.spec), ..resolved }
+        }
+        CapabilitySource::Catalog => resolved,
     };
     if let CapabilitySource::Borrowed { from } = resolved.source {
         warnings.push(Warning::new(
@@ -211,13 +223,42 @@ pub(crate) fn estimate(
 
 /// Warning `cost_estimate_unavailable`.
 pub(crate) fn cost_unavailable(spec: &ModelSpec) -> Warning {
-    Warning::new(
-        "cost_estimate_unavailable",
-        format!(
+    let message = match borrowed_template(spec) {
+        Some(template) => format!(
+            "no cost estimate: the model was given the capabilities of '{}' with --capabilities-from, and \
+             that model's prices are not assumed to apply to it; check the provider's published prices",
+            template.id
+        ),
+        None => format!(
             "no cost estimate is available for this request; see `iris models show {}` for the published prices",
             spec.id
         ),
-    )
+    };
+    Warning::new("cost_estimate_unavailable", message)
+}
+
+/// Specs of models resolved with `--capabilities-from`, one per template for the
+/// life of the process: `(template, copy without prices)`.
+static BORROWED: Mutex<Vec<(&'static ModelSpec, &'static ModelSpec)>> = Mutex::new(Vec::new());
+
+/// `template` without price rules or cost estimators (capabilities, defaults, and
+/// validation unchanged). The copy is created once per template and kept, so the
+/// memory used is bounded by the catalog size.
+fn without_prices(template: &'static ModelSpec) -> &'static ModelSpec {
+    let mut borrowed = BORROWED.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some((_, copy)) = borrowed.iter().find(|(t, _)| std::ptr::eq(*t, template)) {
+        return copy;
+    }
+    let copy: &'static ModelSpec =
+        Box::leak(Box::new(ModelSpec { pricing: &[], estimate: None, estimate_usage: None, ..*template }));
+    borrowed.push((template, copy));
+    copy
+}
+
+/// The template of a spec made by [`without_prices`], if `spec` is one.
+fn borrowed_template(spec: &ModelSpec) -> Option<&'static ModelSpec> {
+    let borrowed = BORROWED.lock().unwrap_or_else(PoisonError::into_inner);
+    borrowed.iter().find(|(_, copy)| std::ptr::eq(*copy, spec)).map(|(template, _)| *template)
 }
 
 /// The options a request runs with: every explicit value, plus the declared

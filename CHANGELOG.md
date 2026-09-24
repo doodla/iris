@@ -156,6 +156,9 @@ machine-readable contract for agents.
   `--format`) and `video generate` only video flags (`--count`, `--duration`, `--resolution`,
   `--aspect-ratio`, `--negative-prompt`); a flag of the other kind is a usage error. Help and
   shell completions follow.
+- A model resolved with `--capabilities-from` no longer gets a cost estimate computed from the
+  template model's prices: `cost_estimate` is `null` (in plans, results, and job records) with a
+  `cost_estimate_unavailable` warning saying the template's prices are not assumed.
 
 ### Known limitations
 

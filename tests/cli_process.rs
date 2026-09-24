@@ -838,6 +838,58 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
     assert!(!Path::new(&sandbox.state().join("jobs")).exists(), "no job record before a submission");
 }
 
+/// Unknown models borrow a known model's capabilities, not its prices.
+#[test]
+fn borrowed_capabilities_get_no_cost_estimate() {
+    let sandbox = Sandbox::new();
+    for args in [
+        &[
+            "image",
+            "generate",
+            "x",
+            "-m",
+            "gpt-image-3",
+            "--capabilities-from",
+            "gpt-image-2",
+            "--quality",
+            "low",
+            "--size",
+            "1024x1024",
+        ][..],
+        &["video", "generate", "x", "-m", "veo-4-new", "--capabilities-from", "veo"],
+        &[
+            "video",
+            "generate",
+            "x",
+            "-m",
+            "veo-9-ultra",
+            "--capabilities-from",
+            "veo-lite",
+            "--duration",
+            "4",
+        ],
+    ] {
+        let template = args[args.iter().position(|a| *a == "--capabilities-from").unwrap() + 1];
+        if iris::catalog::find(template).is_none() {
+            eprintln!("skipped: {template} is not in this build's catalog");
+            continue;
+        }
+        let out = run(iris(&sandbox).args(args).args(["--dry-run", "--json"]));
+        assert_eq!(out.code, 0, "{}", out.stdout);
+        let v = out.json();
+        assert!(v["result"]["cost_estimate"].is_null(), "{args:?}: {v}");
+        let warning = v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|w| w["code"] == "cost_estimate_unavailable")
+            .unwrap_or_else(|| panic!("{args:?}: {v}"))
+            .clone();
+        let message = warning["message"].as_str().unwrap();
+        assert!(message.contains("prices are not assumed"), "{message}");
+    }
+}
+
 #[test]
 fn unsupported_operations_fail_locally_with_exit_2() {
     let sandbox = Sandbox::new();
