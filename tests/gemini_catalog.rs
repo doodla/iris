@@ -70,7 +70,7 @@ fn the_three_nano_banana_models_are_declared_with_ids_names_and_aliases() {
         assert_eq!(m.lifecycle, Lifecycle::Ga);
         assert_eq!(m.operations, &[Operation::ImageGenerate, Operation::ImageEdit]);
         assert_eq!(m.docs_url, "https://ai.google.dev/gemini-api/docs/image-generation");
-        assert_eq!(m.outputs.media_types, &["image/png", "image/jpeg"]);
+        assert_eq!(m.outputs.media_types, &["image/jpeg", "image/png"]);
         assert_eq!(m.outputs.max_count, 1);
         assert_eq!(m.limits.max_prompt_chars, None);
         // C-06 rev 3 verbatim; a change of wording is a contract revision.

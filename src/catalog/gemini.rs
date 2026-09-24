@@ -37,7 +37,10 @@ const INPUTS: InputSpec = InputSpec {
     max_reference_images: 0,
 };
 
-const OUTPUTS: OutputSpec = OutputSpec { media_types: &["image/png", "image/jpeg"], max_count: 1 };
+/// The provider chooses the format. JPEG comes first because live runs of
+/// `gemini-3.1-flash-image` returned JPEG for both generate and edit, so default
+/// file names get the right extension; PNG outputs are still saved (as `.png`).
+const OUTPUTS: OutputSpec = OutputSpec { media_types: &["image/jpeg", "image/png"], max_count: 1 };
 
 const LIMITS: Limits = Limits { max_prompt_chars: None };
 
