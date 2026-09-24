@@ -91,6 +91,12 @@ machine-readable contract for agents.
   persisted error bodies, `usage`, and `cost_estimate`, and error codes this version does not
   know. Views show such a code as `internal_error` with the original in `details.recorded_code`.
 
+- A finished Veo job is `succeeded` with its output URIs recorded even when Iris will not fetch
+  them with the current base URL (for example behind a pass-through proxy). Download trust is
+  checked on every `jobs wait`/`jobs download`; a refused URI fails that output with
+  `download_failed` and a hint, and a later download with a corrected base URL succeeds.
+  Previously such a job was recorded as `failed` and could not be recovered.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

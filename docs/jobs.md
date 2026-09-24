@@ -121,6 +121,11 @@ A record still `submitting` more than (the full paid-submission timeout budget +
 `created_at` is treated as abandoned — the process that submitted it died inside the uncertainty
 window — and is reported as `submission_unknown` the next time anything touches it.
 
+A finished operation with output URIs is always `succeeded` with every URI recorded (the raw URI
+only in the private record): whether Iris trusts a URI enough to fetch it is a download decision,
+made anew by every download (see [Downloads](#downloads)). Only a provider-reported error, or a
+finished operation without any output, makes a job `failed`.
+
 **There is deliberately no transition that turns a `running` or `succeeded` job into `failed`
 because of something *local*.** Ctrl-C, a wait-limit expiry, a local network error while polling,
 and a download failure never change a job's status — the remote job is unaffected by any of them,
@@ -206,7 +211,13 @@ Order of decision for each output, under the job's download lock:
    to run any number of times.
 2. If the recorded local file is intact but you asked for a *different* target path → copy it
    locally (no network call).
-3. Otherwise, stream it from the provider, hashing as it downloads. A non-2xx response is mapped
+3. Otherwise, check that Iris may fetch the recorded URI with the configuration of *this*
+   invocation (for Veo: a Files API download URL under the configured Gemini base URL; see
+   [configuration.md](configuration.md#base-url-overrides) for proxies). A refused URI fails that
+   output with `download_failed` (not retryable as is, redacted URI in `details.uri`,
+   `download_state: failed`) and nothing is requested; the job stays `succeeded`, `next_steps`
+   still offer `iris jobs download <id>`, and a later download with a corrected base URL checks
+   again. Then stream it from the provider, hashing as it downloads. A non-2xx response is mapped
    by status, not lumped into one generic failure: 403/404/410 → `artifact_expired` (the provider
    no longer serves it — retryable is `false`, no point trying again); 401 →
    `authentication_failed`; 429, or any status whose `Retry-After` exceeds the automatic-wait

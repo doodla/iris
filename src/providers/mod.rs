@@ -223,6 +223,17 @@ pub trait VideoProvider: Send + Sync {
 
     /// Documented server-side retention of generated outputs, if any.
     fn output_retention(&self) -> Option<std::time::Duration>;
+
+    /// Whether Iris should fetch `uri`, an output of a succeeded job, given the base
+    /// URL configured now. Called before every download attempt (never at poll time,
+    /// so a refusal never changes the job's status). A refusal is returned as the
+    /// error to record on that output (normally `download_failed`, not retryable as
+    /// is, with the redacted URI and a hint). The default accepts every URI: the
+    /// downloader's credential-origin rule applies either way.
+    fn check_output_uri(&self, uri: &str, base_url: &url::Url) -> Result<(), IrisError> {
+        let _ = (uri, base_url);
+        Ok(())
+    }
 }
 
 /// Built-in providers. Adding a provider = one line here + adapter + catalog + tests.

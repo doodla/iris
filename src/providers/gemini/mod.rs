@@ -27,7 +27,7 @@ use async_trait::async_trait;
 
 pub use client::{API_V1, API_V1BETA};
 pub use image::{WARNING_OUTPUT_COUNT, WARNING_TEXT_OUTPUT};
-pub use veo::{WARNING_CONTENT_FILTERED, is_operation_name, validate_output_uri};
+pub use veo::{WARNING_CONTENT_FILTERED, check_output_uri, is_operation_name, validate_output_uri};
 
 use super::{
     AccountAccess, CredentialHeader, ImageOutput, ImageProvider, ImageRequest, Provider, ProviderContext,
@@ -139,5 +139,10 @@ impl VideoProvider for GeminiProvider {
     /// "Generated videos are stored on the server for 2 days" (Veo guide).
     fn output_retention(&self) -> Option<Duration> {
         Some(Duration::from_secs(catalog::veo::OUTPUT_RETENTION_HOURS * 3600))
+    }
+
+    /// Files API download URLs under the configured base URL only.
+    fn check_output_uri(&self, uri: &str, base_url: &url::Url) -> Result<(), IrisError> {
+        veo::check_output_uri(uri, base_url)
     }
 }

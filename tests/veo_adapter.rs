@@ -715,37 +715,81 @@ async fn any_unreserved_operation_id_is_accepted_and_polled_verbatim() {
     assert!(reqs[1].url.query().is_none());
 }
 
+/// A done operation answered `uri` as its only output.
+async fn poll_output(server: &MockServer, uri: &str) -> RemoteStatus {
+    Mock::given(method("GET"))
+        .and(path(format!("/v1beta/{OPERATION}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": OPERATION, "done": true,
+            "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": uri}}]}}
+        })))
+        .up_to_n_times(1)
+        .mount(server)
+        .await;
+    GeminiProvider::new().poll(OPERATION, &ctx(server)).await.unwrap()
+}
+
 #[tokio::test]
-async fn output_uris_off_the_api_origin_or_path_are_refused() {
+async fn untrusted_output_uris_still_mean_success_and_are_refused_only_at_download_time() {
     let server = MockServer::start().await;
     let base = server.uri();
-    let other_port = url::Url::parse(&base).unwrap().port().unwrap().wrapping_add(1);
-    let bad_uris = [
+    let base_url = url::Url::parse(&base).unwrap();
+    let other_port = base_url.port().unwrap().wrapping_add(1);
+    let untrusted = [
         format!("http://127.0.0.1:{other_port}/v1beta/files/abc:download?alt=media"),
-        "https://storage.googleapis.com/v1beta/files/abc:download".to_string(),
+        "https://generativelanguage.googleapis.com/v1beta/files/abc:download?alt=media".to_string(),
+        "https://storage.googleapis.com/veo-out/abc.mp4?X-Goog-Signature=deadbeef".to_string(),
         format!("{base}/v1/files/abc:download"),
         format!("{base}/v1beta/files/abc"),
         format!("{base}/v1beta/files/ABC:download"),
         format!("{base}/v1beta/files/-abc:download"),
-        format!("{base}/v1beta/files/abc-:download"),
         format!("{base}/v1beta/files/a_b:download"),
         format!("{base}/v1beta/files/{}:download", "a".repeat(41)),
         format!("{base}/v1beta/files/../models/x:download"),
-        format!("{base}/v1beta/files/abc:download#frag"),
     ];
-    for uri in &bad_uris {
-        Mock::given(method("GET"))
-            .and(path(format!("/v1beta/{OPERATION}")))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-                "name": OPERATION, "done": true,
-                "response": {"generateVideoResponse": {"generatedSamples": [{"video": {"uri": uri}}]}}
-            })))
-            .up_to_n_times(1)
-            .mount(&server)
-            .await;
-        let err = failed(GeminiProvider::new().poll(OPERATION, &ctx(&server)).await.unwrap());
+    for uri in &untrusted {
+        // The job finished: its output is recorded exactly as sent (the record is
+        // where the raw URI lives), whatever Iris later decides about fetching it.
+        match poll_output(&server, uri).await {
+            RemoteStatus::Succeeded { outputs, .. } => {
+                assert_eq!(outputs.len(), 1, "{uri}");
+                assert_eq!(&outputs[0].uri, uri);
+            }
+            other => panic!("{uri}: expected Succeeded, got {other:?}"),
+        }
+        // Fetching it is refused against this base URL: download_failed, redacted.
+        let err = GeminiProvider::new().check_output_uri(uri, &base_url).unwrap_err();
+        assert_eq!(err.code, ErrorCode::DownloadFailed, "{uri}");
+        assert_eq!(err.retryable, Some(false));
+        assert_eq!(err.provider, Some(ProviderId::Gemini));
+        let shown = err.details["uri"].as_str().unwrap();
+        assert!(!shown.contains("deadbeef"), "{shown}");
+        assert!(err.hint.as_deref().unwrap().contains("proxy"), "{err:?}");
+    }
+    // A Files API URI under the configured base is fetched.
+    let good = format!("{base}/v1beta/files/abc-123:download?alt=media");
+    assert!(GeminiProvider::new().check_output_uri(&good, &base_url).is_ok());
+    // A URI on Google's origin is trusted once the base URL is Google's again.
+    let google = url::Url::parse("https://generativelanguage.googleapis.com").unwrap();
+    assert!(GeminiProvider::new().check_output_uri(&untrusted[1], &google).is_ok());
+}
+
+#[tokio::test]
+async fn structurally_unusable_output_uris_are_a_bad_response() {
+    let server = MockServer::start().await;
+    let base = server.uri();
+    for uri in [
+        "not a url".to_string(),
+        "ftp://generativelanguage.googleapis.com/v1beta/files/abc:download".to_string(),
+        "file:///etc/passwd".to_string(),
+        format!("{}/v1beta/files/abc:download#frag", base),
+        base.replace("http://", "http://user:pw@") + "/v1beta/files/abc:download",
+    ] {
+        let err = failed(poll_output(&server, &uri).await);
         assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{uri}");
-        assert!(err.details.contains_key("uri"));
+        assert!(err.details.contains_key("uri"), "{uri}");
+        assert!(!err.details["uri"].as_str().unwrap().contains("pw@"), "{err:?}");
+        assert_eq!(err.remote_operation_id.as_deref(), Some(OPERATION));
     }
 }
 

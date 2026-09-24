@@ -271,11 +271,17 @@ pub async fn poll(remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus
         .with_provider_request_id(request_id.clone())
         .with_remote_operation(remote_id)
     })?;
-    Ok(interpret(op, remote_id, &ctx.base_url))
+    Ok(interpret(op, remote_id))
 }
 
 /// Map a finished or running operation to [`RemoteStatus`].
-fn interpret(op: Operation, remote_id: &str, base_url: &url::Url) -> RemoteStatus {
+///
+/// A done operation with output URIs is `Succeeded` with every URI recorded as
+/// given, whatever its host: whether Iris is willing to fetch a URI is decided at
+/// download time ([`check_output_uri`]), against the base URL configured then, so a
+/// refused URI never turns a finished (and billed) job into a failed one. Only an
+/// operation error, or a done operation without any output, is `Failed`.
+fn interpret(op: Operation, remote_id: &str) -> RemoteStatus {
     if op.done != Some(true) {
         return RemoteStatus::Running { progress: progress_percent(op.metadata.as_ref()) };
     }
@@ -283,7 +289,7 @@ fn interpret(op: Operation, remote_id: &str, base_url: &url::Url) -> RemoteStatu
         return RemoteStatus::Failed { error: operation_error(&status, remote_id) };
     }
     let video = op.response.and_then(|r| r.generate_video_response).unwrap_or_default();
-    match outputs(&video, base_url) {
+    match outputs(&video) {
         Ok(outputs) if !outputs.is_empty() => {
             let mut warnings = Vec::new();
             if let Some(n) = video.rai_media_filtered_count.filter(|n| *n > 0) {
@@ -327,28 +333,42 @@ fn operation_error(status: &RpcStatus, remote_id: &str) -> IrisError {
     err
 }
 
-/// Validated download references of every generated sample.
-fn outputs(video: &GenerateVideoResponse, base_url: &url::Url) -> Result<Vec<RemoteArtifact>, IrisError> {
+/// Download references of every generated sample, kept exactly as the provider
+/// sent them (the raw URI is stored only in the private job record). Only a
+/// structural check applies here ([`structural_uri_problem`]); a URI that fails it
+/// is not a usable answer at all (`provider_bad_response`).
+fn outputs(video: &GenerateVideoResponse) -> Result<Vec<RemoteArtifact>, IrisError> {
     let mut out = Vec::new();
     for sample in video.generated_samples.iter().flatten() {
         let Some(v) = &sample.video else { continue };
         let Some(uri) = v.uri.as_deref() else { continue };
-        let url = validate_output_uri(uri, base_url).map_err(|why| {
-            IrisError::new(
+        if let Some(why) = structural_uri_problem(uri) {
+            return Err(IrisError::new(
                 ErrorCode::ProviderBadResponse,
-                format!("the Veo job finished but Iris will not download its output: {why}"),
+                format!("the Veo job finished, but the provider's output URI is unusable: {why}"),
             )
             .with_provider(ProviderId::Gemini)
-            .with_detail("uri", redact::redact_url(uri))
-            .with_hint(
-                "the video may still exist on the provider for 2 days; Iris only downloads files from the \
-                 configured Gemini API origin",
-            )
-        })?;
+            .with_detail("uri", redact::redact_url(uri)));
+        }
         // Veo outputs are MP4; the downloader verifies the bytes.
-        out.push(RemoteArtifact { uri: url.to_string(), media_type: Some(VIDEO_MP4.to_string()) });
+        out.push(RemoteArtifact { uri: uri.to_string(), media_type: Some(VIDEO_MP4.to_string()) });
     }
     Ok(out)
+}
+
+/// Why `uri` cannot be a download reference at all: not a URL, not http(s), or
+/// carrying user information or a fragment. `None` if it is structurally usable.
+fn structural_uri_problem(uri: &str) -> Option<&'static str> {
+    let Ok(url) = url::Url::parse(uri) else {
+        return Some("it is not a valid URL");
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return Some("it is not an http(s) URL");
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Some("it carries user information or a fragment");
+    }
+    None
 }
 
 /// `done` without a usable video: filtered → `content_blocked`; otherwise the
@@ -376,6 +396,28 @@ fn no_output_error(video: &GenerateVideoResponse, remote_id: &str) -> IrisError 
         IrisError::new(ErrorCode::ProviderBadResponse, "the Veo job finished without a video or an error")
     };
     err.with_provider(ProviderId::Gemini).with_remote_operation(remote_id)
+}
+
+/// Download-time trust check of a recorded output URI against the base URL
+/// configured now (see [`validate_output_uri`]). A refused URI is `download_failed`
+/// (not retryable as is) with the redacted URI in `details.uri`; the job itself
+/// stays `succeeded`, and a later download re-checks against the configuration of
+/// that time. The credential-origin rule of the downloader applies independently.
+pub fn check_output_uri(uri: &str, base_url: &url::Url) -> Result<(), IrisError> {
+    validate_output_uri(uri, base_url).map(|_| ()).map_err(|why| {
+        IrisError::new(ErrorCode::DownloadFailed, format!("Iris will not download this Veo output: {why}"))
+            .with_retryable(Some(false))
+            .with_provider(ProviderId::Gemini)
+            .with_detail("uri", redact::redact_url(uri))
+            .with_detail("base_url", redact::redact_url(base_url.as_str()))
+            .with_hint(
+                "the job succeeded and the provider keeps its output for about 2 days; Iris downloads Veo \
+                 outputs only from Files API download URLs under the configured Gemini base URL. A proxy \
+                 base URL must rewrite these URIs to its own origin and path prefix; otherwise point \
+                 IRIS_GEMINI_BASE_URL / providers.gemini.base_url back at \
+                 https://generativelanguage.googleapis.com and download again",
+            )
+    })
 }
 
 /// Accept an output URI only if it is on the configured base origin and its path is

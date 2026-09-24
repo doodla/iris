@@ -187,6 +187,20 @@ $ iris doctor
 warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:50045/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
 ```
 
+**Veo downloads through a proxy.** A finished Veo job names its video by a Files API download URL
+(`https://generativelanguage.googleapis.com/v1beta/files/<id>:download?alt=media`). Iris
+downloads a Veo output only from such a URL under the configured Gemini base URL — the same
+origin, below the base URL's path prefix — so the key is never sent anywhere else. A proxy base
+URL must therefore rewrite those URLs in the operation answer to its own origin and prefix (for a
+base URL of `https://proxy.example/gemini`:
+`https://proxy.example/gemini/v1beta/files/<id>:download?alt=media`). A pass-through proxy that
+leaves Google's URLs as they are still lets you submit and follow jobs, and they still succeed,
+but each download is refused with `download_failed` (not retryable as is; `details.uri` holds the
+redacted URL). Nothing is lost: point the base URL back at
+`https://generativelanguage.googleapis.com` (or fix the proxy) and run `iris jobs download <id>`
+while the provider still keeps the output (about 2 days) — every download checks against the base
+URL configured at that moment.
+
 ## Security rules
 
 - Generated media, local job/state data, a private config file, secrets, and local

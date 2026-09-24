@@ -592,6 +592,7 @@ async fn download_outputs(
     artifacts::preflight_dirs(&plan.paths, true).map_err(|e| with_job_context(e, &rec))?;
 
     let provider = rec.provider();
+    let video = video_adapter(ctx, provider).map_err(|e| with_job_context(e, &rec))?;
     let base_url = ctx.settings.provider(provider).base_url.value.clone();
     let access = Access {
         provider,
@@ -622,6 +623,19 @@ async fn download_outputs(
                 record_saved(ctx, id, out.index, saved, warnings)?;
             }
             DownloadDecision::Fetch => {
+                // Download trust is decided now, against the base URL configured now:
+                // a refusal fails this output only, never the job, and a later
+                // download with another configuration checks again.
+                if let Err(e) = video.check_output_uri(&out.remote_uri, &base_url) {
+                    let e = match e.hint.clone() {
+                        Some(hint) => e.with_hint(format!("{hint} with `iris jobs download {id}`")),
+                        None => e,
+                    };
+                    let now = ctx.now();
+                    ctx.store.update(id, |r| r.mark_output_failed(out.index, &e, now))?;
+                    remote_failure.get_or_insert(e);
+                    continue;
+                }
                 let now = ctx.now();
                 if rec.remote_expired(now) {
                     let e = retention_passed(&rec);

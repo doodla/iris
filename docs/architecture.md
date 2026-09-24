@@ -80,6 +80,8 @@ pub trait VideoProvider: Send + Sync {
     async fn poll(&self, remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus, IrisError>;
     /// Documented server-side retention of generated outputs, if any.
     fn output_retention(&self) -> Option<std::time::Duration>;
+    /// Whether to fetch an output URI given the base URL configured now (default: yes).
+    fn check_output_uri(&self, uri: &str, base_url: &url::Url) -> Result<(), IrisError> { Ok(()) }
 }
 ```
 

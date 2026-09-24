@@ -259,6 +259,81 @@ fn provider_side_outcomes_of_a_running_job_are_reported_by_later_processes() {
     veo.assert_no_credential_leaks();
 }
 
+/// A pass-through proxy base URL: it forwards the API calls but not the Files API
+/// URIs in the answer, which stay on the real API origin (here `veo.api`).
+fn pass_through_proxy(veo: &VeoMock) -> MockApi {
+    let proxy = MockApi::start();
+    proxy.on("POST", &veo_submit_path(VEO_LITE), json_response(200, json!({ "name": veo.op_name })));
+    proxy.on(
+        "GET",
+        &format!("/v1beta/{}", veo.op_name),
+        json_response(
+            200,
+            json!({
+                "name": veo.op_name,
+                "done": true,
+                "response": { "generateVideoResponse": {
+                    "generatedSamples": [ { "video": { "uri": veo.output_uri() } } ]
+                } }
+            }),
+        ),
+    );
+    proxy
+}
+
+#[test]
+fn an_output_uri_off_the_configured_origin_keeps_the_job_succeeded_until_the_base_url_is_fixed() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let proxy = pass_through_proxy(&veo);
+    let v = sb
+        .iris()
+        .gemini(&proxy)
+        .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+        .run()
+        .ok();
+    let id = job_of(&v)["job_id"].as_str().unwrap().to_string();
+
+    // The provider finished; Iris refuses to fetch a URI outside the base URL.
+    let out = sb.iris().gemini(&proxy).args(["jobs", "wait", &id, "--json"]).run();
+    let v = out.err(1, "download_failed");
+    let error = &v["error"];
+    assert_eq!(error["job_status"], "succeeded", "a refused download is not a failed generation: {v}");
+    assert_eq!(error["retryable"], false);
+    assert_eq!(error["provider"], "gemini");
+    assert_eq!(error["details"]["uri"], veo.output_uri().as_str());
+    let hint = error["hint"].as_str().unwrap();
+    assert!(hint.contains("proxy") && hint.contains(&format!("iris jobs download {id}")), "{hint}");
+    assert!(out.stderr.contains(&format!("Job {id} succeeded")), "{}", out.stderr);
+
+    let rec = sb.record(&id);
+    assert_eq!(rec["status"], "succeeded");
+    assert!(rec["error"].is_null());
+    assert_eq!(rec["outputs"][0]["remote_uri"], veo.output_uri().as_str(), "the raw URI is kept");
+    assert_eq!(rec["outputs"][0]["download_state"], "failed");
+    assert_eq!(rec["outputs"][0]["last_error"]["code"], "download_failed");
+    assert_eq!(veo.api.total(), 0, "nothing (and no key) went to the other origin");
+
+    // Later processes still offer the download; with the same base URL it is refused again.
+    let v = sb.iris().gemini(&proxy).args(["jobs", "status", &id, "--json"]).run().ok();
+    assert_eq!(job_of(&v)["status"], "succeeded");
+    assert_eq!(job_of(&v)["outputs"][0]["download_state"], "failed");
+    assert_eq!(v["result"]["next_steps"], json!([format!("iris jobs download {id}")]));
+    assert!(!v.to_string().contains("remote_uri"), "{v}");
+    sb.iris().gemini(&proxy).args(["jobs", "download", &id, "--json"]).run().err(1, "download_failed");
+    assert_eq!(veo.api.total(), 0);
+
+    // With the base URL pointing at the real API origin, the same job downloads.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert_video(&job_of(&v)["artifacts"][0], &sb.path(&format!("{id}.mp4")));
+    assert_eq!(sb.record(&id)["outputs"][0]["download_state"], "downloaded");
+    assert_eq!((veo.api_downloads(), veo.file_fetches()), (1, 1));
+    assert_eq!(proxy.count("POST", &veo_submit_path(VEO_LITE)), 1, "nothing was resubmitted");
+    assert_eq!((veo.submits(), veo.polls()), (0, 0), "downloading never submits or polls");
+    proxy.assert_credentials_only_in(Some(("x-goog-api-key", GEMINI_KEY)));
+    veo.assert_no_credential_leaks();
+}
+
 #[test]
 fn a_rate_limited_veo_submission_is_retried_into_one_job() {
     let sb = Sandbox::new();

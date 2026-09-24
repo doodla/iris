@@ -39,7 +39,8 @@ src/providers/seedance/
 ```
 
 Implement `Provider` (identity, default base URL, credential header, the free `check_access`
-metadata call) and `VideoProvider` (`submit`, `poll`, `output_retention`) — see
+metadata call) and `VideoProvider` (`submit`, `poll`, `output_retention`, and optionally
+`check_output_uri`) — see
 [architecture.md](architecture.md#sync-vs-async-two-provider-traits-on-purpose) for the exact
 trait shapes. A provider that only does images implements `image()` instead of `video()`; a
 provider that does both implements both and returns `Some(self)` from each.
@@ -76,10 +77,12 @@ compiler alone):
 - **Downloads use the shared credential-origin rule**, not a bespoke one: `http::download`
   already attaches `Provider::credential_header()` only when the download URL's scheme+host+port
   match the provider's configured base URL, and follows redirects manually so a redirect off that
-  origin drops the credential. An adapter only needs to validate that a remote output URI is one
-  it is willing to trust (see `providers/gemini/veo.rs::validate_output_uri` for the pattern: same
-  origin, a narrow allowed path shape, no userinfo or fragment) before handing it to the
-  downloader.
+  origin drops the credential. `poll` records every output URI of a finished job as given (after
+  at most a structural check: a URL, http(s), no userinfo or fragment), so a job the provider
+  finished is always `succeeded`. Which URIs Iris is willing to fetch is decided at download time,
+  against the base URL configured then, by `VideoProvider::check_output_uri` (see
+  `providers/gemini/veo.rs::validate_output_uri` for the pattern: same origin, a narrow allowed
+  path shape); a refusal fails that output's download, never the job.
 - **Redact before an error can leak.** Route provider error text through `redact::scrub` (removes
   configured credential values) before it reaches `IrisError` — see
   `providers/openai/client.rs::scrub_credential` for the reference pass over every string field of
