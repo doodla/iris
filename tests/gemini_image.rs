@@ -448,7 +448,7 @@ async fn images_are_typed_by_their_bytes_and_kept_whatever_their_label() {
         if warns {
             assert_eq!(codes(&out), ["output_format_mismatch"], "{name}");
             let message = &out.warnings[0].message;
-            assert!(message.contains("image 0") && message.contains(kept), "{name}: {message}");
+            assert!(message.contains("response item 0 ") && message.contains(kept), "{name}: {message}");
         } else {
             assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
         }
@@ -470,7 +470,9 @@ async fn one_bad_item_never_drops_the_good_ones() {
     let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
     assert_eq!(types, ["image/png", "image/jpeg"]);
     assert_eq!(codes(&out), ["output_format_mismatch", "unexpected_output_count"]);
-    assert!(out.warnings[0].message.contains("image 1 "), "{}", out.warnings[0].message);
+    assert!(out.warnings[0].message.contains("response item 1 "), "{}", out.warnings[0].message);
+    let count = &out.warnings[1].message;
+    assert!(count.contains("returned 2 items (2 usable) for a request of 1"), "{count}");
 
     // A correct image next to items that are not images: the image is kept, each
     // unusable item is named in its own warning.
@@ -488,7 +490,15 @@ async fn one_bad_item_never_drops_the_good_ones() {
         assert_eq!(out.images.len(), 1, "case {i}");
         assert_eq!(out.images[0].bytes, good, "case {i}");
         assert_eq!(codes(&out), ["output_item_unusable", "unexpected_output_count"], "case {i}");
-        assert!(out.warnings[0].message.contains("image 0 "), "case {i}: {}", out.warnings[0].message);
+        // Items are numbered by their place in the response: the skipped one is
+        // item 0, although the kept image becomes artifact 0.
+        assert!(
+            out.warnings[0].message.contains("response item 0 "),
+            "case {i}: {}",
+            out.warnings[0].message
+        );
+        let count = &out.warnings[1].message;
+        assert!(count.contains("returned 2 items (1 usable) for a request of 1"), "case {i}: {count}");
         assert!(out.usage.is_some(), "case {i}: usage is still reported");
     }
 }

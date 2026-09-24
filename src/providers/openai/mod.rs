@@ -272,7 +272,8 @@ impl Expected {
 
 /// Why one `data[]` item of a response cannot be used.
 struct Unusable {
-    /// Human reason naming the item, e.g. "image 1 is not valid base64".
+    /// Human reason naming the item by its position in the response, e.g. "response
+    /// item 1 is not valid base64".
     why: String,
     /// Sniffed type of content that is not an image (e.g. `video/mp4`), if any.
     actual: Option<&'static str>,
@@ -289,6 +290,8 @@ struct Unusable {
 /// * An item that cannot be used (a URL instead of inline data, missing or invalid
 ///   base64, content that is not a recognized image) is skipped with warning
 ///   `output_item_unusable` naming it; every usable item is kept.
+/// * Warnings name items by their position in `data[]` ("response item N"), which
+///   differs from the artifact index once an earlier item was skipped.
 /// * Only a response with no usable item at all is `provider_bad_response`.
 /// * A number of items other than the requested `n` is reported with warning
 ///   `unexpected_output_count`.
@@ -342,8 +345,8 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
             warnings.push(Warning::new(
                 WARNING_FORMAT_MISMATCH,
                 format!(
-                    "OpenAI returned image {index} as {actual}, but {}; it is kept as {actual} because the \
-                     request completed and may have been billed",
+                    "OpenAI returned response item {index} as {actual}, but {}; it is kept as {actual} \
+                     because the request completed and may have been billed",
                     unmet.join(" and ")
                 ),
             ));
@@ -368,12 +371,13 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
 
     let wanted = expect.count.unwrap_or(1);
     if i64::try_from(returned).ok() != Some(wanted) {
-        let noun = if returned == 1 { "image" } else { "images" };
+        let noun = if returned == 1 { "item" } else { "items" };
+        let usable = images.len();
         warnings.push(Warning::new(
             WARNING_OUTPUT_COUNT,
             format!(
-                "OpenAI returned {returned} {noun} but the request asked for {wanted} (n); every usable \
-                 image is kept"
+                "OpenAI returned {returned} {noun} ({usable} usable) for a request of {wanted} (n); every \
+                 usable image was kept"
             ),
         ));
     }
@@ -399,16 +403,16 @@ fn decode_item(
     let Some(b64) = b64_json else {
         return Err(unusable(if has_url {
             format!(
-                "image {index} is a URL instead of inline base64 data (GPT image models return base64); \
-                 Iris does not fetch it"
+                "response item {index} is a URL instead of inline base64 data (GPT image models return \
+                 base64); Iris does not fetch it"
             )
         } else {
-            format!("image {index} has no b64_json data")
+            format!("response item {index} has no b64_json data")
         }));
     };
     let bytes = STANDARD_PAD_INDIFFERENT
         .decode(b64.trim())
-        .map_err(|_| unusable(format!("image {index} is not valid base64")))?;
+        .map_err(|_| unusable(format!("response item {index} is not valid base64")))?;
     drop(b64);
     match media::sniff(&bytes) {
         Some(actual) if media::is_image(actual) => {
@@ -416,7 +420,7 @@ fn decode_item(
         }
         other => Err(Unusable {
             why: format!(
-                "image {index} should be {expected} but its content is {}",
+                "response item {index} should be {expected} but its content is {}",
                 other.unwrap_or("not a recognized image")
             ),
             actual: Some(other.unwrap_or("unknown")),

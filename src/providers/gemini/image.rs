@@ -259,7 +259,9 @@ struct Unusable {
 /// discarded because of another item: a valid image is kept under its sniffed type
 /// (with `output_format_mismatch` when the label differs or is missing); an item that
 /// is not a usable image is skipped with `output_item_unusable`. Only an answer
-/// without any usable image is an error.
+/// without any usable image is an error. Warnings name items by their position among
+/// the returned inline items ("response item N"), which differs from the artifact
+/// index once an earlier item was skipped.
 fn interpret(
     resp: GenerateContentResponse,
     status: u16,
@@ -333,10 +335,12 @@ fn interpret(
         ));
     }
     if returned > requested {
+        let usable = images.len();
         warnings.push(Warning::new(
             WARNING_OUTPUT_COUNT,
             format!(
-                "the model returned {returned} images for a request of {requested}; every usable image was kept"
+                "the model returned {returned} items ({usable} usable) for a request of {requested}; every \
+                 usable image was kept"
             ),
         ));
     }
@@ -360,18 +364,18 @@ fn decode_image(
         None => "without a media type".to_string(),
     };
     if data.trim().is_empty() {
-        return Err(unusable(format!("image {index} ({labeled}) has no data"), None));
+        return Err(unusable(format!("response item {index} ({labeled}) has no data"), None));
     }
     let bytes = STANDARD_PAD_INDIFFERENT
         .decode(data)
         .or_else(|_| URL_SAFE_PAD_INDIFFERENT.decode(data))
-        .map_err(|_| unusable(format!("image {index} ({labeled}) is not valid base64"), None))?;
+        .map_err(|_| unusable(format!("response item {index} ({labeled}) is not valid base64"), None))?;
     let sniffed = match media::sniff(&bytes) {
         Some(t) if media::is_image(t) => t,
         other => {
             return Err(unusable(
                 format!(
-                    "image {index} ({} bytes {labeled}) is {}",
+                    "response item {index} ({} bytes {labeled}) is {}",
                     bytes.len(),
                     other.map_or("not a recognized image".to_string(), |t| format!("{t}, not an image"))
                 ),
@@ -384,8 +388,8 @@ fn decode_image(
         Warning::new(
             WARNING_FORMAT_MISMATCH,
             format!(
-                "the Gemini API returned image {index} {labeled} but its content is {sniffed}; it is kept as \
-                 {sniffed} because the request completed and may have been billed"
+                "the Gemini API returned response item {index} {labeled} but its content is {sniffed}; it \
+                 is kept as {sniffed} because the request completed and may have been billed"
             ),
         )
     });

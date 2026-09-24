@@ -639,7 +639,7 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
     let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
     assert_eq!(types, ["image/png", "image/jpeg"]);
     assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
-    assert!(out.warnings[0].message.contains("image 1 "), "{}", out.warnings[0].message);
+    assert!(out.warnings[0].message.contains("response item 1 "), "{}", out.warnings[0].message);
 }
 
 #[tokio::test]
@@ -664,7 +664,7 @@ async fn a_different_number_of_images_than_requested_is_kept_with_a_warning() {
             let message = &out.warnings[0].message;
             assert!(
                 message.contains(&format!("returned {returned} "))
-                    && message.contains(&format!("for {wanted}")),
+                    && message.contains(&format!("({returned} usable) for a request of {wanted} ")),
                 "{message}"
             );
         } else {
@@ -770,20 +770,26 @@ async fn one_unusable_item_never_drops_the_usable_images() {
         let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
         assert_eq!(codes, ["output_item_unusable"], "{name}: two items came back for n=2");
         let message = &out.warnings[0].message;
-        assert!(message.contains(&format!("image {at} ")) && message.contains(reason), "{name}: {message}");
+        assert!(
+            message.contains(&format!("response item {at} ")) && message.contains(reason),
+            "{name}: {message}"
+        );
         assert!(!message.contains("sig=abc"), "{name}: {message}");
         assert_eq!(out.usage.as_ref().and_then(|u| u.output_tokens), Some(9), "{name}: usage is kept");
         assert_eq!(out.provider_request_id.as_deref(), Some("req_ok_123"), "{name}");
         assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
     }
 
-    // With n=1, the unusable extra item is reported along with the count.
+    // With n=1, the unusable extra item is reported along with the count, which
+    // counts items, not images.
     let server = MockServer::start().await;
     let data = json!([{"b64_json": STANDARD.encode(&good)}, {"b64_json": "@@"}]);
     mount(&server, GEN, ok(json!({"created": 1, "data": data}))).await;
     let out = generate(&server, ResolvedOptions::new()).await.unwrap();
     let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
     assert_eq!(codes, ["output_item_unusable", "unexpected_output_count"]);
+    let count = &out.warnings[1].message;
+    assert!(count.contains("returned 2 items (1 usable) for a request of 1"), "{count}");
 
     // Several items and none usable: one provider_bad_response naming each.
     let server = MockServer::start().await;
@@ -792,7 +798,8 @@ async fn one_unusable_item_never_drops_the_usable_images() {
     let err = generate(&server, options(&[("count", OptionValue::Int(2))])).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse);
     assert!(
-        err.message.contains("image 0 is a URL") && err.message.contains("image 1 is not valid"),
+        err.message.contains("response item 0 is a URL")
+            && err.message.contains("response item 1 is not valid"),
         "{}",
         err.message
     );

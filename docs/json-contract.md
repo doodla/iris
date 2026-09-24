@@ -363,8 +363,10 @@ Paid image output is judged by its bytes, never by the provider's label, and one
 costs the others: a valid image of another type than requested or labeled (or with no label) is
 kept under its real type with `output_format_mismatch`, and a returned item that is not a usable
 image (a URL instead of inline data, missing or invalid base64, content that is not an image) is
-skipped with `output_item_unusable`, whose message names the item's index and the reason. Only a
-response with no usable image at all fails, as `provider_bad_response` with
+skipped with `output_item_unusable`, whose message names the item and the reason. These messages
+number items by their position in the provider's response ("response item 1"), which is not the
+artifact `index` once an earlier item was skipped; `unexpected_output_count` counts items, usable or
+not. Only a response with no usable image at all fails, as `provider_bad_response` with
 `details.charge_possible: true`.
 
 If a valid image cannot be written where it was requested after the paid call (an I/O failure
@@ -386,7 +388,7 @@ saved):
 ```json
 "warnings": [
   {"code":"output_extension_adjusted","message":"/home/you/circle has no extension; saving as /home/you/circle.jpg"},
-  {"code":"output_format_mismatch","message":"OpenAI returned image 0 as image/png, but the request asked for output_format jpeg and the response declared output_format jpeg; it is kept as image/png because the request completed and may have been billed"},
+  {"code":"output_format_mismatch","message":"OpenAI returned response item 0 as image/png, but the request asked for output_format jpeg and the response declared output_format jpeg; it is kept as image/png because the request completed and may have been billed"},
   {"code":"output_extension_adjusted","message":"the provider returned image/png; saving as /home/you/circle.png instead of /home/you/circle.jpg"}
 ]
 ```

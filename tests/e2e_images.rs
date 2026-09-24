@@ -369,7 +369,7 @@ fn an_unusable_openai_item_never_costs_the_good_image() {
     let unusable: Vec<&Value> =
         v["warnings"].as_array().unwrap().iter().filter(|w| w["code"] == "output_item_unusable").collect();
     assert_eq!(unusable.len(), 1, "{v}");
-    assert!(unusable[0]["message"].as_str().unwrap().contains("image 1 "), "{v}");
+    assert!(unusable[0]["message"].as_str().unwrap().contains("response item 1 "), "{v}");
     assert!(v["result"]["cost_estimate"]["amount"].as_f64().is_some(), "usage still gives an estimate: {v}");
     assert_eq!(files_in(&sb.work()).len(), 1, "{:?}", files_in(&sb.work()));
 }
