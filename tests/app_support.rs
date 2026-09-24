@@ -22,7 +22,7 @@ use iris::catalog::{
     ValidationInput,
 };
 use iris::config::{CliOverrides, EnvSnapshot, Platform, Resolved, SettingSource, Settings};
-use iris::domain::{CostEstimate, Operation, ProviderId, Warning};
+use iris::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
 use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy};
 use iris::providers::{
@@ -108,6 +108,17 @@ fn fake_image_estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<Co
     ))
 }
 
+/// $0.001 per reported output token (stands in for a provider's token-rate estimator).
+fn fake_usage_estimate(_spec: &ModelSpec, usage: &Usage) -> Option<CostEstimate> {
+    let tokens = usage.output_tokens?;
+    Some(CostEstimate::usd(
+        tokens as f64 * 0.001,
+        format!("{tokens} output tokens x $0.001 (fake, from usage)"),
+        "https://example.invalid/pricing",
+        "2026-09-24",
+    ))
+}
+
 pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     id: "fake-image-1",
     provider: ProviderId::OpenAi,
@@ -139,7 +150,7 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     docs_url: "https://example.invalid/docs",
     validate: None,
     estimate: Some(fake_image_estimate),
-    estimate_usage: None,
+    estimate_usage: Some(fake_usage_estimate),
 };
 
 pub static FAKE_GEMINI_IMAGE_OPTIONS: &[OptionSpec] = &[

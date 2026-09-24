@@ -205,8 +205,15 @@ pub async fn run(
             .with_detail("saved", saved_paths));
     }
 
-    let cost_estimate =
-        if returned == count { pre_estimate } else { request::estimate(spec, op, &opts, returned) };
+    // Prefer the provider-reported usage (covers every returned image); fall back to
+    // the pre-call estimate for the number of images actually returned.
+    let from_usage = match (spec.estimate_usage, output.usage.as_ref()) {
+        (Some(estimate_usage), Some(usage)) => estimate_usage(spec, usage),
+        _ => None,
+    };
+    let cost_estimate = from_usage.or_else(|| {
+        if returned == count { pre_estimate } else { request::estimate(spec, op, &opts, returned) }
+    });
     if cost_estimate.is_none() {
         warnings.push(request::cost_unavailable(spec));
     }

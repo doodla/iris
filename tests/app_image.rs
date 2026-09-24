@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use iris::app::image::{self, ImageArgs};
 use iris::app::{GenerationArgs, GenerationOutcome, Interrupt};
 use iris::catalog::{OptionSource, OptionValue, RawOption};
-use iris::domain::{Operation, ProviderId, Warning};
+use iris::domain::{Operation, ProviderId, Usage, Warning};
 use iris::error::{ErrorCode, IrisError};
 use iris::output::results::{ImageResult, PlanResult};
 use support::*;
@@ -75,6 +75,22 @@ impl Fixture {
     fn calls(&self) -> usize {
         self.openai.images().calls.load(Ordering::SeqCst) + self.gemini.images().calls.load(Ordering::SeqCst)
     }
+}
+
+#[tokio::test]
+async fn reported_usage_takes_precedence_over_the_pre_call_estimate() {
+    let f = Fixture::new();
+    let mut out = image_output(vec![png(8, 8)]);
+    out.usage = Some(Usage { output_tokens: Some(250), ..Default::default() });
+    f.openai.images().push(Ok(out));
+    let mut a = args("a red kite");
+    a.common.options = vec![flag("quality", "low", "--quality")];
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let cost = completed(r.unwrap()).cost_estimate.expect("estimate");
+    assert!(cost.estimated);
+    assert!((cost.amount - 0.25).abs() < 1e-9, "usage-based, not the $0.01 pre-call estimate");
+    assert!(cost.basis.contains("from usage"));
+    assert!(!has_warning(&warnings, "cost_estimate_unavailable"));
 }
 
 #[tokio::test]
