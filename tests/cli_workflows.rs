@@ -295,6 +295,17 @@ async fn video_generate_waits_and_saves_through_the_cli() {
 }
 
 #[tokio::test]
+async fn dry_run_plans_show_the_effective_options_including_defaults() {
+    let f = Fixture::new();
+    let run = f.run(&["video", "generate", "waves", "--duration", "4", "--dry-run", "--json"]).await;
+    let v = run.json();
+    assert_eq!(v["result"]["options"]["duration"], "4");
+    assert_eq!(v["result"]["options"]["resolution"], "720p", "{v}");
+    let run = f.run(&["video", "generate", "waves", "--dry-run"]).await;
+    assert!(run.stdout.contains("duration=8") && run.stdout.contains("resolution=720p"), "{}", run.stdout);
+}
+
+#[tokio::test]
 async fn wait_limits_exit_4_and_bad_durations_are_invalid_arguments() {
     let f = Fixture::new();
     let run =

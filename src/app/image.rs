@@ -112,7 +112,7 @@ pub async fn run(
             model: resolved.id.clone(),
             operation: op,
             async_job: false,
-            options: request::options_view(spec, &opts, ctx.settings.store_prompts.value),
+            options: request::options_view(spec, op, &opts, ctx.settings.store_prompts.value),
             inputs,
             outputs: plan.paths.iter().map(|p| p.display().to_string()).collect(),
             credential_present: ctx.settings.credential_present(provider),

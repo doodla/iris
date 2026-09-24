@@ -453,7 +453,8 @@ fn plan(res: &PlanResult) -> String {
     field("model", res.model.clone());
     field("async job", yes_no(res.async_job).to_string());
     let options: Vec<String> = res.options.iter().map(|(k, v)| format!("{k}={}", value_text(v))).collect();
-    field("options", if options.is_empty() { "(provider defaults)".into() } else { options.join(" ") });
+    // Explicit values plus declared defaults (the values the request runs with).
+    field("options", if options.is_empty() { "(none)".into() } else { options.join(" ") });
     for i in &res.inputs {
         field("input", format!("{} {} ({}, {} bytes)", i.role, i.path, i.media_type, i.bytes));
     }

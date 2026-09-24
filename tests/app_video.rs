@@ -137,6 +137,10 @@ async fn detach_records_the_job_before_and_after_submission() {
         "free text is hashed: {}",
         rec["request"]
     );
+    // The effective values the job runs with, including declared defaults.
+    assert_eq!(rec["request"]["duration"], "8", "{}", rec["request"]);
+    assert_eq!(rec["request"]["resolution"], "720p", "{}", rec["request"]);
+    assert_eq!(job.request["duration"], "8");
     assert_eq!(rec["output_plan"]["dir"], f.sandbox.work().to_str().unwrap());
     let raw =
         std::fs::read_to_string(f.sandbox.state().join("jobs").join(format!("{}.json", job.job_id))).unwrap();
@@ -622,6 +626,8 @@ async fn video_validation_and_dry_run_happen_before_any_record_or_request() {
     assert_eq!(plan.inputs.len(), 1);
     assert_eq!(plan.inputs[0].role, "first_frame");
     assert!(plan.outputs[0].ends_with("<job_id>.mp4"), "{:?}", plan.outputs);
+    assert_eq!(plan.options["duration"], "4", "explicit");
+    assert_eq!(plan.options["resolution"], "720p", "declared default: {:?}", plan.options);
     assert!((plan.cost_estimate.unwrap().amount - 0.4).abs() < 1e-9);
     assert!(!f.sandbox.state().join("jobs").exists());
     assert_eq!(f.submits(), 0);

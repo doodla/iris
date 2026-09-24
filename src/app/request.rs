@@ -220,14 +220,38 @@ pub(crate) fn cost_unavailable(spec: &ModelSpec) -> Warning {
     )
 }
 
-/// Validated options as shown in plans and results: free-text options appear as
-/// `{sha256, chars}` unless prompt storage is enabled (same rule as job records).
+/// The options a request runs with: every explicit value, plus the declared
+/// default of each other option of `op` that has one. Veo is sent these values
+/// (C-06), and they are what a cost estimate is computed from; for other models
+/// they are the documented provider defaults. Only for display and job records;
+/// adapters get the explicit [`ResolvedOptions`] unchanged.
+pub(crate) fn effective_options(spec: &ModelSpec, op: Operation, opts: &ResolvedOptions) -> ResolvedOptions {
+    let mut all = opts.clone();
+    for option in spec.options_for(op) {
+        if !all.contains(option.name)
+            && let Some(value) = spec.effective(opts, option.name)
+        {
+            all.insert(option.name, value);
+        }
+    }
+    all
+}
+
+/// Options as shown in plans: the [`effective_options`], with free-text options
+/// as `{sha256, chars}` unless prompt storage is enabled (same rule as job
+/// records).
 pub(crate) fn options_view(
     spec: &ModelSpec,
+    op: Operation,
     opts: &ResolvedOptions,
     store_prompts: bool,
 ) -> Map<String, Value> {
-    let mut map = jobs::request_metadata(spec, opts, &InputCounts::default(), store_prompts);
+    let mut map = jobs::request_metadata(
+        spec,
+        &effective_options(spec, op, opts),
+        &InputCounts::default(),
+        store_prompts,
+    );
     map.remove("input_counts");
     map
 }
