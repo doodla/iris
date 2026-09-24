@@ -8,7 +8,8 @@ use std::time::Duration;
 
 use iris::domain::{JobStatus, Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
-use iris::jobs::{JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord};
+use iris::http::Timeouts;
+use iris::jobs::{JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord, paid_submit_budget};
 use iris::providers::SubmittedOperation;
 use jiff::Timestamp;
 use serde_json::{Map, Value, json};
@@ -352,11 +353,32 @@ fn stale_submitting_records_are_reported_and_rewritten_as_submission_unknown() {
     assert_eq!(raw_status(stale.job_id()), "submission_unknown");
     assert_eq!(store.load(fresh.job_id()).unwrap().status(), JobStatus::Submitting);
 
-    // A longer configured submit timeout moves the threshold.
-    let patient = JobStore::new(dir.path()).with_submit_timeout(Duration::from_secs(7200));
+    // A longer configured submit budget moves the threshold.
+    let patient = JobStore::new(dir.path()).with_submit_budget(Duration::from_secs(7200));
     let another = JobRecord::new(new_job(), ago(3600)).unwrap();
     patient.create(&another).unwrap();
     assert_eq!(patient.load(another.job_id()).unwrap().status(), JobStatus::Submitting);
+}
+
+#[test]
+fn default_stale_threshold_covers_a_worst_case_paid_submit() {
+    // 3 attempts × (15s connect + 60s submit) + 2 × 60s Retry-After = 345s (D-12e).
+    let budget = paid_submit_budget(&Timeouts::default());
+    assert_eq!(budget, Duration::from_secs(345));
+    let slow = Timeouts { submit: Duration::from_secs(120), ..Timeouts::default() };
+    assert_eq!(paid_submit_budget(&slow), Duration::from_secs(3 * 135 + 120));
+
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    assert_eq!(store.submit_budget(), budget);
+    // Still inside a slow, retried submission (well past the bare 60s + 60s): not stale.
+    let slow_submit = JobRecord::new(new_job(), ago(300)).unwrap();
+    store.create(&slow_submit).unwrap();
+    assert_eq!(store.load(slow_submit.job_id()).unwrap().status(), JobStatus::Submitting);
+    // Past budget + grace (405s): stale.
+    let dead = JobRecord::new(new_job(), ago(406)).unwrap();
+    store.create(&dead).unwrap();
+    assert_eq!(store.load(dead.job_id()).unwrap().status(), JobStatus::SubmissionUnknown);
 }
 
 #[test]
@@ -377,10 +399,12 @@ fn delete_removes_local_files_only_and_protects_active_jobs() {
     assert!(names_in(store.dir()).is_empty(), "{:?}", names_in(store.dir()));
     assert_eq!(store.load(&running).unwrap_err().code, ErrorCode::JobNotFound);
 
-    // Terminal jobs need no force; stale submitting counts as terminal.
-    let stale = JobRecord::new(new_job(), ago(3600)).unwrap();
-    store.create(&stale).unwrap();
-    store.delete(stale.job_id(), false).unwrap();
+    // Terminal jobs need no force.
+    let mut rejected = JobRecord::new(new_job(), now()).unwrap();
+    rejected.mark_rejected(&IrisError::new(ErrorCode::ProviderError, "400"), now()).unwrap();
+    store.create(&rejected).unwrap();
+    store.delete(rejected.job_id(), false).unwrap();
+    assert!(!store.record_path(rejected.job_id()).exists());
 
     // Unreadable records can be removed with --force only.
     let corrupt = JobId::generate();
@@ -388,6 +412,38 @@ fn delete_removes_local_files_only_and_protects_active_jobs() {
     assert_eq!(store.delete(&corrupt, false).unwrap_err().code, ErrorCode::StateInvalid);
     store.delete(&corrupt, true).unwrap();
     assert!(!store.record_path(&corrupt).exists());
+}
+
+#[test]
+fn delete_uses_the_status_on_disk_so_a_slow_submitter_keeps_its_record() {
+    // A record still `submitting` on disk is reported as submission_unknown once
+    // past the stale threshold, but its submitter may be alive (slow retries, or a
+    // store configured with a shorter budget). Deleting it without --force would
+    // make that process's later mark_submitted fail and lose the operation id.
+    let dir = tempfile::tempdir().unwrap();
+    let impatient = JobStore::new(dir.path()).with_submit_budget(Duration::from_secs(1));
+    let rec = JobRecord::new(new_job(), ago(3600)).unwrap();
+    impatient.create(&rec).unwrap();
+    let id = rec.job_id().clone();
+    assert_eq!(impatient.load(&id).unwrap().status(), JobStatus::SubmissionUnknown);
+
+    let err = impatient.delete(&id, false).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_eq!(err.job_status, Some(JobStatus::Submitting));
+    assert!(err.message.contains("submission_unknown"), "{}", err.message);
+    assert!(err.hint.as_deref().unwrap().contains("--force"));
+
+    // The live submitter can still record its operation id.
+    let op = SubmittedOperation { remote_id: "operations/late".into(), provider_request_id: None };
+    let (after, ()) = impatient.update(&id, |r| r.mark_submitted(&op, now())).unwrap();
+    assert_eq!(after.status(), JobStatus::Running);
+    assert_eq!(after.remote_operation_id(), Some("operations/late"));
+
+    // --force still removes a submitting record.
+    let other = JobRecord::new(new_job(), ago(3600)).unwrap();
+    impatient.create(&other).unwrap();
+    impatient.delete(other.job_id(), true).unwrap();
+    assert_eq!(impatient.load(other.job_id()).unwrap_err().code, ErrorCode::JobNotFound);
 }
 
 #[test]
@@ -421,4 +477,36 @@ fn download_lock_blocks_until_released() {
     drop(held);
     rx.recv_timeout(Duration::from_secs(10)).expect("acquired after release");
     waiter.join().unwrap();
+}
+
+#[tokio::test]
+async fn async_download_lock_waits_without_blocking_the_runtime() {
+    let (_dir, store, id) = store_with_running_job();
+    let held = store.download_lock(&id).unwrap();
+
+    // On this single-threaded runtime a blocking flock would never let the timer
+    // fire; the async form yields between attempts, so the timeout does.
+    let waited = tokio::time::timeout(
+        Duration::from_millis(150),
+        store.download_lock_async(&id, Duration::from_millis(10)),
+    )
+    .await;
+    assert!(waited.is_err(), "must still be waiting while another holder has the lock");
+
+    drop(held);
+    let lock = tokio::time::timeout(
+        Duration::from_secs(10),
+        store.download_lock_async(&id, Duration::from_millis(10)),
+    )
+    .await
+    .expect("acquired after release")
+    .unwrap();
+    assert_eq!(lock.job_id(), &id);
+    assert!(store.try_download_lock(&id).unwrap().is_none(), "the async lock is a real lock");
+
+    let missing = JobId::generate();
+    assert_eq!(
+        store.download_lock_async(&missing, Duration::from_millis(10)).await.unwrap_err().code,
+        ErrorCode::JobNotFound
+    );
 }

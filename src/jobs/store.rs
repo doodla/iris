@@ -9,6 +9,12 @@
 //! record. Locks use `std::fs::File::lock` (flock on Linux and macOS): they are per
 //! open file description, so threads of one process exclude each other as well as
 //! separate processes.
+//!
+//! The blocking lock calls ([`JobStore::update`], [`JobStore::delete`],
+//! [`JobStore::download_lock`]) park the calling thread in `flock`. Record locks are
+//! held only for one short read-modify-write, but a download lock is held for a
+//! whole download: async code waits for it with [`JobStore::download_lock_async`],
+//! which never blocks the runtime (so Ctrl-C handling keeps working).
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -25,6 +31,25 @@ use crate::http::Timeouts;
 
 /// Name of the jobs directory inside the state directory.
 const JOBS_DIR: &str = "jobs";
+
+/// Attempts of the `PaidSubmit` retry class (C-04).
+const PAID_SUBMIT_ATTEMPTS: u32 = 3;
+/// Longest wait between two `PaidSubmit` attempts: `Retry-After` is honored up to
+/// 60s (C-04); the exponential backoff cap (30s) is lower.
+const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
+
+/// Worst-case wall-clock time of one `PaidSubmit` call with `timeouts` (D-12e):
+/// `attempts × (connect + submit timeout) + (attempts − 1) × longest retry wait`.
+/// With the default timeouts this is 3 × (15s + 60s) + 2 × 60s = 345s.
+///
+/// This is the "submit timeout" of the stale-`submitting` rule: a record is only
+/// declared abandoned once no live submitter can still be waiting for its answer.
+pub fn paid_submit_budget(timeouts: &Timeouts) -> Duration {
+    let per_attempt = timeouts.connect.saturating_add(timeouts.submit);
+    per_attempt
+        .saturating_mul(PAID_SUBMIT_ATTEMPTS)
+        .saturating_add(MAX_RETRY_WAIT.saturating_mul(PAID_SUBMIT_ATTEMPTS - 1))
+}
 
 /// Records returned by [`JobStore::list`], newest first, plus one
 /// `job_record_unreadable` warning per skipped record.
@@ -61,22 +86,34 @@ struct RecordLock {
 #[derive(Debug, Clone)]
 pub struct JobStore {
     dir: PathBuf,
-    submit_timeout: Duration,
+    submit_budget: Duration,
 }
 
 impl JobStore {
-    /// A store for `<state_dir>/jobs/`, using the default submit timeout (C-04: 60s)
-    /// for the stale-`submitting` rule.
+    /// A store for `<state_dir>/jobs/`. The stale-`submitting` rule uses the
+    /// worst-case `PaidSubmit` duration with default timeouts
+    /// ([`paid_submit_budget`]`(&Timeouts::default())`, 345s); use
+    /// [`JobStore::with_submit_budget`] when timeouts are configured.
     pub fn new(state_dir: impl AsRef<Path>) -> JobStore {
-        JobStore { dir: state_dir.as_ref().join(JOBS_DIR), submit_timeout: Timeouts::default().submit }
+        JobStore {
+            dir: state_dir.as_ref().join(JOBS_DIR),
+            submit_budget: paid_submit_budget(&Timeouts::default()),
+        }
     }
 
-    /// Use the configured submit timeout for the stale-`submitting` rule
-    /// (a `submitting` record older than `submit_timeout + SUBMIT_GRACE` is reported
-    /// and rewritten as `submission_unknown`).
-    pub fn with_submit_timeout(mut self, submit_timeout: Duration) -> JobStore {
-        self.submit_timeout = submit_timeout;
+    /// Set the submit budget of the stale-`submitting` rule: a `submitting` record
+    /// older than `submit_budget + SUBMIT_GRACE` is reported and rewritten as
+    /// `submission_unknown`. Pass [`paid_submit_budget`] of the configured
+    /// timeouts, never the bare submit timeout (D-12e): a slower threshold only
+    /// delays the report, a faster one relabels live submissions.
+    pub fn with_submit_budget(mut self, submit_budget: Duration) -> JobStore {
+        self.submit_budget = submit_budget;
         self
+    }
+
+    /// The submit budget used by the stale-`submitting` rule.
+    pub fn submit_budget(&self) -> Duration {
+        self.submit_budget
     }
 
     /// The jobs directory (`<state_dir>/jobs`).
@@ -119,7 +156,7 @@ impl JobStore {
     /// by a newer iris), `io_error`.
     pub fn load(&self, id: &JobId) -> Result<JobRecord, IrisError> {
         let mut record = self.read(id)?;
-        record.resolve_stale_submitting(now(), self.submit_timeout);
+        record.resolve_stale_submitting(now(), self.submit_budget);
         Ok(record)
     }
 
@@ -136,7 +173,7 @@ impl JobStore {
     ) -> Result<(JobRecord, T), IrisError> {
         let _lock = self.lock_record(id)?;
         let mut record = self.read(id)?;
-        record.resolve_stale_submitting(now(), self.submit_timeout);
+        record.resolve_stale_submitting(now(), self.submit_budget);
         let value = f(&mut record)?;
         self.write(&record)?;
         Ok((record, value))
@@ -171,7 +208,7 @@ impl JobStore {
             let Ok(id) = JobId::parse(id) else { continue };
             match self.read(&id) {
                 Ok(mut record) => {
-                    record.resolve_stale_submitting(now, self.submit_timeout);
+                    record.resolve_stale_submitting(now, self.submit_budget);
                     listing.records.push(record);
                 }
                 // Deleted between read_dir and read: not an error for a listing.
@@ -191,21 +228,35 @@ impl JobStore {
     /// Delete a job's LOCAL record and its lock files (never downloaded media, never
     /// anything remote). Refuses active jobs (`submitting`/`running`, which would
     /// become unrecoverable) and unreadable records unless `force`.
+    ///
+    /// The decision uses the status on disk, without the stale-`submitting` rule: a
+    /// record still `submitting` may belong to a live process whose submission is
+    /// merely slow, and deleting it would lose the operation id that process is
+    /// about to record. Such a record needs `force` even when it is reported as
+    /// `submission_unknown`.
     pub fn delete(&self, id: &JobId, force: bool) -> Result<(), IrisError> {
         let _lock = self.lock_record(id)?;
         match self.read(id) {
-            Ok(mut record) => {
-                record.resolve_stale_submitting(now(), self.submit_timeout);
+            Ok(record) => {
                 if record.is_active() && !force {
-                    return Err(IrisError::invalid(format!(
-                        "job {id} is still {}; deleting its local record would make the job unrecoverable",
-                        record.status()
-                    ))
-                    .with_job(id.to_string(), Some(record.status()))
-                    .with_hint(
-                        "wait for the job to finish (`iris jobs wait`), or pass --force to delete the local \
-                         record anyway (the remote job is not cancelled)",
-                    ));
+                    let message = if record.is_stale_submitting(now(), self.submit_budget) {
+                        format!(
+                            "job {id} is recorded as submitting; the submitting process has probably stopped \
+                             (the job is reported as submission_unknown), but deleting the local record would \
+                             lose the provider operation id if it is still running"
+                        )
+                    } else {
+                        format!(
+                            "job {id} is still {}; deleting its local record would make the job unrecoverable",
+                            record.status()
+                        )
+                    };
+                    return Err(IrisError::invalid(message)
+                        .with_job(id.to_string(), Some(record.status()))
+                        .with_hint(
+                            "wait for the job to finish (`iris jobs wait`), or pass --force to delete the \
+                             local record anyway (the remote job is not cancelled)",
+                        ));
                 }
             }
             Err(e) if e.code == ErrorCode::JobNotFound => return Err(e),
@@ -226,6 +277,10 @@ impl JobStore {
 
     /// Take the job's exclusive download lock, waiting for any other download of the
     /// same job to finish. Re-read the record after acquiring it.
+    ///
+    /// This BLOCKS the calling thread (in `flock`) for as long as another process
+    /// downloads the job. Do not call it on an async runtime thread; use
+    /// [`JobStore::download_lock_async`] there.
     pub fn download_lock(&self, id: &JobId) -> Result<DownloadLock, IrisError> {
         let path = self.download_lock_path(id);
         let file = self.open_lock(id, &path)?;
@@ -248,6 +303,25 @@ impl JobStore {
         }
         self.confirm_exists_or_cleanup(id, &path)?;
         Ok(Some(DownloadLock { _file: file, job_id: id.clone() }))
+    }
+
+    /// Async form of [`JobStore::download_lock`]: polls
+    /// [`JobStore::try_download_lock`] every `poll_interval`, sleeping with
+    /// `tokio::time::sleep` in between, so the runtime is never blocked. Waiting
+    /// can be cancelled by dropping the future (e.g. in a `tokio::select!` with
+    /// Ctrl-C). Callers that want to tell the user they are waiting can call
+    /// `try_download_lock` first.
+    pub async fn download_lock_async(
+        &self,
+        id: &JobId,
+        poll_interval: Duration,
+    ) -> Result<DownloadLock, IrisError> {
+        loop {
+            if let Some(lock) = self.try_download_lock(id)? {
+                return Ok(lock);
+            }
+            tokio::time::sleep(poll_interval).await;
+        }
     }
 
     // ----- internals ---------------------------------------------------------

@@ -26,7 +26,7 @@ pub use record::{
     JOB_RECORD_VERSION, JobOutput, JobRecord, NewJob, OutputPlan, PollApplied, PromptRecord, SUBMIT_GRACE,
     request_metadata,
 };
-pub use store::{DownloadLock, JobListing, JobStore};
+pub use store::{DownloadLock, JobListing, JobStore, paid_submit_budget};
 
 /// Prefix of every job id.
 const JOB_ID_PREFIX: &str = "job_";

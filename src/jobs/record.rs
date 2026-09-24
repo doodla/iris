@@ -43,9 +43,10 @@ use crate::redact;
 /// `schema_version <= JOB_RECORD_VERSION` and reject newer records (`state_invalid`).
 pub const JOB_RECORD_VERSION: u32 = 1;
 
-/// Grace period added to the submit timeout before a record still in `submitting`
-/// is considered abandoned (the process died in the uncertainty window) and is
-/// reported as `submission_unknown`.
+/// Grace period added to the submit budget (see
+/// [`paid_submit_budget`](super::paid_submit_budget)) before a record still in
+/// `submitting` is considered abandoned (the process died in the uncertainty
+/// window) and is reported as `submission_unknown`.
 pub const SUBMIT_GRACE: Duration = Duration::from_secs(60);
 
 /// What Iris remembers about the prompt: always a SHA-256 and a character count;
@@ -543,13 +544,15 @@ impl JobRecord {
     }
 
     /// True if this record is still `submitting` although `created_at` is older than
-    /// `submit_timeout + SUBMIT_GRACE`: the submitting process must have died in the
-    /// uncertainty window.
-    pub fn is_stale_submitting(&self, now: Timestamp, submit_timeout: Duration) -> bool {
+    /// `submit_budget + SUBMIT_GRACE`: the submitting process must have died in the
+    /// uncertainty window. `submit_budget` is the worst-case duration of the submit
+    /// call ([`paid_submit_budget`](super::paid_submit_budget)), not the bare
+    /// per-request timeout.
+    pub fn is_stale_submitting(&self, now: Timestamp, submit_budget: Duration) -> bool {
         if self.status != JobStatus::Submitting {
             return false;
         }
-        let limit = submit_timeout.saturating_add(SUBMIT_GRACE).as_secs().min(i64::MAX as u64) as i64;
+        let limit = submit_budget.saturating_add(SUBMIT_GRACE).as_secs().min(i64::MAX as u64) as i64;
         now.as_second().saturating_sub(self.created_at.as_second()) > limit
     }
 
@@ -559,13 +562,13 @@ impl JobRecord {
     /// list, and locked update.
     ///
     /// `completed_at` is set to the moment the record became stale
-    /// (`created_at + submit_timeout + SUBMIT_GRACE`), not to `now`, so repeated
+    /// (`created_at + submit_budget + SUBMIT_GRACE`), not to `now`, so repeated
     /// in-memory reports of the same unpersisted record agree.
-    pub fn resolve_stale_submitting(&mut self, now: Timestamp, submit_timeout: Duration) -> bool {
-        if !self.is_stale_submitting(now, submit_timeout) {
+    pub fn resolve_stale_submitting(&mut self, now: Timestamp, submit_budget: Duration) -> bool {
+        if !self.is_stale_submitting(now, submit_budget) {
             return false;
         }
-        let deadline = submit_timeout.saturating_add(SUBMIT_GRACE);
+        let deadline = submit_budget.saturating_add(SUBMIT_GRACE);
         let became_stale = self.created_at.checked_add(deadline).ok().filter(|t| *t <= now).unwrap_or(now);
         let error = IrisError::new(
             ErrorCode::SubmissionUncertain,
