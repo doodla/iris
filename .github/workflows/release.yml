@@ -42,10 +42,20 @@ jobs:
       tag: ${{ steps.check.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - id: check
+        env:
+          # github.event_name is not attacker-controlled, but routing every
+          # templated value through env: rather than inline `${{ }}`
+          # interpolation is the hardening GitHub itself recommends: it
+          # keeps expression values out of the literal script text that
+          # bash parses, so nothing here can be reached by a script-
+          # injection payload smuggled through a future `${{ }}` addition.
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
+          if [ "$EVENT_NAME" = "push" ]; then
             tag="${GITHUB_REF#refs/tags/}"
             version=$(sh scripts/check-tag-version.sh "$tag")
           else
@@ -66,23 +76,30 @@ jobs:
           # C-07's three v1 targets, each on its native runner (see
           # evidence/T-08 and decisions.md D-09/D-10 for why: musl for
           # portable static Linux binaries, native macOS runners for the two
-          # Apple targets).
+          # Apple targets). macos_deployment_target pins
+          # MACOSX_DEPLOYMENT_TARGET to the exact floor documented in the
+          # header comment above; without it, the real minimum is whatever
+          # rustc/cc default to today, which a future toolchain or a C
+          # dependency's build script (e.g. aws-lc-sys) could silently
+          # raise without this workflow noticing.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
+            macos_deployment_target: ""
           - target: x86_64-apple-darwin
             os: macos-15-intel
+            macos_deployment_target: "10.12"
           - target: aarch64-apple-darwin
             os: macos-15
+            macos_deployment_target: "11.0"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
-        with:
-          key: ${{ matrix.target }}
 
       - name: Install musl toolchain
         if: matrix.target == 'x86_64-unknown-linux-musl'
@@ -92,35 +109,56 @@ jobs:
           sudo apt-get install -y musl-tools
 
       - name: cargo build --release
+        env:
+          # Empty string on the Linux/musl leg is a no-op: this variable is
+          # only consulted by Apple's linker/toolchain.
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos_deployment_target }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Package release archive
         run: sh scripts/package-release.sh ${{ matrix.target }} dist
 
       - name: Smoke test — packaged binary only
+        env:
+          # Routed through env: rather than inline `${{ }}` interpolation
+          # (GitHub's own script-injection hardening guidance) — see the
+          # `verify` job's `check` step for why.
+          VERSION: ${{ needs.verify.outputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
-          version="${{ needs.verify.outputs.version }}"
-          target="${{ matrix.target }}"
-          archive="dist/iris-v${version}-${target}.tar.gz"
+          archive="dist/iris-v${VERSION}-${TARGET}.tar.gz"
           extract_dir=$(mktemp -d)
           tar -xzf "$archive" -C "$extract_dir"
-          bin="$extract_dir/iris-v${version}-${target}/iris"
+          bin="$extract_dir/iris-v${VERSION}-${TARGET}/iris"
           test -x "$bin" || { echo "::error::extracted binary missing or not executable: $bin"; exit 1; }
 
           out=$("$bin" --version)
           echo "iris --version: $out"
-          case "$out" in
-            *"$version"*) ;;
-            *) echo "::error::--version output '$out' does not contain '$version'"; exit 1 ;;
-          esac
+          # A plain substring match (e.g. `*"$VERSION"*`) would also accept
+          # "0.1.01" for an expected "0.1.0". Require the version to appear
+          # as its own token: not immediately preceded or followed by
+          # another digit or dot.
+          version_re=$(printf '%s' "$VERSION" | sed 's/[.[\*^$/]/\\&/g')
+          if ! printf '%s' "$out" | grep -Eq "(^|[^0-9.])${version_re}([^0-9.]|$)"; then
+            echo "::error::--version output '$out' does not contain '$VERSION' as an exact token"
+            exit 1
+          fi
 
-          "$bin" --json version
-          "$bin" --json models list
+          "$bin" --json version | python3 -c 'import json,sys; json.load(sys.stdin)' \
+            || { echo "::error::--json version did not print a single valid JSON document"; exit 1; }
+          "$bin" --json models list | python3 -c 'import json,sys; json.load(sys.stdin)' \
+            || { echo "::error::--json models list did not print a single valid JSON document"; exit 1; }
           "$bin" schema
           rm -rf "$extract_dir"
 
       - name: Smoke test — install.sh against the packaged archive
+        env:
+          # Routed through env: rather than inline `${{ }}` interpolation
+          # (GitHub's own script-injection hardening guidance) — see the
+          # `verify` job's `check` step for why.
+          VERSION: ${{ needs.verify.outputs.version }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           if [ ! -f install.sh ]; then
@@ -128,8 +166,10 @@ jobs:
             exit 0
           fi
 
-          version="${{ needs.verify.outputs.version }}"
-          target="${{ matrix.target }}"
+          # shellcheck disable=SC2153 # intentional lowercase alias of the env-provided VERSION/TARGET
+          version="$VERSION"
+          # shellcheck disable=SC2153 # intentional lowercase alias of the env-provided VERSION/TARGET
+          target="$TARGET"
           tag="v${version}"
           archive_name="iris-v${version}-${target}.tar.gz"
 
@@ -141,10 +181,16 @@ jobs:
             fi
           }
 
-          # Serve just this leg's archive under the same URL shape C-07
-          # documents for IRIS_INSTALL_BASE_URL: <base>/download/<tag>/<asset>.
-          # We pass --version explicitly, so the /latest redirect (exercised
-          # by tests/installer/run.sh instead) isn't needed here.
+          # Serve just this leg's archive under the same URL shape C-07 and
+          # the real install.sh (t09-installer, DEFAULT_BASE_URL =
+          # ".../releases") expect: IRIS_INSTALL_BASE_URL replaces
+          # ".../releases" itself, and install.sh appends
+          # "/download/<tag>/<asset>" to whatever it's given. So the base
+          # URL below must be the server root with NO "/download" suffix —
+          # confirmed against the real install.sh in the t09-installer
+          # worktree (evidence/T-08/install-smoke-test-fix.md); the
+          # previous "${port}/download" value doubled the path segment and
+          # made every request 404.
           #
           # Both temp dirs and server_pid are created/set (even if empty)
           # before the trap is installed: with `set -u`, the cleanup
@@ -157,6 +203,7 @@ jobs:
           # see evidence/T-08).
           serve_root=$(mktemp -d)
           install_dir=$(mktemp -d)
+          log_dir=$(mktemp -d)
           server_pid=""
           cleanup() {
             status=$?
@@ -171,7 +218,7 @@ jobs:
               kill "$server_pid" 2>/dev/null || true
               wait "$server_pid" 2>/dev/null || true
             fi
-            rm -rf "$serve_root" "$install_dir" || true
+            rm -rf "$serve_root" "$install_dir" "$log_dir" || true
             exit "$status"
           }
           trap cleanup EXIT INT TERM
@@ -180,33 +227,45 @@ jobs:
           cp "dist/$archive_name" "$serve_root/download/$tag/$archive_name"
           (cd "$serve_root/download/$tag" && sha256_of "$archive_name") > "$serve_root/download/$tag/SHA256SUMS"
 
-          python3 -m http.server 0 --bind 127.0.0.1 --directory "$serve_root" \
-            > "$serve_root/../server.log" 2>&1 &
+          # -u (unbuffered stdout/stderr): without it, Python block-buffers
+          # its "Serving HTTP on ... port N" startup line whenever stdout is
+          # redirected to a file (as it is here), so the poll loop below
+          # would see an empty log and time out. This sandbox happens to
+          # export PYTHONUNBUFFERED=1, which hid the bug locally; GitHub-
+          # hosted runners do not set it (verified: `env -u PYTHONUNBUFFERED
+          # python3 -m http.server ...` left the log at 0 bytes for the
+          # full poll window, `python3 -u` fixed it — evidence/T-08).
+          python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$serve_root" \
+            > "$log_dir/server.log" 2>&1 &
           server_pid=$!
 
           # http.server with port 0 logs the bound port to stderr on
           # startup; poll for it rather than guessing a fixed free port.
+          # `-E` (POSIX ERE) with an unescaped `+` is used instead of GNU
+          # sed's `\+` BRE extension, which BSD/macOS sed does not support
+          # and both release.yml macOS legs run this same step.
           port=""
           for _ in $(seq 1 50); do
-            port=$(sed -n 's/.*Serving HTTP on 127\.0\.0\.1 port \([0-9]\+\).*/\1/p' "$serve_root/../server.log" | head -n1)
+            port=$(sed -n -E 's/.*Serving HTTP on 127\.0\.0\.1 port ([0-9]+).*/\1/p' "$log_dir/server.log" | head -n1)
             [ -n "$port" ] && break
             sleep 0.1
           done
           if [ -z "$port" ]; then
             echo "::error::local smoke-test HTTP server never reported its port"
-            cat "$serve_root/../server.log" || true
+            cat "$log_dir/server.log" || true
             exit 1
           fi
 
-          IRIS_INSTALL_BASE_URL="http://127.0.0.1:${port}/download" \
+          IRIS_INSTALL_BASE_URL="http://127.0.0.1:${port}" \
             sh install.sh --version "$tag" --dir "$install_dir" < /dev/null
 
           installed_out=$("$install_dir/iris" --version)
           echo "installed iris --version: $installed_out"
-          case "$installed_out" in
-            *"$version"*) ;;
-            *) echo "::error::installed --version output '$installed_out' does not contain '$version'"; exit 1 ;;
-          esac
+          version_re=$(printf '%s' "$version" | sed 's/[.[\*^$/]/\\&/g')
+          if ! printf '%s' "$installed_out" | grep -Eq "(^|[^0-9.])${version_re}([^0-9.]|$)"; then
+            echo "::error::installed --version output '$installed_out' does not contain '$version' as an exact token"
+            exit 1
+          fi
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -225,28 +284,55 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: release-*
           path: dist
           merge-multiple: true
 
-      - name: Build SHA256SUMS
+      - name: Assert expected archives and build SHA256SUMS
+        env:
+          VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
           cd dist
           ls -l
+
+          # Fail closed rather than publishing whatever happened to match
+          # dist/*.tar.gz: require exactly the three C-07 archives for this
+          # version, and nothing else, before anyone downloads them.
+          expected=$(printf '%s\n' \
+            "iris-v${VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            "iris-v${VERSION}-x86_64-apple-darwin.tar.gz" \
+            "iris-v${VERSION}-aarch64-apple-darwin.tar.gz" | LC_ALL=C sort)
+          actual=$(find . -maxdepth 1 -type f -name '*.tar.gz' -printf '%f\n' | LC_ALL=C sort)
+          if [ "$actual" != "$expected" ]; then
+            echo "::error::unexpected set of release archives"
+            echo "--- expected ---"
+            echo "$expected"
+            echo "--- got ---"
+            echo "$actual"
+            exit 1
+          fi
+
           sha256sum -- *.tar.gz > SHA256SUMS
           cat SHA256SUMS
 
       - name: Create GitHub release
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # github.token (equivalent to secrets.GITHUB_TOKEN, but not routed
+          # through the secrets context — SPEC §11/§0 rule out referencing
+          # secrets anywhere in these workflows) and the tag, both via env:
+          # rather than inline `${{ }}` interpolation (GitHub's own script-
+          # injection hardening guidance).
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
         run: |
           set -euo pipefail
-          tag="${{ needs.verify.outputs.tag }}"
-          args=(dist/*.tar.gz dist/SHA256SUMS install.sh --title "$tag" --generate-notes)
-          case "$tag" in
+          args=(dist/*.tar.gz dist/SHA256SUMS install.sh --title "$TAG" --generate-notes)
+          case "$TAG" in
             *-*) args+=(--prerelease) ;;
           esac
-          gh release create "$tag" "${args[@]}"
+          gh release create "$TAG" "${args[@]}"

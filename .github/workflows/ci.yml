@@ -19,6 +19,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
           toolchain: stable
@@ -30,11 +32,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
           toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo clippy --all-targets --locked -- -D warnings
 
   test:
@@ -46,10 +50,12 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo test --locked
 
   msrv:
@@ -57,11 +63,13 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
           # Keep this literal in sync with `rust-version` in Cargo.toml.
           toolchain: "1.89"
-      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: cargo check (MSRV)
         run: cargo check --locked --all-targets
       - name: cargo test (MSRV, tests must build on MSRV too)
@@ -74,7 +82,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: EmbarkStudios/cargo-deny-action@c3bbe7e4e3f7baeee1a3dd9aec0a3b2aded580fb # v2.1.1
+        with:
+          persist-credentials: false
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check
           # The action's own default `arguments` is "--all-features", which
@@ -93,6 +103,8 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: shellcheck
@@ -106,15 +118,37 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
           toolchain: stable
       - name: cargo package --list
-        run: cargo package --list --locked | tee package-list.txt
+        # Without an explicit `shell:`, GitHub runs run: steps on Linux as
+        # `bash -e {0}` (no pipefail) — the *plain* bash default, which
+        # differs from what `shell: bash` gets you. Under `-e` alone, a
+        # failing `cargo package` in this pipe would be masked by `tee`'s
+        # own success and the step would report a wrong (empty) exit code
+        # 0. `set -o pipefail` here makes the pipe reflect cargo's exit
+        # status regardless of how the step is invoked (verified locally:
+        # evidence/T-08).
+        run: |
+          set -euo pipefail
+          cargo package --list --locked | tee package-list.txt
       - name: Assert package contains only intended files
         run: |
           set -euo pipefail
+          if [ ! -s package-list.txt ]; then
+            echo "::error::package-list.txt is empty; cargo package --list produced no output"
+            exit 1
+          fi
           status=0
+          for required in Cargo.toml src/main.rs LICENSE README.md; do
+            if ! grep -qxF "$required" package-list.txt; then
+              echo "::error::expected file missing from package: $required"
+              status=1
+            fi
+          done
           while IFS= read -r f; do
             [ -n "$f" ] || continue
             case "$f" in

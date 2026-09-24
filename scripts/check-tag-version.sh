@@ -53,13 +53,17 @@ if [ -z "$version" ]; then
     exit 1
 fi
 
-case "$version" in
-    [0-9]*.[0-9]*.[0-9]*) ;;
-    *)
-        echo "check-tag-version: package.version '$version' does not look like semver" >&2
-        exit 1
-        ;;
-esac
+# A shell case glob here (`[0-9]*.[0-9]*.[0-9]*`) would accept far more than
+# semver: in a glob, `.` matches any character and `*` matches any string, so
+# e.g. `1.2.3$(echo pwned)` matches it too (verified locally). This value
+# later goes into `${{ }}`-templated `run:` scripts in release.yml (tag
+# comparison, archive/tag names, `gh release create --title`), so require
+# strictly `X.Y.Z` with an optional `-prerelease` suffix instead, anchored at
+# both ends.
+if ! printf '%s' "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+    echo "check-tag-version: package.version '$version' does not look like semver" >&2
+    exit 1
+fi
 
 if [ -z "$tag" ]; then
     echo "check-tag-version: dry run, no tag given; Cargo.toml version is $version (expected tag: v$version)" >&2
