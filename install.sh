@@ -116,6 +116,8 @@ set_option() {
   esac
 }
 
+have() { command -v "$1" >/dev/null 2>&1; }
+
 # Sets os and target, or fails naming what was detected.
 detect_target() {
   os=$(uname -s)
@@ -127,7 +129,10 @@ detect_target() {
       ;;
     Darwin)
       # Under Rosetta, uname -m says x86_64 on Apple silicon; use native arm64.
-      if [ "$arch" = x86_64 ] && [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+      # sysctl is in /usr/sbin, which a minimal PATH may leave out.
+      sysctl_cmd=sysctl
+      have sysctl || sysctl_cmd=/usr/sbin/sysctl
+      if [ "$arch" = x86_64 ] && [ "$("$sysctl_cmd" -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
         arch=arm64
       fi
       case $arch in
@@ -140,8 +145,6 @@ detect_target() {
     die "unsupported platform: $os $arch (release builds exist for Linux x86_64, macOS x86_64 and macOS arm64; elsewhere, build from source: https://github.com/doodla/iris)"
   fi
 }
-
-have() { command -v "$1" >/dev/null 2>&1; }
 
 # Sets fetcher and hasher, or fails naming the missing tool.
 check_tools() {

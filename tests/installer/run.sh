@@ -74,6 +74,9 @@ echo "sysctl: unknown oid '${2:-}'" >&2
 exit 1
 EOF
   chmod 755 "$W/shims/uname" "$W/shims/sysctl"
+  # Without sysctl on PATH, as when /usr/sbin is missing from it.
+  mkdir -p "$W/shims-nosysctl"
+  cp "$W/shims/uname" "$W/shims-nosysctl/uname"
 }
 
 # toolbox NAME TOOL...: a directory with links to just these host tools
@@ -131,6 +134,7 @@ begin() {
   ARCH=x86_64
   ARM64=
   TOOLS=$W/tools/default
+  SHIMS=$W/shims
   FRONT_PATH=
   USER_SHELL=/bin/bash
   ENV_VERSION=
@@ -145,7 +149,7 @@ begin() {
 in_env() {
   cd "$CWD" || exit 99
   exec env -i HOME="$C/home" TMPDIR="$C/tmp" SHELL="$USER_SHELL" \
-    PATH="${FRONT_PATH:+$FRONT_PATH:}$W/shims:$TOOLS" \
+    PATH="${FRONT_PATH:+$FRONT_PATH:}$SHIMS:$TOOLS" \
     FAKE_UNAME_S="$OS" FAKE_UNAME_M="$ARCH" FAKE_SYSCTL_ARM64="$ARM64" \
     IRIS_INSTALL_BASE_URL="$BASE" IRIS_VERSION="$ENV_VERSION" IRIS_INSTALL_DIR="$ENV_DIR" \
     "$@"
@@ -283,6 +287,20 @@ platform_cases() {
   run ok/good
   expect_status 0
   expect_installed "$BIN/iris" 0.2.0 aarch64-apple-darwin
+  end
+
+  # The system sysctl answers here, so the expected target depends on the host:
+  # arm64 on Apple silicon, x86_64 elsewhere (e.g. Linux, where the key is absent).
+  if [ "$(/usr/sbin/sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+    host_arm64=yes want=aarch64-apple-darwin
+  else
+    host_arm64=no want=x86_64-apple-darwin
+  fi
+  begin "macOS x86_64 without sysctl on PATH asks /usr/sbin/sysctl (host arm64: $host_arm64)"
+  OS=Darwin ARCH=x86_64 SHIMS=$W/shims-nosysctl
+  run ok/good
+  expect_status 0
+  expect_installed "$BIN/iris" 0.2.0 "$want"
   end
 
   for platform in "Linux aarch64" "Linux i686" "Linux armv7l" "MINGW64_NT-10.0-19045 x86_64" \
