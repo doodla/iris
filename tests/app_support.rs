@@ -660,3 +660,72 @@ pub fn remote_success(uri: &str) -> RemoteStatus {
         warnings: Vec::new(),
     }
 }
+
+// ----- in-process CLI runs ------------------------------------------------------------
+
+/// Output of one in-process `iris` invocation.
+#[derive(Debug)]
+pub struct CliRun {
+    pub code: i32,
+    pub stdout: String,
+    pub stderr: String,
+}
+
+impl CliRun {
+    /// The single JSON envelope on stdout (asserts there is exactly one line).
+    pub fn json(&self) -> serde_json::Value {
+        let lines: Vec<&str> = self.stdout.lines().collect();
+        assert_eq!(lines.len(), 1, "expected exactly one JSON line on stdout, got: {}", self.stdout);
+        assert!(self.stdout.ends_with('\n'));
+        serde_json::from_str(lines[0]).unwrap_or_else(|e| panic!("stdout is not JSON ({e}): {}", self.stdout))
+    }
+
+    /// `error.code` of a failure envelope.
+    pub fn error_code(&self) -> String {
+        let v = self.json();
+        assert_eq!(v["ok"], false, "{v}");
+        v["error"]["code"].as_str().unwrap().to_string()
+    }
+}
+
+/// Inputs of an in-process run.
+pub struct CliSetup {
+    pub env: EnvSnapshot,
+    pub providers: Vec<Arc<FakeProvider>>,
+    pub stdin: Vec<u8>,
+    pub stdin_is_tty: bool,
+    pub google_api_key_present: bool,
+    pub interrupt: Interrupt,
+}
+
+impl CliSetup {
+    pub fn new(env: EnvSnapshot, providers: Vec<Arc<FakeProvider>>) -> CliSetup {
+        CliSetup {
+            env,
+            providers,
+            stdin: Vec::new(),
+            stdin_is_tty: false,
+            google_api_key_present: false,
+            interrupt: Interrupt::manual(),
+        }
+    }
+}
+
+/// Run `iris <args>` in-process with fake providers and the fake catalog.
+pub async fn run_cli(setup: CliSetup, args: &[&str]) -> CliRun {
+    let stdout = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let stderr = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let io = iris::cli::Io {
+        env: setup.env,
+        stdin: Box::new(Cursor::new(setup.stdin)),
+        stdin_is_tty: setup.stdin_is_tty,
+        stdout: stdout.clone(),
+        stderr: stderr.clone(),
+        google_api_key_present: setup.google_api_key_present,
+    };
+    let mut argv = vec![std::ffi::OsString::from("iris")];
+    argv.extend(args.iter().map(std::ffi::OsString::from));
+    let code = iris::cli::run_with(argv, io, deps(setup.providers, setup.interrupt)).await;
+    let text = |buf: &Arc<Mutex<Vec<u8>>>| String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+    CliRun { code, stdout: text(&stdout), stderr: text(&stderr) }
+}
