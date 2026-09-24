@@ -99,6 +99,7 @@ documents two different inline request limits (20 MB and 100 MB); Iris enforces 
 [generateContent image examples](https://ai.google.dev/gemini-api/docs/generate-content/image-generation) ·
 [Interactions API overview](https://ai.google.dev/gemini-api/docs/interactions-overview) ·
 [Migrating to Interactions](https://ai.google.dev/gemini-api/docs/migrate-to-interactions) ·
+[Interactions breaking changes (May 2026)](https://ai.google.dev/gemini-api/docs/interactions-breaking-changes-may-2026) ·
 [API versions](https://ai.google.dev/gemini-api/docs/api-versions) ·
 [Logs and datasets (`store`)](https://ai.google.dev/gemini-api/docs/logs-datasets) ·
 [v1 discovery document, revision 20260923](https://generativelanguage.googleapis.com/$discovery/rest?version=v1) ·
