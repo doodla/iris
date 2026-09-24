@@ -237,11 +237,42 @@ pub struct ModelArgs {
     pub capabilities_from: Option<String>,
 }
 
-/// Typed common options (each accepted only if the model declares it) and `-O`.
+/// Typed option flags of the image commands and the catalog option each sets. Each
+/// is accepted only if the resolved model declares that option for the operation;
+/// every flag here is declared by at least one catalog image model (a test checks
+/// it), and other options are reachable with `-O name=value`.
+pub const IMAGE_FLAGS: &[(&str, &str)] = &[
+    ("--count", "count"),
+    ("--size", "size"),
+    ("--aspect-ratio", "aspect_ratio"),
+    ("--resolution", "resolution"),
+    ("--quality", "quality"),
+    ("--format", "format"),
+];
+
+/// Typed option flags of `video generate` and the catalog option each sets (see
+/// [`IMAGE_FLAGS`] for the rules).
+pub const VIDEO_FLAGS: &[(&str, &str)] = &[
+    ("--count", "count"),
+    ("--duration", "duration"),
+    ("--resolution", "resolution"),
+    ("--aspect-ratio", "aspect_ratio"),
+    ("--negative-prompt", "negative_prompt"),
+];
+
+/// The option flags one generation command was given: each typed flag with its
+/// catalog option name and value (if set), and the `-O KEY=VALUE` items.
+#[derive(Debug, Clone)]
+pub struct OptionFlags<'a> {
+    pub typed: Vec<(&'static str, &'static str, Option<&'a String>)>,
+    pub generic: &'a [String],
+}
+
+/// Typed image options (each accepted only if the model declares it) and `-O`.
 #[derive(Debug, Args, Default)]
 #[command(next_help_heading = "Generation options (validated against the model)")]
-pub struct TypedOptions {
-    /// Number of outputs
+pub struct ImageOptions {
+    /// Number of images
     #[arg(short = 'n', long, value_name = "N")]
     pub count: Option<String>,
     /// Output size, WxH or auto
@@ -250,7 +281,7 @@ pub struct TypedOptions {
     /// Aspect ratio, e.g. 16:9
     #[arg(long, value_name = "W:H")]
     pub aspect_ratio: Option<String>,
-    /// Resolution, e.g. 1K or 720p
+    /// Resolution class, e.g. 1K or 2K
     #[arg(long, value_name = "R")]
     pub resolution: Option<String>,
     /// Quality level, e.g. low, medium, high
@@ -259,24 +290,68 @@ pub struct TypedOptions {
     /// Image format: png, jpeg, or webp
     #[arg(long, value_name = "FORMAT")]
     pub format: Option<String>,
-    /// Random seed
-    #[arg(long, value_name = "N", allow_hyphen_values = true)]
-    pub seed: Option<String>,
-    /// What to avoid in the output
-    #[arg(long, value_name = "TEXT")]
-    pub negative_prompt: Option<String>,
-    /// Video duration in seconds
-    #[arg(long, value_name = "SECONDS")]
-    pub duration: Option<String>,
-    /// Generate audio
-    #[arg(long, conflicts_with = "no_audio")]
-    pub audio: bool,
-    /// Do not generate audio
-    #[arg(long)]
-    pub no_audio: bool,
     /// Provider-specific option KEY=VALUE (repeatable); see `iris models show <MODEL>`
     #[arg(short = 'O', long = "option", value_name = "KEY=VALUE")]
     pub options: Vec<String>,
+}
+
+impl ImageOptions {
+    /// The flags as given, in [`IMAGE_FLAGS`] order.
+    pub fn flags(&self) -> OptionFlags<'_> {
+        let values = [
+            self.count.as_ref(),
+            self.size.as_ref(),
+            self.aspect_ratio.as_ref(),
+            self.resolution.as_ref(),
+            self.quality.as_ref(),
+            self.format.as_ref(),
+        ];
+        OptionFlags {
+            typed: IMAGE_FLAGS.iter().zip(values).map(|(&(flag, name), value)| (flag, name, value)).collect(),
+            generic: &self.options,
+        }
+    }
+}
+
+/// Typed video options (each accepted only if the model declares it) and `-O`.
+#[derive(Debug, Args, Default)]
+#[command(next_help_heading = "Generation options (validated against the model)")]
+pub struct VideoOptions {
+    /// Number of videos
+    #[arg(short = 'n', long, value_name = "N")]
+    pub count: Option<String>,
+    /// Video length in seconds
+    #[arg(long, value_name = "SECONDS")]
+    pub duration: Option<String>,
+    /// Resolution, e.g. 720p or 1080p
+    #[arg(long, value_name = "R")]
+    pub resolution: Option<String>,
+    /// Aspect ratio, e.g. 16:9
+    #[arg(long, value_name = "W:H")]
+    pub aspect_ratio: Option<String>,
+    /// What the video should not contain
+    #[arg(long, value_name = "TEXT")]
+    pub negative_prompt: Option<String>,
+    /// Provider-specific option KEY=VALUE (repeatable); see `iris models show <MODEL>`
+    #[arg(short = 'O', long = "option", value_name = "KEY=VALUE")]
+    pub options: Vec<String>,
+}
+
+impl VideoOptions {
+    /// The flags as given, in [`VIDEO_FLAGS`] order.
+    pub fn flags(&self) -> OptionFlags<'_> {
+        let values = [
+            self.count.as_ref(),
+            self.duration.as_ref(),
+            self.resolution.as_ref(),
+            self.aspect_ratio.as_ref(),
+            self.negative_prompt.as_ref(),
+        ];
+        OptionFlags {
+            typed: VIDEO_FLAGS.iter().zip(values).map(|(&(flag, name), value)| (flag, name, value)).collect(),
+            generic: &self.options,
+        }
+    }
 }
 
 /// Where to save outputs.
@@ -329,7 +404,7 @@ pub struct ImageGenerateArgs {
     #[command(flatten)]
     pub model: ModelArgs,
     #[command(flatten)]
-    pub options: TypedOptions,
+    pub options: ImageOptions,
     #[command(flatten)]
     pub output: OutputArgs,
     /// Validate everything locally and print the plan; nothing is sent or charged
@@ -350,7 +425,7 @@ pub struct ImageEditArgs {
     #[command(flatten)]
     pub model: ModelArgs,
     #[command(flatten)]
-    pub options: TypedOptions,
+    pub options: ImageOptions,
     #[command(flatten)]
     pub output: OutputArgs,
     /// Validate everything locally and print the plan; nothing is sent or charged
@@ -392,7 +467,7 @@ pub struct VideoGenerateArgs {
     #[command(flatten)]
     pub model: ModelArgs,
     #[command(flatten)]
-    pub options: TypedOptions,
+    pub options: VideoOptions,
     #[command(flatten)]
     pub output: OutputArgs,
     /// Submit, record the job, print its id, and return without waiting

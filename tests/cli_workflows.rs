@@ -136,11 +136,16 @@ async fn prompt_sources_are_exclusive_and_validated() {
 #[tokio::test]
 async fn option_flags_map_to_catalog_options_and_are_rejected_when_undeclared() {
     let f = Fixture::new();
-    let run = f.run(&["image", "generate", "x", "--duration", "4", "--json"]).await;
+    let run = f.run(&["image", "generate", "x", "--aspect-ratio", "16:9", "--json"]).await;
     assert_eq!(run.code, 2);
     let v = run.json();
     assert_eq!(v["error"]["code"], "unsupported_option");
-    assert!(v["error"]["message"].as_str().unwrap().contains("--duration"), "{v}");
+    assert!(v["error"]["message"].as_str().unwrap().contains("--aspect-ratio"), "{v}");
+    // Video-only flags do not exist on image commands (and vice versa).
+    let run = f.run(&["image", "generate", "x", "--duration", "4", "--json"]).await;
+    assert_eq!(run.error_code(), "usage_error");
+    let run = f.run(&["video", "generate", "x", "--quality", "low", "--json"]).await;
+    assert_eq!(run.error_code(), "usage_error");
 
     let run = f.run(&["image", "generate", "x", "-O", "nope=1", "--json"]).await;
     assert_eq!(run.error_code(), "unsupported_option");

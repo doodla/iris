@@ -12,20 +12,6 @@ use serde_json::json;
 
 const IDS: [&str; 3] = ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"];
 
-/// Typed flag → option name mapping.
-const FLAG_TABLE: &[(&str, &str)] = &[
-    ("count", "--count"),
-    ("size", "--size"),
-    ("aspect_ratio", "--aspect-ratio"),
-    ("resolution", "--resolution"),
-    ("quality", "--quality"),
-    ("format", "--format"),
-    ("seed", "--seed"),
-    ("negative_prompt", "--negative-prompt"),
-    ("duration", "--duration"),
-    ("audio", "--audio"),
-];
-
 fn model(id: &str) -> &'static ModelSpec {
     openai::MODELS.iter().find(|m| m.id == id).unwrap_or_else(|| panic!("{id} not in the OpenAI catalog"))
 }
@@ -178,11 +164,14 @@ fn every_declared_option_parses_its_own_default() {
     }
 }
 
+/// An option with a typed flag on the image commands must declare exactly that flag,
+/// and an option without one must not be shadowed by a typed flag.
 #[test]
 fn typed_flags_follow_the_cli_flag_table() {
     for m in openai::MODELS {
         for o in m.options {
-            let expected = FLAG_TABLE.iter().find(|(name, _)| *name == o.name).map(|(_, flag)| *flag);
+            let expected =
+                iris::cli::args::IMAGE_FLAGS.iter().find(|(_, name)| *name == o.name).map(|(flag, _)| *flag);
             assert_eq!(o.flag, expected, "{}.{}", m.id, o.name);
         }
     }

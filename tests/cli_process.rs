@@ -320,7 +320,8 @@ fn clap_errors_are_json_envelopes_with_exit_2_and_nothing_on_stderr() {
     for args in [
         vec!["image", "generate", "x", "--bogus", "--json"],
         vec!["image", "generate", "x", "-o", "a.png", "-d", "out", "--json"],
-        vec!["video", "generate", "x", "--audio", "--no-audio", "--json"],
+        vec!["video", "generate", "x", "--no-audio", "--json"],
+        vec!["image", "generate", "x", "--seed", "7", "--json"],
         vec!["video", "generate", "x", "--detach", "--timeout", "5m", "--json"],
         vec!["jobs", "delete", "--json"],
         vec!["jobs", "wait", "job_00000000000000000000000000", "--no-download", "-o", "x.mp4", "--json"],
@@ -423,7 +424,23 @@ fn completions_are_generated_for_each_supported_shell() {
         assert!(out.stdout.contains(needle), "{shell}: {}", &out.stdout[..out.stdout.len().min(200)]);
         let v = run(iris(&sandbox).args(["completions", shell, "--json"])).json();
         assert_eq!(v["result"]["shell"], shell);
+        for removed in ["seed", "no-audio"] {
+            assert!(!out.stdout.contains(removed), "{shell} completes the removed --{removed}");
+        }
     }
+    // Each command completes only its own typed flags.
+    let fish = run(iris(&sandbox).args(["completions", "fish"])).stdout;
+    let lines = |command: &str| -> Vec<String> {
+        fish.lines().filter(|l| l.contains(command)).map(str::to_string).collect()
+    };
+    let image = lines("__fish_iris_using_subcommand image; and __fish_seen_subcommand_from generate");
+    let video = lines("__fish_iris_using_subcommand video; and __fish_seen_subcommand_from generate");
+    assert!(
+        image.iter().any(|l| l.contains("-l quality")) && !image.iter().any(|l| l.contains("-l duration"))
+    );
+    assert!(
+        video.iter().any(|l| l.contains("-l duration")) && !video.iter().any(|l| l.contains("-l quality"))
+    );
 }
 
 #[test]
@@ -679,17 +696,13 @@ fn ctrl_c_stops_waiting_with_exit_130_and_leaves_the_job_untouched() {
 
 // ----- generation against the built-in catalog (no network) --------------------------------
 
-const TYPED_FLAGS: &[(&str, &str)] = &[
-    ("--count", "count"),
-    ("--size", "size"),
-    ("--aspect-ratio", "aspect_ratio"),
-    ("--resolution", "resolution"),
-    ("--quality", "quality"),
-    ("--format", "format"),
-    ("--seed", "seed"),
-    ("--negative-prompt", "negative_prompt"),
-    ("--duration", "duration"),
-];
+/// The typed option flags of the command that runs `op`.
+fn typed_flags(op: Operation) -> &'static [(&'static str, &'static str)] {
+    match op {
+        Operation::VideoGenerate => iris::cli::args::VIDEO_FLAGS,
+        _ => iris::cli::args::IMAGE_FLAGS,
+    }
+}
 
 fn builtin_default(provider: ProviderId, op: Operation) -> Option<&'static ModelSpec> {
     let spec = iris::catalog::default_model(provider, op);
@@ -699,12 +712,51 @@ fn builtin_default(provider: ProviderId, op: Operation) -> Option<&'static Model
     spec
 }
 
-fn undeclared_flag(spec: &ModelSpec, op: Operation) -> &'static str {
-    TYPED_FLAGS
+/// A typed flag of `op`'s command that `spec` does not declare, if there is one.
+fn undeclared_flag(spec: &ModelSpec, op: Operation) -> Option<&'static str> {
+    typed_flags(op)
         .iter()
         .find(|(_, name)| !spec.options_for(op).any(|o| o.name == *name))
         .map(|(flag, _)| *flag)
-        .expect("some typed flag is not declared")
+}
+
+/// No command offers a typed flag that no built-in model accepts for its operation:
+/// such a flag could only ever fail (options for future models use `-O name=value`).
+#[test]
+fn every_typed_flag_is_declared_by_some_model_for_its_command() {
+    for op in Operation::ALL {
+        for (flag, name) in typed_flags(*op) {
+            let declared = iris::catalog::all()
+                .filter(|m| m.supports(*op))
+                .any(|m| m.options_for(*op).any(|o| o.name == *name && o.flag == Some(*flag)));
+            assert!(declared, "{flag} ({name}) is offered for {op} but no model declares it");
+        }
+    }
+    let sandbox = Sandbox::new();
+    for (words, absent) in [
+        (
+            &["image", "generate", "--help"][..],
+            &["--seed", "--audio", "--no-audio", "--duration", "--negative-prompt"][..],
+        ),
+        (
+            &["image", "edit", "--help"],
+            &["--seed", "--audio", "--no-audio", "--duration", "--negative-prompt"],
+        ),
+        (
+            &["video", "generate", "--help"],
+            &["--seed", "--audio", "--no-audio", "--size", "--quality", "--format"],
+        ),
+    ] {
+        let help = run(iris(&sandbox).args(words)).stdout;
+        for (flag, _) in
+            typed_flags(if words[0] == "video" { Operation::VideoGenerate } else { Operation::ImageEdit })
+        {
+            assert!(help.contains(flag), "{words:?} lacks {flag}");
+        }
+        for flag in absent {
+            assert!(!help.contains(&format!("{flag} ")), "{words:?} offers {flag}:\n{help}");
+        }
+    }
 }
 
 fn assert_nothing_sent(out: &Out, code: &str, exit: i32) {
@@ -730,10 +782,14 @@ fn image_generation_is_validated_locally_before_any_request() {
     let out =
         run(iris(&sandbox).args(["image", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
     assert_nothing_sent(&out, "unsupported_option", 2);
-    let flag = undeclared_flag(spec, op);
-    let out = run(iris(&sandbox).args(["image", "generate", "x", flag, "1", "--json"]));
-    assert_nothing_sent(&out, "unsupported_option", 2);
-    assert!(out.json()["error"]["message"].as_str().unwrap().contains(flag));
+    if let Some(flag) = undeclared_flag(spec, op) {
+        let out = run(iris(&sandbox).args(["image", "generate", "x", flag, "1", "--json"]));
+        assert_nothing_sent(&out, "unsupported_option", 2);
+        assert!(out.json()["error"]["message"].as_str().unwrap().contains(flag));
+    }
+    // A video-only flag is not an image flag at all.
+    let out = run(iris(&sandbox).args(["image", "generate", "x", "--duration", "4", "--json"]));
+    assert_nothing_sent(&out, "usage_error", 2);
 
     std::fs::write(sandbox.path("taken.png"), b"existing").unwrap();
     let out = run(iris(&sandbox)
@@ -771,9 +827,12 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
     let out =
         run(iris(&sandbox).args(["video", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
     assert_nothing_sent(&out, "unsupported_option", 2);
-    let flag = undeclared_flag(spec, op);
-    let out = run(iris(&sandbox).args(["video", "generate", "x", flag, "1", "--json"]));
-    assert_nothing_sent(&out, "unsupported_option", 2);
+    if let Some(flag) = undeclared_flag(spec, op) {
+        let out = run(iris(&sandbox).args(["video", "generate", "x", flag, "1", "--json"]));
+        assert_nothing_sent(&out, "unsupported_option", 2);
+    }
+    let out = run(iris(&sandbox).args(["video", "generate", "x", "--format", "png", "--json"]));
+    assert_nothing_sent(&out, "usage_error", 2);
     let out = run(iris(&sandbox).args(["video", "generate", "x", "--json"]));
     assert_nothing_sent(&out, "missing_credentials", 3);
     assert!(!Path::new(&sandbox.state().join("jobs")).exists(), "no job record before a submission");

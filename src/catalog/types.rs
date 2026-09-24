@@ -70,7 +70,7 @@ pub enum OptionKind {
     Enum(&'static [&'static str]),
     /// Integer within an inclusive range.
     Integer { min: i64, max: i64 },
-    /// Boolean (`true`/`false`; CLI flags like `--audio`/`--no-audio`).
+    /// Boolean (`true`/`false`, e.g. `-O name=true`).
     Boolean,
     /// Free text with a maximum length in characters.
     Text { max_chars: usize },

@@ -150,6 +150,12 @@ machine-readable contract for agents.
   `/cwd/../x.png`), the JSON contract explains that default names in a `--dry-run` plan are
   indicative, and the `output_extension_adjusted` warning for `-o` without an extension names the
   files actually written when there are several outputs.
+- **Removed** the `--seed`, `--audio`, and `--no-audio` flags: no built-in model accepts them, so
+  they could only fail (`-O name=value` reaches options of future models). Image commands now offer
+  only image flags (`--count`, `--size`, `--aspect-ratio`, `--resolution`, `--quality`,
+  `--format`) and `video generate` only video flags (`--count`, `--duration`, `--resolution`,
+  `--aspect-ratio`, `--negative-prompt`); a flag of the other kind is a usage error. Help and
+  shell completions follow.
 
 ### Known limitations
 

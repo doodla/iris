@@ -13,29 +13,23 @@ const FLASH: &str = "gemini-3.1-flash-image";
 const LITE: &str = "gemini-3.1-flash-lite-image";
 const PRO: &str = "gemini-3-pro-image";
 
-/// Typed flag → option name mapping.
-const FLAG_TABLE: &[(&str, &str)] = &[
-    ("count", "--count"),
-    ("size", "--size"),
-    ("aspect_ratio", "--aspect-ratio"),
-    ("resolution", "--resolution"),
-    ("quality", "--quality"),
-    ("format", "--format"),
-    ("seed", "--seed"),
-    ("negative_prompt", "--negative-prompt"),
-    ("duration", "--duration"),
-    ("audio", "--audio"),
-];
+/// The typed flags of the command that runs `op` (`--count` → `count`, ...).
+fn flag_table(op: Operation) -> &'static [(&'static str, &'static str)] {
+    match op {
+        Operation::VideoGenerate => iris::cli::args::VIDEO_FLAGS,
+        _ => iris::cli::args::IMAGE_FLAGS,
+    }
+}
 
 fn spec(id: &str) -> &'static ModelSpec {
     catalog::find(id).unwrap_or_else(|| panic!("{id} is in the catalog"))
 }
 
 fn raw(name: &str, value: &str) -> RawOption {
-    let source = FLAG_TABLE
+    let source = flag_table(Operation::ImageGenerate)
         .iter()
-        .find(|(n, _)| *n == name)
-        .map_or(OptionSource::Generic, |(_, flag)| OptionSource::Flag(flag));
+        .find(|(_, n)| *n == name)
+        .map_or(OptionSource::Generic, |(flag, _)| OptionSource::Flag(flag));
     RawOption { name: name.to_string(), value: value.to_string(), source }
 }
 
@@ -244,14 +238,19 @@ fn every_declared_default_parses_with_its_own_kind() {
     }
 }
 
+/// Each option declares the typed flag its command has for it (image commands for
+/// the image models, `video generate` for Veo), or none when that command has no
+/// flag of that name.
 #[test]
-fn typed_flags_follow_the_contract_mapping_for_every_gemini_provider_model() {
+fn typed_flags_follow_the_cli_flag_tables_for_every_gemini_provider_model() {
     let models = gemini_models();
     assert_eq!(models.len(), 6, "three image models and three Veo models");
     for m in models {
         for o in m.options {
-            let expected = FLAG_TABLE.iter().find(|(n, _)| *n == o.name).map(|(_, f)| *f);
-            assert_eq!(o.flag, expected, "{} option {}", m.id, o.name);
+            for op in o.operations {
+                let expected = flag_table(*op).iter().find(|(_, n)| *n == o.name).map(|(f, _)| *f);
+                assert_eq!(o.flag, expected, "{} option {} for {op}", m.id, o.name);
+            }
         }
     }
 }

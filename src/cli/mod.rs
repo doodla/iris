@@ -32,8 +32,8 @@ use crate::output::results::{CompletionsResult, SchemaResult};
 use crate::output::{self, CommandName, Envelope, ErrorBody, ResultPayload, human};
 
 use args::{
-    Cli, Command, ConfigCommand, ImageCommand, JobsCommand, ModelArgs, ModelsCommand, OutputArgs, PromptArgs,
-    ProvidersCommand, Shell, TypedOptions, VideoCommand,
+    Cli, Command, ConfigCommand, ImageCommand, JobsCommand, ModelArgs, ModelsCommand, OptionFlags,
+    OutputArgs, PromptArgs, ProvidersCommand, Shell, VideoCommand,
 };
 use render::{Output, Sink};
 
@@ -269,19 +269,22 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
     let mut o = Overrides::default();
     let request = match command {
         Command::Image(ImageCommand::Generate(a)) => {
-            let common = generation(&a.prompt, &a.model, &a.options, &a.output, a.dry_run, io, &mut o)?;
+            let common =
+                generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
             o.image_provider = common.provider;
             Request::Image(Operation::ImageGenerate, ImageArgs { common, images: Vec::new(), mask: None })
         }
         Command::Image(ImageCommand::Edit(a)) => {
-            let common = generation(&a.prompt, &a.model, &a.options, &a.output, a.dry_run, io, &mut o)?;
+            let common =
+                generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
             o.image_provider = common.provider;
             let images = a.images.into_iter().map(|p| absolute(&io.env, p)).collect();
             let mask = a.mask.map(|p| absolute(&io.env, p));
             Request::Image(Operation::ImageEdit, ImageArgs { common, images, mask })
         }
         Command::Video(VideoCommand::Generate(a)) => {
-            let common = generation(&a.prompt, &a.model, &a.options, &a.output, a.dry_run, io, &mut o)?;
+            let common =
+                generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
             o.wait_timeout = duration_flag("--timeout", a.timeout.as_deref())?;
             o.poll_interval = duration_flag("--poll-interval", a.poll_interval.as_deref())?;
             Request::Video(VideoArgs {
@@ -353,7 +356,7 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
 fn generation(
     prompt_args: &PromptArgs,
     model: &ModelArgs,
-    typed: &TypedOptions,
+    flags: OptionFlags<'_>,
     output: &OutputArgs,
     dry_run: bool,
     io: &mut Io,
@@ -366,7 +369,7 @@ fn generation(
     };
     let prompt = prompt::read(&prompt_args, &mut *io.stdin, io.stdin_is_tty)?;
     let provider = model.provider.as_deref().map(parse_provider).transpose()?;
-    let options = raw_options(typed)?;
+    let options = raw_options(&flags)?;
     overrides.out_dir = output.out_dir.clone();
     Ok(GenerationArgs {
         prompt,
@@ -387,24 +390,15 @@ fn absolute(env: &EnvSnapshot, path: PathBuf) -> PathBuf {
     if path.is_absolute() { path } else { env.cwd().join(path) }
 }
 
-/// Typed flags → `RawOption { source: Flag(..) }` using the model catalog's flag → name table,
-/// then `-O KEY=VALUE` (`=` required). A typed flag and `-O` for the same option
-/// is a usage error; duplicate `-O` keys are rejected by validation.
-pub fn raw_options(t: &TypedOptions) -> Result<Vec<RawOption>, IrisError> {
-    let typed: [(&'static str, &'static str, Option<&String>); 9] = [
-        ("--count", "count", t.count.as_ref()),
-        ("--size", "size", t.size.as_ref()),
-        ("--aspect-ratio", "aspect_ratio", t.aspect_ratio.as_ref()),
-        ("--resolution", "resolution", t.resolution.as_ref()),
-        ("--quality", "quality", t.quality.as_ref()),
-        ("--format", "format", t.format.as_ref()),
-        ("--seed", "seed", t.seed.as_ref()),
-        ("--negative-prompt", "negative_prompt", t.negative_prompt.as_ref()),
-        ("--duration", "duration", t.duration.as_ref()),
-    ];
-    let mut raw: Vec<RawOption> = typed
-        .into_iter()
-        .filter_map(|(flag, name, value)| {
+/// Typed flags → `RawOption { source: Flag(..) }` using the command's flag → option
+/// name table (`args::IMAGE_FLAGS` / `args::VIDEO_FLAGS`), then `-O KEY=VALUE` (`=`
+/// required). A typed flag and `-O` for the same option is a usage error; duplicate
+/// `-O` keys are rejected by validation.
+pub fn raw_options(flags: &OptionFlags<'_>) -> Result<Vec<RawOption>, IrisError> {
+    let mut raw: Vec<RawOption> = flags
+        .typed
+        .iter()
+        .filter_map(|&(flag, name, value)| {
             value.map(|v| RawOption {
                 name: name.to_string(),
                 value: v.clone(),
@@ -412,21 +406,7 @@ pub fn raw_options(t: &TypedOptions) -> Result<Vec<RawOption>, IrisError> {
             })
         })
         .collect();
-    if t.audio {
-        raw.push(RawOption {
-            name: "audio".into(),
-            value: "true".into(),
-            source: OptionSource::Flag("--audio"),
-        });
-    }
-    if t.no_audio {
-        raw.push(RawOption {
-            name: "audio".into(),
-            value: "false".into(),
-            source: OptionSource::Flag("--no-audio"),
-        });
-    }
-    for item in &t.options {
+    for item in flags.generic {
         let Some((key, value)) = item.split_once('=') else {
             return Err(IrisError::usage(format!("-O/--option expects KEY=VALUE, got '{item}'"))
                 .with_hint("run `iris models show <MODEL>` to see the options a model accepts"));
@@ -540,33 +520,59 @@ mod tests {
 
     #[test]
     fn typed_flags_map_to_option_names_and_conflict_with_generic_options() {
-        let t = TypedOptions {
+        let t = args::ImageOptions {
             quality: Some("low".into()),
-            no_audio: true,
             options: vec!["background=transparent".into(), "empty=".into()],
-            ..TypedOptions::default()
+            ..Default::default()
         };
-        let raw = raw_options(&t).unwrap();
+        let raw = raw_options(&t.flags()).unwrap();
         let view: Vec<(&str, &str)> = raw.iter().map(|o| (o.name.as_str(), o.value.as_str())).collect();
-        assert_eq!(
-            view,
-            [("quality", "low"), ("audio", "false"), ("background", "transparent"), ("empty", "")]
-        );
+        assert_eq!(view, [("quality", "low"), ("background", "transparent"), ("empty", "")]);
         assert_eq!(raw[0].source, OptionSource::Flag("--quality"));
-        assert_eq!(raw[2].source, OptionSource::Generic);
+        assert_eq!(raw[1].source, OptionSource::Generic);
 
-        let t = TypedOptions {
+        let t = args::ImageOptions {
             quality: Some("low".into()),
             options: vec!["quality=high".into()],
             ..Default::default()
         };
-        let e = raw_options(&t).unwrap_err();
+        let e = raw_options(&t.flags()).unwrap_err();
         assert_eq!(e.code, ErrorCode::UsageError);
         assert!(e.message.contains("--quality"), "{}", e.message);
 
         for bad in ["novalue", "=x"] {
-            let t = TypedOptions { options: vec![bad.into()], ..Default::default() };
-            assert_eq!(raw_options(&t).unwrap_err().code, ErrorCode::UsageError, "{bad}");
+            let t = args::VideoOptions { options: vec![bad.into()], ..Default::default() };
+            assert_eq!(raw_options(&t.flags()).unwrap_err().code, ErrorCode::UsageError, "{bad}");
+        }
+    }
+
+    /// Every entry of a command's flag table is a real flag of that command and sets
+    /// the option the table names (the tables and the clap structs cannot drift).
+    #[test]
+    fn flag_tables_match_the_parsed_flags_of_each_command() {
+        type FlagTable = &'static [(&'static str, &'static str)];
+        let commands: [(&[&str], FlagTable); 3] = [
+            (&["image", "generate", "p"], args::IMAGE_FLAGS),
+            (&["image", "edit", "-i", "a.png", "p"], args::IMAGE_FLAGS),
+            (&["video", "generate", "p"], args::VIDEO_FLAGS),
+        ];
+        for (words, table) in commands {
+            for &(flag, name) in table {
+                let mut argv = vec!["iris"];
+                argv.extend_from_slice(words);
+                argv.extend([flag, "V"]);
+                let cli = Cli::try_parse_from(&argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+                let flags = match &cli.command {
+                    Command::Image(ImageCommand::Generate(a)) => a.options.flags(),
+                    Command::Image(ImageCommand::Edit(a)) => a.options.flags(),
+                    Command::Video(VideoCommand::Generate(a)) => a.options.flags(),
+                    other => panic!("unexpected command {other:?}"),
+                };
+                let raw = raw_options(&flags).unwrap();
+                assert_eq!(raw.len(), 1, "{argv:?}");
+                assert_eq!((raw[0].name.as_str(), raw[0].value.as_str()), (name, "V"), "{argv:?}");
+                assert_eq!(raw[0].source, OptionSource::Flag(flag), "{argv:?}");
+            }
         }
     }
 }

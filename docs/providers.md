@@ -129,12 +129,14 @@ Then:
    `Bearer `) matching how the provider documents authentication.
 3. Declare every option the model accepts as an `OptionSpec` (`OptionKind::Enum`, `Integer { min,
    max }`, `Boolean`, `Text { max_chars }`, or `Pattern` with a custom validator). An option in
-   the CLI's fixed typed-flag table (`--count`,
-   `--duration`, …) must use that flag name; anything else is reachable only through
-   `-O name=value` (the table itself is `raw_options`'s flag → option-name array in
-   `src/cli/mod.rs`, around line 397; `tests/openai_catalog.rs::typed_flags_follow_the_cli_flag_table`
-   and the equivalent test in `tests/gemini_catalog.rs` are what enforces every declared model
-   stays consistent with it). **Never accept an option Iris cannot map on the wire side** — if the
+   the typed-flag table of its command (`--count`, `--duration`, …) must use that flag name;
+   anything else is reachable only through `-O name=value`. The tables are `IMAGE_FLAGS` (image
+   commands) and `VIDEO_FLAGS` (`video generate`) in `src/cli/args.rs`, each next to the clap
+   struct that defines the flags. `tests/openai_catalog.rs::typed_flags_follow_the_cli_flag_table`
+   and `tests/gemini_catalog.rs::typed_flags_follow_the_cli_flag_tables_for_every_gemini_provider_model`
+   keep declared models consistent with them, and
+   `tests/cli_process.rs::every_typed_flag_is_declared_by_some_model_for_its_command` keeps any
+   command from offering a flag no model accepts. **Never accept an option Iris cannot map on the wire side** — if the
    provider takes it but your adapter has nowhere to put it yet, leave it out of the catalog
    rather than declaring it and dropping it.
 4. If the model needs cross-field validation (Iris's Veo catalog has "1080p or 4k requires an
