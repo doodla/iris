@@ -151,12 +151,6 @@ machine-readable contract for agents.
   JSON contract explains that default names in a `--dry-run` plan are indicative, and the
   `output_extension_adjusted` warning for `-o` without an extension names the files actually
   written when there are several outputs.
-- **Removed** the `--seed`, `--audio`, and `--no-audio` flags: no built-in model accepts them, so
-  they could only fail (`-O name=value` reaches options of future models). Image commands now offer
-  only image flags (`--count`, `--size`, `--aspect-ratio`, `--resolution`, `--quality`,
-  `--format`) and `video generate` only video flags (`--count`, `--duration`, `--resolution`,
-  `--aspect-ratio`, `--negative-prompt`); a flag of the other kind is a usage error. Help and
-  shell completions follow.
 - A model resolved with `--capabilities-from` no longer gets a cost estimate computed from the
   template model's prices: `cost_estimate` is `null` (in plans, results, and job records) with a
   `cost_estimate_unavailable` warning saying the template's prices are not assumed.
@@ -189,6 +183,15 @@ machine-readable contract for agents.
 - Human output: `jobs status` no longer prints a `completed:` time for a job that is still running
   or whose submission outcome is unknown, and the `provider_text_output` warning points at the
   "Model text" line instead of a JSON field.
+
+### Removed
+
+- The `--seed`, `--audio`, and `--no-audio` flags: no built-in model accepts them, so they could
+  only fail (`-O name=value` reaches options of future models). Image commands now offer only image
+  flags (`--count`, `--size`, `--aspect-ratio`, `--resolution`, `--quality`, `--format`) and
+  `video generate` only video flags (`--count`, `--duration`, `--resolution`, `--aspect-ratio`,
+  `--negative-prompt`); a flag of the other kind is a usage error. Help and shell completions
+  follow.
 
 ### Known limitations
 
