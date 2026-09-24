@@ -19,16 +19,24 @@ pub enum ProviderId {
     Gemini,
 }
 
+/// The one place that names each provider's fixed identity: its id, display name,
+/// credential variable, default API base URL, and base URL override variable.
+/// Configuration, diagnostics, and redaction iterate [`ProviderId::ALL`] instead
+/// of listing providers themselves.
 impl ProviderId {
+    /// Every provider, in display order (config rows, `providers list`, `doctor`).
     pub const ALL: &'static [ProviderId] = &[ProviderId::OpenAi, ProviderId::Gemini];
 
-    pub fn as_str(self) -> &'static str {
+    /// The provider's id: its serde name, `--provider` value, and the name of its
+    /// `[providers.<id>]` config table.
+    pub const fn as_str(self) -> &'static str {
         match self {
             ProviderId::OpenAi => "openai",
             ProviderId::Gemini => "gemini",
         }
     }
 
+    /// Human-readable name for messages.
     pub fn display_name(self) -> &'static str {
         match self {
             ProviderId::OpenAi => "OpenAI",
@@ -37,10 +45,30 @@ impl ProviderId {
     }
 
     /// The only environment variable Iris reads this provider's credential from.
-    pub fn credential_env(self) -> &'static str {
+    pub const fn credential_env(self) -> &'static str {
         match self {
             ProviderId::OpenAi => "OPENAI_API_KEY",
             ProviderId::Gemini => "GEMINI_API_KEY",
+        }
+    }
+
+    /// The default API base URL (see docs/configuration.md). Credentials are only
+    /// ever sent to the origin of the configured base URL.
+    pub const fn default_base_url(self) -> &'static str {
+        match self {
+            // Endpoint paths are appended to it.
+            ProviderId::OpenAi => "https://api.openai.com/v1",
+            // The origin: the adapter appends the API version (`/v1` or `/v1beta`).
+            ProviderId::Gemini => "https://generativelanguage.googleapis.com",
+        }
+    }
+
+    /// The environment variable overriding the base URL (`IRIS_<PROVIDER>_BASE_URL`;
+    /// the config file key is `providers.<id>.base_url`).
+    pub const fn base_url_env(self) -> &'static str {
+        match self {
+            ProviderId::OpenAi => "IRIS_OPENAI_BASE_URL",
+            ProviderId::Gemini => "IRIS_GEMINI_BASE_URL",
         }
     }
 }
@@ -51,14 +79,18 @@ impl fmt::Display for ProviderId {
     }
 }
 
+/// Parses a provider id, case-insensitively; `google` is accepted for `gemini`.
 impl FromStr for ProviderId {
     type Err = String;
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "openai" => Ok(ProviderId::OpenAi),
-            "gemini" | "google" => Ok(ProviderId::Gemini),
-            other => Err(format!("unknown provider '{other}' (expected: openai, gemini)")),
+        let name = s.to_ascii_lowercase();
+        if name == "google" {
+            return Ok(ProviderId::Gemini);
         }
+        ProviderId::ALL.iter().copied().find(|p| p.as_str() == name).ok_or_else(|| {
+            let known: Vec<&str> = ProviderId::ALL.iter().map(|p| p.as_str()).collect();
+            format!("unknown provider '{name}' (expected: {})", known.join(", "))
+        })
     }
 }
 

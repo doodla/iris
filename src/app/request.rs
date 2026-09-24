@@ -128,6 +128,10 @@ pub(crate) fn resolve_model(
     Ok(resolved)
 }
 
+/// The provider a command uses without `--provider` or `--model`: the configured
+/// image provider for image operations. Video has no provider setting, so it comes
+/// from the catalog: the first provider (in `ProviderId` order) with a model
+/// declared as the default for `op`, else the first with any model for it.
 fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisError> {
     if !op.is_async_job() {
         return Ok(ctx.settings.image_provider.value);
@@ -136,7 +140,7 @@ fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisE
     providers
         .iter()
         .copied()
-        .find(|p| *p == ProviderId::Gemini)
+        .find(|p| ctx.catalog.default_model(*p, op).is_some())
         .or_else(|| providers.first().copied())
         .ok_or_else(|| {
             IrisError::new(ErrorCode::UnsupportedOperation, format!("no model in this build supports {op}"))

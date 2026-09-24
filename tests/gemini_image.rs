@@ -1029,7 +1029,7 @@ fn the_provider_declares_origin_base_url_header_auth_and_retention() {
     let p = GeminiProvider::new();
     assert_eq!(p.id(), ProviderId::Gemini);
     assert_eq!(p.default_base_url(), "https://generativelanguage.googleapis.com");
-    assert_eq!(p.default_base_url(), iris::config::DEFAULT_GEMINI_BASE_URL);
+    assert_eq!(p.default_base_url(), ProviderId::Gemini.default_base_url());
     assert_eq!(p.credential_header().name, "x-goog-api-key");
     assert_eq!(p.credential_header().prefix, "");
     assert!(p.image().is_some() && p.video().is_some());

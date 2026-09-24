@@ -78,16 +78,19 @@ fn defaults_apply_when_nothing_is_configured_and_the_default_file_is_missing() {
     assert_eq!(s.wait_timeout.value, Duration::from_secs(600));
     assert_eq!(s.poll_interval.value, Duration::from_secs(10));
     assert!(!s.store_prompts.value);
-    assert_eq!(s.openai.base_url.value.as_str(), "https://api.openai.com/v1");
-    assert_eq!(s.gemini.base_url.value.as_str(), "https://generativelanguage.googleapis.com/");
-    assert_eq!(s.openai.request_timeout.value, Duration::from_secs(300));
-    assert_eq!(s.gemini.request_timeout.value, Duration::from_secs(300));
+    assert_eq!(s.provider(ProviderId::OpenAi).base_url.value.as_str(), "https://api.openai.com/v1");
     assert_eq!(
-        s.openai.image_model.value,
+        s.provider(ProviderId::Gemini).base_url.value.as_str(),
+        "https://generativelanguage.googleapis.com/"
+    );
+    assert_eq!(s.provider(ProviderId::OpenAi).request_timeout.value, Duration::from_secs(300));
+    assert_eq!(s.provider(ProviderId::Gemini).request_timeout.value, Duration::from_secs(300));
+    assert_eq!(
+        s.provider(ProviderId::OpenAi).image_model.value,
         catalog::default_model(ProviderId::OpenAi, Operation::ImageGenerate).map(|m| m.id.to_string())
     );
     assert_eq!(
-        s.gemini.video_model.value,
+        s.provider(ProviderId::Gemini).video_model.value,
         catalog::default_model(ProviderId::Gemini, Operation::VideoGenerate).map(|m| m.id.to_string())
     );
     assert_eq!(s.log_filter.value, "warn");
@@ -98,9 +101,9 @@ fn defaults_apply_when_nothing_is_configured_and_the_default_file_is_missing() {
         ("wait_timeout", &s.wait_timeout.source),
         ("poll_interval", &s.poll_interval.source),
         ("store_prompts", &s.store_prompts.source),
-        ("openai.base_url", &s.openai.base_url.source),
-        ("gemini.base_url", &s.gemini.base_url.source),
-        ("openai.request_timeout", &s.openai.request_timeout.source),
+        ("openai.base_url", &s.provider(ProviderId::OpenAi).base_url.source),
+        ("gemini.base_url", &s.provider(ProviderId::Gemini).base_url.source),
+        ("openai.request_timeout", &s.provider(ProviderId::OpenAi).request_timeout.source),
         ("log", &s.log_filter.source),
     ] {
         assert_eq!(*source, SettingSource::Default, "{key}");
@@ -178,10 +181,10 @@ fn file_values_override_defaults() {
     assert_eq!(s.wait_timeout.value, Duration::from_secs(1200));
     assert_eq!(s.poll_interval.value, Duration::from_secs(30));
     assert!(s.store_prompts.value);
-    assert_eq!(s.openai.base_url.value.as_str(), "https://file-openai.example/v1");
-    assert_eq!(s.gemini.base_url.value.host_str(), Some("file-gemini.example"));
-    assert_eq!(s.openai.request_timeout.value, Duration::from_secs(120));
-    assert_eq!(s.gemini.request_timeout.value, Duration::from_secs(90));
+    assert_eq!(s.provider(ProviderId::OpenAi).base_url.value.as_str(), "https://file-openai.example/v1");
+    assert_eq!(s.provider(ProviderId::Gemini).base_url.value.host_str(), Some("file-gemini.example"));
+    assert_eq!(s.provider(ProviderId::OpenAi).request_timeout.value, Duration::from_secs(120));
+    assert_eq!(s.provider(ProviderId::Gemini).request_timeout.value, Duration::from_secs(90));
     assert_eq!(s.timeouts(ProviderId::Gemini).generate, Duration::from_secs(90));
     for source in [
         &s.output_dir.source,
@@ -190,10 +193,10 @@ fn file_values_override_defaults() {
         &s.wait_timeout.source,
         &s.poll_interval.source,
         &s.store_prompts.source,
-        &s.openai.base_url.source,
-        &s.gemini.base_url.source,
-        &s.openai.request_timeout.source,
-        &s.gemini.request_timeout.source,
+        &s.provider(ProviderId::OpenAi).base_url.source,
+        &s.provider(ProviderId::Gemini).base_url.source,
+        &s.provider(ProviderId::OpenAi).request_timeout.source,
+        &s.provider(ProviderId::Gemini).request_timeout.source,
     ] {
         assert_eq!(*source, SettingSource::File);
     }
@@ -210,8 +213,8 @@ fn environment_overrides_the_file() {
     assert_eq!(s.wait_timeout.value, Duration::from_secs(1800));
     assert_eq!(s.poll_interval.value, Duration::from_secs(45));
     assert!(!s.store_prompts.value);
-    assert_eq!(s.openai.base_url.value.host_str(), Some("env-openai.example"));
-    assert_eq!(s.gemini.base_url.value.host_str(), Some("env-gemini.example"));
+    assert_eq!(s.provider(ProviderId::OpenAi).base_url.value.host_str(), Some("env-openai.example"));
+    assert_eq!(s.provider(ProviderId::Gemini).base_url.value.host_str(), Some("env-gemini.example"));
     assert_eq!(s.log_filter.value, "info");
     for source in [
         &s.output_dir.source,
@@ -220,14 +223,14 @@ fn environment_overrides_the_file() {
         &s.wait_timeout.source,
         &s.poll_interval.source,
         &s.store_prompts.source,
-        &s.openai.base_url.source,
-        &s.gemini.base_url.source,
+        &s.provider(ProviderId::OpenAi).base_url.source,
+        &s.provider(ProviderId::Gemini).base_url.source,
         &s.log_filter.source,
     ] {
         assert_eq!(*source, SettingSource::Env);
     }
     // Settings without an environment variable still come from the file.
-    assert_eq!(s.openai.request_timeout.source, SettingSource::File);
+    assert_eq!(s.provider(ProviderId::OpenAi).request_timeout.source, SettingSource::File);
 }
 
 #[test]
@@ -549,7 +552,7 @@ fn a_base_url_equal_to_the_default_is_not_flagged() {
     let fx = Fixture::new();
     let env = fx.env().with_var("IRIS_OPENAI_BASE_URL", "https://api.openai.com/v1/");
     let s = load(&env).unwrap();
-    assert_eq!(s.openai.base_url.source, SettingSource::Env);
+    assert_eq!(s.provider(ProviderId::OpenAi).base_url.source, SettingSource::Env);
     assert!(s.warnings().is_empty());
 }
 
@@ -603,4 +606,48 @@ fn catalog_models_are_accepted_as_file_defaults_and_cross_provider_models_reject
             );
         }
     }
+}
+
+#[test]
+fn every_provider_gets_its_config_table_base_url_variable_and_show_rows() {
+    // Provider settings are resolved for each id in ProviderId::ALL, named after it.
+    let fx = Fixture::new();
+    let mut text = String::new();
+    for p in ProviderId::ALL {
+        text.push_str(&format!(
+            "[providers.{p}]\nbase_url = \"https://file-{p}.example\"\nrequest_timeout = 42\n"
+        ));
+    }
+    fx.write_default_config(&text);
+    let s = load(&fx.env()).unwrap();
+    assert_eq!(s.providers().map(|p| p.provider).collect::<Vec<_>>(), ProviderId::ALL);
+    let mut env = fx.env();
+    for p in ProviderId::ALL {
+        let got = s.provider(*p);
+        assert_eq!(got.base_url.value.host_str(), Some(format!("file-{p}.example").as_str()));
+        assert_eq!(got.base_url.source, SettingSource::File);
+        assert_eq!(got.request_timeout.value, Duration::from_secs(42));
+        env = env.with_var(p.base_url_env(), &format!("https://env-{p}.example"));
+    }
+
+    let s = load(&env).unwrap();
+    let show = s.config_show();
+    for p in ProviderId::ALL {
+        assert_eq!(s.provider(*p).base_url.source, SettingSource::Env, "{p}");
+        let key = format!("providers.{p}.base_url");
+        let row = show.settings.iter().find(|r| r.key == key).unwrap();
+        assert_eq!(row.env_var.as_deref(), Some(p.base_url_env()));
+    }
+    assert_eq!(s.warnings().len(), ProviderId::ALL.len(), "every overridden base URL is flagged");
+
+    // A table for a provider Iris does not have names the known ones.
+    fx.write_default_config("[providers.seedance]\nbase_url = \"https://x.example\"\n");
+    let e = load(&fx.env()).unwrap_err();
+    assert_eq!(e.details.get("key").and_then(|v| v.as_str()), Some("providers.seedance"));
+    let known: Vec<String> = ProviderId::ALL.iter().map(|p| format!("`{p}`")).collect();
+    assert!(
+        e.message.contains(&format!("unknown key; expected one of {}", known.join(", "))),
+        "{}",
+        e.message
+    );
 }

@@ -200,7 +200,11 @@ pub struct ProviderContext {
 #[async_trait]
 pub trait Provider: Send + Sync {
     fn id(&self) -> ProviderId;
-    fn default_base_url(&self) -> &'static str;
+    /// The default API base URL: [`ProviderId::default_base_url`], the single
+    /// definition configuration also uses.
+    fn default_base_url(&self) -> &'static str {
+        self.id().default_base_url()
+    }
     fn credential_header(&self) -> CredentialHeader;
     fn docs_url(&self) -> &'static str;
 

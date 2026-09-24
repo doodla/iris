@@ -35,8 +35,6 @@ use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, HttpResponse};
 use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireImagesResponse, WireOptions};
 
-/// Default API base URL (see docs/configuration.md). Endpoint paths are appended to it.
-pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 /// Official image generation guide.
 pub const DOCS_URL: &str = crate::catalog::openai::DOCS_URL;
 /// Longest data URL the JSON edit body accepts per image (`image_url` maxLength).
@@ -82,10 +80,6 @@ impl OpenAiProvider {
 impl Provider for OpenAiProvider {
     fn id(&self) -> ProviderId {
         ProviderId::OpenAi
-    }
-
-    fn default_base_url(&self) -> &'static str {
-        DEFAULT_BASE_URL
     }
 
     fn credential_header(&self) -> CredentialHeader {

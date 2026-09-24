@@ -38,9 +38,6 @@ use crate::domain::{Operation, ProviderId};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass};
 
-/// Default API origin. Adapters append the API version.
-pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
-
 /// The Gemini API adapter (images and Veo).
 #[derive(Debug, Default)]
 pub struct GeminiProvider;
@@ -55,10 +52,6 @@ impl GeminiProvider {
 impl Provider for GeminiProvider {
     fn id(&self) -> ProviderId {
         ProviderId::Gemini
-    }
-
-    fn default_base_url(&self) -> &'static str {
-        DEFAULT_BASE_URL
     }
 
     fn credential_header(&self) -> CredentialHeader {

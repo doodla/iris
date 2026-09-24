@@ -629,11 +629,7 @@ pub fn settings_with(env: &EnvSnapshot, overrides: &CliOverrides) -> Settings {
 /// Point a provider's base URL at a mock server.
 pub fn set_base_url(settings: &mut Settings, provider: ProviderId, url: &str) {
     let parsed = iris::config::parse_base_url(url).unwrap();
-    let p = match provider {
-        ProviderId::OpenAi => &mut settings.openai,
-        ProviderId::Gemini => &mut settings.gemini,
-    };
-    p.base_url = Resolved { value: parsed, source: SettingSource::Env };
+    settings.provider_mut(provider).base_url = Resolved { value: parsed, source: SettingSource::Env };
 }
 
 /// HTTP client for 127.0.0.1 mock servers: no system proxy, millisecond backoff.

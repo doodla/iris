@@ -25,14 +25,11 @@ pub const ENV_WAIT_TIMEOUT: &str = "IRIS_WAIT_TIMEOUT";
 pub const ENV_POLL_INTERVAL: &str = "IRIS_POLL_INTERVAL";
 /// `IRIS_STORE_PROMPTS`: keep prompt text in job records.
 pub const ENV_STORE_PROMPTS: &str = "IRIS_STORE_PROMPTS";
-/// `IRIS_OPENAI_BASE_URL`: OpenAI API base URL override.
-pub const ENV_OPENAI_BASE_URL: &str = "IRIS_OPENAI_BASE_URL";
-/// `IRIS_GEMINI_BASE_URL`: Gemini API base URL override.
-pub const ENV_GEMINI_BASE_URL: &str = "IRIS_GEMINI_BASE_URL";
 /// `IRIS_LOG`: tracing filter directives.
 pub const ENV_LOG: &str = "IRIS_LOG";
 
-/// Non-secret variables captured by [`EnvSnapshot::from_process`].
+/// Non-secret variables captured by [`EnvSnapshot::from_process`], besides each
+/// provider's base URL override ([`ProviderId::base_url_env`]).
 pub const SETTING_VARS: &[&str] = &[
     ENV_CONFIG,
     ENV_OUTPUT_DIR,
@@ -41,8 +38,6 @@ pub const SETTING_VARS: &[&str] = &[
     ENV_WAIT_TIMEOUT,
     ENV_POLL_INTERVAL,
     ENV_STORE_PROMPTS,
-    ENV_OPENAI_BASE_URL,
-    ENV_GEMINI_BASE_URL,
     ENV_LOG,
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
@@ -50,8 +45,9 @@ pub const SETTING_VARS: &[&str] = &[
 ];
 
 /// The environment Iris resolves settings from: the platform, home and current
-/// directories, the non-secret variables in [`SETTING_VARS`], and the credentials
-/// `OPENAI_API_KEY` / `GEMINI_API_KEY` (held as [`Secret`]s, never as plain strings).
+/// directories, the non-secret variables in [`SETTING_VARS`] and each provider's
+/// base URL override, and each provider's credential (`OPENAI_API_KEY` /
+/// `GEMINI_API_KEY`, held as [`Secret`]s, never as plain strings).
 ///
 /// Empty or whitespace-only variables count as unset. `Debug` shows variable names
 /// only, never values.
@@ -73,11 +69,12 @@ impl EnvSnapshot {
             .map_err(|e| IrisError::io("cannot determine the current directory", &e))?;
         let home = dirs::home_dir();
         let mut snap = EnvSnapshot::new(Platform::current(), home, cwd);
-        for name in SETTING_VARS {
+        let base_url_vars = ProviderId::ALL.iter().map(|p| p.base_url_env());
+        for name in SETTING_VARS.iter().copied().chain(base_url_vars) {
             match std::env::var(name) {
                 Ok(value) => snap = snap.with_var(name, &value),
                 Err(VarError::NotUnicode(_)) => {
-                    snap.non_unicode.insert((*name).to_string());
+                    snap.non_unicode.insert(name.to_string());
                 }
                 Err(VarError::NotPresent) => {}
             }

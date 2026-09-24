@@ -1,9 +1,11 @@
 //! The TOML config file: strict parsing, credential-key rejection, and positions.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::redact;
 
@@ -19,8 +21,11 @@ pub(crate) struct FileConfig {
     pub video: VideoSection,
     #[serde(default)]
     pub jobs: JobsSection,
+    /// `[providers.<id>]` tables, keyed by provider id. [`parse`] rejects any id
+    /// that is not in [`ProviderId::ALL`], so a new provider gets its table without
+    /// a new field here.
     #[serde(default)]
-    pub providers: ProvidersSection,
+    pub providers: BTreeMap<String, ProviderSection>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -42,15 +47,6 @@ pub(crate) struct VideoSection {
 #[serde(deny_unknown_fields)]
 pub(crate) struct JobsSection {
     pub store_prompts: Option<bool>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ProvidersSection {
-    #[serde(default)]
-    pub openai: ProviderSection,
-    #[serde(default)]
-    pub gemini: ProviderSection,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -96,13 +92,23 @@ pub(crate) fn parse(path: &Path, text: &str) -> Result<FileConfig, IrisError> {
         file_error(path, format!("invalid TOML{}: {}", at.unwrap_or_default(), e.message()))
     })?;
     if let Some(key) = find_credential_key(&table, "") {
+        let vars: Vec<&str> = ProviderId::ALL.iter().map(|p| p.credential_env()).collect();
         return Err(key_error(
             path,
             &key,
-            "credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY, never from the config file",
+            format!("credentials are read only from {}, never from the config file", vars.join(" / ")),
         ));
     }
-    toml::Value::Table(table).try_into::<FileConfig>().map_err(|e| schema_error(path, &e))
+    let config = toml::Value::Table(table).try_into::<FileConfig>().map_err(|e| schema_error(path, &e))?;
+    if let Some(name) = config.providers.keys().find(|k| !ProviderId::ALL.iter().any(|p| p.as_str() == *k)) {
+        let known: Vec<String> = ProviderId::ALL.iter().map(|p| format!("`{p}`")).collect();
+        return Err(key_error(
+            path,
+            &format!("providers.{name}"),
+            format!("unknown key; expected one of {}", known.join(", ")),
+        ));
+    }
+    Ok(config)
 }
 
 /// A `config_invalid` error for the typed pass (unknown key or wrong type): the key

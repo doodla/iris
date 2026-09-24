@@ -12,10 +12,10 @@ use std::time::Duration;
 
 use iris::app::jobs::{self, ListFilter, Target, WaitArgs};
 use iris::app::video::{self, VideoArgs};
-use iris::app::{GenerationArgs, GenerationOutcome, Interrupt};
-use iris::catalog::{OptionSource, RawOption};
+use iris::app::{AppContext, Catalog, GenerationArgs, GenerationOutcome, Interrupt, Progress};
+use iris::catalog::{ModelSpec, OptionSource, RawOption};
 use iris::config::{CliOverrides, Resolved, SettingSource};
-use iris::domain::{DownloadState, JobStatus, ProviderId};
+use iris::domain::{DownloadState, JobStatus, Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobStore};
 use iris::output::results::{JobResult, JobView};
@@ -1164,4 +1164,37 @@ async fn an_accepted_job_whose_record_vanished_exits_5_with_the_remote_id() {
     assert_eq!(e.details["provider_accepted"], true);
     assert!(e.hint.as_deref().unwrap().contains("do not resubmit"), "{:?}", e.hint);
     assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn the_default_video_provider_is_the_one_whose_catalog_model_is_the_video_default() {
+    // Nothing in the app names a video provider: without --provider or --model, a
+    // video command uses the provider whose catalog declares a default video model.
+    let sandbox = Sandbox::new();
+    let spec = |id: &'static str, provider: ProviderId, is_default: bool| -> &'static ModelSpec {
+        let default_for: &'static [Operation] = if is_default { FAKE_VIDEO_MODEL.default_for } else { &[] };
+        Box::leak(Box::new(ModelSpec { id, provider, aliases: &[], default_for, ..FAKE_VIDEO_MODEL }))
+    };
+    for (default_provider, other) in
+        [(ProviderId::OpenAi, ProviderId::Gemini), (ProviderId::Gemini, ProviderId::OpenAi)]
+    {
+        let with_video = |id: ProviderId| {
+            let base = if id == ProviderId::OpenAi { FakeProvider::openai() } else { FakeProvider::gemini() };
+            Arc::new(FakeProvider { video: Some(FakeVideo::default()), ..base })
+        };
+        let mut deps =
+            deps(vec![with_video(ProviderId::OpenAi), with_video(ProviderId::Gemini)], Interrupt::manual());
+        deps.catalog = Catalog::with_models(vec![
+            spec("fake-other-video", other, false),
+            spec("fake-default-video", default_provider, true),
+        ]);
+        let ctx = AppContext::new(settings(&sandbox.env()), deps, Progress::silent());
+        let mut a = vargs("x");
+        a.common.dry_run = true;
+        let plan = match video::run(&ctx, a, &mut Vec::new()).await.unwrap() {
+            GenerationOutcome::Planned(p) => p,
+            GenerationOutcome::Completed(_) => panic!("expected a plan"),
+        };
+        assert_eq!((plan.provider, plan.model.as_str()), (default_provider, "fake-default-video"));
+    }
 }

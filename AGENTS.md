@@ -28,8 +28,9 @@ rules, not a description of the code; read `docs/architecture.md` and the source
   detach, resume, or cancellation for an operation the provider cannot recover.
 - Do not claim capabilities, access, cancellation, or recovery that a provider does not
   document. When providers differ, implement the honest subset.
-- Adding a provider means: an adapter, one registry entry, catalog declarations, and
-  tests. If it requires edits across the app, fix the abstraction first.
+- Adding a provider means: an adapter, one registry entry, its `ProviderId` identity,
+  catalog declarations, tests, and the regenerated schema and docs. If it requires edits
+  across the app, fix the abstraction first.
 
 ## Money, credentials, and safety
 

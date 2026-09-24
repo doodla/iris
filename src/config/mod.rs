@@ -18,6 +18,10 @@
 //!   be absolute (or start with `~`).
 //! * Credentials come only from `OPENAI_API_KEY` / `GEMINI_API_KEY` and are held as
 //!   [`Secret`]s; nothing here ever formats their values.
+//! * Per-provider settings (`[providers.<id>]`, `IRIS_<PROVIDER>_BASE_URL`) are
+//!   resolved for every provider in [`ProviderId::ALL`]; each provider's id,
+//!   variable names, and default base URL come from [`ProviderId`], so nothing here
+//!   lists providers by name.
 //!
 //! Dependencies outside the usual module layering (see docs/architecture.md):
 //! `config` uses `catalog` (a configured default model "must be a known model")
@@ -36,8 +40,8 @@ use std::time::Duration;
 use url::Url;
 
 pub use env::{
-    ENV_CONFIG, ENV_GEMINI_BASE_URL, ENV_IMAGE_PROVIDER, ENV_LOG, ENV_OPENAI_BASE_URL, ENV_OUTPUT_DIR,
-    ENV_POLL_INTERVAL, ENV_STATE_DIR, ENV_STORE_PROMPTS, ENV_WAIT_TIMEOUT, EnvSnapshot, SETTING_VARS,
+    ENV_CONFIG, ENV_IMAGE_PROVIDER, ENV_LOG, ENV_OUTPUT_DIR, ENV_POLL_INTERVAL, ENV_STATE_DIR,
+    ENV_STORE_PROMPTS, ENV_WAIT_TIMEOUT, EnvSnapshot, SETTING_VARS,
 };
 pub use paths::{Platform, PlatformPaths, expand_tilde, platform_paths};
 
@@ -50,10 +54,8 @@ use crate::output::results::{ConfigPathResult, ConfigShowResult, CredentialView,
 use crate::redact;
 use crate::secret::Secret;
 
-/// Default OpenAI API base URL (see docs/configuration.md).
-pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-/// Default Gemini API base URL: the origin; adapters append `/v1` or `/v1beta`.
-pub const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
+/// Default image provider (`image.provider`) when no layer sets one.
+pub const DEFAULT_IMAGE_PROVIDER: ProviderId = ProviderId::OpenAi;
 /// Default caller wait limit for video jobs.
 pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 /// Default poll interval for video jobs.
@@ -128,12 +130,11 @@ pub struct Settings {
     pub poll_interval: Resolved<Duration>,
     /// Keep prompt text in job records (`jobs.store_prompts`).
     pub store_prompts: Resolved<bool>,
-    /// OpenAI settings (`providers.openai`).
-    pub openai: ProviderSettings,
-    /// Gemini settings (`providers.gemini`).
-    pub gemini: ProviderSettings,
     /// Tracing filter directives for the log subscriber.
     pub log_filter: Resolved<String>,
+    /// Settings of every provider in [`ProviderId::ALL`] (`providers.<id>`); see
+    /// [`Settings::provider`].
+    providers: BTreeMap<ProviderId, ProviderSettings>,
     credentials: BTreeMap<ProviderId, Secret>,
 }
 
@@ -179,7 +180,7 @@ impl Settings {
                 .as_deref()
                 .map(|v| parse_image_provider(v).map_err(|m| file::key_error(path, "image.provider", m)))
                 .transpose()?,
-            || Ok(ProviderId::OpenAi),
+            || Ok(DEFAULT_IMAGE_PROVIDER),
         )?;
 
         let wait_timeout = layered(
@@ -209,8 +210,14 @@ impl Settings {
                 Ok(false)
             })?;
 
-        let openai = provider_settings(ProviderId::OpenAi, &cfg.providers.openai, env, path)?;
-        let gemini = provider_settings(ProviderId::Gemini, &cfg.providers.gemini, env, path)?;
+        let unset = file::ProviderSection::default();
+        let providers = ProviderId::ALL
+            .iter()
+            .map(|&p| {
+                let section = cfg.providers.get(p.as_str()).unwrap_or(&unset);
+                provider_settings(p, section, env, path).map(|s| (p, s))
+            })
+            .collect::<Result<BTreeMap<_, _>, IrisError>>()?;
 
         let verbose = match cli.verbose {
             0 => None,
@@ -230,19 +237,28 @@ impl Settings {
             wait_timeout,
             poll_interval,
             store_prompts,
-            openai,
-            gemini,
             log_filter,
+            providers,
             credentials: env.credentials().clone(),
         })
     }
 
     /// Settings of one provider.
     pub fn provider(&self, provider: ProviderId) -> &ProviderSettings {
-        match provider {
-            ProviderId::OpenAi => &self.openai,
-            ProviderId::Gemini => &self.gemini,
-        }
+        // `load` resolves every provider in `ProviderId::ALL`, and only `load` can
+        // build a `Settings`.
+        &self.providers[&provider]
+    }
+
+    /// Mutable settings of one provider, for embedders and tests that adjust
+    /// resolved settings (the other settings are public fields).
+    pub fn provider_mut(&mut self, provider: ProviderId) -> &mut ProviderSettings {
+        self.providers.get_mut(&provider).expect("Settings::load resolves every provider")
+    }
+
+    /// Settings of every provider, in [`ProviderId::ALL`] order.
+    pub fn providers(&self) -> impl Iterator<Item = &ProviderSettings> {
+        ProviderId::ALL.iter().map(|p| self.provider(*p))
     }
 
     /// `<state_dir>/jobs`.
@@ -334,13 +350,14 @@ impl Settings {
                 Some(ENV_STORE_PROMPTS),
             ),
         ];
-        for p in [&self.openai, &self.gemini] {
+        let video_providers = catalog::providers_for(Operation::VideoGenerate);
+        for p in self.providers() {
             let prefix = format!("providers.{}", p.provider.as_str());
             rows.push(row(
                 &format!("{prefix}.base_url"),
                 url(&p.base_url.value),
                 &p.base_url.source,
-                Some(base_url_env(p.provider)),
+                Some(p.provider.base_url_env()),
             ));
             rows.push(row(
                 &format!("{prefix}.image_model"),
@@ -348,8 +365,8 @@ impl Settings {
                 &p.image_model.source,
                 None,
             ));
-            // docs/configuration.md lists a video model only for Gemini (the only video provider).
-            if p.provider == ProviderId::Gemini || p.video_model.value.is_some() {
+            // A video model row only for providers the catalog has a video model for.
+            if video_providers.contains(&p.provider) || p.video_model.value.is_some() {
                 rows.push(row(
                     &format!("{prefix}.video_model"),
                     opt(&p.video_model.value),
@@ -405,12 +422,11 @@ impl Settings {
     /// [`WARNING_NON_DEFAULT_BASE_URL`] per provider whose base URL is not the
     /// default (its API key is sent there). `config show` and `doctor` print these.
     pub fn warnings(&self) -> Vec<Warning> {
-        [&self.openai, &self.gemini]
-            .into_iter()
+        self.providers()
             .filter(|p| p.base_url.value.as_str() != default_base_url(p.provider).as_str())
             .map(|p| {
                 let origin = match p.base_url.source {
-                    SettingSource::Env => format!("from {}", base_url_env(p.provider)),
+                    SettingSource::Env => format!("from {}", p.provider.base_url_env()),
                     SettingSource::File => "from the config file".to_string(),
                     SettingSource::Flag => "from a flag".to_string(),
                     SettingSource::Default => "default".to_string(),
@@ -431,21 +447,9 @@ impl Settings {
     }
 }
 
-/// The default base URL of a provider (see docs/configuration.md).
+/// The default base URL of a provider ([`ProviderId::default_base_url`]), parsed.
 pub fn default_base_url(provider: ProviderId) -> Url {
-    let raw = match provider {
-        ProviderId::OpenAi => DEFAULT_OPENAI_BASE_URL,
-        ProviderId::Gemini => DEFAULT_GEMINI_BASE_URL,
-    };
-    Url::parse(raw).expect("default base URLs are valid")
-}
-
-/// The environment variable overriding a provider's base URL.
-pub fn base_url_env(provider: ProviderId) -> &'static str {
-    match provider {
-        ProviderId::OpenAi => ENV_OPENAI_BASE_URL,
-        ProviderId::Gemini => ENV_GEMINI_BASE_URL,
-    }
+    Url::parse(provider.default_base_url()).expect("default base URLs are valid")
 }
 
 /// Parse a duration: humantime syntax (`90s`, `10m`, `1h 30m`) or plain seconds.
@@ -504,7 +508,7 @@ fn provider_settings(
     let key = |k: &str| format!("{prefix}.{k}");
     let base_url = layered(
         None,
-        env_parsed(env, base_url_env(provider), parse_base_url)?,
+        env_parsed(env, provider.base_url_env(), parse_base_url)?,
         section
             .base_url
             .as_deref()
@@ -743,10 +747,13 @@ mod tests {
             default_base_url(ProviderId::Gemini).as_str(),
             "https://generativelanguage.googleapis.com/"
         );
-        assert_eq!(
-            parse_base_url(DEFAULT_GEMINI_BASE_URL).unwrap(),
-            default_base_url(ProviderId::Gemini),
-            "the default must round-trip through validation unchanged"
-        );
+        for p in ProviderId::ALL {
+            assert_eq!(
+                parse_base_url(p.default_base_url()).unwrap(),
+                default_base_url(*p),
+                "{p}: the default must round-trip through validation unchanged"
+            );
+            assert_eq!(p.base_url_env(), format!("IRIS_{}_BASE_URL", p.as_str().to_ascii_uppercase()));
+        }
     }
 }

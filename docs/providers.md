@@ -1,10 +1,12 @@
 # Adding a provider
 
 Adding a provider to Iris is meant to be a focused, additive change: a new adapter module, one
-line in the registry, catalog declarations, and tests — not edits scattered through `app` or
-`cli`. This guide walks through it step by step, using a **hypothetical** Seedance (video)
-provider as a worked example. Iris does not implement Seedance; nothing here is a real adapter,
-and no Seedance API is called by Iris today.
+line in the registry, the provider's identity in `ProviderId`, catalog declarations, and tests —
+not edits scattered through `app` or `cli`. The
+[checklist](#checklist-everything-a-new-provider-touches) at the end lists every file it touches,
+including the schema, help text, and documents that name providers. This guide walks through it
+step by step, using a **hypothetical** Seedance (video) provider as a worked example. Iris does not
+implement Seedance; nothing here is a real adapter, and no Seedance API is called by Iris today.
 
 Read [architecture.md](architecture.md) first for the module layout and the two provider traits
 (`ImageProvider`, `VideoProvider`) this guide builds on.
@@ -38,10 +40,10 @@ src/providers/seedance/
   wire.rs     -- request/response types (private)
 ```
 
-Implement `Provider` (identity, default base URL, credential header, the free `check_access`
-metadata call) and `VideoProvider` (`submit`, `poll`, `output_retention`, and optionally
-`validate` — the local checks `submit` makes, run before the job record is written — and
-`check_output_uri`) — see
+Implement `Provider` (`id`, the credential header, `docs_url`, and the free `check_access`
+metadata call; `default_base_url` comes from `ProviderId`) and `VideoProvider` (`submit`, `poll`,
+`output_retention`, and optionally `validate` — the local checks `submit` makes, run before the
+job record is written — and `check_output_uri`) — see
 [architecture.md](architecture.md#sync-vs-async-two-provider-traits-on-purpose) for the exact
 trait shapes. A provider that only does images implements `image()` instead of `video()`; a
 provider that does both implements both and returns `Some(self)` from each.
@@ -120,12 +122,17 @@ pub static MODELS: &[ModelSpec] = &[
 
 Then:
 
-1. Add a `Seedance` variant to the `ProviderId` enum (`src/domain.rs`): its serde name
-   (`"seedance"`), an entry in `ProviderId::ALL` (config, doctor, and redaction all iterate this
-   to cover every provider), and a `credential_env()` match arm naming its environment variable.
-   Iris reads provider keys only from named environment variables (`OPENAI_API_KEY`,
-   `GEMINI_API_KEY` today); document the new one in [configuration.md](configuration.md). Add the
-   new module to the catalog's `all()` chain (`src/catalog/mod.rs`).
+1. Give the provider its identity: a `Seedance` variant of the `ProviderId` enum
+   (`src/domain.rs`), an entry in `ProviderId::ALL`, and a match arm in each of its identity
+   methods: `as_str` (`"seedance"`, which is also its serde name, `--provider` value, and config
+   table name), `display_name`, `credential_env` (the one environment variable its key is read
+   from, e.g. `SEEDANCE_API_KEY`), `default_base_url`, and `base_url_env`
+   (`IRIS_SEEDANCE_BASE_URL`). The compiler points at every missing arm. Configuration, `doctor`,
+   `providers list`, and credential redaction iterate `ProviderId::ALL` and read these methods,
+   so they pick the provider up without further edits (see
+   [the checklist below](#checklist-everything-a-new-provider-touches)). Then add the catalog
+   module to `src/catalog/mod.rs`: `pub mod seedance;`, its `MODELS` in the `all()` chain, and a
+   `model_id_syntax` arm for the ids its adapter can send.
 2. Give the adapter a `CredentialHeader` (header name and value prefix, e.g. `Authorization` /
    `Bearer `) matching how the provider documents authentication.
 3. Declare every option the model accepts as an `OptionSpec` (`OptionKind::Enum`, `Integer { min,
@@ -173,10 +180,10 @@ pub fn builtin() -> Self {
 }
 ```
 
-That is the only place `app` learns a new provider exists — it looks up adapters solely through
-the registry, by `ProviderId`, so nothing in `app` or `cli` needs to change to make the new
-provider reachable from every command (`models list`, `providers list`, `image`/`video generate`,
-`doctor`, …).
+Together with `pub mod seedance;` next to the other adapter modules, that is the only place
+`app` learns about the adapter: it looks adapters up through the registry, by `ProviderId`, so no
+command handler in `app` or `cli` changes to make the new provider reachable from every command
+(`models list`, `providers list`, `image`/`video generate`, `jobs`, `doctor`, …).
 
 ## 5. Tests
 
@@ -195,14 +202,63 @@ Mirror the existing per-provider test files (`tests/openai_catalog.rs` /
   classification matches what you decided in step 2, tested against a local `wiremock`
   server — **never** a real endpoint (see [live-testing.md](live-testing.md) for how the small,
   budgeted, opt-in live check is separated from the ordinary offline suite).
+- Test fakes that match on `ProviderId` exhaustively (`FakeProvider::credential_header` in
+  `tests/app_support.rs`) need an arm for the new provider; the compiler shows where.
 - Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before
   committing — the same checks every commit in this repository passes (see
   [CONTRIBUTING.md](../CONTRIBUTING.md)).
 
+## Checklist: everything a new provider touches
+
+The complete list, for a provider like the Seedance example.
+
+**The provider's own code:**
+
+- `src/providers/seedance/` (the adapter), `pub mod seedance;` and one `Registry::builtin()` line
+  in `src/providers/mod.rs`.
+- `src/catalog/seedance.rs`, and in `src/catalog/mod.rs` its `pub mod`, its models in `all()`, and a
+  `model_id_syntax` arm.
+- `ProviderId` in `src/domain.rs`: the variant, the `ALL` entry, and one arm in each of `as_str`,
+  `display_name`, `credential_env`, `default_base_url`, and `base_url_env`.
+- Adapter and catalog tests (step 5).
+
+**Derived from those, with no further edits:** parsing `--provider seedance` and
+`image.provider = "seedance"`; the `[providers.seedance]` config table with the same keys as the
+others (`base_url`, `image_model`, `video_model`, `request_timeout`); the `IRIS_SEEDANCE_BASE_URL`
+override; its rows in `config show`; the `non_default_base_url` warning; `doctor`'s
+`credentials.seedance`, `base_url.seedance`, and `access.seedance.<model>` checks; the
+`providers list` entry; redaction of its key from every message; and the config file's refusal of
+credential-like keys, whose message lists every provider's variable.
+
+**Contract, help text, and documents that name providers, updated by hand:**
+
+- The JSON Schema. `ProviderId` is an enum in the published schema (every `provider` field), so
+  regenerate it with `cargo run -q -- schema > schema/iris-output.v1.schema.json`
+  (`tests/schema_contract.rs` fails until you do). A new provider value is an additive change
+  under the [versioning policy](json-contract.md#schema-versioning-policy): no `schema_version`
+  bump, but it gets a changelog entry.
+- Help text in `src/cli/args.rs` that lists the providers or their variables: the top-level
+  "Credentials are read only from the OPENAI_API_KEY and GEMINI_API_KEY environment variables",
+  `--provider`'s "Provider: openai or gemini", and the `providers list` description.
+- The default video provider. A video command without `--provider` or `--model` uses the provider
+  whose catalog declares a default video model (`default_for` containing `video.generate`). If a
+  second provider declares one, the first in `ProviderId` order wins; choose that order
+  deliberately, or add a `video.provider` setting as a documented configuration change.
+- Documentation: the README's setup section and support table,
+  [configuration.md](configuration.md) (credential table, precedence table, full key set),
+  `CHANGELOG.md`, and a record of the API choices you made, with source links and the date you
+  checked them (section 1).
+- `AGENTS.md`'s credential rule, which names the variables Iris reads: a new variable is a
+  deliberate change to that rule.
+
+Deliberately provider-specific, and not needed for a new provider: `doctor`'s warning that
+`GOOGLE_API_KEY` is set but ignored, and each adapter's own error mapping.
+
 ## What you should not need to touch
 
-If adding a provider requires changing `cli/args.rs` beyond adding the provider to a documented
-enum, or requires new branches in `app/image.rs` / `app/video.rs` keyed on which provider was
-selected, that is a sign the abstraction in `providers` needs to grow first — fix the trait or the
-shared catalog types, not the application layer, and record why as a deliberate, documented
-CLI/JSON compatibility change (see [AGENTS.md#compatibility](../AGENTS.md#compatibility)).
+If adding a provider requires changes beyond the checklist above (for example `cli/args.rs`
+beyond the help text that names providers, or new branches in `app/image.rs` / `app/video.rs`
+keyed on which provider was selected), that is a sign the abstraction in `providers` needs to grow
+first — fix the trait or the shared catalog types, not the application layer, and record why as a
+deliberate, documented CLI/JSON compatibility change (see
+[AGENTS.md#compatibility](../AGENTS.md#compatibility)).
