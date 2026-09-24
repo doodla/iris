@@ -330,6 +330,8 @@ credential each provider reads and whether it's set.
 
 - [docs/architecture.md](docs/architecture.md) — module layout, sync vs. async traits, where
   invariants live
+- [docs/decisions.md](docs/decisions.md) — why Iris uses the endpoints, models, retry rules, and
+  tools it does, with the official sources and the date they were checked
 - [docs/providers.md](docs/providers.md) — how to add a provider (worked example: Seedance)
 - [docs/json-contract.md](docs/json-contract.md) — the `--json` envelope, every result type, the
   error taxonomy, exit codes, and schema versioning

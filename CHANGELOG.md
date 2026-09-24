@@ -60,7 +60,9 @@ machine-readable contract for agents.
   with it. The release workflow publishes only after format, Clippy, and tests pass again on the
   tagged commit and every target's archive passes the same smoke test.
 - `AGENTS.md`/`CLAUDE.md` durable agent instructions, and this project's documentation set under
-  `docs/`.
+  `docs/`, including a decisions log ([docs/decisions.md](docs/decisions.md)) that explains the
+  API, model, retry, persistence, dependency, and release choices with their official sources and
+  the date they were checked.
 
 ### Changed
 

@@ -7,7 +7,9 @@ crate root; there is no `unsafe` anywhere in Iris's own code.
 
 This document describes the module layout and where each kind of invariant is enforced. For the
 exact command surface see [json-contract.md](json-contract.md) and `iris <command> --help`; for how
-to add a provider see [providers.md](providers.md).
+to add a provider see [providers.md](providers.md); for why Iris calls the provider APIs, retries,
+persists jobs, and picks dependencies the way it does, with sources, see
+[decisions.md](decisions.md).
 
 ## Layering
 

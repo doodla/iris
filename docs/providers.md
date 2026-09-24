@@ -22,8 +22,9 @@ current docs and what has drifted. Iris does this in the code itself: the module
 catalog file (`src/catalog/openai.rs`, `gemini.rs`, `veo.rs`) says which official documentation
 its values come from and the date it was checked, the price tables carry their source (`PRICING_URL`) and
 date (`CATALOG_AS_OF`, or `PRICING_AS_OF` for OpenAI) into every `pricing` entry and cost
-estimate, and the adapters' module headers explain their wire-format choices. Do the same for a
-new provider.
+estimate, the adapters' module headers explain their wire-format choices, and
+[decisions.md](decisions.md) records the consequential choices with their sources and the date
+they were checked. Do the same for a new provider.
 
 Decide honestly what Iris can support: if the provider's Rust SDK (if one exists) does not cover
 what you need or lags the API, write a thin REST client instead of waiting on or working around
@@ -250,8 +251,8 @@ credential-like keys, whose message lists every provider's variable.
   deliberately, or add a `video.provider` setting as a documented configuration change.
 - Documentation: the README's setup section and support table,
   [configuration.md](configuration.md) (credential table, precedence table, full key set),
-  `CHANGELOG.md`, and a record of the API choices you made, with source links and the date you
-  checked them (section 1).
+  `CHANGELOG.md`, and [decisions.md](decisions.md) (the API choices you made, with source links
+  and the date you checked them; see section 1).
 - `AGENTS.md`'s credential rule, which names the variables Iris reads: a new variable is a
   deliberate change to that rule.
 
