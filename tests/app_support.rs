@@ -303,6 +303,8 @@ pub struct FakeImages {
     pub results: Mutex<VecDeque<Result<ImageOutput, IrisError>>>,
     pub calls: AtomicUsize,
     pub last_request: Mutex<Option<ImageRequest>>,
+    /// The operation of the last call: which trait method was called.
+    pub last_operation: Mutex<Option<Operation>>,
     /// Run once at the start of the next call (e.g. create a conflicting file).
     pub on_call: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     /// If set, the call waits for this before answering.
@@ -312,17 +314,18 @@ pub struct FakeImages {
 #[async_trait]
 impl ImageProvider for FakeImages {
     async fn generate(&self, req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
-        self.answer(req).await
+        self.answer(Operation::ImageGenerate, req).await
     }
     async fn edit(&self, req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
-        self.answer(req).await
+        self.answer(Operation::ImageEdit, req).await
     }
 }
 
 impl FakeImages {
-    async fn answer(&self, req: &ImageRequest) -> Result<ImageOutput, IrisError> {
+    async fn answer(&self, op: Operation, req: &ImageRequest) -> Result<ImageOutput, IrisError> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.last_request.lock().unwrap() = Some(req.clone());
+        *self.last_operation.lock().unwrap() = Some(op);
         if let Some(hook) = self.on_call.lock().unwrap().take() {
             hook();
         }

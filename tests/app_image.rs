@@ -529,7 +529,7 @@ async fn edit_reads_and_validates_inputs_before_sending() {
     let (r, _) = f.run(Operation::ImageEdit, a).await;
     completed(r.unwrap());
     let req = f.openai.images().last_request.lock().unwrap().clone().unwrap();
-    assert_eq!(req.operation, Operation::ImageEdit);
+    assert_eq!(*f.openai.images().last_operation.lock().unwrap(), Some(Operation::ImageEdit));
     assert_eq!(req.images.len(), 2);
     assert_eq!(req.images[1].media_type, "image/jpeg");
     assert!(req.mask.is_some());

@@ -16,7 +16,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 
 use crate::catalog::ResolvedOptions;
-use crate::domain::{Operation, ProviderId, Usage, Warning};
+use crate::domain::{ProviderId, Usage, Warning};
 use crate::error::IrisError;
 use crate::http::{HttpClient, Timeouts};
 use crate::secret::Secret;
@@ -60,10 +60,10 @@ impl std::fmt::Debug for InputImage {
     }
 }
 
-/// Validated request for `image.generate` / `image.edit`.
+/// Validated request for `image.generate` / `image.edit`. The operation is the
+/// [`ImageProvider`] method it is passed to.
 #[derive(Debug, Clone)]
 pub struct ImageRequest {
-    pub operation: Operation,
     /// Model id to send.
     pub model: String,
     pub prompt: String,

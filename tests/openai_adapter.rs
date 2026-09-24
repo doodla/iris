@@ -13,7 +13,7 @@ use std::time::Duration;
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD};
 use iris::catalog::{OptionValue, ResolvedOptions};
-use iris::domain::{Operation, ProviderId};
+use iris::domain::ProviderId;
 use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy, Timeouts};
 use iris::providers::openai::OpenAiProvider;
@@ -121,7 +121,6 @@ fn s(v: &str) -> OptionValue {
 
 fn generate_request(opts: ResolvedOptions) -> ImageRequest {
     ImageRequest {
-        operation: Operation::ImageGenerate,
         model: "gpt-image-2.5-sunburst".to_string(),
         prompt: "a watercolor lighthouse".to_string(),
         images: Vec::new(),
@@ -132,7 +131,6 @@ fn generate_request(opts: ResolvedOptions) -> ImageRequest {
 
 fn edit_request(images: Vec<InputImage>, mask: Option<InputImage>, opts: ResolvedOptions) -> ImageRequest {
     ImageRequest {
-        operation: Operation::ImageEdit,
         model: "gpt-image-2.5-sunburst".to_string(),
         prompt: "add a red scarf".to_string(),
         images,
@@ -408,17 +406,17 @@ async fn options_the_adapter_does_not_map_are_internal_errors_and_nothing_is_sen
 }
 
 #[tokio::test]
-async fn generate_and_edit_refuse_requests_of_the_other_kind_without_sending() {
+async fn generate_and_edit_refuse_requests_they_cannot_express_without_sending() {
     let server = MockServer::start().await;
     let p = OpenAiProvider::new();
     let img = input(InputRole::Image, "a.png", "image/png", png_rgb(8, 8));
+    // A generation body has no place for input images: they are never dropped silently.
     let mut with_image = generate_request(ResolvedOptions::new());
     with_image.images.push(img.clone());
     assert_eq!(p.generate(&with_image, &ctx(&server)).await.unwrap_err().code, ErrorCode::InternalError);
-    let edit = edit_request(vec![img.clone()], None, ResolvedOptions::new());
-    assert_eq!(p.generate(&edit, &ctx(&server)).await.unwrap_err().code, ErrorCode::InternalError);
-    let gen_as_edit = generate_request(ResolvedOptions::new());
-    assert_eq!(p.edit(&gen_as_edit, &ctx(&server)).await.unwrap_err().code, ErrorCode::InternalError);
+    let mut with_mask = generate_request(ResolvedOptions::new());
+    with_mask.mask = Some(input(InputRole::Mask, "m.png", "image/png", png_rgba(8, 8)));
+    assert_eq!(p.generate(&with_mask, &ctx(&server)).await.unwrap_err().code, ErrorCode::InternalError);
     let no_images = edit_request(Vec::new(), None, ResolvedOptions::new());
     assert_eq!(p.edit(&no_images, &ctx(&server)).await.unwrap_err().code, ErrorCode::UsageError);
     let seventeen = edit_request(vec![img; 17], None, ResolvedOptions::new());

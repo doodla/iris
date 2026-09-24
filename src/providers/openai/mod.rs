@@ -30,7 +30,7 @@ use super::{
     Provider, ProviderContext,
 };
 use crate::artifacts::media;
-use crate::domain::{Operation, ProviderId, Warning};
+use crate::domain::{ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, HttpResponse};
 use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireImagesResponse, WireOptions};
@@ -111,12 +111,7 @@ impl Provider for OpenAiProvider {
 #[async_trait]
 impl ImageProvider for OpenAiProvider {
     async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
-        if req.operation != Operation::ImageGenerate {
-            return Err(IrisError::internal(format!(
-                "the OpenAI adapter's generate() received a {} request; nothing was sent",
-                req.operation
-            )));
-        }
+        // Input images would be dropped from a generation body: never send one silently.
         if !req.images.is_empty() || req.mask.is_some() {
             return Err(IrisError::internal(
                 "the OpenAI adapter's generate() received input images or a mask; nothing was sent",
@@ -133,12 +128,6 @@ impl ImageProvider for OpenAiProvider {
     }
 
     async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
-        if req.operation != Operation::ImageEdit {
-            return Err(IrisError::internal(format!(
-                "the OpenAI adapter's edit() received a {} request; nothing was sent",
-                req.operation
-            )));
-        }
         if req.images.is_empty() {
             return Err(IrisError::usage("image edit requires at least one --image"));
         }

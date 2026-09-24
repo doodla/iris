@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use iris::catalog::{OptionValue, ResolvedOptions};
-use iris::domain::{Operation, ProviderId};
+use iris::domain::ProviderId;
 use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy, Timeouts};
 use iris::providers::gemini::GeminiProvider;
@@ -97,7 +97,6 @@ fn s(v: &str) -> OptionValue {
 
 fn generate_request(opts: ResolvedOptions) -> ImageRequest {
     ImageRequest {
-        operation: Operation::ImageGenerate,
         model: MODEL.to_string(),
         prompt: "A red kite over green hills, watercolor".to_string(),
         images: vec![],
@@ -198,7 +197,6 @@ async fn edit_sends_the_prompt_first_then_every_reference_in_order_with_all_opti
     mount_ok(&server, response_with(vec![image_part("image/jpeg", &jpeg())], "STOP")).await;
     let (first, second) = (png(), jpeg());
     let req = ImageRequest {
-        operation: Operation::ImageEdit,
         model: MODEL.to_string(),
         prompt: "Put the cat from the first image into the kitchen from the second".to_string(),
         images: vec![
@@ -283,7 +281,6 @@ async fn options_the_adapter_does_not_map_are_internal_errors_and_nothing_is_sen
         assert_eq!(err.code, ErrorCode::InternalError, "{name}");
     }
     let mut masked = generate_request(ResolvedOptions::new());
-    masked.operation = Operation::ImageEdit;
     masked.images = vec![input(png(), "image/png", "a.png")];
     masked.mask = Some(input(png(), "image/png", "mask.png"));
     let err = GeminiProvider::new().edit(&masked, &ctx(&server)).await.unwrap_err();
@@ -906,7 +903,6 @@ async fn requests_above_twenty_megabytes_fail_locally_with_zero_requests() {
     let mut big = png();
     big.resize(15_000_001, 0); // base64 alone is over 20,000,000 bytes
     let req = ImageRequest {
-        operation: Operation::ImageEdit,
         model: MODEL.to_string(),
         prompt: "enlarge".to_string(),
         images: vec![input(big, "image/png", "big.png")],

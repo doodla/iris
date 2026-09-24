@@ -11,11 +11,12 @@
 //! outcome. Two different failures can leave a paid request in an unknown state:
 //!
 //! * no usable response arrived after the request may have been sent (timeout,
-//!   reset, truncated body): [`HttpError::is_ambiguous`] is true;
+//!   reset, truncated body): an [`HttpError::Transport`] whose
+//!   [`TransportError::after_send`] is true;
 //! * the provider answered 408 or 5xx, which does not prove the request was not
 //!   processed. [`Verdict::default_for`] classifies these as [`Verdict::Transient`],
 //!   and the executor then returns the classifier's error (`provider_error`,
-//!   retryable) *as an [`HttpError::Error`]*, where `is_ambiguous()` is false.
+//!   retryable) *as an [`HttpError::Error`]*.
 //!
 //! Synchronous image calls report both as `submission_uncertain` with
 //! `charge_possible` (except where the provider documents that an error answer was
@@ -25,7 +26,8 @@
 //! `Verdict::Final(<submission_uncertain error>)` for 408 and every 5xx (never
 //! `Transient`), except a provider-documented "not processed" overload rejection,
 //! which stays a [`Verdict::RetryableRejection`]; and the adapter maps
-//! `Err(e) if e.is_ambiguous()` to `submission_uncertain` too. For example:
+//! `Err(HttpError::Transport(t)) if t.after_send` to `submission_uncertain` too.
+//! For example:
 //!
 //! ```
 //! # use iris::http::{HttpResponse, Verdict};
@@ -483,23 +485,14 @@ pub enum HttpError {
     /// with status, request id, provider, and retry delay — or a local error while
     /// building the request.
     Error(IrisError),
-    /// No usable response was received. Check [`TransportError::after_send`] (or
-    /// [`HttpError::is_ambiguous`]) before deciding how to report a paid call.
+    /// No usable response was received. Check [`TransportError::after_send`] before
+    /// deciding how to report a paid call: it does not cover a 408/5xx *answer*,
+    /// which arrives as [`HttpError::Error`] with the classifier's error (see the
+    /// module documentation above).
     Transport(TransportError),
 }
 
 impl HttpError {
-    /// True when a request may have been processed although no answer arrived
-    /// (a transport failure after sending).
-    ///
-    /// This does not cover a 408/5xx *answer* to a paid submission, which the
-    /// executor returns as [`HttpError::Error`] with the classifier's error. Video
-    /// submissions must make their classifier return `submission_uncertain` for
-    /// those (see the module documentation above).
-    pub fn is_ambiguous(&self) -> bool {
-        matches!(self, HttpError::Transport(t) if t.after_send)
-    }
-
     /// Map to an [`IrisError`] (transport failures via [`TransportError::to_iris`]).
     pub fn into_iris(self) -> IrisError {
         match self {

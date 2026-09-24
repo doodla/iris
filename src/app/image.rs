@@ -152,7 +152,6 @@ async fn run_checked(
     let pctx = ctx.provider_context(provider)?;
     artifacts::preflight_dirs(&plan.paths, true)?;
     let req = ImageRequest {
-        operation: op,
         model: resolved.id.clone(),
         prompt: common.prompt.clone(),
         images,

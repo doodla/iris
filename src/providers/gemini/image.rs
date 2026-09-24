@@ -85,12 +85,6 @@ pub async fn run(op: Operation, req: &ImageRequest, ctx: &ProviderContext) -> Re
 /// Requests reaching the adapter were validated against the catalog; anything the
 /// adapter cannot express is an internal error, never silently dropped.
 fn check_request_shape(op: Operation, req: &ImageRequest) -> Result<(), IrisError> {
-    if req.operation != op {
-        return Err(IrisError::internal(format!(
-            "the Gemini image adapter was asked to run {op} with a {} request",
-            req.operation
-        )));
-    }
     if req.mask.is_some() {
         return Err(IrisError::internal(
             "Gemini image models take no mask; the request should have been rejected",

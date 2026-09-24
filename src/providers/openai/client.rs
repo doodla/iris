@@ -16,7 +16,9 @@ use reqwest::header::CONTENT_TYPE;
 use super::wire::WireError;
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
-use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, TransportError, Verdict};
+use crate::http::{
+    AuthHeader, Call, HttpError, HttpResponse, PROVIDER_TEXT_MAX, RetryClass, TransportError, Verdict,
+};
 use crate::providers::{AccountAccess, ProviderContext};
 use crate::redact;
 
@@ -24,9 +26,6 @@ use crate::redact;
 pub(super) const REQUEST_ID_HEADER: &str = "x-request-id";
 /// Request header carrying Iris's own per-request id (ASCII, ≤ 512 chars).
 pub(super) const CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
-
-/// Longest provider text kept in messages and details (see docs/json-contract.md).
-const PROVIDER_TEXT_MAX: usize = 500;
 
 /// Billing and quota exhaustion codes (HTTP 429, `error.code`, or the broad
 /// `error.type` `insufficient_quota`) from OpenAI's error-code guide. Retrying these

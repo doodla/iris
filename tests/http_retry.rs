@@ -33,6 +33,12 @@ fn client() -> HttpClient {
     .unwrap()
 }
 
+/// A failure after which a paid request may have been processed although no answer
+/// arrived: a transport failure after sending.
+fn sent_without_answer(err: &HttpError) -> bool {
+    matches!(err, HttpError::Transport(t) if t.after_send)
+}
+
 fn call(class: RetryClass) -> Call {
     Call::new(class, Duration::from_secs(5))
         .with_request_id_header("x-request-id")
@@ -346,7 +352,7 @@ async fn a_build_error_is_returned_without_sending() {
             )
             .await
             .unwrap_err();
-        assert!(!err.is_ambiguous(), "{err:?}");
+        assert!(!sent_without_answer(&err), "{err:?}");
         let e = err.into_iris();
         assert_eq!(e.code, ErrorCode::InternalError, "{class}");
         assert!(e.details.get("charge_possible").is_none(), "{class}");
@@ -426,7 +432,7 @@ fn closed_port_url() -> String {
 async fn connection_refused_is_retried_for_paid_submit_and_reported_as_not_sent() {
     let base = closed_port_url();
     let err = post(&base, RetryClass::PaidSubmit).await.unwrap_err();
-    assert!(!err.is_ambiguous());
+    assert!(!sent_without_answer(&err));
     let HttpError::Transport(t) = err else { panic!("expected a transport error") };
     assert_eq!(t.kind, TransportKind::Connect);
     assert!(!t.after_send);
@@ -448,7 +454,7 @@ async fn a_timeout_after_sending_is_not_retried_for_paid_submit_and_flags_charge
     let short =
         Call::new(RetryClass::PaidSubmit, Duration::from_millis(300)).with_provider(ProviderId::OpenAi);
     let err = client().execute(&short, |c| Ok(c.post(&url).body("{}")), classify).await.unwrap_err();
-    assert!(err.is_ambiguous());
+    assert!(sent_without_answer(&err));
     let HttpError::Transport(t) = err.clone() else { panic!("expected a transport error") };
     assert_eq!(t.kind, TransportKind::Timeout);
     assert!(t.after_send);
