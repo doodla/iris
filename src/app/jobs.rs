@@ -12,6 +12,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use jiff::Timestamp;
 use url::Url;
 
 use crate::artifacts::{self, DownloadDecision, FinalizeMode, Naming, PartFile, PathRequest, SavedArtifact};
@@ -19,7 +20,7 @@ use crate::config::SettingSource;
 use crate::domain::{DownloadState, JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{self, AuthHeader, DownloadError, DownloadRequest};
-use crate::jobs::{JobId, JobOutput, JobRecord, PollApplied};
+use crate::jobs::{self, JobId, JobOutput, JobRecord, PollApplied};
 use crate::output::ErrorBody;
 use crate::output::results::{JobDeleteResult, JobListResult, JobResult};
 use crate::providers::VideoProvider;
@@ -43,6 +44,20 @@ pub struct Target {
     pub output: Option<PathBuf>,
     /// `--overwrite`.
     pub overwrite: bool,
+}
+
+/// How a file already at an output's target is handled when the output is saved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SaveMode {
+    /// `jobs wait` / `jobs download` (C-04 "Downloads" step 4): without
+    /// `--overwrite` a different file at the target is `output_exists`. Nothing
+    /// is regenerated, so the caller can simply choose another target.
+    Download,
+    /// The wait of `video generate` itself: the caller just paid for this output
+    /// and the target passed the preflight, so a file that appeared since then
+    /// never blocks the save; the output goes to `<stem>.<n>.<ext>` with warning
+    /// `output_renamed` (C-02 "Output paths", as for images).
+    Generated,
 }
 
 /// Arguments of `jobs wait`.
@@ -110,7 +125,7 @@ pub async fn wait(
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
     let id = JobId::parse(job_id)?;
-    wait_parsed(ctx, &id, args, warnings).await
+    wait_parsed(ctx, &id, args, SaveMode::Download, warnings).await
 }
 
 /// `jobs download`: download the outputs of a succeeded job. Never resubmits.
@@ -121,7 +136,7 @@ pub async fn download(
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
     let id = JobId::parse(job_id)?;
-    let rec = download_outputs(ctx, &id, target, warnings).await?;
+    let rec = download_outputs(ctx, &id, target, SaveMode::Download, warnings).await?;
     Ok(job_result(&rec))
 }
 
@@ -179,12 +194,13 @@ pub(crate) async fn wait_parsed(
     ctx: &AppContext,
     id: &JobId,
     args: &WaitArgs,
+    save: SaveMode,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
     let rec = wait_until_terminal(ctx, id, warnings).await?;
     match rec.status() {
         JobStatus::Succeeded if args.download => {
-            let rec = download_outputs(ctx, id, &args.target, warnings).await?;
+            let rec = download_outputs(ctx, id, &args.target, save, warnings).await?;
             Ok(job_result(&rec))
         }
         JobStatus::Succeeded => {
@@ -242,6 +258,31 @@ pub(crate) fn with_job_context(e: IrisError, rec: &JobRecord) -> IrisError {
     e
 }
 
+/// When a record that is still `submitting` will be reported as
+/// `submission_unknown` (the stale-`submitting` rule of C-04): its creation time
+/// plus the store's paid-submit budget and grace period.
+pub(crate) fn submission_unknown_at(ctx: &AppContext, rec: &JobRecord) -> Option<Timestamp> {
+    rec.created_at().checked_add(ctx.store.submit_budget().saturating_add(jobs::SUBMIT_GRACE)).ok()
+}
+
+/// "at about <time>" for [`submission_unknown_at`], or "later" if unknown.
+fn at_about(when: Option<Timestamp>) -> String {
+    when.map(|t| format!("at about {t}")).unwrap_or_else(|| "later".to_string())
+}
+
+/// What happens to a job the caller stops waiting for.
+fn still_pending(ctx: &AppContext, rec: &JobRecord) -> String {
+    if rec.status() == JobStatus::Submitting {
+        format!(
+            "it has no operation id yet (its submission was not recorded); unless one is recorded, it becomes \
+             submission_unknown {}",
+            at_about(submission_unknown_at(ctx, rec))
+        )
+    } else {
+        "it continues remotely".to_string()
+    }
+}
+
 /// Rebuild an error from a persisted error body.
 pub(crate) fn error_from_body(body: &ErrorBody) -> IrisError {
     let mut e = IrisError::new(body.code, body.message.clone()).with_retryable(body.retryable);
@@ -289,14 +330,15 @@ fn video_adapter(ctx: &AppContext, provider: ProviderId) -> Result<&dyn VideoPro
         .ok_or_else(|| IrisError::internal(format!("provider '{provider}' has no video adapter")))
 }
 
-fn wait_timeout(rec: &JobRecord, waited: Duration) -> IrisError {
+fn wait_timeout(ctx: &AppContext, rec: &JobRecord, waited: Duration) -> IrisError {
     let id = rec.job_id();
     with_job_context(
         IrisError::new(
             ErrorCode::WaitTimeout,
             format!(
-                "job {id} did not finish within {}; it continues remotely",
-                humantime::format_duration(waited)
+                "job {id} did not finish within {}; {}",
+                humantime::format_duration(waited),
+                still_pending(ctx, rec)
             ),
         )
         .with_hint(format!("resume with `iris jobs wait {id}` (or check with `iris jobs status {id}`)")),
@@ -304,12 +346,12 @@ fn wait_timeout(rec: &JobRecord, waited: Duration) -> IrisError {
     )
 }
 
-fn interrupted_wait(rec: &JobRecord) -> IrisError {
+fn interrupted_wait(ctx: &AppContext, rec: &JobRecord) -> IrisError {
     let id = rec.job_id();
     with_job_context(
         IrisError::new(
             ErrorCode::Interrupted,
-            format!("stopped waiting for job {id}; it continues remotely"),
+            format!("stopped waiting for job {id}; {}", still_pending(ctx, rec)),
         )
         .with_hint(format!("resume with `iris jobs wait {id}`")),
         rec,
@@ -344,7 +386,7 @@ async fn poll_once(
     let pctx = ctx.provider_context(provider)?;
     let status = tokio::select! {
         result = video.poll(remote, &pctx) => result?,
-        () = ctx.interrupt.after(seen) => return Err(interrupted_wait(rec)),
+        () = ctx.interrupt.after(seen) => return Err(interrupted_wait(ctx, rec)),
     };
     let (updated, applied) =
         ctx.store.update(rec.job_id(), |r| r.apply_poll(status, video.output_retention(), ctx.now()))?;
@@ -395,7 +437,10 @@ async fn wait_until_terminal(
                 if !announced_submitting {
                     announced_submitting = true;
                     ctx.progress.line(format!(
-                        "Job {id} is still being submitted by another iris process; waiting for its operation id"
+                        "Job {id} has no operation id yet: another iris process is still submitting it, or the \
+                         process that submitted it was interrupted. Waiting; unless an operation id is recorded, \
+                         it becomes submission_unknown {}",
+                        at_about(submission_unknown_at(ctx, &rec))
                     ));
                 }
             }
@@ -411,8 +456,8 @@ async fn wait_until_terminal(
                 };
                 let polled = tokio::select! {
                     result = video.poll(&remote, &pctx) => result,
-                    () = ctx.interrupt.after(seen) => return Err(interrupted_wait(&rec)),
-                    () = tokio::time::sleep_until(deadline) => return Err(wait_timeout(&rec, limit)),
+                    () = ctx.interrupt.after(seen) => return Err(interrupted_wait(ctx, &rec)),
+                    () = tokio::time::sleep_until(deadline) => return Err(wait_timeout(ctx, &rec, limit)),
                 };
                 match polled {
                     Ok(status) => {
@@ -439,8 +484,8 @@ async fn wait_until_terminal(
         let delay = jittered(interval).max(retry_after);
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
-            () = ctx.interrupt.after(seen) => return Err(interrupted_wait(&rec)),
-            () = tokio::time::sleep_until(deadline) => return Err(wait_timeout(&rec, limit)),
+            () = ctx.interrupt.after(seen) => return Err(interrupted_wait(ctx, &rec)),
+            () = tokio::time::sleep_until(deadline) => return Err(wait_timeout(ctx, &rec, limit)),
         }
         if rec.status() == JobStatus::Submitting {
             rec = ctx.store.load(id)?;
@@ -472,11 +517,13 @@ struct Access<'a> {
     seen: u64,
 }
 
-/// C-04 "Downloads" steps 1–6 for every output of a job.
+/// C-04 "Downloads" steps 1–6 for every output of a job. `save` decides what a
+/// file already at a target means (see [`SaveMode`]).
 async fn download_outputs(
     ctx: &AppContext,
     id: &JobId,
     target: &Target,
+    save: SaveMode,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobRecord, IrisError> {
     ctx.interrupt.arm();
@@ -551,7 +598,10 @@ async fn download_outputs(
         base_url: &base_url,
         idle_timeout: ctx.settings.timeouts(provider).download_idle,
         media_types,
-        mode: FinalizeMode::for_download(overwrite),
+        mode: match save {
+            SaveMode::Download => FinalizeMode::for_download(overwrite),
+            SaveMode::Generated => FinalizeMode::for_generated(overwrite),
+        },
         seen,
     };
 

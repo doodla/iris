@@ -14,7 +14,7 @@ use iris::app::jobs::{self, ListFilter, Target, WaitArgs};
 use iris::app::video::{self, VideoArgs};
 use iris::app::{GenerationArgs, GenerationOutcome, Interrupt};
 use iris::catalog::{OptionSource, RawOption};
-use iris::config::{Resolved, SettingSource};
+use iris::config::{CliOverrides, Resolved, SettingSource};
 use iris::domain::{DownloadState, JobStatus, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobStore};
@@ -421,6 +421,12 @@ async fn second_ctrl_c_during_submission_exits_at_once_leaving_the_record_submit
     let id = JobId::parse(e.job_id.as_deref().unwrap()).unwrap();
     let raw = record_json(&f.sandbox.state(), id.as_str());
     assert_eq!(raw["status"], "submitting");
+    // The hint says how long the record stays `submitting` (the stale threshold).
+    let hint = e.hint.as_deref().unwrap();
+    let rec = store(&f.sandbox).load(&id).unwrap();
+    let until = rec.created_at().checked_add(ctx.store.submit_budget() + iris::jobs::SUBMIT_GRACE).unwrap();
+    assert!(hint.contains(&format!("submitting until about {until}")), "{hint}");
+    assert!(hint.contains("submission_unknown after that"), "{hint}");
 }
 
 #[tokio::test]
@@ -650,4 +656,231 @@ async fn the_api_key_is_never_sent_to_another_origin() {
     let mut w = Vec::new();
     let res = completed(video::run(&ctx, vargs("x"), &mut w).await.unwrap());
     assert_eq!(res.job.artifacts.len(), 1);
+}
+
+#[tokio::test]
+async fn detach_preflights_the_recorded_output_before_submitting() {
+    let f = Fixture::new().await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let existing = f.sandbox.path("clip.mp4");
+    std::fs::write(&existing, b"old").unwrap();
+    let mut a = detached("waves");
+    a.common.output = Some(existing.clone());
+    let e = video::run(&ctx, a.clone(), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::OutputExists);
+    assert_eq!(e.exit_code(), 2);
+
+    // A file where -o's directory should be: nothing is sent either.
+    let blocker = f.sandbox.path("blocker");
+    std::fs::write(&blocker, b"x").unwrap();
+    let mut b = detached("waves");
+    b.common.output = Some(blocker.join("clip.mp4"));
+    let code = err_code(video::run(&ctx, b, &mut w).await);
+    assert!(matches!(code, ErrorCode::IoError | ErrorCode::InvalidArgument), "{code:?}");
+    assert_eq!(f.submits(), 0);
+    assert!(files_in(&f.sandbox.state().join("jobs")).is_empty(), "no job record");
+
+    // With --overwrite the same -o is accepted and recorded for the later download.
+    a.common.overwrite = true;
+    let res = completed(video::run(&ctx, a, &mut w).await.unwrap());
+    let rec = record_json(&f.sandbox.state(), &res.job.job_id);
+    assert_eq!(rec["output_plan"]["path"], existing.to_str().unwrap());
+    assert_eq!(rec["output_plan"]["overwrite"], true);
+    assert_eq!(f.submits(), 1);
+}
+
+#[tokio::test]
+async fn a_file_that_appears_while_waiting_never_blocks_saving_the_paid_video() {
+    let f = Fixture::new().await;
+    f.mount_video(1).await;
+    let v = f.gemini.videos();
+    v.push_poll(Ok(RemoteStatus::Running { progress: None }));
+    v.push_poll(Ok(remote_success(&f.uri())));
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let target = f.sandbox.path("clip.mp4");
+    let mut a = vargs("x");
+    a.common.output = Some(target.clone());
+    let entered = v.submit_entered.clone();
+    let run = video::run(&ctx, a, &mut w);
+    let driver = async {
+        // After the preflight, before the download: another writer takes the name.
+        entered.notified().await;
+        std::fs::write(&target, b"another agent's file").unwrap();
+    };
+    let (r, ()) = tokio::join!(run, driver);
+    let res = completed(r.unwrap());
+    let renamed = f.sandbox.path("clip.1.mp4");
+    assert_eq!(res.job.artifacts[0].path, renamed.to_str().unwrap());
+    assert_eq!(std::fs::read(&renamed).unwrap(), mp4(4));
+    assert_eq!(std::fs::read(&target).unwrap(), b"another agent's file", "never replaced");
+    assert!(has_warning(&w, "output_renamed"), "{w:?}");
+    assert_eq!(f.submits(), 1);
+}
+
+#[tokio::test]
+async fn video_generate_downloads_with_its_own_out_dir_and_overwrite() {
+    let f = Fixture::new().await;
+    f.mount_video(1).await;
+    let v = f.gemini.videos();
+    v.push_poll(Ok(RemoteStatus::Running { progress: None }));
+    v.push_poll(Ok(remote_success(&f.uri())));
+    let dir = f.sandbox.path("videos");
+    let mut s = settings_with(
+        &f.sandbox.env(),
+        &CliOverrides { out_dir: Some(dir.clone()), ..CliOverrides::default() },
+    );
+    set_base_url(&mut s, ProviderId::Gemini, &f.server.uri());
+    let ctx = context(s, vec![f.gemini.clone()]);
+    let mut w = Vec::new();
+    let mut a = vargs("x");
+    a.common.overwrite = true;
+    let entered = v.submit_entered.clone();
+    let state = f.sandbox.state();
+    let run = video::run(&ctx, a, &mut w);
+    let driver = async {
+        entered.notified().await;
+        let listing = JobStore::new(&state).list().unwrap();
+        let id = listing.records[0].job_id().to_string();
+        std::fs::write(dir.join(format!("{id}.mp4")), b"stale").unwrap();
+    };
+    let (r, ()) = tokio::join!(run, driver);
+    let res = completed(r.unwrap());
+    let art = &res.job.artifacts[0];
+    assert_eq!(art.path, dir.join(format!("{}.mp4", res.job.job_id)).to_str().unwrap(), "-d applies");
+    assert_eq!(std::fs::read(&art.path).unwrap(), mp4(4), "--overwrite applies with -d");
+    assert!(!has_warning(&w, "output_renamed"));
+}
+
+#[tokio::test]
+async fn local_save_failures_after_success_are_download_failed_never_exit_2() {
+    let f = Fixture::new().await;
+    f.mount_video(1).await;
+    let v = f.gemini.videos();
+    v.push_poll(Ok(RemoteStatus::Running { progress: None }));
+    v.push_poll(Ok(remote_success(&f.uri())));
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let sub = f.sandbox.path("sub");
+    let mut a = vargs("x");
+    a.common.output = Some(sub.join("clip.mp4"));
+    let entered = v.submit_entered.clone();
+    let run = video::run(&ctx, a, &mut w);
+    let driver = async {
+        // The output directory is replaced by a file while the job runs.
+        entered.notified().await;
+        std::fs::remove_dir(&sub).unwrap();
+        std::fs::write(&sub, b"in the way").unwrap();
+    };
+    let (r, ()) = tokio::join!(run, driver);
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::DownloadFailed);
+    assert_eq!(e.exit_code(), 1, "the paid job exists: never exit 2");
+    assert_eq!(e.job_status, Some(JobStatus::Succeeded));
+    assert_eq!(e.details["cause_code"], "invalid_argument");
+    let hint = e.hint.as_deref().unwrap();
+    let id = e.job_id.clone().unwrap();
+    assert!(hint.contains(&format!("iris jobs download {id}")), "{hint}");
+    assert!(hint.contains("do not re-run `iris video generate`"), "{hint}");
+
+    // The recorded job is downloaded elsewhere without resubmitting.
+    let other = f.sandbox.path("other.mp4");
+    let res = jobs::download(&ctx, &id, &Target { output: Some(other.clone()), overwrite: false }, &mut w)
+        .await
+        .unwrap();
+    assert_eq!(res.job.artifacts[0].path, other.to_str().unwrap());
+    assert_eq!(f.submits(), 1);
+}
+
+#[tokio::test]
+async fn provider_rejections_while_waiting_after_submission_are_not_exit_2() {
+    let f = Fixture::new().await;
+    f.gemini.videos().push_poll(Err(IrisError::invalid("malformed operation name")));
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::ProviderError);
+    assert_eq!(e.exit_code(), 1);
+    assert_eq!(e.details["cause_code"], "invalid_argument");
+    assert_eq!(e.job_status, Some(JobStatus::Running));
+    assert!(e.remote_operation_id.is_some());
+    let hint = e.hint.as_deref().unwrap();
+    assert!(hint.contains("iris jobs wait") && hint.contains("do not re-run"), "{hint}");
+    let id = JobId::parse(e.job_id.as_deref().unwrap()).unwrap();
+    assert_eq!(store(&f.sandbox).load(&id).unwrap().status(), JobStatus::Running);
+}
+
+#[tokio::test]
+async fn record_failures_after_the_paid_submit_never_hide_the_submission_outcome() {
+    let f = Fixture::new().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gemini = Arc::new(FakeProvider {
+        video: Some(FakeVideo { submit_gate: Some(gate.clone()), ..FakeVideo::default() }),
+        ..FakeProvider::gemini()
+    });
+    let ctx = context(f.settings(), vec![gemini.clone()]);
+    let videos = gemini.videos();
+    videos.push_submit(Ok(iris::providers::SubmittedOperation {
+        remote_id: "models/fake-video-1/operations/accepted".into(),
+        provider_request_id: None,
+    }));
+    videos.push_submit(Err(IrisError::new(ErrorCode::SubmissionUncertain, "reset after send")));
+    videos.push_submit(Err(IrisError::new(ErrorCode::PermissionDenied, "billing required")));
+
+    for expected in
+        [ErrorCode::SubmissionUncertain, ErrorCode::SubmissionUncertain, ErrorCode::PermissionDenied]
+    {
+        let mut w = Vec::new();
+        let entered = videos.submit_entered.clone();
+        let state = f.sandbox.state();
+        let run = video::run(&ctx, vargs("x"), &mut w);
+        let driver = async {
+            // Another process deletes every record (`jobs delete --all --force`)
+            // while the paid request is in flight.
+            entered.notified().await;
+            let store = JobStore::new(&state);
+            for rec in store.list().unwrap().records {
+                store.delete(rec.job_id(), true).unwrap();
+            }
+            gate.notify_one();
+        };
+        let (r, ()) = tokio::join!(run, driver);
+        let e = r.unwrap_err();
+        assert_eq!(e.code, expected, "{e:?}");
+        assert_eq!(e.details["record_error"]["code"], "job_not_found", "{e:?}");
+        assert!(e.job_id.is_some());
+    }
+    assert_eq!(videos.submit_calls.load(Ordering::SeqCst), 3);
+}
+
+#[tokio::test]
+async fn an_accepted_job_whose_record_vanished_exits_5_with_the_remote_id() {
+    let f = Fixture::new().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gemini = Arc::new(FakeProvider {
+        video: Some(FakeVideo { submit_gate: Some(gate.clone()), ..FakeVideo::default() }),
+        ..FakeProvider::gemini()
+    });
+    let ctx = context(f.settings(), vec![gemini.clone()]);
+    let mut w = Vec::new();
+    let entered = gemini.videos().submit_entered.clone();
+    let state = f.sandbox.state();
+    let run = video::run(&ctx, vargs("x"), &mut w);
+    let driver = async {
+        entered.notified().await;
+        let store = JobStore::new(&state);
+        for rec in store.list().unwrap().records {
+            store.delete(rec.job_id(), true).unwrap();
+        }
+        gate.notify_one();
+    };
+    let (r, ()) = tokio::join!(run, driver);
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::SubmissionUncertain);
+    assert_eq!(e.exit_code(), 5);
+    assert_eq!(e.remote_operation_id.as_deref(), Some("models/fake-video-1/operations/op0"));
+    assert_eq!(e.details["provider_accepted"], true);
+    assert!(e.hint.as_deref().unwrap().contains("do not resubmit"), "{:?}", e.hint);
+    assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0);
 }

@@ -8,22 +8,33 @@
 //!
 //! Ctrl-C during the submission is deferred once, until the provider answers, so
 //! the operation id gets recorded (then exit 130 with the job `running`); a second
-//! Ctrl-C exits at once and leaves the record `submitting` (later reported as
-//! `submission_unknown`). With `--detach` the command returns after submission;
-//! otherwise it waits and downloads exactly like `jobs wait`.
+//! Ctrl-C exits at once and leaves the record `submitting` (reported as
+//! `submission_unknown` once the paid-submit budget has passed). With `--detach`
+//! the command returns after submission; otherwise it waits and downloads like
+//! `jobs wait`, except that a file which appeared at the target since the
+//! preflight never blocks saving the paid output (`<stem>.<n>.<ext>`,
+//! `output_renamed`).
+//!
+//! Once the provider has been contacted, no outcome is reported with exit 2
+//! ("nothing was sent"), and failing to update the local record never hides
+//! whether the provider accepted the job.
 
 use std::path::PathBuf;
 
+use serde_json::json;
+
 use crate::artifacts::{self, Naming, PathRequest, media};
 use crate::catalog::{self, InputCounts};
-use crate::domain::{JobStatus, Operation, Warning};
-use crate::error::{ErrorCode, IrisError};
+use crate::domain::{JobStatus, Operation, ProviderId, Warning};
+use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
 use crate::jobs::{self, JobId, JobRecord, NewJob, OutputPlan, PromptRecord};
 use crate::output::results::{JobResult, PlanResult};
 use crate::providers::{InputRole, VideoRequest};
 
 use super::context::AppContext;
-use super::jobs::{Target, WaitArgs, job_result, wait_parsed, with_job_context};
+use super::jobs::{
+    SaveMode, Target, WaitArgs, job_result, submission_unknown_at, wait_parsed, with_job_context,
+};
 use super::request::{self, GenerationArgs, GenerationOutcome};
 
 /// Arguments of `video generate`.
@@ -76,8 +87,9 @@ pub async fn run(
         .map(|p| artifacts::read_input_image(p, InputRole::Reference, &spec.inputs))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Output planning: validates -o now; when this run downloads, the paths are
-    // preflighted before anything is sent.
+    // Output planning and preflight (C-02): every planned path is checked before
+    // anything is sent, with --detach too, since the recorded plan is where
+    // `iris jobs wait/download` will save the output later.
     let count = request::effective_count(spec, op, &opts);
     let job_id = JobId::generate();
     let out_dir = ctx.settings.output_dir.value.clone();
@@ -90,10 +102,8 @@ pub async fn run(
         media_types: spec.outputs.media_types,
     })?;
     warnings.extend(plan.warnings.iter().cloned());
-    if !args.detach {
-        artifacts::preflight(&plan.paths, common.overwrite)?;
-        artifacts::preflight_dirs(&plan.paths, !common.dry_run)?;
-    }
+    artifacts::preflight(&plan.paths, common.overwrite)?;
+    artifacts::preflight_dirs(&plan.paths, !common.dry_run)?;
 
     let video = ctx
         .provider(provider)?
@@ -181,6 +191,9 @@ pub async fn run(
                     ));
                 }
                 () = ctx.interrupt.after(seen + 1), if deferred => {
+                    let unknown_at = submission_unknown_at(ctx, &record)
+                        .map(|t| format!("until about {t}"))
+                        .unwrap_or_else(|| "for a while".to_string());
                     return Err(IrisError::new(
                         ErrorCode::Interrupted,
                         format!("interrupted while submitting job {job_id}; the provider's answer was not recorded"),
@@ -188,8 +201,9 @@ pub async fn run(
                     .with_job(job_id.to_string(), Some(JobStatus::Submitting))
                     .with_provider(provider)
                     .with_hint(format!(
-                        "the provider may have accepted (and will bill) this request; `iris jobs status {job_id}` \
-                         will report it as submission_unknown; check the provider console before resubmitting"
+                        "the provider may have accepted (and will bill) this request, but Iris cannot follow it \
+                         without an operation id; `iris jobs status {job_id}` shows it as submitting {unknown_at} \
+                         and as submission_unknown after that; check the provider console before resubmitting"
                     )));
                 }
             }
@@ -199,14 +213,17 @@ pub async fn run(
     let now = ctx.now();
     match submission {
         Ok(operation) => {
-            let (record, ()) = ctx.store.update(&job_id, |r| r.mark_submitted(&operation, now)).map_err(|e| {
-                e.with_job(job_id.to_string(), Some(JobStatus::Submitting))
-                    .with_remote_operation(operation.remote_id.clone())
-                    .with_hint(
-                        "the provider accepted the job but Iris could not record it; keep the remote operation id \
-                         shown here, and do not resubmit",
-                    )
-            })?;
+            let record = match ctx.store.update(&job_id, |r| r.mark_submitted(&operation, now)) {
+                Ok((record, ())) => record,
+                Err(store_error) => {
+                    return Err(accepted_but_unrecorded(
+                        &job_id,
+                        provider,
+                        &operation.remote_id,
+                        &store_error,
+                    ));
+                }
+            };
             ctx.progress.line(format!("Job {job_id} accepted by {provider}"));
             if deferred {
                 return Err(with_job_context(
@@ -221,19 +238,137 @@ pub async fn run(
             if args.detach {
                 return Ok(GenerationOutcome::Completed(job_result(&record)));
             }
-            let wait = WaitArgs { download: true, target: Target::default() };
-            Ok(GenerationOutcome::Completed(wait_parsed(ctx, &job_id, &wait, warnings).await?))
+            // Save where this command was asked to (its own -o/-d/--overwrite).
+            let wait = WaitArgs {
+                download: true,
+                target: Target { output: common.output.clone(), overwrite: common.overwrite },
+            };
+            match wait_parsed(ctx, &job_id, &wait, SaveMode::Generated, warnings).await {
+                Ok(result) => Ok(GenerationOutcome::Completed(result)),
+                Err(e) => Err(after_acceptance(ctx, e, &record)),
+            }
         }
         Err(e) if is_uncertain(&e) => {
-            let e = as_uncertain(e);
-            ctx.store.update(&job_id, |r| r.mark_submission_unknown(&e, now))?;
-            Err(e.with_job(job_id.to_string(), Some(JobStatus::SubmissionUnknown)))
+            let e = as_uncertain(e).with_job(job_id.to_string(), Some(JobStatus::SubmissionUnknown));
+            match ctx.store.update(&job_id, |r| r.mark_submission_unknown(&e, now)) {
+                Ok(_) => Err(e),
+                // The uncertainty is the outcome that matters (exit 5, do not resubmit).
+                Err(store_error) => Err(e.with_detail("record_error", record_error(&store_error))),
+            }
         }
         Err(e) => {
-            ctx.store.update(&job_id, |r| r.mark_rejected(&e, now))?;
-            Err(e.with_job(job_id.to_string(), Some(JobStatus::Failed)))
+            let e = e.with_job(job_id.to_string(), Some(JobStatus::Failed));
+            match ctx.store.update(&job_id, |r| r.mark_rejected(&e, now)) {
+                Ok(_) => Err(e),
+                Err(store_error) => Err(e.with_detail("record_error", record_error(&store_error))),
+            }
         }
     }
+}
+
+/// `{code, message}` of a failed job-store update, for `details.record_error`.
+fn record_error(e: &IrisError) -> serde_json::Value {
+    json!({ "code": e.code.as_str(), "message": e.message })
+}
+
+/// The provider accepted job `id` as `remote_id`, but Iris could not record (or
+/// no longer has) the job's local record: exit 5 with the remote operation id,
+/// never "nothing was sent", and never a suggestion to resubmit.
+fn accepted_but_unrecorded(
+    id: &JobId,
+    provider: ProviderId,
+    remote_id: &str,
+    cause: &IrisError,
+) -> IrisError {
+    IrisError::new(
+        ErrorCode::SubmissionUncertain,
+        format!(
+            "the provider accepted job {id} (remote operation {remote_id}), but Iris could not keep its local \
+             record: {}",
+            cause.message
+        ),
+    )
+    .with_provider(provider)
+    .with_job(id.to_string(), None)
+    .with_remote_operation(remote_id)
+    .with_detail("provider_accepted", true)
+    .with_detail("record_error", record_error(cause))
+    .with_hint(
+        "the job continues remotely and is billed by the provider, but Iris cannot wait for or download it \
+         without its record; do not resubmit; keep the remote operation id and check it in the provider console",
+    )
+}
+
+/// Errors after the provider accepted the job and it was recorded. The paid job
+/// exists, so nothing may be reported as exit 2 ("nothing was sent"), and running
+/// `video generate` again is never the fix:
+/// * the local record disappeared: exit 5 with the remote operation id;
+/// * the job succeeded but its output could not be saved locally (a file or
+///   directory in the way, disk errors): `download_failed` naming
+///   `iris jobs download`;
+/// * any other exit-2 answer while waiting (e.g. a provider 400 on a status
+///   check): `provider_error`; the job continues remotely.
+///
+/// A replaced code is kept in `details.cause_code`. Remote, pending, and
+/// interrupt outcomes (`download_failed`, `wait_timeout`, `interrupted`, ...)
+/// pass through unchanged.
+fn after_acceptance(ctx: &AppContext, e: IrisError, record: &JobRecord) -> IrisError {
+    let id = record.job_id();
+    let local =
+        e.exit_code() == exit::USAGE || matches!(e.category(), ErrorCategory::Io | ErrorCategory::Internal);
+    if !local {
+        return e;
+    }
+    if e.code == ErrorCode::JobNotFound {
+        let remote = record.remote_operation_id().unwrap_or("unknown");
+        return accepted_but_unrecorded(id, record.provider(), remote, &e);
+    }
+    // Store and lock errors carry no job context: take it from the current record.
+    let e = if e.job_id.is_some() {
+        e
+    } else {
+        match ctx.store.load(id) {
+            Ok(current) => with_job_context(e, &current),
+            Err(_) => with_job_context(e, record),
+        }
+    };
+    let dont_resubmit = "do not re-run `iris video generate`, which would submit and bill a new job";
+    if e.job_status == Some(JobStatus::Succeeded) {
+        return recode(
+            e,
+            ErrorCode::DownloadFailed,
+            |m| format!("job {id} succeeded, but its output could not be saved: {m}"),
+            format!(
+                "the job succeeded and is recorded; save its output with `iris jobs download {id}` (choose \
+                 another location with -o PATH or -d DIR, or replace an existing file with --overwrite); \
+                 {dont_resubmit}"
+            ),
+        );
+    }
+    let resume = format!(
+        "the job was submitted and continues remotely; check it with `iris jobs status {id}` or resume with \
+         `iris jobs wait {id}`; {dont_resubmit}"
+    );
+    if e.exit_code() == exit::USAGE {
+        return recode(e, ErrorCode::ProviderError, |m| format!("could not check job {id}: {m}"), resume);
+    }
+    if e.hint.is_none() { e.with_hint(resume) } else { e }
+}
+
+/// `e` under another code (with that code's default retryability), keeping its
+/// provider and job context; the original code goes to `details.cause_code`.
+fn recode(e: IrisError, code: ErrorCode, message: impl FnOnce(&str) -> String, hint: String) -> IrisError {
+    let mut out = IrisError::new(code, message(&e.message)).with_hint(hint);
+    out.retry_after = e.retry_after;
+    out.provider = e.provider;
+    out.provider_status = e.provider_status;
+    out.provider_code = e.provider_code.clone();
+    out.provider_request_id = e.provider_request_id.clone();
+    out.job_id = e.job_id.clone();
+    out.remote_operation_id = e.remote_operation_id.clone();
+    out.job_status = e.job_status;
+    out.details = e.details.clone();
+    out.with_detail("cause_code", e.code.as_str())
 }
 
 /// A submission error that leaves open whether the provider accepted the job:

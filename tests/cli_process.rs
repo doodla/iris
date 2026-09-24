@@ -611,7 +611,9 @@ fn ctrl_c_stops_waiting_with_exit_130_and_leaves_the_job_untouched() {
     let started = Instant::now();
     loop {
         let line = lines.next().expect("iris exited early").unwrap();
-        if line.contains("still being submitted") {
+        if line.contains("has no operation id yet") {
+            // It says when the record will be reported as submission_unknown.
+            assert!(line.contains("becomes submission_unknown at about 20"), "{line}");
             break;
         }
         assert!(started.elapsed() < Duration::from_secs(30), "no progress line");
