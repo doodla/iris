@@ -128,6 +128,10 @@ machine-readable contract for agents.
 - A local copy for `jobs download -o/-d` whose source file changes while being copied now falls
   back to fetching the output, as documented, instead of failing with `io_error`.
 
+- Errors about a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, ...) now
+  carry the job's `provider`, and `invalid_media` from a job download is `retryable: true` with a
+  hint to download again.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

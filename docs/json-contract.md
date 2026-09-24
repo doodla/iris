@@ -255,6 +255,10 @@ $ iris image generate "x" --model does-not-exist --json
  "ok":false,"result":null,"schema_version":1,"warnings":[]}
 ```
 
+`provider` names the provider an error concerns: the one that answered, or, for an error about a
+job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a download failure, ...), the
+job's provider, even when the error itself is local.
+
 `provider_code` and `details.provider_message` are informational and **unstable** — they come
 from the provider and can change without notice; `code` is Iris's own, stable, public taxonomy.
 Every string in an error is secret-scrubbed and signed-URL-redacted, and any provider message is
@@ -293,7 +297,7 @@ written; the job record keeps the original code and any unknown fields untouched
 | `request_timeout` | timeout | 1 | true |
 | `download_failed` | artifact | 1 | true |
 | `artifact_expired` | artifact | 1 | false |
-| `invalid_media` | artifact | 1 | unspecified |
+| `invalid_media` | artifact | 1 | unspecified (true for a job output download) |
 | `state_invalid` | io | 1 | false |
 | `io_error` | io | 1 | unspecified |
 | `internal_error` | internal | 1 | unspecified |

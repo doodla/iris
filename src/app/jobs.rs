@@ -275,13 +275,16 @@ fn retention_warning(rec: &JobRecord, now: Timestamp) -> Option<Warning> {
     })
 }
 
-/// Attach the job's identifiers and status to an error.
+/// Attach the job's identifiers, status, and provider to an error.
 pub(crate) fn with_job_context(e: IrisError, rec: &JobRecord) -> IrisError {
     let mut e = e.with_job(rec.job_id().to_string(), Some(rec.status()));
     if e.remote_operation_id.is_none()
         && let Some(remote) = rec.remote_operation_id()
     {
         e = e.with_remote_operation(remote);
+    }
+    if e.provider.is_none() {
+        e = e.with_provider(rec.provider());
     }
     e
 }
@@ -567,9 +570,13 @@ async fn download_outputs(
             tokio::select! {
                 lock = ctx.store.download_lock_async(id, Duration::from_millis(250)) => lock?,
                 () = ctx.interrupt.after(seen) => {
-                    return Err(IrisError::new(ErrorCode::Interrupted, format!("stopped waiting to download job {id}"))
+                    let e = IrisError::new(ErrorCode::Interrupted, format!("stopped waiting to download job {id}"))
                         .with_job(id.to_string(), None)
-                        .with_hint(format!("download later with `iris jobs download {id}`")));
+                        .with_hint(format!("download later with `iris jobs download {id}`"));
+                    return Err(match ctx.store.load(id) {
+                        Ok(rec) => with_job_context(e, &rec),
+                        Err(_) => e,
+                    });
                 }
             }
         }
@@ -696,6 +703,9 @@ async fn download_outputs(
             Err(FetchFailure::Local(e)) => return Err(with_job_context(e, &rec)),
             Err(FetchFailure::Remote(e)) => {
                 let now = ctx.now();
+                // Content that is not the expected media (an error page served as
+                // a video, a truncated file) is worth downloading again.
+                let e = if e.code == ErrorCode::InvalidMedia { e.with_retryable(Some(true)) } else { e };
                 let e = refused_or_gone(e, &rec, now);
                 if e.code == ErrorCode::ArtifactExpired {
                     ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;

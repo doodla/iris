@@ -300,6 +300,16 @@ async fn failed_downloads_keep_the_job_succeeded_and_a_later_download_needs_no_r
     assert!(has_warning(&w2, "already_downloaded"));
     assert_eq!(again.job.artifacts, res.job.artifacts);
 
+    // A different file in the way is a local conflict that names the job and its provider.
+    let taken = f.sandbox.path("taken.mp4");
+    std::fs::write(&taken, b"something else").unwrap();
+    let e = jobs::download(&ctx, &id, &Target { output: Some(taken), overwrite: false }, &mut w2)
+        .await
+        .unwrap_err();
+    assert_eq!(e.code, ErrorCode::OutputExists);
+    assert_eq!(e.job_id.as_deref(), Some(id.as_str()));
+    assert_eq!(e.provider, Some(ProviderId::Gemini));
+
     // Another target is a local copy (still no network).
     let copy = f.sandbox.path("copy.mp4");
     let res = jobs::download(&ctx, &id, &Target { output: Some(copy.clone()), overwrite: false }, &mut w2)

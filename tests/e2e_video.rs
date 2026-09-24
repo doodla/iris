@@ -173,6 +173,7 @@ fn jobs_download_checks_a_running_record_once_and_downloads_a_job_that_finished_
     let out = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run();
     let v = out.err(4, "job_not_ready");
     assert_eq!(v["error"]["job_status"], "running");
+    assert_eq!(v["error"]["provider"], "gemini", "job-scoped errors name the job's provider");
     assert_eq!(veo.polls(), 1);
 
     // The provider finished since: the stale local record is refreshed first.
@@ -496,6 +497,7 @@ fn a_wait_limit_exits_4_and_leaves_the_job_running() {
     let v = out.err(4, "wait_timeout");
     assert_eq!(v["error"]["category"], "pending");
     assert_eq!(v["error"]["job_id"], id.as_str());
+    assert_eq!(v["error"]["provider"], "gemini");
     assert_eq!(v["error"]["job_status"], "running");
     assert!(v["error"]["hint"].as_str().unwrap().contains(&format!("iris jobs wait {id}")), "{v}");
     assert!(
@@ -540,6 +542,7 @@ fn ctrl_c_sigterm_or_sighup_during_jobs_wait_exits_130_and_leaves_the_job_runnin
         let v = out.err(130, "interrupted");
         assert_eq!(v["command"], "jobs.wait");
         assert_eq!(v["error"]["job_id"], id.as_str());
+        assert_eq!(v["error"]["provider"], "gemini");
         assert_eq!(v["error"]["job_status"], "running");
         assert!(v["error"]["hint"].as_str().unwrap().contains(&format!("iris jobs wait {id}")), "{v}");
         assert!(out.elapsed < Duration::from_secs(30), "SIG{signal}: {:?}", out.elapsed);
@@ -642,6 +645,9 @@ fn an_error_document_served_as_media_is_invalid_media_and_nothing_is_saved() {
 
     let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "invalid_media");
     assert_eq!(v["error"]["job_status"], "succeeded");
+    assert_eq!(v["error"]["retryable"], true, "downloading again may work: {v}");
+    assert!(v["error"]["hint"].as_str().unwrap().contains(&format!("iris jobs download {id}")), "{v}");
+    assert_eq!(sb.record(&id)["outputs"][0]["download_state"], "failed");
     assert_eq!(sb.record(&id)["status"], "succeeded");
     assert!(files_in(&sb.work()).is_empty());
     assert_eq!(veo.submits(), 1);
