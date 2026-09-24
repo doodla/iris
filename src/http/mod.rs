@@ -42,7 +42,9 @@ pub const USER_AGENT: &str = concat!("iris/", env!("CARGO_PKG_VERSION"));
 /// Settings for [`HttpClient::new`].
 #[derive(Debug, Clone)]
 pub struct HttpSettings {
-    /// TCP/TLS connect timeout (C-04: 15s).
+    /// TCP/TLS connect timeout (C-04: 15s). This is a client-level setting: it is
+    /// fixed when the client is built, and [`Timeouts::connect`] reaches requests only
+    /// through this field (the application derives it from there).
     pub connect_timeout: Duration,
     /// Backoff schedule used by [`HttpClient::execute`] and [`download()`].
     pub retry: RetryPolicy,
@@ -152,6 +154,10 @@ impl HttpClient {
 /// Per-provider timeouts (C-04).
 #[derive(Debug, Clone, Copy)]
 pub struct Timeouts {
+    /// TCP/TLS connect timeout. Client-level: [`HttpClient::execute`] and
+    /// [`download()`] do not read it; it takes effect only through
+    /// [`HttpSettings::connect_timeout`] when the client is built
+    /// (`config::Settings::http_settings` derives it from here).
     pub connect: Duration,
     /// Synchronous paid generation (image) request.
     pub generate: Duration,

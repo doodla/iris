@@ -242,9 +242,16 @@ impl Settings {
         Timeouts { generate: self.provider(provider).request_timeout.value, ..Timeouts::default() }
     }
 
-    /// Settings for [`crate::http::HttpClient::new`].
+    /// Settings for [`crate::http::HttpClient::new`]. The connect timeout is a
+    /// client-level setting shared by all providers; it is derived from
+    /// [`Settings::timeouts`] (the longest provider connect timeout) so both agree.
     pub fn http_settings(&self) -> HttpSettings {
-        HttpSettings::default()
+        let connect_timeout = ProviderId::ALL
+            .iter()
+            .map(|p| self.timeouts(*p).connect)
+            .max()
+            .unwrap_or(Timeouts::default().connect);
+        HttpSettings { connect_timeout, ..HttpSettings::default() }
     }
 
     /// The credential for `provider`, if its environment variable was set.

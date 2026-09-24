@@ -102,12 +102,83 @@ pub(crate) fn parse(path: &Path, text: &str) -> Result<FileConfig, IrisError> {
             "credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY, never from the config file",
         ));
     }
-    toml::Value::Table(table).try_into::<FileConfig>().map_err(|e| {
-        // Without source input, the error renders as "<message>\nin `<key path>`".
-        let rendered = e.to_string();
-        let text = rendered.lines().map(str::trim).filter(|l| !l.is_empty()).collect::<Vec<_>>().join(" ");
-        file_error(path, redact::truncate(&text, 300))
-    })
+    toml::Value::Table(table).try_into::<FileConfig>().map_err(|e| schema_error(path, &e))
+}
+
+/// A `config_invalid` error for the typed pass (unknown key or wrong type): the key
+/// path goes to `details.key` (as [`key_error`] does), and the message names the
+/// expected and found *types* but never quotes the offending value, which could be
+/// a misplaced secret.
+fn schema_error(path: &Path, e: &toml::de::Error) -> IrisError {
+    // Without source input, the error renders as "<message>\nin `<key path>`"; toml
+    // offers no other accessor for the key path.
+    let rendered = e.to_string();
+    let table = rendered
+        .lines()
+        .rev()
+        .find_map(|l| l.trim().strip_prefix("in `")?.strip_suffix('`'))
+        .filter(|k| !k.is_empty());
+    let message = e.message().trim();
+    let join = |field: &str| match table {
+        Some(t) => format!("{t}.{field}"),
+        None => field.to_string(),
+    };
+    let (key, text) = if let Some(rest) = message.strip_prefix("unknown field `")
+        && let Some((field, tail)) = rest.split_once('`')
+    {
+        let tail = tail.trim_start_matches(',').trim();
+        let text = if tail.is_empty() { "unknown key".to_string() } else { format!("unknown key; {tail}") };
+        (Some(join(field)), text)
+    } else if let Some(rest) = message.strip_prefix("invalid type: ") {
+        (table.map(str::to_string), found_expected("wrong type", rest))
+    } else if let Some(rest) = message.strip_prefix("invalid value: ") {
+        (table.map(str::to_string), found_expected("invalid value", rest))
+    } else {
+        (table.map(str::to_string), without_quoted(message))
+    };
+    let text = redact::truncate(&text, 300);
+    match key {
+        Some(key) => key_error(path, &key, text),
+        None => file_error(path, text),
+    }
+}
+
+/// `"<what> (found <kind>, expected <type>)"` from serde's `"<kind> <value>, expected
+/// <type>"`, dropping the value (serde quotes it after the kind).
+fn found_expected(what: &str, rest: &str) -> String {
+    let (found, expected) = rest.split_once(", expected ").unwrap_or((rest, ""));
+    let kind = found.split(['"', '`']).next().unwrap_or("").trim();
+    let kind = if kind.is_empty() { "a value" } else { kind };
+    if expected.is_empty() {
+        format!("{what} (found {kind})")
+    } else {
+        format!("{what} (found {kind}, expected {})", without_quoted(expected))
+    }
+}
+
+/// Replace every `"…"` and `` `…` `` quoted span with `…`.
+fn without_quoted(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut open: Option<char> = None;
+    for c in text.chars() {
+        match open {
+            Some(q) if c == q => {
+                out.push('…');
+                out.push(c);
+                open = None;
+            }
+            Some(_) => {}
+            None if c == '"' || c == '`' => {
+                out.push(c);
+                open = Some(c);
+            }
+            None => out.push(c),
+        }
+    }
+    if open.is_some() {
+        out.push('…');
+    }
+    out
 }
 
 /// 1-based line and column of a byte offset.
@@ -233,15 +304,50 @@ base_url = "https://generativelanguage.googleapis.com"
         assert!(!e.message.contains("sk-live"), "{}", e.message);
     }
 
+    fn key(e: &IrisError) -> Option<&str> {
+        e.details.get("key").and_then(|v| v.as_str())
+    }
+
     #[test]
     fn unknown_keys_name_the_key_and_table() {
         let e = err("[video]\nwait = \"1m\"\n");
-        assert!(e.message.contains("unknown field `wait`"), "{}", e.message);
-        assert!(e.message.contains("video"), "{}", e.message);
+        assert_eq!(key(&e), Some("video.wait"));
+        assert!(e.message.contains("`video.wait`: unknown key"), "{}", e.message);
+        assert!(e.message.contains("wait_timeout"), "the expected keys are listed: {}", e.message);
         let e = err("[providers.other]\nbase_url = \"https://x\"\n");
-        assert!(e.message.contains("unknown field `other`"), "{}", e.message);
-        let e = err("[jobs]\nstore_prompts = \"yes\"\n");
-        assert!(e.message.contains("store_prompts"), "{}", e.message);
+        assert_eq!(key(&e), Some("providers.other"));
+        let e = err("outptu_dir = \"/x\"\n");
+        assert_eq!(key(&e), Some("outptu_dir"));
+    }
+
+    #[test]
+    fn wrong_types_name_the_key_and_never_quote_the_value() {
+        let e = err("[jobs]\nstore_prompts = \"sk-live-abcdefghijkl\"\n");
+        assert_eq!(e.code, ErrorCode::ConfigInvalid);
+        assert_eq!(key(&e), Some("jobs.store_prompts"));
+        assert!(e.message.contains("wrong type (found string, expected a boolean)"), "{}", e.message);
+        assert!(!e.message.contains("sk-live"), "{}", e.message);
+        let e = err("[providers.openai]\nbase_url = 12345678901\n");
+        assert_eq!(key(&e), Some("providers.openai.base_url"));
+        assert!(e.message.contains("found integer"), "{}", e.message);
+        assert!(!e.message.contains("12345678901"), "{}", e.message);
+        let e = err("output_dir = [\"sk-live-abcdefghijkl\"]\n");
+        assert_eq!(key(&e), Some("output_dir"));
+        assert!(!e.message.contains("sk-live"), "{}", e.message);
+    }
+
+    #[test]
+    fn quoted_spans_are_elided() {
+        assert_eq!(without_quoted(r#"a "secret" and `x` end"#), "a \"…\" and `…` end");
+        assert_eq!(without_quoted(r#"open "rest"#), "open \"…");
+        assert_eq!(
+            found_expected("wrong type", r#"string "v", expected a boolean"#),
+            "wrong type (found string, expected a boolean)"
+        );
+        assert_eq!(
+            found_expected("invalid value", "integer `-5`, expected u64"),
+            "invalid value (found integer, expected u64)"
+        );
     }
 
     #[test]

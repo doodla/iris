@@ -111,6 +111,12 @@ fn defaults_apply_when_nothing_is_configured_and_the_default_file_is_missing() {
         (t.generate, t.submit, t.poll),
         (Duration::from_secs(300), Duration::from_secs(60), Duration::from_secs(30))
     );
+    // The client-level connect timeout has one source: the provider timeouts.
+    let http = s.http_settings();
+    assert_eq!(http.connect_timeout, t.connect);
+    assert_eq!(http.connect_timeout, s.timeouts(ProviderId::Gemini).connect);
+    assert_eq!(http.connect_timeout, Duration::from_secs(15));
+    assert!(http.system_proxy, "the application honors the system proxy");
 }
 
 const FULL_FILE: &str = r#"
@@ -321,7 +327,7 @@ fn unknown_keys_are_rejected_naming_the_file_and_key() {
 fn wrong_types_and_invalid_values_in_the_file_are_rejected_with_the_key() {
     let fx = Fixture::new();
     for (text, key) in [
-        ("[jobs]\nstore_prompts = \"yes\"\n", "store_prompts"),
+        ("[jobs]\nstore_prompts = \"yes\"\n", "jobs.store_prompts"),
         ("[video]\nwait_timeout = \"forever\"\n", "video.wait_timeout"),
         ("[video]\nwait_timeout = 0\n", "video.wait_timeout"),
         ("[video]\npoll_interval = \"1s\"\n", "video.poll_interval"),
@@ -336,6 +342,7 @@ fn wrong_types_and_invalid_values_in_the_file_are_rejected_with_the_key() {
         let e = load(&fx.env()).unwrap_err();
         assert_eq!(e.code, ErrorCode::ConfigInvalid, "{text}");
         assert!(e.message.contains(key), "{text}: {}", e.message);
+        assert_eq!(e.details.get("key").and_then(|v| v.as_str()), Some(key), "{text}");
     }
 }
 
