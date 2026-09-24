@@ -50,8 +50,8 @@ machine-readable contract for agents.
   verification, pinned installs, and no `sudo`. See [docs/install.md](docs/install.md). (No
   release has been published yet — see that document for what works today.)
 - Release archives hold `docs/` next to the binary, `LICENSE`, `README.md`, and `CHANGELOG.md`,
-  so the README's links work in an unpacked archive. The installer accepts archives with or
-  without `docs/` and still installs only the binary.
+  so the README's links into `docs/` work in an unpacked archive. The installer accepts archives
+  with or without `docs/` and still installs only the binary.
 - CI (formatting, Clippy, offline tests on Linux and macOS, a pinned MSRV check, dependency
   license/advisory scanning, repeated weekly for new advisories) and a tag-triggered release
   workflow producing checksummed archives.
