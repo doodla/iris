@@ -9,11 +9,11 @@
 use crate::domain::{CostEstimate, Operation, ProviderId};
 use crate::error::IrisError;
 
-use super::CATALOG_AS_OF;
 use super::types::{
     Constraint, EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec,
     PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
+use super::{CATALOG_AS_OF, round_usd};
 
 /// Pricing page all Veo prices were taken from.
 pub const PRICING_URL: &str = "https://ai.google.dev/gemini-api/docs/pricing";
@@ -412,7 +412,7 @@ fn estimate_video(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEst
     let videos = input.count.max(1);
     let amount = f64::from(seconds) * rate * f64::from(videos);
     Some(CostEstimate::usd(
-        (amount * 1e6).round() / 1e6,
+        round_usd(amount),
         format!(
             "{seconds} s × ${rate}/s ({}, {resolution}, audio included); estimate; blocked videos are not \
              charged",

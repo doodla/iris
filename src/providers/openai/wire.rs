@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::catalog::{OptionValue, ResolvedOptions};
 use crate::domain::Usage;
 use crate::error::IrisError;
+use crate::providers::{USAGE_MAX_DEPTH, USAGE_MAX_ENTRIES};
 
 /// Option fields shared by generation and edit bodies (see the model catalog's wire mapping). Only
 /// options the user set explicitly are present; omitted ones take the provider default.
@@ -204,11 +205,6 @@ pub(super) fn parse_usage(value: &Value) -> Option<Usage> {
     (!empty).then_some(usage)
 }
 
-/// Maximum nesting kept from a provider usage object.
-const USAGE_MAX_DEPTH: usize = 3;
-/// Maximum keys kept per usage object.
-const USAGE_MAX_KEYS: usize = 32;
-
 /// A sanitized copy of a provider usage object: only objects and numbers survive
 /// (strings, booleans, arrays, and nulls are dropped), keys must be short
 /// `[a-z0-9_]` identifiers, and depth and width are bounded. `None` if nothing is left.
@@ -224,7 +220,7 @@ pub(super) fn numbers_only(value: &Value, depth: usize) -> Option<Value> {
                         && k.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
                 })
                 .filter_map(|(k, v)| numbers_only(v, depth + 1).map(|v| (k.clone(), v)))
-                .take(USAGE_MAX_KEYS)
+                .take(USAGE_MAX_ENTRIES)
                 .collect();
             (!kept.is_empty()).then_some(Value::Object(kept))
         }

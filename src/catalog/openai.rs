@@ -19,6 +19,7 @@ use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
 use crate::error::IrisError;
 
 use super::options::OptionValue;
+use super::round_usd;
 use super::types::{
     Constraint, EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec, OptionKind,
     OptionSpec, OutputSpec, PriceRule, RequestRules, ValidationInput,
@@ -384,10 +385,6 @@ pub fn estimated_output_tokens(base: u32, width: u64, height: u64) -> u64 {
 /// The calculator base for `quality`, if the table has one (`auto` has none).
 pub fn calculator_base(table: &[(&str, u32)], quality: &str) -> Option<u32> {
     table.iter().find(|(q, _)| *q == quality).map(|(_, b)| *b)
-}
-
-fn round_usd(amount: f64) -> f64 {
-    (amount * 1e6).round() / 1e6
 }
 
 fn estimate_with(

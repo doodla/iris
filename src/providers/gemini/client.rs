@@ -28,8 +28,9 @@ pub const CREDENTIAL_HEADER: CredentialHeader = CredentialHeader { name: "x-goog
 /// API; Iris records one if a proxy or future API version adds it.
 const REQUEST_ID_HEADERS: &[&str] = &["x-request-id", "x-goog-request-id"];
 
-/// Maximum characters of provider text kept in messages and details (see docs/json-contract.md).
-pub const PROVIDER_TEXT_MAX: usize = 500;
+/// Maximum characters of provider text kept in messages and details: the limit
+/// shared by every adapter (see docs/json-contract.md).
+pub(crate) use crate::http::PROVIDER_TEXT_MAX;
 
 /// The credential header for this call.
 pub fn auth(ctx: &ProviderContext) -> Result<AuthHeader, IrisError> {
@@ -442,18 +443,30 @@ pub fn rpc_code_name(code: i64) -> String {
 
 /// Keep only numbers, booleans, and short enum-like strings from a provider usage
 /// object (`Usage::provider_usage` is informational and must not carry free text).
+/// Nesting and width are bounded like every adapter's usage object
+/// ([`USAGE_MAX_DEPTH`](crate::providers::USAGE_MAX_DEPTH) levels of objects or
+/// arrays, [`USAGE_MAX_ENTRIES`](crate::providers::USAGE_MAX_ENTRIES) entries each);
+/// anything deeper is dropped.
 pub fn sanitize_usage(value: &Value) -> Option<Value> {
+    sanitize_usage_at(value, 0)
+}
+
+fn sanitize_usage_at(value: &Value, depth: usize) -> Option<Value> {
+    use crate::providers::{USAGE_MAX_DEPTH, USAGE_MAX_ENTRIES};
     match value {
         Value::Number(_) | Value::Bool(_) => Some(value.clone()),
         Value::String(s) => identifier(s).map(Value::String),
-        Value::Array(items) => Some(Value::Array(items.iter().filter_map(sanitize_usage).collect())),
-        Value::Object(map) => Some(Value::Object(
+        Value::Array(items) if depth < USAGE_MAX_DEPTH => Some(Value::Array(
+            items.iter().filter_map(|v| sanitize_usage_at(v, depth + 1)).take(USAGE_MAX_ENTRIES).collect(),
+        )),
+        Value::Object(map) if depth < USAGE_MAX_DEPTH => Some(Value::Object(
             map.iter()
                 .filter(|(k, _)| k.len() <= 64)
-                .filter_map(|(k, v)| sanitize_usage(v).map(|v| (k.clone(), v)))
+                .filter_map(|(k, v)| sanitize_usage_at(v, depth + 1).map(|v| (k.clone(), v)))
+                .take(USAGE_MAX_ENTRIES)
                 .collect(),
         )),
-        Value::Null => None,
+        _ => None,
     }
 }
 
@@ -549,6 +562,25 @@ mod tests {
                 "candidatesTokensDetails": [{"modality": "IMAGE", "tokenCount": 747}],
                 "serviceTier": "STANDARD"
             })
+        );
+    }
+
+    #[test]
+    fn usage_sanitizer_bounds_depth_and_width_like_the_other_adapters() {
+        let deep = serde_json::json!({"a": {"b": {"c": {"d": 1}}, "n": 2}, "list": [[[1]], 3]});
+        assert_eq!(
+            sanitize_usage(&deep).unwrap(),
+            serde_json::json!({"a": {"b": {}, "n": 2}, "list": [[], 3]}),
+            "levels beyond the shared depth are dropped"
+        );
+        let wide: serde_json::Map<String, Value> =
+            (0..100).map(|i| (format!("k{i:03}"), Value::from(i))).collect();
+        let clean = sanitize_usage(&Value::Object(wide)).unwrap();
+        assert_eq!(clean.as_object().unwrap().len(), crate::providers::USAGE_MAX_ENTRIES);
+        let long = Value::Array((0..100).map(Value::from).collect());
+        assert_eq!(
+            sanitize_usage(&long).unwrap().as_array().unwrap().len(),
+            crate::providers::USAGE_MAX_ENTRIES
         );
     }
 }

@@ -21,6 +21,12 @@ use crate::error::IrisError;
 use crate::http::{HttpClient, Timeouts};
 use crate::secret::Secret;
 
+/// Deepest nesting (objects or arrays) an adapter keeps from a provider's usage
+/// object in `Usage::provider_usage`; deeper values are dropped.
+pub(crate) const USAGE_MAX_DEPTH: usize = 3;
+/// Most entries an adapter keeps per object or array of a provider's usage object.
+pub(crate) const USAGE_MAX_ENTRIES: usize = 32;
+
 /// Role of an input image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]

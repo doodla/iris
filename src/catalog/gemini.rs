@@ -8,11 +8,11 @@
 
 use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
 
-use super::CATALOG_AS_OF;
 use super::types::{
     EstimateInput, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
     OutputSpec, PriceRule, RequestSizeLimit,
 };
+use super::{CATALOG_AS_OF, round_usd};
 
 /// Pricing page all Gemini image prices were taken from.
 pub const PRICING_URL: &str = "https://ai.google.dev/gemini-api/docs/pricing";
@@ -285,11 +285,6 @@ pub static MODELS: &[ModelSpec] = &[
 
 fn rates_for(model: &str) -> Option<&'static Rates> {
     RATES.iter().find(|r| r.model == model)
-}
-
-/// Round to a millionth of a dollar so estimates print cleanly.
-fn round_usd(amount: f64) -> f64 {
-    (amount * 1e6).round() / 1e6
 }
 
 /// Pre-call estimate: the published per-image price for the effective resolution,

@@ -19,6 +19,12 @@ use crate::error::{ErrorCode, IrisError};
 /// provider documentation.
 pub const CATALOG_AS_OF: &str = "2026-09-24";
 
+/// Round a dollar amount to a millionth of a dollar so estimates print cleanly.
+/// Every provider's estimates go through it, so they round the same way.
+pub(crate) fn round_usd(amount: f64) -> f64 {
+    (amount * 1e6).round() / 1e6
+}
+
 /// All built-in models, grouped by provider in a stable order.
 pub fn all() -> impl Iterator<Item = &'static ModelSpec> {
     openai::MODELS.iter().chain(gemini::MODELS.iter()).chain(veo::MODELS.iter())
