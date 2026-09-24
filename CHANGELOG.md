@@ -52,7 +52,8 @@ machine-readable contract for agents.
   so the README's links work in an unpacked archive. The installer accepts archives with or
   without `docs/` and still installs only the binary.
 - CI (formatting, Clippy, offline tests on Linux and macOS, a pinned MSRV check, dependency
-  license/advisory scanning) and a tag-triggered release workflow producing checksummed archives.
+  license/advisory scanning, repeated weekly for new advisories) and a tag-triggered release
+  workflow producing checksummed archives.
   CI also runs the release path on every change: it builds the Linux musl binary, checks that
   packaging it twice gives byte-identical archives, and smoke-tests the archive and `install.sh`
   with it. The release workflow publishes only after format, Clippy, and tests pass again on the
