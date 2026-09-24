@@ -23,11 +23,13 @@ indefinitely.
 
 ## Where state lives
 
+`iris config path` prints the absolute locations (output on Linux with `HOME=/home/you`):
+
 ```console
 $ iris config path
-config file: ~/.config/iris/config.toml
-state dir:   ~/.local/state/iris
-jobs dir:    ~/.local/state/iris/jobs
+config file: /home/you/.config/iris/config.toml
+state dir:   /home/you/.local/state/iris
+jobs dir:    /home/you/.local/state/iris/jobs
 ```
 
 The state directory is `IRIS_STATE_DIR` > config `state_dir` > the platform default (Linux:
@@ -66,28 +68,33 @@ Iris never deletes or expires one on its own, regardless of provider-side retent
 job is. It stays until you remove it yourself with `iris jobs delete` (see
 [Local deletion vs. remote state](#local-deletion-vs-remote-state)).
 
-Real record, captured from a completed job (`<state>/jobs/<job_id>.json`):
+A record (`<state_dir>/jobs/<job_id>.json`) captured right after `jobs wait` saved the output, from
+a run against a local mock server; abridged: hashes are shortened (`...`), the mock server's URI is replaced by the form
+Google returns, and `cost_estimate` is cut short. Keys are shown grouped; the file itself is
+written with sorted keys:
 
 ```json
 {
   "schema_version": 1,
-  "job_id": "job_01m3a333vp4pc80nb37svfgq7x",
+  "job_id": "job_01m3asyx4dya3grvdg4b28g2ms",
   "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "operation": "video.generate",
   "status": "succeeded",
-  "created_at": "2026-09-24T16:13:32Z", "submitted_at": "2026-09-24T16:13:32Z",
-  "updated_at": "2026-09-24T16:13:34Z", "completed_at": "2026-09-24T16:13:34Z",
-  "last_checked_at": "2026-09-24T16:13:34Z",
+  "created_at": "2026-09-24T22:53:12Z", "submitted_at": "2026-09-24T22:53:12Z",
+  "updated_at": "2026-09-24T22:53:12Z", "completed_at": "2026-09-24T22:53:12Z",
+  "last_checked_at": "2026-09-24T22:53:12Z",
   "remote_operation_id": "models/veo-3.1-fast-generate-preview/operations/op_mockjob001",
-  "provider_request_id": "req_mock_veo-3.1-",
-  "remote_expires_at": "2026-09-26T16:13:32Z",
+  "provider_request_id": null,
+  "remote_expires_at": "2026-09-26T22:53:12Z",
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": "4", "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
   "prompt": { "sha256": "c039da7d...", "chars": 31, "text": null },
   "output_plan": { "dir": "/home/you", "path": null, "overwrite": false },
-  "outputs": [ { "index": 0, "remote_uri": "https://.../v1beta/files/....:download?alt=media",
+  "outputs": [ { "index": 0,
+                 "remote_uri": "https://generativelanguage.googleapis.com/v1beta/files/<id>:download?alt=media",
                  "media_type": "video/mp4", "download_state": "downloaded",
-                 "local_path": "/home/you/job_01m3a333vp4pc80nb37svfgq7x.mp4", "bytes": 764,
-                 "sha256": "5622...", "downloaded_at": "2026-09-24T16:13:34Z", "last_error": null } ],
+                 "local_path": "/home/you/job_01m3asyx4dya3grvdg4b28g2ms.mp4", "bytes": 764,
+                 "sha256": "56222df0...", "width": null, "height": null, "duration_seconds": 4.0,
+                 "downloaded_at": "2026-09-24T22:53:12Z", "last_error": null } ],
   "error": null, "usage": null,
   "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.4, "...": "..." }
 }
@@ -192,8 +199,8 @@ $ echo $?
 ```
 
 Ctrl-C during a wait exits **130** (`interrupted`) with the same "job stays running, resumable"
-guarantee (real transcript — the job was sent SIGINT about a second into a 10-second poll
-interval):
+guarantee (real transcript against a local mock server — the job was sent SIGINT about a second
+into a 10-second poll interval):
 
 ```console
 $ iris jobs wait job_01m3a3fznq2sv8nqnqc3h25z4n --timeout 60s --poll-interval 10s
@@ -282,7 +289,8 @@ carries a final name, but these may remain:
   `submission_unknown` once the submission budget has passed, see
   [Lifecycle states and transitions](#lifecycle-states-and-transitions)).
 
-Real end-to-end sequence, run as four **separate process invocations** against the same job:
+Real end-to-end sequence against a local mock server standing in for the Gemini API, run as four
+**separate process invocations** against the same job:
 
 ```console
 $ iris video generate "waves crashing at dusk" --duration 4 --detach
@@ -337,10 +345,10 @@ $ echo $?
 Veo retains outputs for about **2 days** after generation. Iris records that as
 `remote_expires_at` = `submitted_at` + the provider's documented retention: the *earliest* time the
 provider may delete them (generation starts at submission), so the `retention_limited` warning
-says the outputs are kept "at least until about" that time. `completed_at` is when Iris
-*observed* the job finish (its first poll after the provider finished), which can be much later
-than the provider finished if nobody polled, so retention is never counted from it. Download
-before `remote_expires_at`.
+says the outputs are kept "at least until about" that time, and human `iris jobs status` shows it
+as `kept until: at least <time>`. `completed_at` is when Iris *observed* the job finish (its
+first poll after the provider finished), which can be much later than the provider finished if
+nobody polled, so retention is never counted from it. Download before `remote_expires_at`.
 
 Iris never refuses a download on its own estimate: `jobs download` and `jobs wait` always ask the
 file host, because the provider may keep the outputs longer. The answer decides:

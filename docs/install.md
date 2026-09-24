@@ -151,15 +151,15 @@ $ rm ~/.local/bin/iris        # or wherever --dir / IRIS_INSTALL_DIR pointed
 
 Removing the executable is a **separate action** from deleting your configuration and job
 history. Run `iris config path` first to see the real, absolute paths on your machine — they
-differ by platform:
+differ by platform (Linux output with `HOME=/home/you`):
 
 ```console
 $ iris config path
-config file: ~/.config/iris/config.toml
-state dir:   ~/.local/state/iris
-jobs dir:    ~/.local/state/iris/jobs
-$ rm ~/.config/iris/config.toml
-$ rm -rf ~/.local/state/iris
+config file: /home/you/.config/iris/config.toml
+state dir:   /home/you/.local/state/iris
+jobs dir:    /home/you/.local/state/iris/jobs
+$ rm /home/you/.config/iris/config.toml
+$ rm -rf /home/you/.local/state/iris
 ```
 
 The state directory's `unsaved/` subdirectory may hold paid images Iris could not save where you
@@ -171,15 +171,16 @@ them out before deleting the state directory.
 `jobs/` subdirectory. Deleting the whole state directory on macOS also deletes your config file,
 which is *not* a separate action there. To delete job history only on macOS, remove the `jobs/`
 subdirectory, not the whole state directory, and delete `config.toml` on its own if you also want
-that gone:
+that gone. On macOS with `HOME=/Users/you`, `iris config path` prints the paths below (the
+macOS layout is covered by Iris's platform-path tests; this transcript was not captured on a Mac):
 
 ```console
 $ iris config path
-config file: ~/Library/Application Support/iris/config.toml
-state dir:   ~/Library/Application Support/iris
-jobs dir:    ~/Library/Application Support/iris/jobs
-$ rm -rf ~/Library/Application\ Support/iris/jobs   # job history only
-$ rm ~/Library/Application\ Support/iris/config.toml   # config, separately
+config file: /Users/you/Library/Application Support/iris/config.toml
+state dir:   /Users/you/Library/Application Support/iris
+jobs dir:    /Users/you/Library/Application Support/iris/jobs
+$ rm -rf "/Users/you/Library/Application Support/iris/jobs"          # job history only
+$ rm "/Users/you/Library/Application Support/iris/config.toml"       # config, separately
 ```
 
 `iris jobs delete --all` (see [jobs.md](jobs.md#local-deletion-vs-remote-state)) removes only
@@ -189,7 +190,8 @@ these ever cancels or deletes anything on a provider.
 ## Verifying what you installed
 
 `iris --json version` reports the version, the target triple, and `git_commit`, the commit the
-binary was built from:
+binary was built from. For a Linux release archive it looks like this (the commit is shown as a
+placeholder):
 
 ```console
 $ iris --json version

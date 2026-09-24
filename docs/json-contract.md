@@ -128,7 +128,7 @@ $ iris --json version
   "artifacts": [ "...the same array as outputs[].artifact, downloaded ones only (a convenience)" ],
   "error": null, "usage": null,
   "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.4,
-                      "basis": "4 s x $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged",
+                      "basis": "4 s × $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged",
                       "source_url": "https://ai.google.dev/gemini-api/docs/pricing", "as_of": "2026-09-24" },
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": "4", "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } }
@@ -250,6 +250,12 @@ that billing tier, prepaid credit, or organization verification allow a paid req
 
 ### `version` → `{ "name": "iris", "version": "0.1.0", "schema_version": 1, "target": "x86_64-unknown-linux-gnu", "git_commit": null }`
 
+`git_commit` is the commit the binary was built from, filled only when the build set
+`IRIS_GIT_COMMIT` (the release workflow does, so release archives report the tagged commit) and
+`null` otherwise, for example for a local `cargo install`. See
+[Verifying what you installed](install.md#verifying-what-you-installed) for the exact rule and how
+to check it.
+
 ### `plan` (any generation command run with `--dry-run`)
 
 The `command` stays the generation command (`image.generate`, `image.edit`, or
@@ -319,9 +325,10 @@ $ iris image generate "x" --model does-not-exist --json
  "ok":false,"result":null,"schema_version":1,"warnings":[]}
 ```
 
-`provider` names the provider an error concerns: the one that answered, or, for an error about a
-job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a download failure, ...), the
-job's provider, even when the error itself is local.
+`provider` names the provider an error concerns: the one that answered, or, for an error while
+following or downloading a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a
+download failure), the job's provider, even when the error itself is local. A refused
+`jobs delete` identifies the job only by `job_id` and `job_status` (`provider` is `null`).
 
 `provider_code` and `details.provider_message` are informational and **unstable** — they come
 from the provider and can change without notice; `code` is Iris's own, stable, public taxonomy.

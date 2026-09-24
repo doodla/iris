@@ -12,14 +12,15 @@ file, never from a command-line flag, and never with a fallback name:
 
 Credentials are held in a `Secret` type that never prints or serializes its contents — Iris
 reports only *presence*, never a value. Real `doctor` output, abridged to the credential rows
-(`doctor` also reports `config`, `state_dir`, `output_dir`, `base_url.openai`, `base_url.gemini`,
-and `jobs` — see [Setup](../README.md#setup) in the README for the full, real block):
+(`...` marks the omitted lines; `doctor` also reports `config`, `state_dir`, `output_dir`,
+`base_url.openai`, `base_url.gemini`, and `jobs` — see [Setup](../README.md#setup) in the README
+for the full block):
 
 ```console
 $ iris doctor
 ...
 [ok]      credentials.openai: OPENAI_API_KEY is set
-[ok]      credentials.gemini: GEMINI_API_KEY is set
+[warning] credentials.gemini: GEMINI_API_KEY is not set; gemini commands will fail with missing_credentials
 ...
 ```
 
@@ -42,13 +43,14 @@ TOML. Location, in order: `--config <PATH>` > `IRIS_CONFIG` > the platform defau
 
 A missing *default* file is fine (built-in defaults apply). A file named explicitly by `--config`
 or `IRIS_CONFIG` that does not exist is `config_invalid` — you asked for it, so Iris tells you it
-isn't there rather than silently falling back.
+isn't there rather than silently falling back. `iris config path` prints the real, absolute
+locations (output on Linux with `HOME=/home/you` and no `XDG_*` or `IRIS_*` variables set):
 
 ```console
 $ iris config path
-config file: ~/.config/iris/config.toml
-state dir:   ~/.local/state/iris
-jobs dir:    ~/.local/state/iris/jobs
+config file: /home/you/.config/iris/config.toml
+state dir:   /home/you/.local/state/iris
+jobs dir:    /home/you/.local/state/iris/jobs
 ```
 
 Full key set:
@@ -79,16 +81,21 @@ video_model = "veo-3.1-fast-generate-preview"
 request_timeout = "300s"
 ```
 
-**Unknown keys are rejected**, not ignored — a typo is caught immediately rather than silently
-doing nothing:
+Each `[providers.<id>]` table takes the same four keys; there is one per provider (`openai`,
+`gemini`). **Unknown keys are rejected**, not ignored — a typo is caught immediately rather than
+silently doing nothing (a relative `--config` path resolves against the current directory,
+`/home/you` here):
 
 ```console
-$ iris --config ./bad.toml config show
-error[config_invalid]: config file ./bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`
+$ iris --config bad.toml config show
+error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 $ echo $?
 2
 ```
+
+A table for a provider Iris does not have is rejected the same way (`providers.<id>`: unknown
+key; expected one of `openai`, `gemini`).
 
 **Any key that looks like a credential — `api_key`, anything ending in `_key`, `key`, `token`,
 `secret`, or `password`, case-insensitive, at any depth — is rejected too**, with a message
@@ -96,8 +103,8 @@ pointing at the environment variables instead, so a well-meaning `api_key = "sk-
 file (which would otherwise get committed to a repo) is caught rather than silently accepted:
 
 ```console
-$ iris --config ./bad2.toml config show
-error[config_invalid]: config file ./bad2.toml: `providers.openai.api_key`: credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY, never from the config file
+$ iris --config bad2.toml config show
+error[config_invalid]: config file /home/you/bad2.toml: `providers.openai.api_key`: credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY, never from the config file
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 ```
 
@@ -105,21 +112,24 @@ An unknown model in `image_model`/`video_model` is also caught at config-load ti
 command tries to use it:
 
 ```console
-$ iris --config ./bad3.toml config show
-error[config_invalid]: config file ./bad3.toml: `providers.openai.image_model`: unknown model 'not-a-real-model' (run `iris models list`)
+$ iris --config bad3.toml config show
+error[config_invalid]: config file /home/you/bad3.toml: `providers.openai.image_model`: unknown model 'not-a-real-model' (run `iris models list`)
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 ```
 
-`iris doctor` always reports **every** check it can, even when the config file itself is invalid
-— an invalid config file doesn't hide unrelated problems like a missing credential:
+`iris doctor` still runs the checks that do not need a valid configuration when the config file
+itself is invalid, so an invalid file doesn't hide unrelated problems like a missing credential.
+The directory, base URL, and job checks need the resolved settings, so they are skipped (real,
+complete output):
 
 ```console
-$ iris --config ./bad.toml doctor
-[error]   config: config file ./bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
+$ iris --config bad.toml doctor
+[error]   config: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
-...
 Problems found (see [error] lines).
+$ echo $?
+0
 ```
 
 ## Precedence: flag > environment variable > config file > default
@@ -141,36 +151,42 @@ Problems found (see [error] lines).
 | log filter | `IRIS_LOG` | `-v` (repeatable) | `warn` |
 
 Provider/model resolution for generation, in order: provider = `--provider` > the provider implied
-by `--model` (from the catalog) > `IRIS_IMAGE_PROVIDER` > config `image.provider` > `openai`
-(video has only one provider, `gemini`, so there is nothing to resolve). Model = `--model` >
-config `providers.<provider>.<kind>_model` > the catalog's default for that (provider, operation).
+by `--model` (from the catalog) > `IRIS_IMAGE_PROVIDER` > config `image.provider` > `openai`.
+Video has no provider setting: without `--provider` or `--model` it uses the provider whose catalog
+declares a default video model, which today is `gemini`, the only video provider. Model =
+`--model` > config `providers.<provider>.<kind>_model` > the catalog's default for that
+(provider, operation).
 Passing `--provider` together with a `--model` that belongs to a *different* provider is
 `invalid_argument`, caught before anything is sent.
 
 An environment variable's value is validated exactly like a config-file value — a bad one is
 `config_invalid` naming the variable, not silently ignored.
 
-Real `config show`, run with `IRIS_STATE_DIR`, `IRIS_OPENAI_BASE_URL`, and `IRIS_GEMINI_BASE_URL`
-set (edited for width; every row and the exact `source` values are real):
+Real `config show` output, with `HOME=/home/you`, both keys set, and
+`IRIS_STATE_DIR=/home/you/iris-state`, `IRIS_OPENAI_BASE_URL=http://127.0.0.1:8080/v1`, and
+`IRIS_GEMINI_BASE_URL=http://127.0.0.1:8080` (the table goes to stdout; the two
+`non_default_base_url` warnings it also prints go to stderr and are shown in
+[Base URL overrides](#base-url-overrides)):
 
 ```console
 $ iris config show
-SETTING                           VALUE                       SOURCE
-config_file                       ~/.config/iris/config.toml  default
-output_dir                        /home/you                   default
-state_dir                         /tmp/.../state               env IRIS_STATE_DIR
-image.provider                    openai                      default
-video.wait_timeout                10m                         default
-video.poll_interval               10s                         default
-jobs.store_prompts                false                       default
-providers.openai.base_url         http://127.0.0.1:50045/v1   env IRIS_OPENAI_BASE_URL
-providers.openai.image_model      gpt-image-2.5-sunburst      default
-providers.openai.request_timeout  5m                          default
-providers.gemini.base_url         http://127.0.0.1:50045/     env IRIS_GEMINI_BASE_URL
-providers.gemini.image_model      gemini-3.1-flash-image      default
-providers.gemini.video_model      veo-3.1-fast-generate-preview  default
-providers.gemini.request_timeout  5m                          default
-log                               warn                        default
+config file: /home/you/.config/iris/config.toml (not found; defaults apply)
+SETTING                           VALUE                               SOURCE
+config_file                       /home/you/.config/iris/config.toml  default
+output_dir                        /home/you                           default
+state_dir                         /home/you/iris-state                env IRIS_STATE_DIR
+image.provider                    openai                              default
+video.wait_timeout                10m                                 default
+video.poll_interval               10s                                 default
+jobs.store_prompts                false                               default
+providers.openai.base_url         http://127.0.0.1:8080/v1            env IRIS_OPENAI_BASE_URL
+providers.openai.image_model      gpt-image-2.5-sunburst              default
+providers.openai.request_timeout  5m                                  default
+providers.gemini.base_url         http://127.0.0.1:8080/              env IRIS_GEMINI_BASE_URL
+providers.gemini.image_model      gemini-3.1-flash-image              default
+providers.gemini.video_model      veo-3.1-fast-generate-preview       default
+providers.gemini.request_timeout  5m                                  default
+log                               warn                                default
 credentials (presence only):
   OPENAI_API_KEY: set
   GEMINI_API_KEY: set
@@ -187,7 +203,17 @@ where the key would go:
 
 ```console
 $ iris doctor
-warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:50045/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
+warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:8080/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
+warning[non_default_base_url]: providers.gemini.base_url is http://127.0.0.1:8080/ (from IRIS_GEMINI_BASE_URL); GEMINI_API_KEY is sent to that host over unencrypted HTTP
+[ok]      config: no config file at /home/you/.config/iris/config.toml; built-in defaults apply
+[ok]      credentials.openai: OPENAI_API_KEY is set
+[ok]      credentials.gemini: GEMINI_API_KEY is set
+[ok]      state_dir: state directory /home/you/iris-state does not exist yet; it will be created on first use
+[ok]      output_dir: output directory /home/you is writable
+[warning] base_url.openai: providers.openai.base_url is http://127.0.0.1:8080/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
+[warning] base_url.gemini: providers.gemini.base_url is http://127.0.0.1:8080/ (from IRIS_GEMINI_BASE_URL); GEMINI_API_KEY is sent to that host over unencrypted HTTP
+[ok]      jobs: 0 local job record(s) readable
+Healthy.
 ```
 
 **Veo downloads through a proxy.** A finished Veo job names its video by a Files API download URL

@@ -10,7 +10,7 @@ submit, disconnect, and resume from another process without losing the job.
 $ iris image generate "a watercolor fox in a misty forest" -o fox.png
 Requesting 1 image from openai (gpt-image-2.5-sunburst); this is a paid request
 Saved /home/you/fox.png
-Estimated cost: ~$0.0082 USD (estimate from reported usage ...)
+Estimated cost: ~$0.0060 USD (estimate from reported usage (gpt-image-2.5-sunburst): 14 text input tokens × $5.00/1M + 0 image input tokens × $8.00/1M + 196 output tokens × $30.00/1M; cached-input discounts not reported)
 ```
 
 **Provider usage is billed separately by OpenAI and Google, to your own API account.** A ChatGPT
@@ -97,14 +97,15 @@ $ export GEMINI_API_KEY=...
 ```
 
 You need only the key for the provider(s) you use. Check what Iris sees (values are never
-printed, only presence; real output, paths are absolute, never `~`):
+printed, only presence). Real output on a first run on Linux with `HOME=/home/you`; paths are
+always absolute, never `~`:
 
 ```console
 $ iris doctor
 [ok]      config: no config file at /home/you/.config/iris/config.toml; built-in defaults apply
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
-[ok]      state_dir: state directory /home/you/.local/state/iris is writable
+[ok]      state_dir: state directory /home/you/.local/state/iris does not exist yet; it will be created on first use
 [ok]      output_dir: output directory /home/you is writable
 [ok]      base_url.openai: openai API base URL is the default (https://api.openai.com/v1)
 [ok]      base_url.gemini: gemini API base URL is the default (https://generativelanguage.googleapis.com/)
@@ -135,20 +136,19 @@ Non-secret settings (default models, output directory, timeouts, a config file) 
 ## First success
 
 ```console
-$ iris image generate "a red bicycle leaning against a brick wall" -o bike.png
+$ iris image generate "a red bicycle leaning against a brick wall" -o bike.png --size 1024x1024 --quality low
 Requesting 1 image from openai (gpt-image-2.5-sunburst); this is a paid request
 Saved /home/you/bike.png
-Estimated cost: ~$0.0082 USD (estimate from reported usage (gpt-image-2.5-sunburst): ...)
+Estimated cost: ~$0.0060 USD (estimate from reported usage (gpt-image-2.5-sunburst): 14 text input tokens × $5.00/1M + 0 image input tokens × $8.00/1M + 196 output tokens × $30.00/1M; cached-input discounts not reported)
 ```
 
-Validate a request locally, with no charge and no credentials required, before spending money:
+Validate a request locally, with no charge and no credentials required, before spending money.
+With an explicit size and quality the plan carries a pre-call estimate (with `auto`, the default,
+it is `null` and a `cost_estimate_unavailable` warning says so):
 
 ```console
-$ iris image generate "a red bicycle" --dry-run --json
-{"command":"image.generate","result":{"dry_run":true,"provider":"openai","model":"gpt-image-2.5-sunburst",
- "operation":"image.generate","async_job":false,"options":{...},"inputs":[],
- "outputs":["/home/you/iris-01m3a2qat6apz4cwwhx37fkewe.png"],"credential_present":true,
- "cost_estimate":null}, "ok":true, "schema_version":1, "warnings":[...]}
+$ iris image generate "a red bicycle" --size 1024x1024 --quality low --dry-run --json
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-01m3at0b4p5p26d7c3c6jftqz7.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
 ```
 
 ## More examples
@@ -156,7 +156,7 @@ $ iris image generate "a red bicycle" --dry-run --json
 Generate with Gemini's "Nano Banana" instead of OpenAI:
 
 ```console
-$ iris image generate "a watercolor fox" --provider gemini -o fox-gemini.png
+$ iris image generate "a watercolor fox" --provider gemini -o fox-gemini.jpg
 ```
 
 Edit an image with a reference and a mask (OpenAI only supports masks):
@@ -188,12 +188,15 @@ $ iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x           # waits, then download
 $ iris jobs download job_01m3a59a5syx5aex0a0qv8qc3x        # safe to repeat; never regenerates
 ```
 
-A wait limit or Ctrl-C only stops *waiting* — the remote job keeps running and stays resumable:
+A wait limit or Ctrl-C only stops *waiting* — the remote job keeps running and stays resumable
+(transcript from a local mock server standing in for the Gemini API):
 
 ```console
-$ iris jobs wait job_01m3a3g5wb5mkqg2whke2e4k3q --timeout 1ms --poll-interval 10s
-error[wait_timeout]: job job_01m3a3g5wb5mkqg2whke2e4k3q did not finish within 1ms; it continues remotely
-  hint: resume with `iris jobs wait job_01m3a3g5wb5mkqg2whke2e4k3q` (or check with `iris jobs status ...`)
+$ iris jobs wait job_01m3asz412h3hncrs5hkyqh05r --timeout 1ms --poll-interval 10s
+error[wait_timeout]: job job_01m3asz412h3hncrs5hkyqh05r did not finish within 1ms; it continues remotely
+  hint: resume with `iris jobs wait job_01m3asz412h3hncrs5hkyqh05r` (or check with `iris jobs status job_01m3asz412h3hncrs5hkyqh05r`)
+  job: job_01m3asz412h3hncrs5hkyqh05r (status running)
+  remote operation: models/veo-3.1-fast-generate-preview/operations/op_mockjob002
 $ echo $?
 4
 ```
@@ -234,11 +237,11 @@ diagnostics go to stderr, and interactive prompts are never used. The envelope a
 
 ```console
 $ iris --json version
-{"command":"version","error":null,"ok":true,
- "result":{"git_commit":null,"name":"iris","schema_version":1,
-           "target":"x86_64-unknown-linux-gnu","version":"0.1.0"},
- "schema_version":1,"warnings":[]}
+{"command":"version","error":null,"ok":true,"result":{"git_commit":null,"name":"iris","schema_version":1,"target":"x86_64-unknown-linux-gnu","version":"0.1.0"},"schema_version":1,"warnings":[]}
 ```
+
+(A binary built from a checkout reports `git_commit: null`; see
+[docs/install.md](docs/install.md#verifying-what-you-installed).)
 
 Get the full schema (also published at `schema/iris-output.v1.schema.json` in this repo):
 
@@ -266,10 +269,14 @@ apart from `error.provider_status`: `null` means nothing was sent (full table in
 
 The video **recovery flow** an agent should implement: `--detach` to get a `job_id` immediately,
 then poll with `iris jobs status <id> --json`, which exits **0** and reports the job's state in
-`result.job.status` (`running`, `succeeded`, `failed`, `expired`, or `submission_unknown`) —
-branch on that field, not on the exit code. `iris jobs wait <id> --timeout <D> --json` is a
-convenient alternative: it exits **4** (`wait_timeout`) while still running and **0** once the job
-reaches a terminal status, so an agent can loop on exit 4 instead of parsing `status` itself.
+`result.job.status` (`submitting`, `running`, `succeeded`, `failed`, `expired`, or
+`submission_unknown`) — branch on that field, not on the exit code. `iris jobs wait <id>
+--timeout <D> --json` is a convenient alternative that an agent can loop on: it exits **4**
+(`wait_timeout`) while the job is still running and **0** once the job has succeeded and its
+outputs are saved (with `--no-download`, once it has succeeded). Otherwise it exits with the code
+of the error it reports, as in the table above: usually **1** for a remote failure, an expired
+job, or a failed download (`remote_job_failed`, `content_blocked`, `artifact_expired`,
+`download_failed`), and **5** when the submission's outcome is unknown (`submission_uncertain`).
 Either way, finish with `iris jobs download <id>` once the job reports `succeeded`. A download
 checks a `running` record's status once first, so a stale local record is not a problem; if the
 job is still running it exits 4 (`job_not_ready`) rather than waiting or resubmitting. Every step
