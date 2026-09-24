@@ -91,6 +91,14 @@ toolbox() {
   done
 }
 
+# broken_toolbox NAME TOOL: the default tools, except that TOOL always fails.
+broken_toolbox() {
+  toolbox "$1" curl "$HASH" tar gzip mktemp mkdir cp chmod mv rm
+  rm -f "$tb/$2"
+  printf '#!/bin/sh\necho "%s: simulated failure" >&2\nexit 1\n' "$2" >"$tb/$2"
+  chmod 755 "$tb/$2"
+}
+
 make_toolboxes() {
   if command -v sha256sum >/dev/null 2>&1; then HASH=sha256sum; else HASH=shasum; fi
   toolbox default curl "$HASH" tar gzip mktemp mkdir cp chmod mv rm
@@ -99,6 +107,8 @@ make_toolboxes() {
   toolbox notar curl "$HASH" gzip mktemp mkdir cp chmod mv rm
   toolbox nohash curl tar gzip mktemp mkdir cp chmod mv rm
   toolbox nofetch "$HASH" tar gzip mktemp mkdir cp chmod mv rm
+  broken_toolbox brokenchmod chmod
+  broken_toolbox brokenmv mv
 }
 
 start_server() {
@@ -539,6 +549,7 @@ bad_release() {
 verification_cases() {
   bad_release badsum "checksum mismatch for $NAME"
   bad_release nosumline "SHA256SUMS for v0.1.0 has no line for $NAME"
+  bad_release decoysums "SHA256SUMS for v0.1.0 has no line for $NAME"
   bad_release nosums "not found (HTTP 404): $SERVER/ok/nosums/download/v0.1.0/SHA256SUMS"
   bad_release malformedsum "malformed checksum for $NAME"
   bad_release dupsum "lists $NAME more than once"
@@ -549,6 +560,7 @@ verification_cases() {
   bad_release absolute "unexpected entry in $NAME: '/"
   bad_release symlink "unexpected link or special file in $NAME"
   bad_release hardlink "unexpected link or special file in $NAME"
+  bad_release fifo "unexpected link or special file in $NAME"
   bad_release noiris "$NAME does not contain $TOP/iris"
   bad_release extratop "unexpected entry in $NAME: 'other/'"
   bad_release extrafile "unexpected entry in $NAME: '$TOP/extra'"
@@ -801,6 +813,26 @@ upgrade_cases() {
   run ok/good
   expect_status 0
   expect_installed "$BIN/iris" 0.2.0 "$LINUX"
+  end
+
+  # Failures after the staged copy exists: it must be removed, and the old
+  # iris kept.
+  begin "chmod fails after staging: staged file removed, old iris kept"
+  TOOLS=$W/tools/brokenchmod
+  seed_old "$BIN"
+  run ok/good
+  expect_status 1
+  expect_err "could not make $BIN/.iris."
+  expect_old_kept "$BIN"
+  end
+
+  begin "mv fails after staging: staged file removed, old iris kept"
+  TOOLS=$W/tools/brokenmv
+  seed_old "$BIN"
+  run ok/good
+  expect_status 1
+  expect_err "could not move the new iris into place at $BIN/iris"
+  expect_old_kept "$BIN"
   end
 }
 

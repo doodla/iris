@@ -120,6 +120,16 @@ dir=$(release_dir nosumline v0.1.0)
 grep -v "$LINUX" "$dir/SHA256SUMS" >"$dir/SHA256SUMS.tmp"
 mv "$dir/SHA256SUMS.tmp" "$dir/SHA256SUMS"
 
+# Lines whose names only contain the archive name, each with its real hash:
+# only an exact name match may count.
+good_archive decoysums v0.1.0 "$LINUX"
+dir=$(release_dir decoysums v0.1.0)
+sum=$(sha256_line "$dir/$NAME")
+sum=${sum%% *}
+for decoy in "$NAME.sig" "x$NAME" "sub/$NAME" "$NAME.bak"; do
+  printf '%s  %s\n' "$sum" "$decoy"
+done >"$dir/SHA256SUMS"
+
 good_archive nosums v0.1.0 "$LINUX"
 
 good_archive malformedsum v0.1.0 "$LINUX"
@@ -171,6 +181,12 @@ stage "$WORK/hardlink/$TOP" v0.1.0 "$LINUX"
 rm "$WORK/hardlink/$TOP/README.md"
 ln "$WORK/hardlink/$TOP/iris" "$WORK/hardlink/$TOP/README.md"
 bad_archive hardlink "$WORK/hardlink" "$TOP"
+
+# A FIFO under an allowed name: only the entry type gives it away.
+stage "$WORK/fifo/$TOP" v0.1.0 "$LINUX"
+rm "$WORK/fifo/$TOP/LICENSE"
+mkfifo "$WORK/fifo/$TOP/LICENSE"
+bad_archive fifo "$WORK/fifo" "$TOP"
 
 stage "$WORK/noiris/$TOP" v0.1.0 "$LINUX"
 rm "$WORK/noiris/$TOP/iris"
