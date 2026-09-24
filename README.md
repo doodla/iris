@@ -7,11 +7,15 @@ about where they differ, and it makes provider-native asynchronous jobs (Google 
 submit, disconnect, and resume from another process without losing the job.
 
 ```console
-$ iris image generate "a watercolor fox in a misty forest" -o fox.png
+$ iris image generate "a watercolor fox in a misty forest" -o fox.png --size 1024x1024 --quality low
 Requesting 1 image from openai (gpt-image-2.5-sunburst); this is a paid request
 Saved /home/you/fox.png
 Estimated cost: ~$0.0060 USD (estimate from reported usage (gpt-image-2.5-sunburst): 14 text input tokens × $5.00/1M + 0 image input tokens × $8.00/1M + 196 output tokens × $30.00/1M; cached-input discounts not reported)
 ```
+
+(Output from a local mock server standing in for the OpenAI API. A real run prints the same lines,
+with the cost estimated from the usage OpenAI reports for that request, so it varies with the
+prompt, size, and quality.)
 
 **Provider usage is billed separately by OpenAI and Google, to your own API account.** A ChatGPT
 Plus/Pro subscription, the Gemini app, or a Google Flow subscription does **not** grant API access;
@@ -135,6 +139,9 @@ Non-secret settings (default models, output directory, timeouts, a config file) 
 
 ## First success
 
+A small, low-quality image (output from a local mock server standing in for the OpenAI API; with
+a real key the cost line reflects the usage OpenAI reports for your request):
+
 ```console
 $ iris image generate "a red bicycle leaning against a brick wall" -o bike.png --size 1024x1024 --quality low
 Requesting 1 image from openai (gpt-image-2.5-sunburst); this is a paid request
@@ -172,7 +179,8 @@ Generate a video and wait for it (the default: wait, then save):
 $ iris video generate "waves crashing at dusk, slow motion" --duration 4 -o waves.mp4
 ```
 
-Submit and come back later — from any process, even after the terminal closed:
+Submit and come back later — from any process, even after the terminal closed (output from a
+local mock server standing in for the Gemini API):
 
 ```console
 $ iris video generate "a paper boat drifting on a pond" --duration 4 --detach

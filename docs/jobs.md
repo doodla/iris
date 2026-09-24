@@ -327,7 +327,8 @@ Saved /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4
 (a free status read, as `jobs status` does), because the local record may be stale: if the
 provider has finished meanwhile, it downloads right away. If the job is still running it exits
 **4** (`job_not_ready`) — it never waits or resubmits. If the check itself fails, the last known
-status stands and a `status_refresh_failed` warning says why:
+status stands and a `status_refresh_failed` warning says why. The still-running case, against a
+local mock server standing in for the Gemini API:
 
 ```console
 $ iris jobs download job_01m3a3eg1tckbg2s35k2frympv
