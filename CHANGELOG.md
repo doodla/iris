@@ -30,8 +30,8 @@ machine-readable contract for agents.
   (`iris schema`), a stable error-code taxonomy with a documented exit-code mapping, and
   structured warnings. See [docs/json-contract.md](docs/json-contract.md).
 - **`iris models list`/`show`** describing every built-in model's declared capabilities, options,
-  limits, published pricing, and documented access requirements, plus `--check-access` for a free
-  per-account metadata check.
+  limits, published pricing, and documented access requirements, plus `--check-access`, a free
+  metadata check of whether a model is visible to your key.
 - **`iris jobs`** (`list`, `status`, `wait`, `download`, `delete`) for provider-native async job
   recovery, with atomic, versioned, lock-protected local persistence. Downloads are safe to
   repeat and never re-trigger generation. See [docs/jobs.md](docs/jobs.md).
@@ -190,6 +190,10 @@ machine-readable contract for agents.
 - Human `jobs status` shows the retention estimate as `kept until: at least <time>` instead of
   `expires: <time>`, and the schema describes `job.remote_expires_at` as the earliest time the
   provider may stop serving the outputs (it may keep them longer). The JSON value is unchanged.
+- The schema describes `AccountAccess` (`model.access.account_access`, filled by
+  `models show --check-access`) as whether the model is visible to your key, not whether your
+  account can use it: the free metadata read does not check billing tier, prepaid credit, or
+  organization verification. The `--check-access` help already said so; the values are unchanged.
 
 ### Removed
 
