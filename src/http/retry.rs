@@ -948,7 +948,7 @@ mod tests {
     }
 
     #[test]
-    fn class_rules_match_c04() {
+    fn retry_classes_bound_attempts_and_retry_only_what_each_class_allows() {
         use RetryClass::*;
         use TransportKind::*;
         assert_eq!(PaidSubmit.max_attempts(), 3);
