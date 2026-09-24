@@ -12,8 +12,8 @@ Anything else (Linux arm64, Windows/MSYS/Cygwin, a BSD, a 32-bit system) is not 
 installer fails immediately with a clear message naming what it detected, rather than silently
 installing the wrong archive.
 
-The musl target for Linux is **provisional** (D-09 in this project's decisions log) and may change
-in a future release if it stops meeting the project's needs.
+The musl target for Linux is the release target: musl gives a static binary that runs on any
+x86_64 Linux kernel, regardless of the host's glibc version or its absence.
 
 HTTPS requests (installer download, and every provider API call `iris` itself makes) use the
 **system's CA trust store**, not a bundled one. On a minimal container or base image, install

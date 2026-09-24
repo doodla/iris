@@ -1,5 +1,5 @@
 //! Gemini image adapter (`generateContent`) against a local wiremock server:
-//! exact request JSON, header auth, response rules, the C-06 error table, retry
+//! exact request JSON, header auth, response rules, error mapping, retry
 //! decisions, the 20 MB request cap, and `check_access`. Offline; fake key only.
 
 use std::path::PathBuf;
@@ -652,7 +652,7 @@ async fn a_zero_quota_is_quota_exceeded_sent_once_with_billing_guidance() {
     )
     .await;
     assert_eq!(err.code, ErrorCode::QuotaExceeded, "{}", err.message);
-    assert_eq!(sent, 1, "an exhausted quota is never retried (C-04)");
+    assert_eq!(sent, 1, "an exhausted quota is never retried");
     assert_eq!(err.retryable, Some(false));
     assert_eq!(err.exit_code(), 3);
     assert_eq!(err.retry_after, None);
@@ -740,7 +740,7 @@ async fn timeout_answers_are_sent_once_and_may_be_charged() {
         assert_eq!(err.details["charge_possible"], true, "HTTP {status}");
         assert!(err.hint.as_deref().unwrap().contains("did not retry"), "HTTP {status}: {:?}", err.hint);
     }
-    // Other server errors keep the C-06 mapping (provider_error, no charge claim).
+    // Other server errors keep the default mapping (provider_error, no charge claim).
     let (err, _) = error_case(500, google_error(500, "INTERNAL", "internal error", json!([]))).await;
     assert_eq!(err.code, ErrorCode::ProviderError);
     assert!(err.details.get("charge_possible").is_none());

@@ -1,6 +1,6 @@
 //! Shared REST plumbing for the Gemini API: endpoint URLs, the credential header,
 //! identifier validation, and the mapping of `google.rpc.Status` error bodies to the
-//! public error taxonomy (C-06 "Error mapping").
+//! public error taxonomy (see docs/json-contract.md).
 
 use std::time::Duration;
 
@@ -28,7 +28,7 @@ pub const CREDENTIAL_HEADER: CredentialHeader = CredentialHeader { name: "x-goog
 /// API; Iris records one if a proxy or future API version adds it.
 const REQUEST_ID_HEADERS: &[&str] = &["x-request-id", "x-goog-request-id"];
 
-/// Maximum characters of provider text kept in messages and details (C-03).
+/// Maximum characters of provider text kept in messages and details (see docs/json-contract.md).
 pub const PROVIDER_TEXT_MAX: usize = 500;
 
 /// The credential header for this call.
@@ -114,13 +114,12 @@ pub struct QuotaViolation {
 }
 
 /// Why a 429 is quota exhaustion rather than a rate limit that clears within the
-/// retry window. C-04 never retries quota exhaustion, and D-05 retries only
-/// rate-limit 429s.
+/// retry window. Quota exhaustion is never retried; only rate-limit 429s are.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QuotaExhaustion<'a> {
     /// The limit is 0: the project has no quota for this model at all. This is the
     /// expected answer for a project without billing, because the image and Veo
-    /// models have no free tier (T-02 §7 infers it; not yet seen live).
+    /// models have no free tier (inferred from research; not yet seen live).
     ZeroLimit(&'a QuotaViolation),
     /// A per-day quota is used up. It resets at midnight Pacific time, so retrying
     /// within the executor's retry window cannot succeed.
@@ -139,7 +138,7 @@ impl GoogleError {
     }
 
     /// Quota exhaustion shown by the `QuotaFailure` details, if any. Without such
-    /// details, a 429 stays a rate limit (C-06).
+    /// details, a 429 stays a rate limit.
     pub fn quota_exhaustion(&self) -> Option<QuotaExhaustion<'_>> {
         let violations = &self.quota_violations;
         if let Some(v) = violations.iter().find(|v| v.quota_value == Some(0)) {
@@ -217,7 +216,7 @@ pub fn parse_google_error(resp: &HttpResponse) -> GoogleError {
     }
 }
 
-/// Map a non-success response to the public taxonomy (C-06 Gemini error table).
+/// Map a non-success response to the public taxonomy (see docs/json-contract.md).
 /// Returns the error and the provider-requested retry delay (`RetryInfo`).
 pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
     let google = parse_google_error(resp);
@@ -304,7 +303,7 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
             Some("use fewer or smaller input images".to_string()),
         ),
         // A 429 is a rate limit unless its QuotaFailure proves the quota is exhausted
-        // (C-04: quota exhaustion is never retried). Both forms stay definite
+        // (quota exhaustion is never retried). Both forms stay definite
         // rejections: nothing was processed or billed.
         429 if matches!(exhausted, Some(QuotaExhaustion::ZeroLimit(_))) => (
             ErrorCode::QuotaExceeded,
@@ -401,7 +400,8 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
     (err, google.retry_delay)
 }
 
-/// Retry verdict for a non-success response (C-04 classes, D-05):
+/// Retry verdict for a non-success response (see docs/architecture.md "Where
+/// invariants live" for retry classes):
 /// 429 → retryable rejection honoring `RetryInfo`, unless its `QuotaFailure` shows
 /// an exhausted quota (`quota_exceeded`, final; Gemini's billing exhaustion is the
 /// 402); 408/5xx → transient (retried by reads only); everything else → final.

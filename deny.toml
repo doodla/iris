@@ -21,13 +21,13 @@ ignore = []
 # workaround for networks/proxies that terminate TLS in a way the embedded
 # library doesn't trust (that's what happened during local validation for
 # this task: the embedded fetcher failed the TLS handshake while the system
-# `git` CLI succeeded against the same host — see evidence/T-08/local-vs-hosted.md)
+# `git` CLI succeeded against the same host)
 # and is a no-op cost elsewhere.
 git-fetch-with-cli = true
 
 [licenses]
 version = 2
-# MIT distribution (SPEC §2/§12): every allowed license here must be
+# MIT distribution: every allowed license here must be
 # compatible with re-distributing Iris under MIT. Kept to exactly what the
 # current dependency tree needs (verified with `cargo deny check licenses`),
 # no copyleft.
@@ -48,7 +48,7 @@ exceptions = [
     # MPL-2.0, a file-level copyleft license: modifying option-ext's own
     # source and redistributing it would require sharing those changes, but
     # merely depending on it does not affect Iris's own MIT licensing. Scoped
-    # to this one crate only, not a blanket MPL-2.0 allow. (decisions.md D-11)
+    # to this one crate only, not a blanket MPL-2.0 allow.
     { allow = ["MPL-2.0"], crate = "option-ext" },
 ]
 

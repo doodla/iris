@@ -1,6 +1,6 @@
 //! Veo adapter (`predictLongRunning` + operation polling) against a local wiremock
 //! server: submit bodies, always-sent defaults, the paid-submission uncertainty
-//! rules (D-08), poll status mapping, operation-name and output-URI validation.
+//! rules, poll status mapping, operation-name and output-URI validation.
 //! Offline; fake key only.
 
 use std::io::{BufRead, BufReader, Read, Write};

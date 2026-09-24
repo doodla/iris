@@ -210,7 +210,7 @@ pub trait ImageProvider: Send + Sync {
 pub trait VideoProvider: Send + Sync {
     /// Paid, non-idempotent submission. On an ambiguous failure (sent but no usable
     /// answer) returns `submission_uncertain`; on a definite rejection returns the
-    /// mapped error. Never retries except as C-04 `PaidSubmit` allows.
+    /// mapped error. Never retries except as the `PaidSubmit` retry class allows.
     async fn submit(
         &self,
         req: &VideoRequest,

@@ -1,5 +1,6 @@
 //! HTTP calls to the OpenAI API and the classification of its answers
-//! (C-04 retry classes, D-05 paid-submit policy).
+//! (see docs/architecture.md "Where invariants live" for retry classes and
+//! paid-submit policy).
 //!
 //! Paid image requests run under [`RetryClass::PaidSubmit`]: they are resent only
 //! when OpenAI provably did not process them (a connection that failed before
@@ -22,7 +23,7 @@ pub(super) const REQUEST_ID_HEADER: &str = "x-request-id";
 /// Request header carrying Iris's own per-request id (ASCII, ≤ 512 chars).
 pub(super) const CLIENT_REQUEST_ID_HEADER: &str = "x-client-request-id";
 
-/// Longest provider text kept in messages and details (C-03).
+/// Longest provider text kept in messages and details (see docs/json-contract.md).
 const PROVIDER_TEXT_MAX: usize = 500;
 
 /// Billing and quota exhaustion codes (HTTP 429, `error.code`, or the broad
@@ -97,7 +98,7 @@ pub(super) async fn post_paid(
 /// Remove the context's own credential from every string of an error.
 ///
 /// Provider text is already passed through [`redact::scrub`], which covers the
-/// credentials in the environment (the only source the CLI uses, C-05). This pass
+/// credentials in the environment (the only source the CLI uses; see docs/configuration.md). This pass
 /// also covers a key handed to the adapter another way, e.g. by a library caller.
 fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
     let secrets = [ctx.credential.expose().trim().to_string()];
@@ -126,7 +127,7 @@ fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
 }
 
 /// A paid request may have reached OpenAI but no complete answer arrived
-/// (timeout, reset, truncated body). Never retried (C-04, D-05).
+/// (timeout, reset, truncated body). Never retried (see docs/jobs.md).
 fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError {
     let mut err = t.to_iris();
     err.code = ErrorCode::RequestTimeout;

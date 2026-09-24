@@ -1,4 +1,4 @@
-//! Configuration: config file, environment, precedence, platform paths (C-05).
+//! Configuration: config file, environment, precedence, platform paths (see docs/configuration.md).
 //!
 //! [`Settings::load`] resolves every non-secret setting from four layers —
 //! command-line flags ([`CliOverrides`]) > environment variables > the TOML config
@@ -19,9 +19,9 @@
 //! * Credentials come only from `OPENAI_API_KEY` / `GEMINI_API_KEY` and are held as
 //!   [`Secret`]s; nothing here ever formats their values.
 //!
-//! Dependencies outside C-01's layering: `config` uses `catalog` (C-05: a
-//! configured default model "must be a known model") and `output::results` (the
-//! `config show` rows); see the T-06 task record.
+//! Dependencies outside the usual module layering (see docs/architecture.md):
+//! `config` uses `catalog` (a configured default model "must be a known model")
+//! and `output::results` (the `config show` rows).
 
 #![warn(missing_docs)]
 
@@ -50,15 +50,15 @@ use crate::output::results::{ConfigPathResult, ConfigShowResult, CredentialView,
 use crate::redact;
 use crate::secret::Secret;
 
-/// Default OpenAI API base URL (C-05).
+/// Default OpenAI API base URL (see docs/configuration.md).
 pub const DEFAULT_OPENAI_BASE_URL: &str = "https://api.openai.com/v1";
-/// Default Gemini API base URL: the origin; adapters append `/v1` or `/v1beta` (D-04).
+/// Default Gemini API base URL: the origin; adapters append `/v1` or `/v1beta`.
 pub const DEFAULT_GEMINI_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 /// Default caller wait limit for video jobs.
 pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 /// Default poll interval for video jobs.
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(10);
-/// Smallest accepted poll interval (C-04).
+/// Smallest accepted poll interval.
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Default per-request timeout for synchronous generation.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
@@ -250,7 +250,7 @@ impl Settings {
         self.state_dir.value.join("jobs")
     }
 
-    /// Timeouts for a provider: C-04 defaults with `request_timeout` as the
+    /// Timeouts for a provider: default timeouts with `request_timeout` as the
     /// synchronous generation timeout.
     pub fn timeouts(&self, provider: ProviderId) -> Timeouts {
         Timeouts { generate: self.provider(provider).request_timeout.value, ..Timeouts::default() }
@@ -279,7 +279,7 @@ impl Settings {
     }
 
     /// The credential for `provider`, or `missing_credentials` (exit 3) naming the
-    /// environment variable. Call after all other local validation (C-05).
+    /// environment variable. Call after all other local validation.
     pub fn require_credential(&self, provider: ProviderId) -> Result<Secret, IrisError> {
         self.credential(provider).cloned().ok_or_else(|| {
             let var = provider.credential_env();
@@ -348,7 +348,7 @@ impl Settings {
                 &p.image_model.source,
                 None,
             ));
-            // C-05 lists a video model only for Gemini (the only video provider).
+            // docs/configuration.md lists a video model only for Gemini (the only video provider).
             if p.provider == ProviderId::Gemini || p.video_model.value.is_some() {
                 rows.push(row(
                     &format!("{prefix}.video_model"),
@@ -431,7 +431,7 @@ impl Settings {
     }
 }
 
-/// The default base URL of a provider (C-05, D-04).
+/// The default base URL of a provider (see docs/configuration.md).
 pub fn default_base_url(provider: ProviderId) -> Url {
     let raw = match provider {
         ProviderId::OpenAi => DEFAULT_OPENAI_BASE_URL,

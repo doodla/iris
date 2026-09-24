@@ -1,4 +1,5 @@
-//! Atomic finalization of artifacts (C-02 "Output paths", C-04 "Downloads" step 3–4).
+//! Atomic finalization of artifacts (see README "Prompts, models, and output files"
+//! and docs/jobs.md "Downloads" steps 3-4).
 //!
 //! Content is first written to a temp file in the target directory named
 //! `.<name>.iris-part-<random>` (created with `O_EXCL`, so an existing file or
@@ -26,8 +27,8 @@
 //! writing ([`PartFile::file_mut`], [`PartFile::reset`]), validating, hashing, and
 //! syncing. The file is never reopened by name, because in a shared, writable
 //! directory another user could swap that name for a symlink, and a reopen (with
-//! `O_TRUNC`, say) would follow it; that would undo the `O_EXCL` creation C-04
-//! requires. Only the final rename uses the name.
+//! `O_TRUNC`, say) would follow it; that would undo this file's own `O_EXCL`
+//! creation. Only the final rename uses the name.
 
 use std::fs::{self, File};
 use std::io::{self, Read, Seek, SeekFrom, Write};

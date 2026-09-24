@@ -1,5 +1,5 @@
 //! Atomic finalization, no-clobber/overwrite/rename rules, repeat downloads, and
-//! local copies (C-02 "Output paths", C-04 "Downloads").
+//! local copies (see `iris --help` and docs/jobs.md "Downloads").
 
 use std::fs;
 use std::io::{Cursor, Write};

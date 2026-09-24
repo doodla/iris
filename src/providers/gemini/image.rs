@@ -20,7 +20,7 @@ use crate::http::{HttpError, RetryClass};
 use crate::providers::{GeneratedImage, ImageOutput, ImageRequest, ProviderContext};
 use crate::redact;
 
-/// `finishReason` values meaning the output was blocked (C-06 response rules).
+/// `finishReason` values meaning the output was blocked (per the Gemini API's error codes).
 const BLOCKING_FINISH_REASONS: &[&str] = &[
     "SAFETY",
     "IMAGE_SAFETY",
@@ -189,12 +189,12 @@ fn str_option<'a>(name: &str, value: &'a crate::catalog::OptionValue) -> Result<
         .ok_or_else(|| IrisError::internal(format!("option '{name}' must be a string, got {value}")))
 }
 
-/// Paid synchronous call failures (C-03, C-04). Neither case below is retried.
+/// Paid synchronous call failures (see docs/json-contract.md). Neither case below is retried.
 /// * A transport failure after sending is `request_timeout` with `charge_possible`.
-/// * An HTTP 408 or 504 answer (`request_timeout` in the C-06 table) arrived after
+/// * An HTTP 408 or 504 answer (`request_timeout`) arrived after
 ///   the request was sent. It gets the same `charge_possible` and no-retry hint.
 ///   Google's billing page says a request that "fails with a 400 or 500 error" is
-///   not charged, and it does not name 408 or 504. C-03 treats every timeout
+///   not charged, and it does not name 408 or 504. docs/json-contract.md treats every timeout
 ///   after sending the same way, and a Veo submit that gets 408 or 504 is
 ///   `submission_uncertain` too.
 fn paid_call_error(err: HttpError) -> IrisError {
@@ -224,7 +224,7 @@ fn charged_bad_response(message: &str, status: u16) -> IrisError {
         .with_hint("the provider may have billed this request; Iris did not retry automatically")
 }
 
-/// Apply the C-06 response rules to a successful `generateContent` answer.
+/// Interpret a successful `generateContent` answer.
 fn interpret(
     resp: GenerateContentResponse,
     status: u16,
@@ -327,7 +327,7 @@ fn usage_from_metadata(meta: &serde_json::Value) -> Option<Usage> {
 }
 
 /// Zero final images: blocked prompt/output → `content_blocked`; account limited →
-/// `permission_denied`; anything else → `remote_job_failed` (C-06).
+/// `permission_denied`; anything else → `remote_job_failed`.
 fn no_image_error(resp: &GenerateContentResponse, text: Option<&str>) -> IrisError {
     let block_reason = resp
         .prompt_feedback

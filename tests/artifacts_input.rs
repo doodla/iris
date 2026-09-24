@@ -1,4 +1,5 @@
-//! Local input image validation before paid requests (SPEC §3, C-01 `InputImage`).
+//! Local input image validation before paid requests (see the `artifacts` row in
+//! docs/architecture.md).
 
 use std::fs;
 use std::io::Cursor;

@@ -1,4 +1,4 @@
-# Dependency update automation (SPEC §12).
+# Dependency update automation.
 #
 # Two ecosystems, both weekly, both grouped so routine minor/patch bumps land
 # as one PR instead of one-per-crate. Security *alerts* for cargo come from

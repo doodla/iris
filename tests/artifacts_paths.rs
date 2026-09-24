@@ -1,4 +1,4 @@
-//! Output path planning and preflight (C-02 "Output paths and filenames").
+//! Output path planning and preflight (see `iris --help`).
 
 use std::path::{Path, PathBuf};
 

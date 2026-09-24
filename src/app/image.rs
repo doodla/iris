@@ -63,7 +63,7 @@ pub async fn run(
         .transpose()?;
 
     // Output planning. With no explicit format, a declared `format` option follows
-    // the -o extension (C-02).
+    // the -o extension.
     let count = request::effective_count(spec, op, &opts);
     let format = opts.get("format").and_then(|v| v.as_str()).map(str::to_string);
     let out_dir = ctx.settings.output_dir.value.clone();

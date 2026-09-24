@@ -214,7 +214,7 @@ impl Iris {
         self.env("IRIS_OPENAI_BASE_URL", format!("{}/v1", api.uri())).env("OPENAI_API_KEY", OPENAI_KEY)
     }
 
-    /// Point the Gemini base URL (an origin, D-04) at `api` and set the fake key.
+    /// Point the Gemini base URL (an origin) at `api` and set the fake key.
     pub fn gemini(&mut self, api: &MockApi) -> &mut Iris {
         self.env("IRIS_GEMINI_BASE_URL", api.uri()).env("GEMINI_API_KEY", GEMINI_KEY)
     }

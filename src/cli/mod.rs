@@ -1,5 +1,5 @@
-//! Command-line interface: argument parsing (clap, C-02), prompt sources,
-//! dispatch to the application workflows, and presentation (C-03 JSON envelope or
+//! Command-line interface: argument parsing (clap; see `iris --help`), prompt sources,
+//! dispatch to the application workflows, and presentation (docs/json-contract.md envelope or
 //! concise human text).
 //!
 //! [`run`] is the process entry point. [`run_with`] runs one invocation against
@@ -52,7 +52,7 @@ pub struct Io {
 }
 
 /// Run the `iris` process: parse `std::env::args_os`, execute, print, and return
-/// the exit code (C-03 mapping). An unexpected panic is reported as
+/// the exit code (docs/json-contract.md mapping). An unexpected panic is reported as
 /// `internal_error` (exit 1), still as a single JSON document in `--json` mode.
 pub fn run() -> i32 {
     let args: Vec<OsString> = std::env::args_os().collect();
@@ -387,7 +387,7 @@ fn absolute(env: &EnvSnapshot, path: PathBuf) -> PathBuf {
     if path.is_absolute() { path } else { env.cwd().join(path) }
 }
 
-/// Typed flags → `RawOption { source: Flag(..) }` using C-06's flag → name table,
+/// Typed flags → `RawOption { source: Flag(..) }` using the model catalog's flag → name table,
 /// then `-O KEY=VALUE` (`=` required). A typed flag and `-O` for the same option
 /// is a usage error; duplicate `-O` keys are rejected by validation.
 pub fn raw_options(t: &TypedOptions) -> Result<Vec<RawOption>, IrisError> {

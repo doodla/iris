@@ -1,5 +1,5 @@
 //! Veo video generation: `predictLongRunning` submission and operation polling
-//! (provider-native asynchronous jobs, C-06 Veo section, D-08).
+//! (provider-native asynchronous jobs; see the model catalog's Veo section).
 //!
 //! The submission is paid and not idempotent. Only a connection failure before
 //! sending and a 429 rate limit are retried; every answer that leaves the outcome
@@ -182,7 +182,7 @@ fn str_option<'a>(name: &str, value: &'a OptionValue) -> Result<&'a str, IrisErr
 
 /// Submission classifier: 408 and every 5xx leave the outcome open (the job may
 /// exist and be billed), so they are final `submission_uncertain`, never
-/// `Transient` and never `provider_error` (D-08). 429 stays a retryable rejection;
+/// `Transient` and never `provider_error`. 429 stays a retryable rejection;
 /// 4xx rejections map like image errors.
 fn classify_submit(resp: &HttpResponse) -> Verdict {
     let status = resp.status.as_u16();
@@ -205,7 +205,7 @@ fn classify_submit(resp: &HttpResponse) -> Verdict {
     client::classify(resp)
 }
 
-/// `submission_uncertain` with the C-06 hint (exit 5; the app records the job as
+/// `submission_uncertain` with [`UNCERTAIN_HINT`] (exit 5; the app records the job as
 /// `submission_unknown` and never resubmits).
 fn uncertain(message: String) -> IrisError {
     IrisError::new(ErrorCode::SubmissionUncertain, message)
@@ -215,7 +215,7 @@ fn uncertain(message: String) -> IrisError {
 }
 
 /// Operation names are placed in the poll URL path, so they must be exactly
-/// `models/<segment>/operations/<segment>` (C-06: `^models/[^/]+/operations/[^/]+$`).
+/// `models/<segment>/operations/<segment>` (`^models/[^/]+/operations/[^/]+$`).
 /// A segment may hold any RFC 3986 unreserved character (`A-Z a-z 0-9 - . _ ~`) but
 /// must not be a dot segment (`.` or `..`). Those characters mean nothing in a URL
 /// and are never percent-decoded. Everything that could change the requested URL
@@ -274,7 +274,7 @@ pub async fn poll(remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus
     Ok(interpret(op, remote_id, &ctx.base_url))
 }
 
-/// Map a finished or running operation to [`RemoteStatus`] (C-06 "Poll").
+/// Map a finished or running operation to [`RemoteStatus`].
 fn interpret(op: Operation, remote_id: &str, base_url: &url::Url) -> RemoteStatus {
     if op.done != Some(true) {
         return RemoteStatus::Running { progress: progress_percent(op.metadata.as_ref()) };
@@ -345,7 +345,7 @@ fn outputs(video: &GenerateVideoResponse, base_url: &url::Url) -> Result<Vec<Rem
                  configured Gemini API origin",
             )
         })?;
-        // Veo outputs are MP4 (C-06); the downloader verifies the bytes.
+        // Veo outputs are MP4; the downloader verifies the bytes.
         out.push(RemoteArtifact { uri: url.to_string(), media_type: Some(VIDEO_MP4.to_string()) });
     }
     Ok(out)
@@ -380,7 +380,7 @@ fn no_output_error(video: &GenerateVideoResponse, remote_id: &str) -> IrisError 
 
 /// Accept an output URI only if it is on the configured base origin and its path is
 /// `<base path>/v1beta/files/<id>:download` with a File id of 1–40 lowercase
-/// letters, digits, or dashes, not starting or ending with a dash (C-06). Any query
+/// letters, digits, or dashes, not starting or ending with a dash. Any query
 /// (the provider adds `alt=media`) is kept; userinfo and fragments are refused.
 pub fn validate_output_uri(uri: &str, base_url: &url::Url) -> Result<url::Url, String> {
     let url = url::Url::parse(uri).map_err(|_| "the output URI is not a valid URL".to_string())?;

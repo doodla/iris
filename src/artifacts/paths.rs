@@ -1,4 +1,4 @@
-//! Output path planning (C-02 "Output paths and filenames", C-04 "Filenames and paths").
+//! Output path planning (see `iris --help` and docs/jobs.md).
 //!
 //! * The output directory precedence (`-d` > `IRIS_OUTPUT_DIR` > config > cwd) is
 //!   resolved by the caller and passed in; planned paths are absolute.
@@ -219,9 +219,9 @@ pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
     Ok(())
 }
 
-/// Check the directories of planned output paths before any paid request (SPEC §3
-/// local validation; C-02: paid output is never discarded, `-d` is created if
-/// missing). For each distinct parent directory:
+/// Check the directories of planned output paths before any paid request (this
+/// runs as local validation before any network call; paid output is never
+/// discarded, `-d` is created if missing). For each distinct parent directory:
 ///
 /// * the nearest existing ancestor must be a directory; a regular file (or a
 ///   broken symbolic link) in the way is `invalid_argument` (exit 2);
@@ -329,7 +329,7 @@ pub fn adjust_extension(path: &Path, media_type: &str) -> (PathBuf, Option<Warni
     (adjusted, Some(warning))
 }
 
-/// `<stem>.<n>.<ext>` next to `path` (the C-02 race fallback name).
+/// `<stem>.<n>.<ext>` next to `path` (the race fallback name for `output_renamed`).
 pub fn numbered(path: &Path, n: u32) -> PathBuf {
     let stem = path.file_stem().unwrap_or_default().to_string_lossy();
     let name = match path.extension() {

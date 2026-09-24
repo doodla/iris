@@ -1,4 +1,4 @@
-//! The job store over `<state_dir>/jobs/` (C-04 "State directory", "Writes").
+//! The job store over `<state_dir>/jobs/` (see docs/jobs.md).
 //!
 //! Layout: `<job_id>.json` (record), `<job_id>.lock` (exclusive advisory lock held
 //! only for a read-modify-write), `<job_id>.download.lock` (exclusive lock held for
@@ -32,13 +32,14 @@ use crate::http::Timeouts;
 /// Name of the jobs directory inside the state directory.
 const JOBS_DIR: &str = "jobs";
 
-/// Attempts of the `PaidSubmit` retry class (C-04).
+/// Attempts of the `PaidSubmit` retry class (see docs/architecture.md "Where
+/// invariants live").
 const PAID_SUBMIT_ATTEMPTS: u32 = 3;
 /// Longest wait between two `PaidSubmit` attempts: `Retry-After` is honored up to
-/// 60s (C-04); the exponential backoff cap (30s) is lower.
+/// 60s; the exponential backoff cap (30s) is lower.
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
 
-/// Worst-case wall-clock time of one `PaidSubmit` call with `timeouts` (D-12e):
+/// Worst-case wall-clock time of one `PaidSubmit` call with `timeouts`:
 /// `attempts × (connect + submit timeout) + (attempts − 1) × longest retry wait`.
 /// With the default timeouts this is 3 × (15s + 60s) + 2 × 60s = 345s.
 ///
@@ -104,7 +105,7 @@ impl JobStore {
     /// Set the submit budget of the stale-`submitting` rule: a `submitting` record
     /// older than `submit_budget + SUBMIT_GRACE` is reported and rewritten as
     /// `submission_unknown`. Pass [`paid_submit_budget`] of the configured
-    /// timeouts, never the bare submit timeout (D-12e): a slower threshold only
+    /// timeouts, never the bare submit timeout: a slower threshold only
     /// delays the report, a faster one relabels live submissions.
     pub fn with_submit_budget(mut self, submit_budget: Duration) -> JobStore {
         self.submit_budget = submit_budget;

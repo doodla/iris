@@ -1,7 +1,7 @@
 //! Shared HTTP plumbing: client construction, operation-aware retries, error
 //! classification helpers, streaming downloads with credential-origin rules, and
-//! redaction. Implemented per contract C-04 (retry classes, timeouts, redirects,
-//! credential origin rule) and decision D-05 (paid-submit retry policy).
+//! redaction. See docs/architecture.md "Where invariants live" for the retry
+//! classes, the paid-submit retry policy, and the credential-origin rule.
 //!
 //! Provider adapters use three entry points:
 //!
@@ -44,7 +44,7 @@ pub const USER_AGENT: &str = concat!("iris/", env!("CARGO_PKG_VERSION"));
 /// Settings for [`HttpClient::new`].
 #[derive(Debug, Clone)]
 pub struct HttpSettings {
-    /// TCP/TLS connect timeout (C-04: 15s). This is a client-level setting: it is
+    /// TCP/TLS connect timeout (15s). This is a client-level setting: it is
     /// fixed when the client is built, and [`Timeouts::connect`] reaches requests only
     /// through this field (the application derives it from there).
     pub connect_timeout: Duration,
@@ -153,7 +153,7 @@ impl HttpClient {
     }
 }
 
-/// Per-provider timeouts (C-04).
+/// Per-provider timeouts.
 #[derive(Debug, Clone, Copy)]
 pub struct Timeouts {
     /// TCP/TLS connect timeout. Client-level: [`HttpClient::execute`] and

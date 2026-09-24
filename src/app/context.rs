@@ -52,7 +52,7 @@ pub struct AppContext {
     pub registry: Registry,
     pub catalog: Catalog,
     /// Job store over `<state_dir>/jobs`, with the stale-`submitting` threshold
-    /// derived from the configured timeouts (D-14c).
+    /// derived from the configured timeouts.
     pub store: JobStore,
     pub progress: Progress,
     pub clock: Clock,

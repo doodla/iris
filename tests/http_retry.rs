@@ -1,4 +1,5 @@
-//! Retry executor behavior against localhost mock servers (C-04 retry classes, D-05).
+//! Retry executor behavior against localhost mock servers (see docs/architecture.md
+//! "Where invariants live" for retry classes).
 //! No network access beyond 127.0.0.1; no credentials.
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -131,7 +132,7 @@ async fn reads_retry_500_but_paid_submit_does_not() {
     failing_then_ok(&server, 500, 1, &[]).await;
     let err = expect_error(post(&server.uri(), RetryClass::PaidSubmit).await);
     assert_eq!(err.code, ErrorCode::ProviderError);
-    assert_eq!(err.retryable, Some(true), "D-05: reported retryable for the caller to decide");
+    assert_eq!(err.retryable, Some(true), "reported retryable for the caller to decide");
     assert_eq!(err.provider_status, Some(500));
     assert_eq!(requests(&server).await, 1, "a paid submission must never be resent after a 500");
 }

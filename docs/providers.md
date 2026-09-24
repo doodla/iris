@@ -33,7 +33,7 @@ outside `providers/seedance/` should know Seedance's JSON shapes. Following the 
 
 ```
 src/providers/seedance/
-  mod.rs      -- Provider + VideoProvider impl, module-level docs (contracts/decisions referenced)
+  mod.rs      -- Provider + VideoProvider impl, module-level docs
   client.rs   -- endpoint URLs, the credential header, shared error-status mapping
   wire.rs     -- request/response types (private)
 ```

@@ -782,7 +782,7 @@ fn check(def: Option<&str>, instance: &serde_json::Value) {
     assert!(errors.is_empty(), "does not match {}: {errors:?}\n{instance}", def.unwrap_or("the envelope"));
 }
 
-/// The `$defs` type of a success `result` for `command` (C-03).
+/// The `$defs` type of a success `result` for `command` (see docs/json-contract.md).
 pub fn result_def(command: Option<&str>, result: &serde_json::Value) -> &'static str {
     let only_help = result.as_object().is_some_and(|o| o.len() == 1 && o.contains_key("help"));
     if only_help {

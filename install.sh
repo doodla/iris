@@ -42,7 +42,8 @@
 
 set -u
 
-# Linux release target (C-07 rev 1; provisional, so it lives only here).
+# Linux release target: musl gives a static binary that runs on any x86_64
+# Linux kernel; kept in one variable here in case that ever needs to change.
 LINUX_X86_64_TARGET=x86_64-unknown-linux-musl
 DEFAULT_BASE_URL=https://github.com/doodla/iris/releases
 NL='

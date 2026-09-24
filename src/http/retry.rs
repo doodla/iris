@@ -1,4 +1,5 @@
-//! Operation-aware retry executor (C-04 retry classes, D-05 paid-submit policy).
+//! Operation-aware retry executor (see docs/architecture.md "Where invariants live" for
+//! retry classes and paid-submit policy).
 //!
 //! The executor owns *when* to retry; the calling adapter owns *what a response
 //! means* (it knows the provider's error bodies) and says so through a [`Verdict`].
@@ -16,8 +17,8 @@
 //!   and the executor then returns the classifier's error (`provider_error`,
 //!   retryable) *as an [`HttpError::Error`]*, where `is_ambiguous()` is false.
 //!
-//! Synchronous image calls report both as documented by D-05 (`request_timeout` +
-//! `charge_possible`, or `provider_error` retryable). Video submissions (D-08) must
+//! Synchronous image calls report both as `request_timeout` +
+//! `charge_possible`, or `provider_error` retryable. Video submissions must
 //! treat both as `submission_uncertain` so the job is recorded as
 //! `submission_unknown` and never resubmitted: the Veo submit classifier returns
 //! `Verdict::Final(<submission_uncertain error>)` for 408 and every 5xx (never
@@ -31,7 +32,7 @@
 //! # use iris::error::{ErrorCode, IrisError};
 //! fn classify_veo_submit(r: &HttpResponse) -> Verdict {
 //!     if r.status.as_u16() == 408 || r.status.is_server_error() {
-//!         // The operation may exist and be billed (D-08): never "failed".
+//!         // The operation may exist and be billed: never "failed".
 //!         return Verdict::Final(IrisError::new(
 //!             ErrorCode::SubmissionUncertain,
 //!             "the provider may have accepted this video job",
@@ -55,10 +56,10 @@ use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::redact;
 
-/// Maximum characters of provider text kept in messages and details (C-03).
+/// Maximum characters of provider text kept in messages and details (see docs/json-contract.md).
 pub(crate) const PROVIDER_TEXT_MAX: usize = 500;
 
-/// How a call may be retried (C-04 "Retry classes").
+/// How a call may be retried (see docs/architecture.md "Where invariants live").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RetryClass {
     /// Paid, non-idempotent submission (image generate/edit, video submit). Retried
@@ -126,14 +127,14 @@ impl fmt::Display for RetryClass {
 /// would exceed the cap, so Iris applies full jitter itself.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RetryPolicy {
-    /// First backoff ceiling (C-04: 1s).
+    /// First backoff ceiling (1s).
     pub base: Duration,
-    /// Growth factor per retry (C-04: 2).
+    /// Growth factor per retry (2).
     pub factor: f32,
-    /// Maximum backoff ceiling (C-04: 30s).
+    /// Maximum backoff ceiling (30s).
     pub cap: Duration,
     /// Longest provider-requested delay (`Retry-After`, `RetryInfo`) Iris waits
-    /// automatically (C-04: 60s). Longer requests stop retrying with `rate_limited`.
+    /// automatically (60s). Longer requests stop retrying with `rate_limited`.
     pub max_retry_after: Duration,
 }
 
@@ -179,7 +180,7 @@ pub(crate) fn full_jitter(ceiling: Duration) -> Duration {
 pub enum Verdict {
     /// The provider definitely did not process the request and asks to try again:
     /// HTTP 429 *rate* limits (never quota/billing exhaustion) and documented
-    /// overload rejections such as OpenAI 503 `server_is_overloaded` (D-05).
+    /// overload rejections such as OpenAI 503 `server_is_overloaded`.
     /// Retried by every class. `error` is returned if retries run out.
     /// `retry_after` is a provider-body delay (e.g. Google `RetryInfo.retryDelay`);
     /// `Retry-After`/`retry-after-ms` headers are read by the executor itself.
@@ -193,7 +194,7 @@ pub enum Verdict {
     /// (408, 500, 502, 503, 504). Retried by `IdempotentRead`/`Download`; returned
     /// immediately for `PaidSubmit` as [`HttpError::Error`] carrying `error`.
     /// A video submission classifier must not return this: it returns
-    /// `Final(submission_uncertain)` instead (module docs, D-08).
+    /// `Final(submission_uncertain)` instead (see the module docs above).
     Transient {
         /// Returned (enriched) when retries run out or are not allowed.
         error: IrisError,
@@ -205,7 +206,7 @@ pub enum Verdict {
 }
 
 impl Verdict {
-    /// The C-04 default for a status: 429 → `RetryableRejection`,
+    /// The default verdict for a status: 429 → `RetryableRejection`,
     /// 408/500/502/503/504 → `Transient`, everything else → `Final`.
     ///
     /// Adapters must check quota/billing codes before calling this: a 429 that
@@ -493,7 +494,7 @@ impl HttpError {
     /// This does not cover a 408/5xx *answer* to a paid submission, which the
     /// executor returns as [`HttpError::Error`] with the classifier's error. Video
     /// submissions must make their classifier return `submission_uncertain` for
-    /// those (see the module documentation and D-08).
+    /// those (see the module documentation above).
     pub fn is_ambiguous(&self) -> bool {
         matches!(self, HttpError::Transport(t) if t.after_send)
     }

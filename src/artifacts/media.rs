@@ -1,4 +1,4 @@
-//! Media sniffing and validation (C-04 "Artifact validation", SPEC §6).
+//! Media sniffing and validation (see docs/jobs.md and docs/configuration.md#security-rules).
 //!
 //! * [`sniff`] identifies a media type from magic bytes (never from file names):
 //!   PNG, JPEG, WebP, GIF via `infer`; ISO-BMFF files (`ftyp` at offset 4) are
@@ -6,7 +6,7 @@
 //! * Images of the decodable types (PNG, JPEG, WebP) are fully decoded with the
 //!   `image` crate so truncated or corrupt data is rejected and dimensions are known.
 //! * GIF and HEIC/HEIF have no decoder in this build (the `image` crate is built
-//!   with png/jpeg/webp only, D-07), so their structure is walked instead: GIF
+//!   with png/jpeg/webp only), so their structure is walked instead: GIF
 //!   blocks up to the `0x3B` trailer ([`inspect_gif`]), and HEIC/HEIF boxes with
 //!   the ISO-BMFF walker ([`inspect_heif`]). Truncated files fail either way.
 //! * Videos are checked with a small ISO-BMFF box walker: the first top-level box

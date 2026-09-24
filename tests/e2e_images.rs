@@ -1,7 +1,7 @@
 //! End-to-end image scenarios: the built `iris` binary as a real process against
 //! 127.0.0.1 mock servers that emulate the OpenAI Images API and the Gemini API.
 //!
-//! Covers T-13 scenarios 1 (OpenAI generate), 2 (OpenAI edit + mask), 3 (Gemini
+//! Covers scenarios 1 (OpenAI generate), 2 (OpenAI edit + mask), 3 (Gemini
 //! generate/edit, thought parts, blocks), 4 (error mapping, retries, timeouts), and
 //! the image half of 10 (secret hygiene with `-vv`). Every JSON envelope is
 //! validated against the committed schema, including its command's result type.

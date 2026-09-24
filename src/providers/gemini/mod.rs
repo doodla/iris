@@ -2,14 +2,15 @@
 //! ("Nano Banana", `generateContent`, synchronous) and Veo video generation
 //! (`predictLongRunning`, provider-native asynchronous operations).
 //!
-//! A thin REST client (D-03): Google publishes no Rust SDK, and no community crate
+//! A thin REST client: Google publishes no Rust SDK, and no community crate
 //! was verified to cover `imageConfig`, `thinkingLevel`, and Veo on these API
-//! versions (T-02 §10); the surface is three calls. All Google wire types stay in
-//! this module. Contracts: C-01 (traits), C-04 (retry classes), C-06 (catalog values,
-//! wire mapping, response and error rules); decisions D-03, D-04, D-05, D-08, D-13.
+//! versions; the surface is three calls. All Google wire types stay in
+//! this module. See docs/architecture.md for the shared traits and, in "Where
+//! invariants live", the retry classes; the model catalog declares option values
+//! and defaults. Wire mapping and response/error rules live in this adapter.
 //!
-//! * The configured base URL is the origin (`https://generativelanguage.googleapis.com`,
-//!   D-04); the adapter appends `/v1` (images, image-model metadata) or `/v1beta`
+//! * The configured base URL is the origin (`https://generativelanguage.googleapis.com`);
+//!   the adapter appends `/v1` (images, image-model metadata) or `/v1beta`
 //!   (Veo, operations, files).
 //! * The key is sent only in the `x-goog-api-key` header, never as `?key=`.
 //! * Paid calls use the `PaidSubmit` retry class; polls and metadata use
@@ -37,7 +38,7 @@ use crate::domain::{Operation, ProviderId};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass};
 
-/// Default API origin (D-04). Adapters append the API version.
+/// Default API origin. Adapters append the API version.
 pub const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 
 /// The Gemini API adapter (images and Veo).

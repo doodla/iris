@@ -1,4 +1,4 @@
-//! OpenAI Images API adapter (C-01, C-04, C-06 rev 3 "OpenAI", D-02, D-05).
+//! OpenAI Images API adapter (see docs/architecture.md, docs/jobs.md, and the model catalog).
 //!
 //! A thin REST client over the shared HTTP layer:
 //!
@@ -34,7 +34,7 @@ use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, HttpResponse};
 use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireImagesResponse, WireOptions};
 
-/// Default API base URL (C-05). Endpoint paths are appended to it.
+/// Default API base URL (see docs/configuration.md). Endpoint paths are appended to it.
 pub const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
 /// Official image generation guide.
 pub const DOCS_URL: &str = crate::catalog::openai::DOCS_URL;
@@ -52,11 +52,11 @@ const CREDENTIAL_HEADER: CredentialHeader = CredentialHeader { name: "authorizat
 const INPUT_MEDIA_TYPES: &[&str] = &[media::PNG, media::JPEG, media::WEBP];
 
 /// Warning: a returned image is a valid image of another type than the requested or
-/// echoed `output_format`. It is kept under its real type (D-12d: paid output is
-/// never discarded). Not yet in C-03's warning list (additive).
+/// echoed `output_format`. It is kept under its real type (paid output is
+/// never discarded). Listed in docs/json-contract.md's warning codes.
 const WARNING_FORMAT_MISMATCH: &str = "output_format_mismatch";
 /// Warning: the response holds a different number of images than `n` asked for.
-/// Same code as the Gemini adapter uses. Not yet in C-03's warning list (additive).
+/// Same code as the Gemini adapter uses. Listed in docs/json-contract.md's warning codes.
 const WARNING_OUTPUT_COUNT: &str = "unexpected_output_count";
 
 /// The OpenAI provider: image generation and editing through the Images API.
@@ -203,7 +203,7 @@ fn data_url(image: &InputImage, role: &str, accepted: &[&str]) -> Result<String,
     Ok(url)
 }
 
-/// Mask rules the catalog cannot express (C-06): a PNG with an alpha channel, at most
+/// Mask rules the catalog cannot express: a PNG with an alpha channel, at most
 /// 4 MB, with the same dimensions as the FIRST input image. Checked by decoding,
 /// before anything is sent.
 fn check_mask(mask: &InputImage, first: &InputImage) -> Result<(), IrisError> {
@@ -282,7 +282,7 @@ impl Expected {
 ///
 /// * A valid image of another type is kept under its real media type with warning
 ///   `output_format_mismatch`: the request completed and may have been billed, and
-///   paid output is never discarded (D-12d, C-02).
+///   paid output is never discarded (see `iris --help`).
 /// * Content that is not a recognized image is `provider_bad_response`.
 /// * A number of images other than the requested `n` is kept with warning
 ///   `unexpected_output_count`.

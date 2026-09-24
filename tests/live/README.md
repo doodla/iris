@@ -1,8 +1,8 @@
 # Live verification (opt-in, paid)
 
 `scripts/live-verify.sh` checks Iris against the real OpenAI and Gemini APIs
-through the built `iris` binary. It follows the live-verification steps in
-SPEC §7 and the budget rules in §8.
+through the built `iris` binary. It follows the steps and budget rules
+documented below.
 
 **This script spends money.** CI and `cargo test` never run it. Every step that
 runs requires `IRIS_LIVE_CONFIRM=yes-i-accept-charges`. The one Veo submission
@@ -47,8 +47,7 @@ cases:
 - The directory's estimated spend plus the estimate would exceed the budget
   (`IRIS_LIVE_BUDGET_USD`, default $10). Set it to what is left of your overall
   budget.
-- Step 4 only: the clip's estimate is more than half of the remaining budget
-  (SPEC §8).
+- Step 4 only: the clip's estimate is more than half of the remaining budget.
 
 | step | what | settings | estimate |
 |---|---|---|---|

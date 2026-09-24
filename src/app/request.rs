@@ -1,5 +1,5 @@
 //! Steps shared by every generation workflow (image generate/edit, video
-//! generate): provider and model resolution (C-05), prompt limits, output counts,
+//! generate): provider and model resolution (docs/configuration.md), prompt limits, output counts,
 //! cost estimates, and dry-run plan pieces.
 
 use std::fmt;
@@ -66,7 +66,7 @@ pub enum GenerationOutcome<T> {
     Planned(PlanResult),
 }
 
-/// Resolve the provider and model (C-05):
+/// Resolve the provider and model (docs/configuration.md):
 /// provider = `--provider` > provider of `--model` > `IRIS_IMAGE_PROVIDER` > file
 /// `image.provider` > `openai` (video: the video provider); model = `--model` >
 /// file `providers.<p>.<kind>_model` > catalog default. Adds the warnings
@@ -222,7 +222,7 @@ pub(crate) fn cost_unavailable(spec: &ModelSpec) -> Warning {
 
 /// The options a request runs with: every explicit value, plus the declared
 /// default of each other option of `op` that has one. Veo is sent these values
-/// (C-06), and they are what a cost estimate is computed from; for other models
+/// (see the model catalog), and they are what a cost estimate is computed from; for other models
 /// they are the documented provider defaults. Only for display and job records;
 /// adapters get the explicit [`ResolvedOptions`] unchanged.
 pub(crate) fn effective_options(spec: &ModelSpec, op: Operation, opts: &ResolvedOptions) -> ResolvedOptions {

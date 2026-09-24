@@ -1,4 +1,4 @@
-//! `video generate`: a provider-native asynchronous job (C-04).
+//! `video generate`: a provider-native asynchronous job (see docs/jobs.md).
 //!
 //! The job record is written (`submitting`) BEFORE the paid submission, so a crash
 //! in the uncertainty window is detectable later (`submission_unknown`). Outcomes:
@@ -87,7 +87,7 @@ pub async fn run(
         .map(|p| artifacts::read_input_image(p, InputRole::Reference, &spec.inputs))
         .collect::<Result<Vec<_>, _>>()?;
 
-    // Output planning and preflight (C-02): every planned path is checked before
+    // Output planning and preflight (see `iris --help`): every planned path is checked before
     // anything is sent, with --detach too, since the recorded plan is where
     // `iris jobs wait/download` will save the output later.
     let count = request::effective_count(spec, op, &opts);

@@ -1,10 +1,10 @@
-# Release: build, package, smoke-test, and publish the C-07 release archives
-# for a pushed `vX.Y.Z` tag (or, via workflow_dispatch, build+smoke-test only,
-# never publish — see the `dry_run` input below).
+# Release: build, package, smoke-test, and publish the release archives
+# (docs/install.md) for a pushed `vX.Y.Z` tag (or, via workflow_dispatch,
+# build+smoke-test only, never publish — see the `dry_run` input below).
 #
-# Runtime compatibility of the three published archives (SPEC §12 "document
-# practical runtime compatibility"; see decisions.md D-09 and
-# evidence/T-08/sha-verification.md for how these were established):
+# Runtime compatibility of the three published archives (documented here so
+# this workflow's claims about what each archive runs on match
+# docs/install.md):
 #   - iris-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz: statically linked
 #     (musl libc, static-pie) — runs on any x86_64 Linux kernel >= 3.2,
 #     regardless of the host's glibc version or absence of one.
@@ -73,10 +73,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # C-07's three v1 targets, each on its native runner (see
-          # evidence/T-08 and decisions.md D-09/D-10 for why: musl for
-          # portable static Linux binaries, native macOS runners for the two
-          # Apple targets). macos_deployment_target pins
+          # The three v1 release targets, each on its native runner: musl
+          # gives portable static Linux binaries, and native macOS runners
+          # cover the two Apple targets. macos_deployment_target pins
           # MACOSX_DEPLOYMENT_TARGET to the exact floor documented in the
           # header comment above; without it, the real minimum is whatever
           # rustc/cc default to today, which a future toolchain or a C
@@ -181,14 +180,12 @@ jobs:
             fi
           }
 
-          # Serve just this leg's archive under the same URL shape C-07 and
-          # the real install.sh (t09-installer, DEFAULT_BASE_URL =
-          # ".../releases") expect: IRIS_INSTALL_BASE_URL replaces
-          # ".../releases" itself, and install.sh appends
-          # "/download/<tag>/<asset>" to whatever it's given. So the base
-          # URL below must be the server root with NO "/download" suffix —
-          # confirmed against the real install.sh in the t09-installer
-          # worktree (evidence/T-08/install-smoke-test-fix.md); the
+          # Serve just this leg's archive under the same URL shape the real
+          # install.sh (DEFAULT_BASE_URL = ".../releases") expects:
+          # IRIS_INSTALL_BASE_URL replaces ".../releases" itself, and
+          # install.sh appends "/download/<tag>/<asset>" to whatever it's
+          # given. So the base URL below must be the server root with NO
+          # "/download" suffix — confirmed against the real install.sh; the
           # previous "${port}/download" value doubled the path segment and
           # made every request 404.
           #
@@ -199,8 +196,7 @@ jobs:
           # action and re-exits with it explicitly: otherwise the `kill`/
           # `wait` calls below it would overwrite the script's real exit
           # status with 143 (SIGTERM) on a *successful* run, failing the
-          # step even though the smoke test passed (found by local testing;
-          # see evidence/T-08).
+          # step even though the smoke test passed (found by local testing).
           serve_root=$(mktemp -d)
           install_dir=$(mktemp -d)
           log_dir=$(mktemp -d)
@@ -212,8 +208,7 @@ jobs:
             # otherwise trip errexit *inside the trap*, so it would abort
             # before reaching `exit "$status"` and this step would report
             # the server's kill signal (143) as its own result instead of
-            # the smoke test's real outcome (found by local testing; see
-            # evidence/T-08).
+            # the smoke test's real outcome (found by local testing).
             if [ -n "$server_pid" ]; then
               kill "$server_pid" 2>/dev/null || true
               wait "$server_pid" 2>/dev/null || true
@@ -234,7 +229,7 @@ jobs:
           # export PYTHONUNBUFFERED=1, which hid the bug locally; GitHub-
           # hosted runners do not set it (verified: `env -u PYTHONUNBUFFERED
           # python3 -m http.server ...` left the log at 0 bytes for the
-          # full poll window, `python3 -u` fixed it — evidence/T-08).
+          # full poll window, `python3 -u` fixed it).
           python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$serve_root" \
             > "$log_dir/server.log" 2>&1 &
           server_pid=$!
@@ -301,8 +296,9 @@ jobs:
           ls -l
 
           # Fail closed rather than publishing whatever happened to match
-          # dist/*.tar.gz: require exactly the three C-07 archives for this
-          # version, and nothing else, before anyone downloads them.
+          # dist/*.tar.gz: require exactly the three release archives (see
+          # docs/install.md) for this version, and nothing else, before
+          # anyone downloads them.
           expected=$(printf '%s\n' \
             "iris-v${VERSION}-x86_64-unknown-linux-musl.tar.gz" \
             "iris-v${VERSION}-x86_64-apple-darwin.tar.gz" \
@@ -323,10 +319,9 @@ jobs:
       - name: Create GitHub release
         env:
           # github.token (equivalent to secrets.GITHUB_TOKEN, but not routed
-          # through the secrets context — SPEC §11/§0 rule out referencing
-          # secrets anywhere in these workflows) and the tag, both via env:
-          # rather than inline `${{ }}` interpolation (GitHub's own script-
-          # injection hardening guidance).
+          # through the secrets context, which these workflows never
+          # reference) and the tag, both via env: rather than inline `${{ }}`
+          # interpolation (GitHub's own script-injection hardening guidance).
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.verify.outputs.tag }}
         run: |

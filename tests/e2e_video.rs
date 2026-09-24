@@ -3,7 +3,7 @@
 //! second mock origin standing in for the signed-URL file host the download
 //! redirects to.
 //!
-//! Covers T-13 scenarios 5 (happy path across processes), 6 (submission
+//! Covers scenarios 5 (happy path across processes), 6 (submission
 //! uncertainty), 7 (wait limit and Ctrl-C), 8 (download failure, recovery, expiry),
 //! 9 (concurrent waits), and the video half of 10 (secret hygiene with `-vv`), plus
 //! the one-command wait-and-save flow, provider-side outcomes seen by later

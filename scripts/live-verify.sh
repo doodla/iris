@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # live-verify.sh — OPT-IN, PAID live verification of Iris against the real OpenAI
-# and Gemini APIs (SPEC §7 steps 1–8, budget rules of SPEC §8).
+# and Gemini APIs, following the steps and budget rules in tests/live/README.md.
 #
 # THIS SCRIPT SPENDS MONEY. It is never run by CI or by `cargo test`. It refuses
 # to run a step unless IRIS_LIVE_CONFIRM=yes-i-accept-charges is set, and the one
@@ -33,7 +33,7 @@ Usage:
   scripts/live-verify.sh --plan [--dir DIR] [--bin PATH]
   scripts/live-verify.sh --help
 
-PAID live verification of Iris through the built binary (SPEC section 7). Before
+PAID live verification of Iris through the built binary. Before
 each step the script prints its estimated cost. A paid step's estimate is Iris's
 own (from a free --dry-run of the same command); the step is refused if there is
 no estimate, if it exceeds the per-step cap, or if it would take the directory's
@@ -370,7 +370,7 @@ estimate() {
 
 # check_budget STEP — refuse a paid request whose estimate (ESTIMATE) would take DIR's
 # estimated spend over IRIS_LIVE_BUDGET_USD. The Veo clip (step 4) may use at most
-# half of the remaining budget (SPEC §8).
+# half of the remaining budget.
 check_budget() {
     local total
     total=$(spent_total)
@@ -378,7 +378,7 @@ check_budget() {
         die "the estimate \$$ESTIMATE on top of the \$$total already spent from $DIR exceeds the budget \$$BUDGET_USD (IRIS_LIVE_BUDGET_USD); nothing was sent"
     if [ "$1" = 4 ]; then
         awk -v t="$total" -v e="$ESTIMATE" -v b="$BUDGET_USD" 'BEGIN { exit !(e <= (b - t) / 2) }' ||
-            die "the Veo clip's estimate \$$ESTIMATE exceeds half of the remaining budget (\$$BUDGET_USD minus \$$total spent); SPEC §8 says not to submit; nothing was sent"
+            die "the Veo clip's estimate \$$ESTIMATE exceeds half of the remaining budget (\$$BUDGET_USD minus \$$total spent); the live-test budget rules say not to submit; nothing was sent"
     fi
     say "BUDGET: \$$total of \$$BUDGET_USD spent so far (estimated); this step adds about \$$ESTIMATE"
 }
@@ -682,7 +682,7 @@ step4() {
     fi
     if [ -e "$WORK/veo-submitted" ]; then
         if [ -s "$WORK/veo-job-id" ]; then
-            say "ESTIMATED COST: \$0 (the Veo job $(job_id) was already submitted from $DIR; SPEC §8 allows one submission, so nothing is sent)"
+            say "ESTIMATED COST: \$0 (the Veo job $(job_id) was already submitted from $DIR; the live-test budget allows one Veo submission, so nothing is sent)"
             return 0
         fi
         die "a Veo submission was already attempted from $DIR ($WORK/veo-submitted) without a recorded job id; \
@@ -693,7 +693,7 @@ check usage in Google AI Studio before anything else; this script will not submi
             say "skipped: the one Veo submission also needs IRIS_LIVE_VEO_CONFIRM=$VEO_CONFIRM_VALUE"
             return 0
         fi
-        die "step 4 submits a paid Veo job, and SPEC §8 allows ONE per budget. Set IRIS_LIVE_VEO_CONFIRM=$VEO_CONFIRM_VALUE \
+        die "step 4 submits a paid Veo job, and the live-test budget allows ONE per budget. Set IRIS_LIVE_VEO_CONFIRM=$VEO_CONFIRM_VALUE \
 only if no Veo job was submitted yet, by this script or by hand"
     fi
     if [ -e "$VEO_GLOBAL" ]; then

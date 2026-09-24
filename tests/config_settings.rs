@@ -1,4 +1,4 @@
-//! Configuration resolution (C-05): discovery, strict parsing, precedence
+//! Configuration resolution (see docs/configuration.md): discovery, strict parsing, precedence
 //! flag > env > file > default for every setting, validation, platform paths, and
 //! secret handling. Uses environment snapshots only; the process environment is
 //! never read for settings or mutated, and credentials are fake.
@@ -569,7 +569,7 @@ fn credentials_come_only_from_the_two_variables() {
 
 #[test]
 fn catalog_models_are_accepted_as_file_defaults_and_cross_provider_models_rejected() {
-    // Meaningful once the catalog is populated (C-06); vacuous for an empty catalog.
+    // Meaningful once the model catalog is populated; vacuous for an empty catalog.
     let fx = Fixture::new();
     for spec in catalog::all() {
         for (kind, ops) in [

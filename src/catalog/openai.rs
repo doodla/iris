@@ -1,4 +1,4 @@
-//! Built-in catalog entries for the OpenAI Images API models (C-06 rev 3, "OpenAI").
+//! Built-in catalog entries for the OpenAI Images API models.
 //!
 //! Values come from OpenAI's official documentation, checked 2026-09-24: the image
 //! generation guide, the Images API reference and OpenAPI spec, the model pages, and
@@ -7,7 +7,7 @@
 //! * models: `gpt-image-2.5-sunburst` (default for generate and edit),
 //!   `gpt-image-2.5-flare`, `gpt-image-2`; their dated default snapshots are accepted
 //!   as aliases. Deprecated `gpt-image-1*`, `chatgpt-image-latest`, and the removed
-//!   `dall-e-*` models are deliberately not registered (D-02).
+//!   `dall-e-*` models are deliberately not registered.
 //! * options and their wire names (the adapter maps exactly these, see
 //!   `providers::openai`): `count`→`n`, `size`, `quality`, `format`→`output_format`,
 //!   `compression`→`output_compression`, `background`, `moderation`.
@@ -193,7 +193,7 @@ const OPTIONS_2_5: &[OptionSpec] =
     &[COUNT, SIZE, QUALITY_2_5, FORMAT, COMPRESSION, BACKGROUND_2_5, MODERATION];
 const OPTIONS_2: &[OptionSpec] = &[COUNT, SIZE, QUALITY_2, FORMAT, COMPRESSION, BACKGROUND_2, MODERATION];
 
-/// The OpenAI models Iris knows (C-06 rev 3).
+/// The OpenAI models Iris knows.
 pub static MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "gpt-image-2.5-sunburst",
@@ -267,7 +267,7 @@ pub fn parse_size(raw: &str) -> Option<(u64, u64)> {
     Some((w.parse().ok()?, h.parse().ok()?))
 }
 
-/// Validator of the `size` option (C-06 Pattern): `auto`, or `WxH` within the
+/// Validator of the `size` option: `auto`, or `WxH` within the
 /// documented limits of gpt-image-2 and the 2.5 models.
 pub fn validate_size(raw: &str) -> Result<(), String> {
     if raw == "auto" {

@@ -1,5 +1,5 @@
-//! Media sniffing, image decoding, and ISO-BMFF video validation (C-04 "Artifact
-//! validation"). Fixtures are generated in-test; nothing binary is committed.
+//! Media sniffing, image decoding, and ISO-BMFF video validation (see docs/jobs.md).
+//! Fixtures are generated in-test; nothing binary is committed.
 
 use std::io::Cursor;
 

@@ -1,4 +1,4 @@
-//! Streaming artifact downloads (C-04 "Downloads" and "Credentials on downloads").
+//! Streaming artifact downloads (see docs/jobs.md "Downloads").
 //!
 //! Redirects are followed here, by hand, because reqwest's automatic redirects would
 //! forward custom credential headers such as `x-goog-api-key` to other hosts.
@@ -38,7 +38,7 @@ pub struct DownloadRequest<'a> {
     ///
     /// The download writes only through this handle, never by path, so a path that
     /// is replaced by a symlink or deleted meanwhile cannot redirect the bytes
-    /// (C-04: temp files are never reached through a symlinked path). The file is
+    /// (temp files are never reached through a symlinked path). The file is
     /// emptied (`set_len(0)`, rewound) at the start of every attempt, so a retried
     /// download never appends to a partial body, and it is left empty on failure.
     /// The handle's position is shared: afterwards it is at the end of the data.
@@ -49,7 +49,7 @@ pub struct DownloadRequest<'a> {
     pub base_url: &'a Url,
     /// Credential header, attached only to hops whose origin equals `base_url`'s.
     pub auth: Option<&'a AuthHeader>,
-    /// Longest wait for response headers or for the next body chunk (C-04: 60s).
+    /// Longest wait for response headers or for the next body chunk (60s).
     pub idle_timeout: Duration,
     /// Provider attached to transport errors.
     pub provider: Option<ProviderId>,
@@ -86,7 +86,7 @@ pub enum DownloadError {
         /// Set when retrying stopped because `retry_after` exceeded this limit
         /// ([`RetryPolicy::max_retry_after`](super::RetryPolicy::max_retry_after));
         /// [`DownloadError::into_iris`] then reports `rate_limited` whatever the
-        /// status (C-04), as [`HttpClient::execute`] does.
+        /// status (see docs/jobs.md), as [`HttpClient::execute`] does.
         retry_after_limit: Option<Duration>,
         /// Attempts made.
         attempts: u32,
@@ -127,7 +127,7 @@ pub enum DownloadError {
 }
 
 impl DownloadError {
-    /// Map to the public taxonomy (C-03/C-04):
+    /// Map to the public taxonomy (see docs/json-contract.md and docs/jobs.md):
     /// 403/404/410 → `artifact_expired`; 401 → `authentication_failed`;
     /// 429, or any status whose `Retry-After` exceeded the automatic-wait limit →
     /// `rate_limited` with `retry_after`; other statuses, policy refusals and

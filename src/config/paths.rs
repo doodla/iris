@@ -19,7 +19,7 @@ impl Platform {
     }
 }
 
-/// Default locations for a platform (C-04, C-05).
+/// Default locations for a platform (see docs/configuration.md).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlatformPaths {
     /// Linux: `$XDG_CONFIG_HOME/iris/config.toml`, else `~/.config/iris/config.toml`.

@@ -1,4 +1,4 @@
-//! Local side of job downloads (C-04 "Downloads" step 2): decide whether an output
+//! Local side of job downloads (docs/jobs.md "Downloads" steps 1–2): decide whether an output
 //! needs the network at all, and copy an already-downloaded file to a new target
 //! without touching the network.
 //!
@@ -43,7 +43,7 @@ pub enum DownloadDecision {
     Fetch,
 }
 
-/// Decide per C-04: `AlreadyDownloaded` if the recorded file exists with the
+/// Decide per docs/jobs.md: `AlreadyDownloaded` if the recorded file exists with the
 /// recorded size and SHA-256 and is the file `target` would become; `CopyLocal` if
 /// it is intact but `target` differs; otherwise `Fetch`.
 ///

@@ -1,8 +1,8 @@
 //! Built-in catalog entries for Gemini native image generation ("Nano Banana") on
 //! the Gemini Developer API (`generateContent`, synchronous).
 //!
-//! Values follow contract C-06 rev 3, which is derived from the verified research
-//! in `evidence/T-02` (docs checked 2026-09-24). Where the provider's pages
+//! These values come from verified research against Google's official
+//! documentation (docs checked 2026-09-24). Where the provider's pages
 //! disagree, the conservative value is declared (Flash Lite: 1K only and the ten
 //! aspect ratios listed on its model card).
 
@@ -279,7 +279,7 @@ fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEst
 }
 
 /// Post-call estimate from the `usageMetadata` the Gemini adapter stores in
-/// [`Usage::provider_usage`] (T-02 §8.2): prompt tokens at the input rate, image
+/// [`Usage::provider_usage`]: prompt tokens at the input rate, image
 /// output tokens at the image rate, and the remaining output plus thinking tokens at
 /// the text rate. When the response does not itemize image tokens, every candidate
 /// token is priced at the (higher) image rate, and the basis says so.

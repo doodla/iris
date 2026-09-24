@@ -1,4 +1,4 @@
-//! Human-readable rendering (C-02 "Human output"; not a machine contract).
+//! Human-readable rendering (see `iris --help`; not a machine contract).
 //!
 //! Concise and plain: no colors, no spinners. Saved artifacts are listed on stdout
 //! as `Saved <absolute path>` lines; job submissions print the job id and the

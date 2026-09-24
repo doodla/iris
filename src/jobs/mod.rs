@@ -1,4 +1,4 @@
-//! Persisted provider-native job records and the job store (contract C-04).
+//! Persisted provider-native job records and the job store (see docs/jobs.md).
 //!
 //! Only provider-native asynchronous operations (`video.generate`) create job
 //! records; synchronous image calls never do. A record is enough to resume,
@@ -7,7 +7,7 @@
 //! * [`JobId`] — validated `job_<26 lowercase ULID chars>` identifiers. Every path
 //!   join goes through a `JobId`, so traversal (`../x`) is unrepresentable.
 //! * [`JobRecord`] — the versioned (v1) on-disk record with transition helpers
-//!   that only allow the arrows of C-04 "Status transitions".
+//!   that only allow the arrows documented in docs/jobs.md.
 //! * [`JobStore`] — `<state_dir>/jobs/`: atomic writes, per-job exclusive locks
 //!   for read-modify-write, lock-free listing, local deletion, and download locks.
 
@@ -106,7 +106,7 @@ impl<'de> Deserialize<'de> for JobId {
     }
 }
 
-/// The current time truncated to whole seconds (C-03 timestamps look like
+/// The current time truncated to whole seconds (docs/json-contract.md timestamps look like
 /// `2026-09-24T12:34:56Z`). Transition helpers take `now` explicitly; callers
 /// normally pass this.
 pub fn now() -> jiff::Timestamp {

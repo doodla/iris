@@ -1,4 +1,4 @@
-//! Catalog declarations for the Gemini image models (C-06 rev 3 "Gemini images"),
+//! Catalog declarations for the Gemini image models,
 //! plus the typed-flag mapping rule for every Gemini-provider model (images and Veo).
 //! Offline; no credentials.
 
@@ -13,7 +13,7 @@ const FLASH: &str = "gemini-3.1-flash-image";
 const LITE: &str = "gemini-3.1-flash-lite-image";
 const PRO: &str = "gemini-3-pro-image";
 
-/// C-06 "Typed flag → option name mapping".
+/// Typed flag → option name mapping.
 const FLAG_TABLE: &[(&str, &str)] = &[
     ("count", "--count"),
     ("size", "--size"),
@@ -73,7 +73,7 @@ fn the_three_nano_banana_models_are_declared_with_ids_names_and_aliases() {
         assert_eq!(m.outputs.media_types, &["image/jpeg", "image/png"]);
         assert_eq!(m.outputs.max_count, 1);
         assert_eq!(m.limits.max_prompt_chars, None);
-        // C-06 rev 3 verbatim; a change of wording is a contract revision.
+        // Fixed wording; change it deliberately for both catalogs.
         for note in [
             "No free tier for image models: billing (Prepay) required",
             "Standard (legacy) API keys are rejected from September 2026; use an auth key",

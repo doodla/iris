@@ -1,5 +1,5 @@
 //! OpenAI Images API wire format (request bodies, response and error bodies).
-//! Everything here is private to the adapter (C-01).
+//! Everything here is private to the adapter (see docs/architecture.md).
 //!
 //! Requests are typed structs, so fields the adapter must never send
 //! (`response_format`, `style`, `input_fidelity`, `user`, `stream`) cannot appear.
@@ -14,7 +14,7 @@ use crate::catalog::{OptionValue, ResolvedOptions};
 use crate::domain::Usage;
 use crate::error::IrisError;
 
-/// Option fields shared by generation and edit bodies (C-06 wire mapping). Only
+/// Option fields shared by generation and edit bodies (see the model catalog's wire mapping). Only
 /// options the user set explicitly are present; omitted ones take the provider default.
 #[derive(Debug, Default, Serialize, PartialEq)]
 pub(super) struct WireOptions {

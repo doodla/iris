@@ -1,6 +1,6 @@
-//! The OpenAI catalog entries against C-06 rev 3 ("OpenAI"): models, aliases,
-//! options (kinds, defaults, flags), size and cross-option validation, prices, and
-//! cost estimates. Offline, no credentials.
+//! The OpenAI catalog entries (checked against OpenAI's official documentation,
+//! 2026-09-24): models, aliases, options (kinds, defaults, flags), size and
+//! cross-option validation, prices, and cost estimates. Offline, no credentials.
 
 use iris::catalog::{
     self, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionKind, OptionSource, OptionValue, RawOption,
@@ -12,7 +12,7 @@ use serde_json::json;
 
 const IDS: [&str; 3] = ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"];
 
-/// C-06 "Typed flag → option name mapping".
+/// Typed flag → option name mapping.
 const FLAG_TABLE: &[(&str, &str)] = &[
     ("count", "--count"),
     ("size", "--size"),
@@ -107,7 +107,7 @@ fn dated_snapshots_are_aliases_of_their_base_model_and_retired_models_are_unknow
     for retired in
         ["gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3", "dall-e-2"]
     {
-        assert!(catalog::find(retired).is_none(), "{retired} must not be registered (D-02)");
+        assert!(catalog::find(retired).is_none(), "{retired} must not be registered (deprecated or removed)");
         let err = catalog::resolve(retired, None, None).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnknownModel);
     }
@@ -287,7 +287,7 @@ fn values_outside_the_declared_sets_and_undeclared_options_are_rejected_before_s
     }
     assert!(validate("gpt-image-2.5-sunburst", Operation::ImageGenerate, &[("quality", "xhigh")]).is_ok());
     assert!(validate("gpt-image-2.5-flare", Operation::ImageGenerate, &[("quality", "max")]).is_ok());
-    // Never sent (C-06): rejected as unsupported because they are not declared.
+    // Never sent: rejected as unsupported because they are not declared.
     for name in [
         "response_format",
         "style",

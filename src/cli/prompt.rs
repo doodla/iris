@@ -1,4 +1,4 @@
-//! Prompt sources (C-02): exactly one of the positional PROMPT, `--prompt-file`,
+//! Prompt sources (see `iris --help`): exactly one of the positional PROMPT, `--prompt-file`,
 //! or `--prompt-stdin`. File and stdin content has trailing whitespace trimmed;
 //! interior content is kept as is. Prompt text is never logged.
 

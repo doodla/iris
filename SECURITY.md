@@ -54,6 +54,6 @@ itself to:
 - A provider's credential header is attached only to requests whose scheme, host, and port match
   that provider's *configured* base URL — including across redirects, which Iris follows itself
   precisely so it can enforce this, rather than letting the HTTP client follow them silently.
-- Generated media, local job/state data, a private config file, secrets, and temporary
-  orchestration files are git-ignored (see `.gitignore`) so they can't end up committed by
-  accident.
+- Generated media, local job/state data, a private config file, secrets, and local
+  scratch/temporary work files are git-ignored (see `.gitignore`) so they can't end up committed
+  by accident.

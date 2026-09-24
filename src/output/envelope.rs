@@ -1,4 +1,4 @@
-//! The versioned JSON envelope (C-03) and the error object.
+//! The versioned JSON envelope (see docs/json-contract.md) and the error object.
 
 use schemars::JsonSchema;
 use serde::Serialize;

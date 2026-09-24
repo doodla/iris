@@ -1,4 +1,4 @@
-//! Job store: atomic writes, locking, listing, deletion (C-04 "State directory", "Writes").
+//! Job store: atomic writes, locking, listing, deletion (see docs/jobs.md).
 
 use std::fs;
 use std::path::Path;
@@ -362,7 +362,7 @@ fn stale_submitting_records_are_reported_and_rewritten_as_submission_unknown() {
 
 #[test]
 fn default_stale_threshold_covers_a_worst_case_paid_submit() {
-    // 3 attempts × (15s connect + 60s submit) + 2 × 60s Retry-After = 345s (D-12e).
+    // 3 attempts × (15s connect + 60s submit) + 2 × 60s Retry-After = 345s.
     let budget = paid_submit_budget(&Timeouts::default());
     assert_eq!(budget, Duration::from_secs(345));
     let slow = Timeouts { submit: Duration::from_secs(120), ..Timeouts::default() };

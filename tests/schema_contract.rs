@@ -1,4 +1,4 @@
-//! The published JSON output schema (C-03): the committed file equals the schema
+//! The published JSON output schema (see docs/json-contract.md): the committed file equals the schema
 //! generated from the Rust DTOs, and real outputs of every command validate
 //! against it (the envelope, and the `$defs` type of the command's result).
 
@@ -25,7 +25,7 @@ fn committed_schema_matches_the_generated_schema() {
         committed == generated,
         "schema/iris-output.v1.schema.json is out of date with the output DTOs.\nRegenerate it with\n    \
          cargo run -q -- schema > schema/iris-output.v1.schema.json\nand review the diff: removing or renaming \
-         a field, or changing its meaning, needs a schema_version bump (C-03)."
+         a field, or changing its meaning, needs a schema_version bump (see docs/json-contract.md)."
     );
 }
 
@@ -61,7 +61,7 @@ fn the_schema_is_valid_and_enumerates_the_stable_codes() {
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    assert_eq!(enum_of("CommandName"), commands, "C-03 command names");
+    assert_eq!(enum_of("CommandName"), commands, "docs/json-contract.md command names");
 }
 
 /// Run every command of the tree in JSON mode (successes and failures); `run_cli`

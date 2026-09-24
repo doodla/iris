@@ -2,7 +2,7 @@
 //! a real process, with 127.0.0.1 mock providers attached so that any request that
 //! should not happen is recorded.
 //!
-//! Covers T-13 scenarios 11 (settings precedence flag > env > file > default, and
+//! Covers scenarios 11 (settings precedence flag > env > file > default, and
 //! credentials refused in the config file), 12 (usage errors in JSON mode), and 13
 //! (`--dry-run` never contacts a provider and needs no keys).
 

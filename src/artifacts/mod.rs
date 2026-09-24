@@ -1,5 +1,4 @@
-//! Local artifact handling (contracts C-02 "Output paths and filenames", C-04
-//! "Downloads", "Artifact validation", "Filenames and paths").
+//! Local artifact handling (see `iris --help` and docs/jobs.md "Downloads").
 //!
 //! * [`paths`] — plan absolute output paths (default names, `-o` rules,
 //!   extension/format consistency), the `output_exists` preflight, and the

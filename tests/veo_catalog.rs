@@ -1,4 +1,4 @@
-//! Catalog declarations and cross-field validators for Veo (C-06 rev 3 "Veo").
+//! Catalog declarations and cross-field validators for Veo.
 //! Offline; no credentials.
 
 use iris::catalog::{
@@ -83,7 +83,7 @@ fn the_three_veo_31_preview_models_are_declared() {
         assert!(m.inputs.first_frame && m.inputs.last_frame && !m.inputs.mask);
         assert_eq!(m.inputs.input_media_types, &["image/png", "image/jpeg"]);
         assert_eq!(m.inputs.max_input_bytes, 20_000_000);
-        // C-06 rev 3 verbatim; a change of wording is a contract revision.
+        // Fixed wording; change it deliberately for both catalogs.
         for note in [
             "Preview model",
             "Paid tier with Prepay credits required (no free tier)",

@@ -1,5 +1,5 @@
 #!/bin/sh
-# scripts/package-release.sh — build a C-07-shaped release archive for one target.
+# scripts/package-release.sh — build the release archive (docs/install.md) for one target.
 #
 # Usage:
 #   scripts/package-release.sh <target-triple> [output-dir]
@@ -9,11 +9,10 @@
 # e.g.:
 #   cargo build --release --locked --target x86_64-unknown-linux-musl
 #
-# and packages it into <output-dir>/iris-vX.Y.Z-<target-triple>.tar.gz
-# (default output-dir: "dist"), with the exact contract layout (see
-# .iris-work/contracts/C-07-release-installer.md): a single top-level
-# directory containing exactly the binary, LICENSE, README.md and
-# CHANGELOG.md, no other paths, no symlinks, no absolute or ".." entries.
+# and packages it into <output-dir>/iris-vX.Y.Z-<target-triple>.tar.gz (default
+# output-dir: "dist"): a single top-level directory containing exactly the
+# binary, LICENSE, README.md and CHANGELOG.md, no other paths, no symlinks, no
+# absolute or ".." entries (checked by the installer; see docs/install.md).
 #
 # Prints the produced archive's path to stdout on success. Run from anywhere;
 # it resolves the repo root from its own location.
@@ -98,8 +97,8 @@ cp README.md "$stage_dir/README.md"
 cp CHANGELOG.md "$stage_dir/CHANGELOG.md"
 chmod 644 "$stage_dir/LICENSE" "$stage_dir/README.md" "$stage_dir/CHANGELOG.md"
 
-# Refuse to publish a symlink under the staged tree — the contract requires
-# none, and staging is entirely files this script just copied, so any
+# Refuse to publish a symlink under the staged tree — the release layout
+# requires none, and staging is entirely files this script just copied, so any
 # symlink here means a source file itself was a symlink.
 if find "$stage_dir" -type l | grep -q .; then
     echo "package-release: refusing to package a symlink under $stage_dir" >&2

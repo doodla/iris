@@ -1,4 +1,4 @@
-//! The OpenAI Images adapter against a local wiremock server (C-01, C-04, C-06):
+//! The OpenAI Images adapter against a local wiremock server:
 //! exact request bodies and headers, response decoding, usage, the error table, the
 //! paid-submit retry rules, and local input checks. Offline: every request goes to
 //! 127.0.0.1 (wiremock, or a raw socket server for broken connections), the key is a

@@ -189,8 +189,8 @@ warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:500
 
 ## Security rules
 
-- Generated media, local job/state data, a private config file, secrets, and temporary
-  orchestration files are all git-ignored in this repository (see `.gitignore`).
+- Generated media, local job/state data, a private config file, secrets, and local
+  scratch/temporary work files are all git-ignored in this repository (see `.gitignore`).
 - Prompts and input contents are never logged by default; `-v`/`--verbose` logs request
   *metadata* only (method, redacted URL, status, provider request id, elapsed time) — never
   prompt text, never a credential.

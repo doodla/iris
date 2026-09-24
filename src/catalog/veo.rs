@@ -1,8 +1,8 @@
 //! Built-in catalog entries for Veo video generation on the Gemini Developer API
 //! (`predictLongRunning`, provider-native asynchronous operations).
 //!
-//! Values follow contract C-06 rev 3, derived from the verified research in
-//! `evidence/T-03` (docs checked 2026-09-24). Only the three `veo-3.1-*-preview`
+//! These values come from verified research against Google's official
+//! documentation (docs checked 2026-09-24). Only the three `veo-3.1-*-preview`
 //! models remain on the Gemini API; the shut-down `veo-2.0-*`/`veo-3.0-*` ids are
 //! deliberately not registered.
 
@@ -145,10 +145,10 @@ const LITE_OPTIONS: &[OptionSpec] = &[
 ];
 
 const NOTE_PREVIEW: &str = "Preview model";
-// The billing and key notes are C-06 rev 3 verbatim, like the image notes in
-// `catalog::gemini`. T-03 verification C4 (Postpay plans exist too) and C5 (the
-// standard-key cutoff date is unconfirmed) suggest softer wording; changing it is a
-// contract revision for both catalogs, not an adapter decision.
+// The billing and key notes are fixed wording, like the image notes in
+// `catalog::gemini`. Postpay plans exist too, and the standard-key cutoff date
+// is unconfirmed, which softer wording might reflect; changing it is a
+// deliberate edit for both catalogs, not an adapter decision.
 const NOTE_PAID: &str = "Paid tier with Prepay credits required (no free tier)";
 const NOTE_AUTH_KEY: &str = "Auth API key required (standard keys rejected since September 2026)";
 const NOTE_AUDIO: &str = "Audio is always generated and cannot be disabled";
@@ -290,7 +290,7 @@ fn invalid_option(option: &str, message: String) -> IrisError {
     IrisError::invalid(message).with_detail("option", option)
 }
 
-/// Cross-field rules from the provider's parameter table (C-06 Veo "Model validator").
+/// Cross-field rules from the provider's parameter table.
 fn validate_video(input: &ValidationInput<'_>) -> Result<(), IrisError> {
     let duration = effective(input, "duration", DEFAULT_DURATION);
     let resolution = effective(input, "resolution", DEFAULT_RESOLUTION);

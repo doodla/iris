@@ -1,4 +1,4 @@
-//! Result payloads of every command (C-03). These types ARE the JSON contract:
+//! Result payloads of every command (see docs/json-contract.md). These types ARE the JSON contract:
 //! the published schema is generated from them.
 
 use schemars::JsonSchema;
