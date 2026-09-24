@@ -2,12 +2,12 @@
 //!
 //! In production this is the built-in catalog, and every lookup delegates to the
 //! contract functions in [`crate::catalog`] (`find`, `default_model`, `resolve`).
-//! Tests can inject their own static [`ModelSpec`]s; lookups over a custom list
-//! follow the same rules (a unit test checks both agree on the built-in list).
+//! Tests can inject their own static [`ModelSpec`]s; resolution over a custom list
+//! runs the same code (`crate::catalog::resolve_in`).
 
-use crate::catalog::{self, CapabilitySource, ModelSpec, ResolvedModel};
+use crate::catalog::{self, ModelSpec, ResolvedModel};
 use crate::domain::{Operation, ProviderId};
-use crate::error::{ErrorCode, IrisError};
+use crate::error::IrisError;
 
 /// The models known to this app instance.
 #[derive(Debug, Clone, Default)]
@@ -74,7 +74,7 @@ impl Catalog {
     }
 
     /// Resolve `--model` / `--capabilities-from` / `--provider` (see
-    /// [`crate::catalog::resolve`] for the rules).
+    /// [`crate::catalog::resolve`] for the rules; custom lists use the same code).
     pub fn resolve(
         &self,
         model: &str,
@@ -83,68 +83,8 @@ impl Catalog {
     ) -> Result<ResolvedModel, IrisError> {
         match &self.custom {
             None => catalog::resolve(model, capabilities_from, provider),
-            Some(_) => self.resolve_custom(model, capabilities_from, provider),
+            Some(models) => catalog::resolve_in(models, model, capabilities_from, provider),
         }
-    }
-
-    /// The same rules as `catalog::resolve`, over the custom model list.
-    fn resolve_custom(
-        &self,
-        model: &str,
-        capabilities_from: Option<&str>,
-        provider: Option<ProviderId>,
-    ) -> Result<ResolvedModel, IrisError> {
-        if let Some(spec) = self.find(model) {
-            if capabilities_from.is_some() {
-                return Err(IrisError::usage(format!(
-                    "--capabilities-from is only for models Iris does not know; '{model}' is a known model"
-                )));
-            }
-            if let Some(p) = provider
-                && p != spec.provider
-            {
-                return Err(IrisError::invalid(format!(
-                    "model '{}' belongs to provider '{}', not '{p}'",
-                    spec.id, spec.provider
-                )));
-            }
-            return Ok(ResolvedModel { id: spec.id.to_string(), spec, source: CapabilitySource::Catalog });
-        }
-        let Some(template) = capabilities_from else {
-            let known: Vec<&str> = self.models().iter().map(|m| m.id).collect();
-            return Err(IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'"))
-                .with_hint(format!(
-                    "known models: {}. To use a model Iris does not know yet, add --capabilities-from \
-                     <KNOWN_MODEL> to declare which known model's capabilities it has",
-                    known.join(", ")
-                )));
-        };
-        let Some(spec) = self.find(template) else {
-            return Err(IrisError::new(
-                ErrorCode::UnknownModel,
-                format!("--capabilities-from '{template}' is not a known model"),
-            )
-            .with_hint("run `iris models list`"));
-        };
-        if let Some(p) = provider
-            && p != spec.provider
-        {
-            return Err(IrisError::invalid(format!(
-                "--capabilities-from model '{}' belongs to provider '{}', not '{p}'",
-                spec.id, spec.provider
-            )));
-        }
-        if model.is_empty()
-            || model.len() > 200
-            || !model.chars().all(|c| c.is_ascii_alphanumeric() || "-._/:@".contains(c))
-        {
-            return Err(IrisError::invalid(format!("model id '{model}' contains unsupported characters")));
-        }
-        Ok(ResolvedModel {
-            id: model.to_string(),
-            spec,
-            source: CapabilitySource::Borrowed { from: spec.id },
-        })
     }
 }
 

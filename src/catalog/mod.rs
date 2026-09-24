@@ -82,6 +82,19 @@ pub fn resolve(
     capabilities_from: Option<&str>,
     provider: Option<ProviderId>,
 ) -> Result<ResolvedModel, IrisError> {
+    let models: Vec<&'static ModelSpec> = all().collect();
+    resolve_in(&models, model, capabilities_from, provider)
+}
+
+/// [`resolve`] over an explicit model list (the app's injectable catalog uses this so
+/// tests and production share one set of rules).
+pub fn resolve_in(
+    models: &[&'static ModelSpec],
+    model: &str,
+    capabilities_from: Option<&str>,
+    provider: Option<ProviderId>,
+) -> Result<ResolvedModel, IrisError> {
+    let find = |id: &str| models.iter().copied().find(|m| m.id == id || m.aliases.contains(&id));
     if let Some(spec) = find(model) {
         if capabilities_from.is_some() {
             return Err(IrisError::usage(format!(
@@ -103,7 +116,7 @@ pub fn resolve(
     }
 
     let Some(template) = capabilities_from else {
-        let known: Vec<&str> = all().map(|m| m.id).collect();
+        let known: Vec<&str> = models.iter().map(|m| m.id).collect();
         return Err(IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'"))
             .with_hint(format!(
                 "known models: {}. To use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> \
