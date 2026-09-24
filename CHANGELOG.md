@@ -125,6 +125,9 @@ machine-readable contract for agents.
 - Artifact downloads are capped at 4 GiB: a larger declared `Content-Length` or body is
   `download_failed` (not retryable) and nothing partial is kept.
 
+- A local copy for `jobs download -o/-d` whose source file changes while being copied now falls
+  back to fetching the output, as documented, instead of failing with `io_error`.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

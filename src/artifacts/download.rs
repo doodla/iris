@@ -84,8 +84,9 @@ pub fn is_intact(rec: &RecordedFile<'_>) -> bool {
 /// record → validate media → finalize with `mode` (normally
 /// [`FinalizeMode::for_download`]; at an extension-adjusted path `Overwrite` acts
 /// as `NoClobber`, see [`finalize_download`](super::finalize_download)). If the
-/// source changed, `io_error` is returned and the caller should fall back to
-/// [`DownloadDecision::Fetch`]. Every error here is local: the job record's
+/// source changed, `io_error` is returned; the caller then fetches the output
+/// instead ([`DownloadDecision::Fetch`]; the job download workflow does so when
+/// [`is_intact`] no longer holds). Every error here is local: the job record's
 /// download state must not be changed because of it.
 pub fn copy_local(
     source: RecordedFile<'_>,

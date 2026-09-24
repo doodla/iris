@@ -335,6 +335,39 @@ async fn partial_files_left_by_a_killed_download_are_removed_by_the_next_one() {
 }
 
 #[tokio::test]
+async fn a_local_copy_whose_source_changes_meanwhile_is_fetched_instead() {
+    let f = Fixture::new().await;
+    f.mount_video(2).await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    f.gemini.videos().push_poll(Ok(remote_success(&f.uri())));
+    jobs::wait(&ctx, &id, &WaitArgs { download: true, target: Target::default() }, &mut w).await.unwrap();
+    let first = f.sandbox.path(&format!("{id}.mp4"));
+    assert_eq!(std::fs::read(&first).unwrap(), mp4(4));
+
+    // The recorded file is intact when the copy is decided, then changes before it
+    // is copied (the progress line is printed in between).
+    let source = first.clone();
+    let progress = iris::app::Progress::new(move |line| {
+        if line.starts_with("Copying output") {
+            std::fs::write(&source, b"edited by someone else").unwrap();
+        }
+    });
+    let ctx =
+        iris::app::AppContext::new(f.settings(), deps(vec![f.gemini.clone()], Interrupt::manual()), progress);
+    let copy = f.sandbox.path("copy.mp4");
+    let res = jobs::download(&ctx, &id, &Target { output: Some(copy.clone()), overwrite: false }, &mut w)
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(&copy).unwrap(), mp4(4), "fetched from the provider, not copied");
+    assert_eq!(res.job.artifacts[0].path, copy.to_str().unwrap());
+    assert_eq!(std::fs::read(&first).unwrap(), b"edited by someone else", "the changed file is left alone");
+    assert_eq!(f.submits(), 1);
+    // `mount_video(2)` verifies the second fetch when the server drops.
+}
+
+#[tokio::test]
 async fn a_new_context_resumes_a_job_submitted_by_an_earlier_one() {
     let f = Fixture::new().await;
     let id = {

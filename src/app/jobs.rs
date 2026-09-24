@@ -6,7 +6,7 @@
 //!   `running` or `succeeded` job to `failed`; only provider answers do.
 //! * Downloads never resubmit anything, and are safe to repeat: an intact file at
 //!   the target is reported as `already_downloaded`, an intact file elsewhere is
-//!   copied locally.
+//!   copied locally (and fetched again if it changes while being copied).
 //! * Deletion is local only; remote jobs and downloaded media are never touched.
 
 use std::path::{Path, PathBuf};
@@ -649,51 +649,60 @@ async fn download_outputs(
                     .line(format!("Removed a partial download left by an earlier run: {}", stale.display()));
             }
         }
-        match decision {
-            DownloadDecision::AlreadyDownloaded => {
-                if let Some(file) = recorded {
-                    warnings.push(artifacts::already_present_warning(file.path));
-                }
+        match (decision, recorded) {
+            (DownloadDecision::AlreadyDownloaded, Some(file)) => {
+                warnings.push(artifacts::already_present_warning(file.path));
+                continue;
             }
-            DownloadDecision::CopyLocal => {
-                let Some(file) = recorded else { continue };
+            (DownloadDecision::CopyLocal, Some(file)) => {
                 ctx.progress.line(format!("Copying output {} of job {id} to {}", out.index, path.display()));
-                let saved = artifacts::copy_local(file, path, out.index, media_types, access.mode)
-                    .map_err(|e| with_job_context(e, &rec))?;
-                record_saved(ctx, id, out.index, saved, warnings)?;
-            }
-            DownloadDecision::Fetch => {
-                // No local short-circuit on the retention estimate: the provider may
-                // keep outputs longer, so the file host's answer decides.
-                // Download trust is decided now, against the base URL configured now:
-                // a refusal fails this output only, never the job, and a later
-                // download with another configuration checks again.
-                if let Err(e) = video.check_output_uri(&out.remote_uri, &base_url) {
-                    let e = match e.hint.clone() {
-                        Some(hint) => e.with_hint(format!("{hint} with `iris jobs download {id}`")),
-                        None => e,
-                    };
-                    let now = ctx.now();
-                    ctx.store.update(id, |r| r.mark_output_failed(out.index, &e, now))?;
-                    remote_failure.get_or_insert(e);
-                    continue;
-                }
-                ctx.progress.line(format!("Downloading output {} of job {id}", out.index));
-                match fetch(ctx, out, path, &access).await {
-                    Ok(saved) => record_saved(ctx, id, out.index, saved, warnings)?,
-                    Err(FetchFailure::Interrupted) => return Err(interrupted_download(&rec)),
-                    Err(FetchFailure::Local(e)) => return Err(with_job_context(e, &rec)),
-                    Err(FetchFailure::Remote(e)) => {
-                        let now = ctx.now();
-                        let e = refused_or_gone(e, &rec, now);
-                        if e.code == ErrorCode::ArtifactExpired {
-                            ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;
-                        } else {
-                            ctx.store.update(id, |r| r.mark_output_failed(out.index, &e, now))?;
-                        }
-                        remote_failure.get_or_insert(e);
+                match artifacts::copy_local(file, path, out.index, media_types, access.mode) {
+                    Ok(saved) => {
+                        record_saved(ctx, id, out.index, saved, warnings)?;
+                        continue;
                     }
+                    // The recorded file changed (or vanished) after it was checked:
+                    // it is no copy of the output any more, so fetch the output.
+                    Err(_) if !artifacts::is_intact(&file) => ctx.progress.line(format!(
+                        "{} changed since it was downloaded; downloading output {} of job {id} again",
+                        file.path.display(),
+                        out.index
+                    )),
+                    Err(e) => return Err(with_job_context(e, &rec)),
                 }
+            }
+            _ => {}
+        }
+
+        // Fetch. No local short-circuit on the retention estimate: the provider may
+        // keep outputs longer, so the file host's answer decides.
+        // Download trust is decided now, against the base URL configured now: a
+        // refusal fails this output only, never the job, and a later download with
+        // another configuration checks again.
+        if let Err(e) = video.check_output_uri(&out.remote_uri, &base_url) {
+            let e = match e.hint.clone() {
+                Some(hint) => e.with_hint(format!("{hint} with `iris jobs download {id}`")),
+                None => e,
+            };
+            let now = ctx.now();
+            ctx.store.update(id, |r| r.mark_output_failed(out.index, &e, now))?;
+            remote_failure.get_or_insert(e);
+            continue;
+        }
+        ctx.progress.line(format!("Downloading output {} of job {id}", out.index));
+        match fetch(ctx, out, path, &access).await {
+            Ok(saved) => record_saved(ctx, id, out.index, saved, warnings)?,
+            Err(FetchFailure::Interrupted) => return Err(interrupted_download(&rec)),
+            Err(FetchFailure::Local(e)) => return Err(with_job_context(e, &rec)),
+            Err(FetchFailure::Remote(e)) => {
+                let now = ctx.now();
+                let e = refused_or_gone(e, &rec, now);
+                if e.code == ErrorCode::ArtifactExpired {
+                    ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;
+                } else {
+                    ctx.store.update(id, |r| r.mark_output_failed(out.index, &e, now))?;
+                }
+                remote_failure.get_or_insert(e);
             }
         }
     }
