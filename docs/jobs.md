@@ -265,12 +265,16 @@ warning[already_downloaded]: an identical file is already at /home/you/job_01m3a
 Saved /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4
 ```
 
-`iris jobs download` on a job that has not finished yet exits **4** (`job_not_ready`) — never
-tries to wait or resubmit:
+`iris jobs download` on a job whose record still says `running` first checks its status once
+(a free status read, as `jobs status` does), because the local record may be stale: if the
+provider has finished meanwhile, it downloads right away. If the job is still running it exits
+**4** (`job_not_ready`) — it never waits or resubmits. If the check itself fails, the last known
+status stands and a `status_refresh_failed` warning says why:
 
 ```console
 $ iris jobs download job_01m3a3eg1tckbg2s35k2frympv
-error[job_not_ready]: job job_01m3a3eg1tckbg2s35k2frympv is still running; its outputs are not ready
+Job job_01m3a3eg1tckbg2s35k2frympv is running
+error[job_not_ready]: job job_01m3a3eg1tckbg2s35k2frympv is still running (last checked 2026-09-24T16:43:05Z); its outputs are not ready
   hint: wait for it with `iris jobs wait job_01m3a3eg1tckbg2s35k2frympv`
   job: job_01m3a3eg1tckbg2s35k2frympv (status running)
   remote operation: models/veo-3.1-fast-generate-preview/operations/op_mockjob001

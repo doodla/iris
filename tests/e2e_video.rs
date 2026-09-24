@@ -164,6 +164,28 @@ fn a_veo_job_is_followed_across_processes_and_downloaded_through_a_redirect() {
 }
 
 #[test]
+fn jobs_download_checks_a_running_record_once_and_downloads_a_job_that_finished_meanwhile() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+
+    // Still running: one status check, then job_not_ready (exit 4).
+    let out = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run();
+    let v = out.err(4, "job_not_ready");
+    assert_eq!(v["error"]["job_status"], "running");
+    assert_eq!(veo.polls(), 1);
+
+    // The provider finished since: the stale local record is refreshed first.
+    veo.succeed();
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert_eq!(job_of(&v)["status"], "succeeded");
+    assert_video(&job_of(&v)["artifacts"][0], &sb.path(&format!("{id}.mp4")));
+    assert_eq!(veo.polls(), 2);
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
+#[test]
 fn video_generate_waits_and_saves_in_one_command() {
     let sb = Sandbox::new();
     let veo = VeoMock::start();

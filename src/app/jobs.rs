@@ -99,21 +99,39 @@ pub async fn status(
 ) -> Result<JobResult, IrisError> {
     let id = JobId::parse(job_id)?;
     let mut rec = ctx.store.load(&id)?;
-    if refresh && rec.status() == JobStatus::Running {
-        ctx.interrupt.arm();
-        let seen = ctx.interrupt.count();
-        match poll_once(ctx, &rec, seen, warnings).await {
-            Ok(Some(updated)) => rec = updated,
-            Ok(None) => {}
-            Err(e) if e.code == ErrorCode::Interrupted => return Err(e),
-            Err(e) => warnings.push(Warning::new(
-                "status_refresh_failed",
-                format!("could not refresh the remote status ({}); showing the last known status", e.message),
-            )),
-        }
+    if refresh {
+        rec = refresh_running(ctx, rec, warnings).await?;
     }
     warnings.extend(retention_warning(&rec, ctx.now()));
     Ok(job_result(&rec))
+}
+
+/// Refresh a `running` record once from the provider (a free status read) and
+/// persist the answer; other records are returned as they are. A failed refresh
+/// is reported as warning `status_refresh_failed` and the last known record is
+/// returned; only an interrupt is an error.
+async fn refresh_running(
+    ctx: &AppContext,
+    rec: JobRecord,
+    warnings: &mut Vec<Warning>,
+) -> Result<JobRecord, IrisError> {
+    if rec.status() != JobStatus::Running {
+        return Ok(rec);
+    }
+    ctx.interrupt.arm();
+    let seen = ctx.interrupt.count();
+    match poll_once(ctx, &rec, seen, warnings).await {
+        Ok(Some(updated)) => Ok(updated),
+        Ok(None) => Ok(rec),
+        Err(e) if e.code == ErrorCode::Interrupted => Err(e),
+        Err(e) => {
+            warnings.push(Warning::new(
+                "status_refresh_failed",
+                format!("could not refresh the remote status ({}); showing the last known status", e.message),
+            ));
+            Ok(rec)
+        }
+    }
 }
 
 /// `jobs wait`: poll until the job is terminal, then download its outputs
@@ -129,6 +147,8 @@ pub async fn wait(
 }
 
 /// `jobs download`: download the outputs of a succeeded job. Never resubmits.
+/// A record that still says `running` may be stale (the job may have finished
+/// since the last check), so it is refreshed once first, as `jobs status` does.
 pub async fn download(
     ctx: &AppContext,
     job_id: &str,
@@ -136,6 +156,7 @@ pub async fn download(
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
     let id = JobId::parse(job_id)?;
+    refresh_running(ctx, ctx.store.load(&id)?, warnings).await?;
     let rec = download_outputs(ctx, &id, target, SaveMode::Download, warnings).await?;
     Ok(job_result(&rec))
 }
@@ -557,10 +578,11 @@ async fn download_outputs(
     match rec.status() {
         JobStatus::Succeeded => {}
         JobStatus::Submitting | JobStatus::Running => {
+            let checked = rec.last_checked_at().map(|t| format!(" (last checked {t})")).unwrap_or_default();
             return Err(with_job_context(
                 IrisError::new(
                     ErrorCode::JobNotReady,
-                    format!("job {id} is still {}; its outputs are not ready", rec.status()),
+                    format!("job {id} is still {}{checked}; its outputs are not ready", rec.status()),
                 )
                 .with_hint(format!("wait for it with `iris jobs wait {id}`")),
                 &rec,

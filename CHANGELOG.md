@@ -109,6 +109,9 @@ machine-readable contract for agents.
   `artifact_expired`; 403/404 are `artifact_expired` only after the retention period and a
   retryable `download_failed` (output left re-downloadable) before it.
 
+- `jobs download` on a record that still says `running` checks the job's status once first, so a
+  job that finished since the last check downloads instead of reporting `job_not_ready`.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

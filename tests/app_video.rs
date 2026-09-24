@@ -565,6 +565,7 @@ async fn download_of_unfinished_or_failed_jobs_reports_the_right_codes() {
     let e = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::JobNotReady);
     assert_eq!(e.exit_code(), 4);
+    assert_eq!(f.gemini.videos().poll_calls.load(Ordering::SeqCst), 1, "the running record was refreshed");
 
     f.gemini.videos().push_poll(Ok(RemoteStatus::Failed {
         error: IrisError::new(ErrorCode::ContentBlocked, "blocked by the provider"),
@@ -582,6 +583,37 @@ async fn download_of_unfinished_or_failed_jobs_reports_the_right_codes() {
         err_code(jobs::status(&ctx, "job_00000000000000000000000000", true, &mut w).await),
         ErrorCode::JobNotFound
     );
+}
+
+#[tokio::test]
+async fn download_refreshes_a_stale_running_record_once_before_deciding() {
+    let f = Fixture::new().await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    let v = f.gemini.videos();
+
+    // The refresh fails: the last known status stands, with a warning.
+    v.push_poll(Err(IrisError::new(ErrorCode::NetworkError, "offline")));
+    let mut w = Vec::new();
+    let e = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::JobNotReady);
+    assert!(has_warning(&w, "status_refresh_failed"), "{w:?}");
+    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 1);
+
+    // The job finished since the last check: one refresh, then the download.
+    f.mount_video(1).await;
+    v.push_poll(Ok(remote_success(&f.uri())));
+    let mut w = Vec::new();
+    let res = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
+    assert_eq!(res.job.status, JobStatus::Succeeded);
+    assert_eq!(res.job.outputs[0].download_state, DownloadState::Downloaded);
+    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 2);
+
+    // A succeeded record is never polled again.
+    jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
+    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(f.submits(), 1);
 }
 
 #[tokio::test]
