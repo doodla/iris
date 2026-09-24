@@ -137,7 +137,7 @@ fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError
     err.code = ErrorCode::SubmissionUncertain;
     err.retryable = Some(false);
     let what = match t.kind {
-        crate::http::TransportKind::Timeout => "no complete response arrived within the time limit",
+        crate::http::TransportKind::Timeout => "the time limit passed",
         _ => "the connection failed after the request was sent",
     };
     err.message = format!(

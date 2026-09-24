@@ -206,7 +206,7 @@ fn paid_call_error(err: HttpError) -> IrisError {
             e.code = ErrorCode::SubmissionUncertain;
             e.retryable = Some(false);
             let what = match t.kind {
-                TransportKind::Timeout => "no complete answer arrived within the time limit",
+                TransportKind::Timeout => "the time limit passed",
                 _ => "the connection failed after the request was sent",
             };
             e.message = format!(

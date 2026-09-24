@@ -668,6 +668,7 @@ fn a_response_slower_than_the_configured_timeout_is_submission_uncertain() {
         .run();
     let v = assert_uncertain(&out);
     assert_eq!(v["error"]["details"]["transport"], "timeout", "{v}");
+    assert_names_the_timeout_once(&v);
     assert!(v["error"]["details"]["client_request_id"].is_string(), "{v}");
     assert_eq!(api.total(), 1, "never resent");
     assert!(out.elapsed < std::time::Duration::from_secs(4), "the 1s timeout applied: {:?}", out.elapsed);
@@ -693,7 +694,15 @@ fn a_response_slower_than_the_configured_timeout_is_submission_uncertain() {
     let v = assert_uncertain(&out);
     assert_eq!(v["error"]["provider"], "gemini");
     assert_eq!(v["error"]["details"]["transport"], "timeout", "{v}");
+    assert_names_the_timeout_once(&v);
     assert_eq!(api.total(), 1);
+}
+
+/// The message of an uncertain timeout says what was missing and why, each once.
+fn assert_names_the_timeout_once(v: &Value) {
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("the time limit passed"), "{message}");
+    assert_eq!(message.matches("arrived").count(), 1, "said once: {message}");
 }
 
 /// A raw 127.0.0.1 server that reads each request completely (head and
