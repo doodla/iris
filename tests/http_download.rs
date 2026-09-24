@@ -334,6 +334,31 @@ async fn retry_after_beyond_the_cap_stops_immediately() {
 }
 
 #[tokio::test]
+async fn a_server_error_asking_to_wait_beyond_the_cap_reports_rate_limited() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(503).insert_header("retry-after", "600"))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let err = fetch(
+        &format!("{}/x.mp4", server.uri()),
+        &base_of(&server),
+        &dir.path().join("p"),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap_err();
+    let DownloadError::Status { status: 503, retry_after_limit, .. } = &err else { panic!("{err:?}") };
+    assert_eq!(*retry_after_limit, Some(Duration::from_secs(60)));
+    assert_eq!(server.received_requests().await.unwrap().len(), 1, "no wait of 600s, no retry");
+    let e = err.into_iris();
+    assert_eq!(e.code, ErrorCode::RateLimited, "C-04: beyond the cap return rate_limited");
+    assert_eq!((e.retryable, e.retry_after), (Some(true), Some(Duration::from_secs(600))));
+    assert_eq!(e.provider_status, Some(503));
+}
+
+#[tokio::test]
 async fn a_client_not_built_by_iris_is_refused_before_any_request() {
     // The regression scenario: the API origin redirects to a storage origin. A client
     // with reqwest's default redirect policy would follow it itself and forward

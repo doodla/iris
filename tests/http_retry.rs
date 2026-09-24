@@ -330,13 +330,27 @@ async fn a_build_error_is_returned_without_sending() {
     let err = client().execute(&call(RetryClass::PaidSubmit), |c| Ok(c.post("not a url")), classify).await;
     assert_eq!(expect_error(err).code, ErrorCode::InternalError);
 
-    // A scheme reqwest refuses fails at execute time, still before sending.
-    let err = client()
-        .execute(&call(RetryClass::PaidSubmit), |c| Ok(c.post("ftp://127.0.0.1/x")), classify)
-        .await
-        .unwrap_err();
-    assert!(!err.is_ambiguous(), "{err:?}");
-    assert_eq!(err.into_iris().details.get("charge_possible"), Some(&json!(false)));
+    // A scheme reqwest refuses fails at send time: a deterministic local error,
+    // reported as internal (not "check your network"), never sent, never retried.
+    for class in [RetryClass::PaidSubmit, RetryClass::IdempotentRead] {
+        let builds = AtomicUsize::new(0);
+        let err = client()
+            .execute(
+                &call(class),
+                |c| {
+                    builds.fetch_add(1, Ordering::SeqCst);
+                    Ok(c.post("ftp://127.0.0.1/x"))
+                },
+                classify,
+            )
+            .await
+            .unwrap_err();
+        assert!(!err.is_ambiguous(), "{err:?}");
+        let e = err.into_iris();
+        assert_eq!(e.code, ErrorCode::InternalError, "{class}");
+        assert!(e.details.get("charge_possible").is_none(), "{class}");
+        assert_eq!(builds.load(Ordering::SeqCst), 1, "{class}: a local error is not retried");
+    }
 }
 
 #[tokio::test]

@@ -14,7 +14,7 @@ use url::Url;
 
 use super::retry::{
     Failure, PROVIDER_TEXT_MAX, RetryClass, TransportError, TransportKind, failure_from_reqwest, full_jitter,
-    retry_after_from_headers, safe_snippet,
+    over_cap, retry_after_from_headers, safe_snippet,
 };
 use super::{AuthHeader, HttpClient, same_origin};
 use crate::domain::ProviderId;
@@ -82,6 +82,11 @@ pub enum DownloadError {
         body_snippet: String,
         /// Delay requested by the host, if any.
         retry_after: Option<Duration>,
+        /// Set when retrying stopped because `retry_after` exceeded this limit
+        /// ([`RetryPolicy::max_retry_after`](super::RetryPolicy::max_retry_after));
+        /// [`DownloadError::into_iris`] then reports `rate_limited` whatever the
+        /// status (C-04), as [`HttpClient::execute`] does.
+        retry_after_limit: Option<Duration>,
         attempts: u32,
         /// Redacted URL of the failing hop.
         url: String,
@@ -98,20 +103,22 @@ pub enum DownloadError {
     /// Writing `dest` failed.
     Io { message: String },
     /// A local programming or setup error, never retried: the client was not built
-    /// by [`HttpClient::new`] (its redirect policy is unknown).
+    /// by [`HttpClient::new`] (its redirect policy is unknown), or reqwest refused
+    /// to build the request.
     Internal { message: String },
 }
 
 impl DownloadError {
     /// Map to the public taxonomy (C-03/C-04):
     /// 403/404/410 → `artifact_expired`; 401 → `authentication_failed`;
-    /// 429 → `rate_limited`; other statuses, policy refusals and transport failures →
-    /// `download_failed` (retryable unless the failure is permanent);
-    /// error documents served as media → `invalid_media`; file errors → `io_error`;
-    /// [`DownloadError::Internal`] → `internal_error`.
+    /// 429, or any status whose `Retry-After` exceeded the automatic-wait limit →
+    /// `rate_limited` with `retry_after`; other statuses, policy refusals and
+    /// transport failures → `download_failed` (retryable unless the failure is
+    /// permanent); error documents served as media → `invalid_media`; file errors →
+    /// `io_error`; [`DownloadError::Internal`] → `internal_error`.
     pub fn into_iris(self) -> IrisError {
         match self {
-            DownloadError::Status { status, body_snippet, retry_after, attempts, url } => {
+            DownloadError::Status { status, body_snippet, retry_after, retry_after_limit, attempts, url } => {
                 let (code, retryable, message) = match status {
                     403 | 404 | 410 => (
                         ErrorCode::ArtifactExpired,
@@ -155,6 +162,9 @@ impl DownloadError {
                 }
                 if !body_snippet.is_empty() {
                     err = err.with_detail("provider_message", body_snippet);
+                }
+                if let (Some(after), Some(limit)) = (retry_after, retry_after_limit) {
+                    err = over_cap(err, after, limit);
                 }
                 err
             }
@@ -272,8 +282,24 @@ pub async fn download(client: &HttpClient, req: &DownloadRequest<'_>) -> Result<
         if attempt >= class.max_attempts() {
             return Err(fail(&mut file, error).await);
         }
+        let limit = client.retry.max_retry_after;
         let delay = match delay {
-            Some(d) if d > client.retry.max_retry_after => return Err(fail(&mut file, error).await),
+            Some(d) if d > limit => {
+                let error = match error {
+                    DownloadError::Status { status, body_snippet, retry_after, attempts, url, .. } => {
+                        DownloadError::Status {
+                            status,
+                            body_snippet,
+                            retry_after,
+                            retry_after_limit: Some(limit),
+                            attempts,
+                            url,
+                        }
+                    }
+                    other => other,
+                };
+                return Err(fail(&mut file, error).await);
+            }
             Some(d) => d,
             None => full_jitter(schedule.next().unwrap_or(client.retry.cap).min(client.retry.cap)),
         };
@@ -345,6 +371,7 @@ async fn fetch_into(
                 after_send: true,
                 status,
                 message: format!("no data for {}s", req.idle_timeout.as_secs_f64()),
+                local: false,
             },
             url,
         )
@@ -372,10 +399,16 @@ async fn fetch_into(
         let response = match tokio::time::timeout(req.idle_timeout, builder.send()).await {
             Err(_) => return Err(retryable(DownloadError::Transport(idle_timeout(&url, None)))),
             Ok(Err(e)) => {
-                return Err(retryable(DownloadError::Transport(transport(
-                    failure_from_reqwest(e, None),
-                    &url,
-                ))));
+                let failure = failure_from_reqwest(e, None);
+                if failure.local {
+                    return Err(AttemptError::Final(DownloadError::Internal {
+                        message: format!(
+                            "could not send the download request to {shown}: {}",
+                            failure.message
+                        ),
+                    }));
+                }
+                return Err(retryable(DownloadError::Transport(transport(failure, &url))));
             }
             Ok(Ok(r)) => r,
         };
@@ -424,6 +457,7 @@ async fn fetch_into(
                 status: status.as_u16(),
                 body_snippet,
                 retry_after,
+                retry_after_limit: None,
                 attempts: attempt,
                 url: shown,
             };
@@ -544,6 +578,7 @@ mod tests {
             status: s,
             body_snippet: String::new(),
             retry_after: None,
+            retry_after_limit: None,
             attempts: 1,
             url: "https://x/".into(),
         };
@@ -562,5 +597,23 @@ mod tests {
             DownloadError::Internal { message: "bug".into() }.into_iris().code,
             ErrorCode::InternalError
         );
+    }
+
+    #[test]
+    fn a_retry_after_beyond_the_limit_reports_rate_limited_for_any_status() {
+        let over = |s: u16| DownloadError::Status {
+            status: s,
+            body_snippet: String::new(),
+            retry_after: Some(Duration::from_secs(600)),
+            retry_after_limit: Some(Duration::from_secs(60)),
+            attempts: 1,
+            url: "https://x/".into(),
+        };
+        for s in [408u16, 429, 500, 503] {
+            let e = over(s).into_iris();
+            assert_eq!(e.code, ErrorCode::RateLimited, "{s}");
+            assert_eq!((e.retryable, e.retry_after), (Some(true), Some(Duration::from_secs(600))), "{s}");
+            assert_eq!(e.provider_status, Some(s));
+        }
     }
 }

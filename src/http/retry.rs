@@ -458,19 +458,23 @@ pub(crate) struct Failure {
     pub after_send: bool,
     pub status: Option<u16>,
     pub message: String,
+    /// The request could not be built for a deterministic local reason (a reqwest
+    /// builder error at send time, e.g. a disallowed URL scheme or an invalid
+    /// header): nothing was sent, and retrying cannot help. Reported as
+    /// `internal_error`, never retried, never "check your network".
+    pub local: bool,
 }
 
 pub(crate) fn failure_from_reqwest(e: reqwest::Error, status: Option<u16>) -> Failure {
+    let local = e.is_builder();
     let (kind, after_send) = if e.is_connect() {
         (TransportKind::Connect, false)
     } else if e.is_timeout() {
         (TransportKind::Timeout, true)
     } else {
-        // A builder error at execute time (e.g. a disallowed URL scheme) means the
-        // request was never sent; anything else may have reached the server.
-        (TransportKind::Other, !e.is_builder())
+        (TransportKind::Other, !local)
     };
-    Failure { kind, after_send, status, message: describe_reqwest_error(e) }
+    Failure { kind, after_send, status, message: describe_reqwest_error(e), local }
 }
 
 impl HttpClient {
@@ -489,7 +493,9 @@ impl HttpClient {
     ///   other non-2xx response.
     /// * Fails with `internal_error`, before building or sending anything, on a
     ///   client that was not built by [`HttpClient::new`] (see
-    ///   [`HttpClient::from_reqwest`]).
+    ///   [`HttpClient::from_reqwest`]). A request that reqwest refuses to send for a
+    ///   local reason (e.g. an unsupported URL scheme) is also `internal_error` and
+    ///   is never retried.
     pub async fn execute<B, C>(
         &self,
         call: &Call,
@@ -571,6 +577,12 @@ impl HttpClient {
                         status.as_u16()
                     );
                     tokio::time::sleep(delay).await;
+                }
+                Err(failure) if failure.local => {
+                    return Err(HttpError::Error(IrisError::internal(format!(
+                        "could not send the HTTP request to {url}: {}",
+                        failure.message
+                    ))));
                 }
                 Err(failure) => {
                     tracing::debug!(
