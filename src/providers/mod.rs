@@ -237,6 +237,11 @@ impl Registry {
         }
     }
 
+    /// A registry with explicit providers (tests inject fakes through this).
+    pub fn with_providers(providers: Vec<Arc<dyn Provider>>) -> Self {
+        Registry { providers }
+    }
+
     pub fn get(&self, id: ProviderId) -> Option<&dyn Provider> {
         self.providers.iter().find(|p| p.id() == id).map(|p| p.as_ref())
     }
