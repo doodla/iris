@@ -48,8 +48,8 @@ const SNIFF_LEN: usize = 64;
 pub struct MediaInfo {
     /// Media type sniffed from the content (one of [`KNOWN_MEDIA_TYPES`]).
     pub media_type: &'static str,
-    /// Pixel dimensions (decoded images; GIF: the logical screen; `None` for
-    /// HEIC/HEIF and videos).
+    /// Pixel dimensions (decoded images; GIF: the logical screen; videos: the
+    /// first video track's `tkhd` size when present; `None` for HEIC/HEIF).
     pub width: Option<u32>,
     pub height: Option<u32>,
     /// Duration in seconds (videos whose `mvhd` is parseable).
@@ -73,6 +73,10 @@ pub struct IsoBmffInfo {
     /// Major brand from the `ftyp` box, e.g. `isom`.
     pub major_brand: String,
     pub duration_seconds: Option<f64>,
+    /// Width and height of the first video track (`moov/trak` whose `hdlr` is
+    /// `vide`), from its `tkhd`, when parseable.
+    pub width: Option<u32>,
+    pub height: Option<u32>,
 }
 
 /// Identify a media type from the first bytes of content (at least 16 bytes are
@@ -259,8 +263,8 @@ pub fn validate_bytes(bytes: &[u8], expected: &[&str]) -> Result<MediaInfo, Iris
             .map_err(|why| invalid_media(format!("content is not a valid {media_type} video: {why}")))?;
         return Ok(MediaInfo {
             media_type,
-            width: None,
-            height: None,
+            width: info.width,
+            height: info.height,
             duration_seconds: info.duration_seconds,
         });
     }
@@ -296,8 +300,8 @@ pub fn validate_reader<R: Read + Seek>(
             .map_err(|why| invalid_media(format!("content is not a valid {media_type} video: {why}")))?;
         return Ok(MediaInfo {
             media_type,
-            width: None,
-            height: None,
+            width: info.width,
+            height: info.height,
             duration_seconds: info.duration_seconds,
         });
     }
@@ -445,6 +449,7 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
     let mut saw_moov = false;
     let mut saw_meta = false;
     let mut duration = None;
+    let mut dimensions = None;
     while pos < len {
         let header = read_box_header(reader, pos, len)?;
         let kind = header.kind_str();
@@ -473,6 +478,7 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
             if want == BmffKind::Video && duration.is_none() && header.payload_len() <= MAX_MOOV_BYTES {
                 let payload = read_payload(reader, &header, MAX_MOOV_BYTES)?;
                 duration = mvhd_duration(&payload);
+                dimensions = video_dimensions(&payload);
             }
         }
         pos += header.size;
@@ -491,7 +497,13 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
         }
         _ => {}
     }
-    Ok(IsoBmffInfo { media_type, major_brand, duration_seconds: duration })
+    Ok(IsoBmffInfo {
+        media_type,
+        major_brand,
+        duration_seconds: duration,
+        width: dimensions.map(|(w, _)| w),
+        height: dimensions.map(|(_, h)| h),
+    })
 }
 
 struct BoxHeader {
@@ -562,6 +574,56 @@ fn read_payload<R: Read + Seek>(reader: &mut R, header: &BoxHeader, max: u64) ->
         return Err(format!("box '{}' is truncated", header.kind_str()));
     }
     Ok(payload)
+}
+
+/// Direct child boxes of a box payload as `(type, body)`; stops at the first
+/// malformed header (callers treat missing data as "unknown").
+fn child_boxes(payload: &[u8]) -> Vec<([u8; 4], &[u8])> {
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    while pos + 8 <= payload.len() {
+        let size32 = u32::from_be_bytes([payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3]]);
+        let kind = [payload[pos + 4], payload[pos + 5], payload[pos + 6], payload[pos + 7]];
+        let (header_len, size) = match size32 {
+            0 => (8usize, payload.len() - pos),
+            1 => match payload.get(pos + 8..pos + 16).and_then(|b| b.try_into().ok()) {
+                Some(large) => match usize::try_from(u64::from_be_bytes(large)) {
+                    Ok(n) => (16, n),
+                    Err(_) => break,
+                },
+                None => break,
+            },
+            n => (8, n as usize),
+        };
+        if size < header_len || pos + size > payload.len() {
+            break;
+        }
+        out.push((kind, &payload[pos + header_len..pos + size]));
+        pos += size;
+    }
+    out
+}
+
+/// Pixel size of the first video track in a `moov` payload: the `trak` whose
+/// `mdia/hdlr` handler type is `vide`, read from its `tkhd` (16.16 fixed-point
+/// width and height in the box's last 8 bytes). `None` when absent or zero.
+fn video_dimensions(moov: &[u8]) -> Option<(u32, u32)> {
+    child_boxes(moov).into_iter().filter(|(kind, _)| kind == b"trak").find_map(|(_, trak)| {
+        let children = child_boxes(trak);
+        let is_video = children.iter().filter(|(k, _)| k == b"mdia").any(|(_, mdia)| {
+            child_boxes(mdia)
+                .iter()
+                .any(|(k, hdlr)| k == b"hdlr" && hdlr.get(8..12) == Some(b"vide".as_slice()))
+        });
+        if !is_video {
+            return None;
+        }
+        let (_, tkhd) = children.iter().find(|(k, _)| k == b"tkhd")?;
+        let tail = tkhd.get(tkhd.len().checked_sub(8)?..)?;
+        let width = u32::from_be_bytes(tail[0..4].try_into().ok()?) >> 16;
+        let height = u32::from_be_bytes(tail[4..8].try_into().ok()?) >> 16;
+        (width > 0 && height > 0).then_some((width, height))
+    })
 }
 
 /// Duration from the `mvhd` child of a `moov` payload, if present and meaningful.

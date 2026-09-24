@@ -195,6 +195,45 @@ fn minimal_mp4_is_valid_with_duration() {
     assert_eq!(media::validate_bytes(&mp4, &[]).unwrap(), file_info);
 }
 
+/// A video track: tkhd (v0, 16.16 width/height at the end) + mdia/hdlr('vide').
+fn video_trak(width: u32, height: u32) -> Vec<u8> {
+    let mut tkhd = vec![0u8; 76]; // version/flags … matrix
+    tkhd.extend_from_slice(&(width << 16).to_be_bytes());
+    tkhd.extend_from_slice(&(height << 16).to_be_bytes());
+    let mut hdlr = vec![0u8; 8]; // version/flags + pre_defined
+    hdlr.extend_from_slice(b"vide");
+    hdlr.extend_from_slice(&[0u8; 13]); // reserved + empty name
+    bx(b"trak", &[bx(b"tkhd", &tkhd), bx(b"mdia", &bx(b"hdlr", &hdlr))].concat())
+}
+
+/// A sound track whose tkhd carries no size (like real audio tracks).
+fn sound_trak() -> Vec<u8> {
+    let mut hdlr = vec![0u8; 8];
+    hdlr.extend_from_slice(b"soun");
+    hdlr.extend_from_slice(&[0u8; 13]);
+    bx(b"trak", &[bx(b"tkhd", &[0u8; 84]), bx(b"mdia", &bx(b"hdlr", &hdlr))].concat())
+}
+
+#[test]
+fn video_dimensions_come_from_the_video_track() {
+    // Audio track first, then video: the size must come from the 'vide' track.
+    let moov = bx(b"moov", &[mvhd_v0(1000, 4000), sound_trak(), video_trak(1280, 720)].concat());
+    let mp4 = [ftyp(b"isom", &[b"isom"]), moov, bx(b"mdat", &[0u8; 64])].concat();
+    let info = inspect_iso_bmff(&mut Cursor::new(&mp4)).unwrap();
+    assert_eq!((info.width, info.height), (Some(1280), Some(720)));
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("clip.mp4");
+    std::fs::write(&path, &mp4).unwrap();
+    let file_info = media::validate_file(&path, &["video/mp4"]).unwrap();
+    assert_eq!((file_info.width, file_info.height), (Some(1280), Some(720)));
+    assert_eq!(file_info.duration_seconds, Some(4.0));
+
+    // A file without a video track handler reports no size rather than a wrong one.
+    let no_video = minimal_mp4(1000, 4000);
+    let info = inspect_iso_bmff(&mut Cursor::new(&no_video)).unwrap();
+    assert_eq!((info.width, info.height), (None, None));
+}
+
 #[test]
 fn iso_bmff_variants_are_accepted() {
     // moov at the end, 64-bit mdat header, mvhd v1, fractional duration.
