@@ -243,24 +243,29 @@ override; its rows in `config show`; the `non_default_base_url` warning; `doctor
 `providers list` entry; redaction of its key from every message; and the config file's refusal of
 credential-like keys, whose message lists every provider's variable.
 
-**Contract, help text, and documents that name providers, updated by hand:**
+**Contract, help text, package metadata, and documents that name providers, updated by hand:**
 
 - The JSON Schema. `ProviderId` is an enum in the published schema (every `provider` field), so
   regenerate it with `cargo run -q -- schema > schema/iris-output.v1.schema.json`
   (`tests/schema_contract.rs` fails until you do). A new provider value is an additive change
   under the [versioning policy](json-contract.md#schema-versioning-policy): no `schema_version`
   bump, but it gets a changelog entry.
-- Help text in `src/cli/args.rs` that lists the providers or their variables: the top-level
-  "Credentials are read only from the OPENAI_API_KEY and GEMINI_API_KEY environment variables",
-  `--provider`'s "Provider: openai or gemini", and the `providers list` description.
+- Help text in `src/cli/args.rs` that names the providers, their products, or their variables:
+  `ABOUT` ("…with OpenAI and Google Gemini/Veo"), `LONG_ABOUT` (its first paragraph names each
+  provider's image and video products, and "Credentials are read only from the OPENAI_API_KEY and
+  GEMINI_API_KEY environment variables"), `--provider`'s "Provider: openai or gemini", and the
+  `providers list` description (its credential and `IRIS_*_BASE_URL` variables).
+- Package metadata in `Cargo.toml`: `description` (names OpenAI and Google Gemini/Veo) and
+  `keywords` (`openai`, `gemini`; crates.io allows at most five).
 - The default video provider. A video command without `--provider` or `--model` uses the provider
   whose catalog declares a default video model (`default_for` containing `video.generate`). If a
   second provider declares one, the first in `ProviderId` order wins; choose that order
   deliberately, or add a `video.provider` setting as a documented configuration change.
 - Documentation: the README's setup section and support table,
   [configuration.md](configuration.md) (credential table, precedence table, full key set),
-  `CHANGELOG.md`, and [decisions.md](decisions.md) (the API choices you made, with source links
-  and the date you checked them; see section 1).
+  [architecture.md](architecture.md)'s module table (it names `providers/{openai,gemini}/` and
+  `catalog/{openai,gemini,veo}.rs`), `CHANGELOG.md`, and [decisions.md](decisions.md) (the API
+  choices you made, with source links and the date you checked them; see section 1).
 - `AGENTS.md`'s credential rule, which names the variables Iris reads: a new variable is a
   deliberate change to that rule.
 
