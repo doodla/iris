@@ -10,8 +10,10 @@ pub mod prompt;
 pub mod render;
 
 use std::ffi::OsString;
-use std::io::{IsTerminal, Read};
+use std::io::{IsTerminal, Read, Write};
+use std::panic::AssertUnwindSafe;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,7 +29,7 @@ use crate::config::{self, CliOverrides, EnvSnapshot, Settings};
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{CompletionsResult, SchemaResult};
-use crate::output::{self, ResultPayload};
+use crate::output::{self, CommandName, Envelope, ErrorBody, ResultPayload, human};
 
 use args::{
     Cli, Command, ConfigCommand, ImageCommand, JobsCommand, ModelArgs, ModelsCommand, OutputArgs, PromptArgs,
@@ -50,15 +52,19 @@ pub struct Io {
 }
 
 /// Run the `iris` process: parse `std::env::args_os`, execute, print, and return
-/// the exit code (C-03 mapping).
+/// the exit code (C-03 mapping). An unexpected panic is reported as
+/// `internal_error` (exit 1), still as a single JSON document in `--json` mode.
 pub fn run() -> i32 {
     let args: Vec<OsString> = std::env::args_os().collect();
-    let stdout: Sink = Arc::new(Mutex::new(std::io::stdout()));
+    let json = render::json_requested(&args);
+    let command = render::guess_command(&args);
+    let written = Arc::new(AtomicBool::new(false));
+    let stdout: Sink = Arc::new(Mutex::new(TrackedStdout { written: Arc::clone(&written) }));
     let stderr: Sink = Arc::new(Mutex::new(std::io::stderr()));
-    let out = Output { json: render::json_requested(&args), stdout: stdout.clone(), stderr: stderr.clone() };
+    let out = Output { json, stdout: stdout.clone(), stderr: stderr.clone() };
     let env = match EnvSnapshot::from_process() {
         Ok(env) => env,
-        Err(e) => return out.failure(render::guess_command(&args), &e, Vec::new()),
+        Err(e) => return out.failure(command, &e, Vec::new()),
     };
     let io = Io {
         env,
@@ -72,10 +78,61 @@ pub fn run() -> i32 {
         Ok(rt) => rt,
         Err(e) => {
             let error = IrisError::io("cannot start the async runtime", &e);
-            return out.failure(render::guess_command(&args), &error, Vec::new());
+            return out.failure(command, &error, Vec::new());
         }
     };
-    runtime.block_on(run_with(args, io, Deps::builtin()))
+    guarded(json, command, &written, &mut std::io::stdout(), &mut std::io::stderr(), || {
+        runtime.block_on(run_with(args, io, Deps::builtin()))
+    })
+}
+
+/// Process stdout that records whether anything was written to it.
+struct TrackedStdout {
+    written: Arc<AtomicBool>,
+}
+
+impl Write for TrackedStdout {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if !buf.is_empty() {
+            self.written.store(true, Ordering::SeqCst);
+        }
+        std::io::stdout().write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        std::io::stdout().flush()
+    }
+}
+
+/// Run `f`; if it panics, report `internal_error` (exit 1): in JSON mode as an
+/// envelope on `stdout`, but only if nothing was written there yet (never a
+/// second document); otherwise as an error on `stderr`. The panic message itself
+/// goes to stderr through the default panic hook.
+fn guarded(
+    json: bool,
+    command: Option<CommandName>,
+    stdout_written: &AtomicBool,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+    f: impl FnOnce() -> i32,
+) -> i32 {
+    if let Ok(code) = std::panic::catch_unwind(AssertUnwindSafe(f)) {
+        return code;
+    }
+    let error = IrisError::internal("iris stopped because of an internal error (a bug)").with_hint(
+        "please report it; before re-running a paid command, check `iris jobs list` for a job this command may \
+         have recorded",
+    );
+    if json {
+        if !stdout_written.load(Ordering::SeqCst) {
+            let _ =
+                stdout.write_all(Envelope::failure(command, &error, Vec::new()).to_json_line().as_bytes());
+            let _ = stdout.flush();
+        }
+    } else {
+        let _ = stderr.write_all(human::error(&ErrorBody::from(&error)).as_bytes());
+    }
+    error.exit_code()
 }
 
 /// Run one invocation with explicit streams, environment, and dependencies.
@@ -84,7 +141,7 @@ pub fn run() -> i32 {
 pub async fn run_with(args: Vec<OsString>, mut io: Io, deps: Deps) -> i32 {
     let out =
         Output { json: render::json_requested(&args), stdout: io.stdout.clone(), stderr: io.stderr.clone() };
-    let cli = match Cli::try_parse_from(&args) {
+    let cli = match Cli::try_parse_from(render::clap_args(&args)) {
         Ok(cli) => cli,
         Err(err) => return out.clap_error(err, &args),
     };
@@ -448,6 +505,38 @@ fn init_tracing(filter: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_panic_becomes_one_internal_error_document_and_never_a_second_one() {
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code =
+            guarded(true, Some(CommandName::JobsList), &AtomicBool::new(false), &mut out, &mut err, || {
+                panic!("test panic (expected)")
+            });
+        assert_eq!(code, 1);
+        let text = String::from_utf8(out).unwrap();
+        assert_eq!(text.lines().count(), 1, "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["command"], "jobs.list");
+        assert_eq!(v["error"]["code"], "internal_error");
+
+        // A document was already written: nothing more on stdout.
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        let code = guarded(true, None, &AtomicBool::new(true), &mut out, &mut err, || {
+            panic!("test panic (expected)")
+        });
+        assert_eq!(code, 1);
+        assert!(out.is_empty());
+
+        // Human mode: the error goes to stderr; a normal run keeps its exit code.
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        guarded(false, None, &AtomicBool::new(false), &mut out, &mut err, || panic!("test panic (expected)"));
+        assert!(out.is_empty());
+        assert!(String::from_utf8(err).unwrap().starts_with("error[internal_error]: "));
+        let (mut out, mut err) = (Vec::new(), Vec::new());
+        assert_eq!(guarded(true, None, &AtomicBool::new(false), &mut out, &mut err, || 4), 4);
+    }
 
     #[test]
     fn typed_flags_map_to_option_names_and_conflict_with_generic_options() {

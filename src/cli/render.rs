@@ -29,14 +29,17 @@ pub fn write(sink: &Sink, text: &str) {
     }
 }
 
-/// True if `--json` appears in argv before a `--` terminator.
+/// True if `--json` (or a `--json=VALUE` form, which clap then rejects as a
+/// usage error) appears in argv before a `--` terminator.
 pub fn json_requested(args: &[OsString]) -> bool {
-    args.iter().skip(1).take_while(|a| *a != "--").any(|a| a == "--json")
+    args.iter()
+        .skip(1)
+        .take_while(|a| *a != "--")
+        .any(|a| a == "--json" || a.to_str().is_some_and(|a| a.starts_with("--json=")))
 }
 
-/// Best-effort command name from argv, for envelopes of errors raised before or
-/// during parsing (`None` when no known command is recognizable).
-pub fn guess_command(args: &[OsString]) -> Option<CommandName> {
+/// The first two command words of argv (skipping flags and the `--config` value).
+fn command_words(args: &[OsString]) -> Vec<&str> {
     let mut words = Vec::new();
     let mut iter = args.iter().skip(1).filter_map(|a| a.to_str());
     while let Some(arg) = iter.next() {
@@ -55,6 +58,50 @@ pub fn guess_command(args: &[OsString]) -> Option<CommandName> {
             break;
         }
     }
+    words
+}
+
+/// argv for clap. clap's `help` subcommand (`iris help …`, `iris jobs help …`)
+/// accepts only command names, so `--json` is removed there; JSON mode was
+/// already detected from the original argv.
+pub fn clap_args(args: &[OsString]) -> Vec<OsString> {
+    let words = command_words(args);
+    let help = match words.as_slice() {
+        ["help", ..] => true,
+        [group, "help", ..] => GROUPS.contains(group),
+        _ => false,
+    };
+    if !help {
+        return args.to_vec();
+    }
+    args.iter()
+        .enumerate()
+        .filter(|(i, a)| *i == 0 || !(*a == "--json" || a.to_str().is_some_and(|a| a.starts_with("--json="))))
+        .map(|(_, a)| a.clone())
+        .collect()
+}
+
+/// Commands that have subcommands.
+const GROUPS: &[&str] = &["image", "video", "jobs", "models", "providers", "config"];
+
+/// A clap error's message without the `error: ` prefix: every line up to the
+/// first blank line or `Usage:`, joined with spaces (so a missing-argument error
+/// names the argument).
+fn clap_message(text: &str) -> String {
+    let lines: Vec<&str> = text
+        .lines()
+        .take_while(|l| !l.trim().is_empty() && !l.trim_start().starts_with("Usage:"))
+        .map(str::trim)
+        .collect();
+    let joined = lines.join(" ");
+    let message = joined.strip_prefix("error: ").unwrap_or(&joined).trim();
+    if message.is_empty() { "invalid arguments".to_string() } else { message.to_string() }
+}
+
+/// Best-effort command name from argv, for envelopes of errors raised before or
+/// during parsing (`None` when no known command is recognizable).
+pub fn guess_command(args: &[OsString]) -> Option<CommandName> {
+    let words = command_words(args);
     let first = *words.first()?;
     let second = words.get(1).copied().unwrap_or("");
     Some(match (first, second) {
@@ -114,13 +161,17 @@ impl Output {
         0
     }
 
-    /// Print a failure; returns the error's exit code.
+    /// Print a failure; returns the error's exit code. In human mode, files that
+    /// were saved before the failure (`details.saved`) are still listed on stdout
+    /// as `Saved <path>` lines.
     pub fn failure(&self, command: Option<CommandName>, error: &IrisError, warnings: Vec<Warning>) -> i32 {
         if self.json {
             write(&self.stdout, &Envelope::failure(command, error, warnings).to_json_line());
         } else {
+            let body = ErrorBody::from(error);
             self.human_warnings(&warnings);
-            write(&self.stderr, &redact::scrub(&human::error(&ErrorBody::from(error))));
+            write(&self.stdout, &redact::scrub(&human::saved_before_error(&body)));
+            write(&self.stderr, &redact::scrub(&human::error(&body)));
         }
         error.exit_code()
     }
@@ -131,14 +182,15 @@ impl Output {
     }
 
     /// Handle a clap parse outcome that is not a successful parse: help, version,
-    /// or a usage error (exit 2).
+    /// or a usage error (exit 2). A help result's envelope has `command: null`
+    /// (the help text is not the named command's result).
     pub fn clap_error(&self, err: clap::Error, args: &[OsString]) -> i32 {
         let text = err.render().to_string();
         let command = guess_command(args);
         match err.kind() {
             ErrorKind::DisplayHelp => {
                 if self.json {
-                    self.success(command, ResultPayload::Help(HelpResult { help: text }), Vec::new())
+                    self.success(None, ResultPayload::Help(HelpResult { help: text }), Vec::new())
                 } else {
                     write(&self.stdout, &text);
                     0
@@ -169,9 +221,7 @@ impl Output {
             }
             _ => {
                 if self.json {
-                    let first = text.lines().next().unwrap_or("invalid arguments");
-                    let message = first.strip_prefix("error: ").unwrap_or(first).to_string();
-                    let error = IrisError::usage(message)
+                    let error = IrisError::usage(clap_message(&text))
                         .with_hint("run the command with --help for usage")
                         .with_detail("usage", text.trim_end().to_string());
                     self.failure(command, &error, Vec::new())
@@ -198,6 +248,29 @@ mod tests {
         assert!(json_requested(&argv(&["iris", "--json", "jobs", "list"])));
         assert!(!json_requested(&argv(&["iris", "image", "generate", "--", "--json"])));
         assert!(!json_requested(&argv(&["iris", "--jsonx"])));
+        assert!(json_requested(&argv(&["iris", "version", "--json=true"])));
+    }
+
+    #[test]
+    fn json_is_dropped_only_for_the_help_subcommand() {
+        assert_eq!(clap_args(&argv(&["iris", "help", "--json"])), argv(&["iris", "help"]));
+        assert_eq!(
+            clap_args(&argv(&["iris", "jobs", "help", "wait", "--json"])),
+            argv(&["iris", "jobs", "help", "wait"])
+        );
+        let prompt = argv(&["iris", "image", "generate", "help", "--json"]);
+        assert_eq!(clap_args(&prompt), prompt, "a prompt that reads 'help' is not the help command");
+    }
+
+    #[test]
+    fn clap_messages_keep_every_line_before_the_usage() {
+        let text = "error: the following required arguments were not provided:\n  <JOB_ID>\n\nUsage: iris jobs \
+                    status <JOB_ID>\n\nFor more information, try '--help'.\n";
+        assert_eq!(clap_message(text), "the following required arguments were not provided: <JOB_ID>");
+        let text = "error: unexpected argument '--bogus' found\n\n  tip: to pass '--bogus' as a value, use '-- \
+                    --bogus'\n\nUsage: iris image generate [OPTIONS] [PROMPT]\n";
+        assert_eq!(clap_message(text), "unexpected argument '--bogus' found");
+        assert_eq!(clap_message(""), "invalid arguments");
     }
 
     #[test]

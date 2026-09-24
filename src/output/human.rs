@@ -97,6 +97,14 @@ pub fn error(e: &ErrorBody) -> String {
     out
 }
 
+/// `Saved <path>` lines for files an error says were saved before the failure
+/// (`details.saved`, e.g. the first images of a request whose later image could
+/// not be saved). Empty when there are none.
+pub fn saved_before_error(e: &ErrorBody) -> String {
+    let saved = e.details.as_ref().and_then(|d| d.get("saved")).and_then(Value::as_array);
+    saved.into_iter().flatten().filter_map(Value::as_str).map(|p| format!("Saved {p}\n")).collect()
+}
+
 fn ensure_newline(mut s: String) -> String {
     if !s.ends_with('\n') {
         s.push('\n');
@@ -486,5 +494,16 @@ mod tests {
         assert!(text.starts_with("error[wait_timeout]: still running\n"), "{text}");
         assert!(text.contains("  hint: iris jobs wait job_x\n"));
         assert!(text.contains("  job: job_x (status running)\n"));
+        assert_eq!(saved_before_error(&ErrorBody::from(&e)), "");
+    }
+
+    #[test]
+    fn files_saved_before_an_error_are_listed() {
+        let e = crate::error::IrisError::new(
+            crate::error::ErrorCode::InvalidMedia,
+            "second image is not an image",
+        )
+        .with_detail("saved", vec!["/w/a-1.png".to_string()]);
+        assert_eq!(saved_before_error(&ErrorBody::from(&e)), "Saved /w/a-1.png\n");
     }
 }

@@ -293,6 +293,21 @@ fn clap_errors_are_json_envelopes_with_exit_2_and_nothing_on_stderr() {
     }
     let v = run(iris(&sandbox).args(["image", "edit", "x", "--json"])).json();
     assert_eq!(v["command"], "image.edit");
+    // Missing-argument messages name the argument (clap spreads them over lines).
+    for (args, missing) in [
+        (&["jobs", "status", "--json"][..], "<JOB_ID>"),
+        (&["jobs", "download", "--json"], "<JOB_ID>"),
+        (&["models", "show", "--json"], "<MODEL>"),
+        (&["image", "edit", "x", "--json"], "--image <PATH>"),
+    ] {
+        let v = run(iris(&sandbox).args(args)).json();
+        let message = v["error"]["message"].as_str().unwrap();
+        assert_eq!(
+            message,
+            format!("the following required arguments were not provided: {missing}"),
+            "{args:?}"
+        );
+    }
     let v = run(iris(&sandbox).args(["bogus", "--json"])).json();
     assert!(v["command"].is_null());
 }

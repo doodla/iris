@@ -189,6 +189,8 @@ async fn clap_usage_errors_become_json_envelopes() {
 
     let run = f.run(&["image", "edit", "x", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error", "edit requires --image");
+    let message = run.json()["error"]["message"].as_str().unwrap().to_string();
+    assert!(message.contains("--image <PATH>"), "the message names the missing argument: {message}");
 
     let run = f.run(&["video", "generate", "x", "--detach", "--timeout", "5m", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error");
@@ -207,9 +209,29 @@ async fn help_and_version_have_json_forms() {
     assert_eq!(run.code, 0);
     let v = run.json();
     assert_eq!(v["ok"], true);
-    assert_eq!(v["command"], "image.generate");
+    // A help result is not the named command's result: command is null.
+    assert!(v["command"].is_null(), "{v}");
     let help = v["result"]["help"].as_str().unwrap();
     assert!(help.contains("Examples:") && help.contains("billed by the provider"), "{help}");
+
+    // clap's help subcommand, with --json anywhere.
+    for args in [&["help", "--json"][..], &["jobs", "help", "wait", "--json"], &["--json", "help", "jobs"]] {
+        let run = f.run(args).await;
+        assert_eq!(run.code, 0, "{args:?}: {run:?}");
+        let v = run.json();
+        assert!(v["command"].is_null());
+        assert!(v["result"]["help"].as_str().unwrap().contains("Usage:"), "{args:?}");
+    }
+    let v = f.run(&["jobs", "help", "wait", "--json"]).await.json();
+    assert!(v["result"]["help"].as_str().unwrap().contains("--no-download"));
+
+    // `--json=VALUE` is a JSON request too; clap rejects the value, as one envelope.
+    let run = f.run(&["version", "--json=true"]).await;
+    assert_eq!(run.code, 2);
+    let v: Value = serde_json::from_str(run.stdout.trim_end()).unwrap();
+    assert_matches_schema(&v);
+    assert_eq!(v["error"]["code"], "usage_error");
+    assert!(run.stderr.is_empty(), "{}", run.stderr);
 
     let run = f.run(&["--help", "--json"]).await;
     let v = run.json();
@@ -492,4 +514,22 @@ async fn dry_run_plans_through_the_cli_need_no_credentials() {
     let run = run_cli(setup, &["image", "generate", "x", "--json"]).await;
     assert_eq!(run.code, 3);
     assert_eq!(run.error_code(), "missing_credentials");
+}
+
+#[tokio::test]
+async fn human_errors_still_list_images_saved_before_the_failure() {
+    let f = Fixture::new();
+    f.openai.images().push(Ok(image_output(vec![png(4, 4), b"not an image".to_vec()])));
+    let run = f.run(&["image", "generate", "two foxes", "--count", "2", "-o", "fox.png"]).await;
+    assert_ne!(run.code, 0, "{run:?}");
+    let first = f.sandbox.path("fox-1.png");
+    assert!(first.is_file());
+    assert_eq!(run.stdout, format!("Saved {}\n", first.display()), "{run:?}");
+    assert!(run.stderr.contains("error["), "{}", run.stderr);
+
+    // The same failure in JSON mode lists them in details.saved.
+    f.openai.images().push(Ok(image_output(vec![png(4, 4), b"not an image".to_vec()])));
+    let run = f.run(&["image", "generate", "two foxes", "--count", "2", "-d", "more", "--json"]).await;
+    let v = run.json();
+    assert_eq!(v["error"]["details"]["saved"].as_array().unwrap().len(), 1, "{v}");
 }
