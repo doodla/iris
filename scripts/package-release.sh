@@ -10,9 +10,17 @@
 #   cargo build --release --locked --target x86_64-unknown-linux-musl
 #
 # and packages it into <output-dir>/iris-vX.Y.Z-<target-triple>.tar.gz (default
-# output-dir: "dist"): a single top-level directory containing exactly the
-# binary, LICENSE, README.md and CHANGELOG.md, no other paths, no symlinks, no
-# absolute or ".." entries (checked by the installer; see docs/install.md).
+# output-dir: "dist", relative to the repo root): a single top-level directory
+# containing exactly the binary, LICENSE, README.md and CHANGELOG.md, no other
+# paths, no symlinks, no absolute or ".." entries (checked by the installer;
+# see docs/install.md).
+#
+# The archive is reproducible: the same inputs give the same bytes on the same
+# kind of host. Entry order, owner, group, permissions and timestamps are fixed
+# (every mtime is SOURCE_DATE_EPOCH, by default the commit time of HEAD), and
+# the gzip header carries no file name or timestamp. GNU tar is used when it is
+# installed (as tar, or as gtar on macOS); otherwise BSD tar, with the same
+# normalization done through its options and by touching the staged files.
 #
 # Prints the produced archive's path to stdout on success. Run from anywhere;
 # it resolves the repo root from its own location.
@@ -80,6 +88,14 @@ if [ -n "$missing" ]; then
     exit 1
 fi
 
+src_date="${SOURCE_DATE_EPOCH:-$(git -C "$repo_root" log -1 --format=%ct 2>/dev/null || date +%s)}"
+case $src_date in
+    '' | *[!0-9]*)
+        echo "package-release: SOURCE_DATE_EPOCH must be a whole number of seconds, got '$src_date'" >&2
+        exit 1
+        ;;
+esac
+
 archive_name="iris-v${version}-${target}"
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/iris-package.XXXXXX")
@@ -89,13 +105,9 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 stage_dir="$work_dir/$archive_name"
-mkdir -p "$stage_dir"
+mkdir "$stage_dir"
 cp "$bin_path" "$stage_dir/iris"
-chmod 755 "$stage_dir/iris"
-cp LICENSE "$stage_dir/LICENSE"
-cp README.md "$stage_dir/README.md"
-cp CHANGELOG.md "$stage_dir/CHANGELOG.md"
-chmod 644 "$stage_dir/LICENSE" "$stage_dir/README.md" "$stage_dir/CHANGELOG.md"
+cp LICENSE README.md CHANGELOG.md "$stage_dir/"
 
 # Refuse to publish a symlink under the staged tree — the release layout
 # requires none, and staging is entirely files this script just copied, so any
@@ -105,42 +117,67 @@ if find "$stage_dir" -type l | grep -q .; then
     exit 1
 fi
 
-mkdir -p "$out_dir"
-# Resolve out_dir to an absolute path before leaving $repo_root's context in
-# the tar invocation, so a relative --output-dir given by the caller still
-# lands where they expect.
-out_dir=$(CDPATH='' cd -- "$out_dir" && pwd)
-archive_path="$out_dir/${archive_name}.tar.gz"
+# Permissions must not depend on the umask or on modes in the checkout.
+find "$stage_dir" -type d -exec chmod 755 {} +
+find "$stage_dir" -type f -exec chmod 644 {} +
+chmod 755 "$stage_dir/iris"
 
-if tar --version 2>/dev/null | grep -q GNU; then
-    # GNU tar: pin owner/group/mtime for a reproducible archive.
-    src_date="${SOURCE_DATE_EPOCH:-$(git -C "$repo_root" log -1 --format=%ct 2>/dev/null || date +%s)}"
-    tar --create --gzip --file "$archive_path" \
-        --sort=name --owner=0 --group=0 --numeric-owner \
-        --mtime="@${src_date}" \
-        -C "$work_dir" "$archive_name"
+# Every entry in one fixed, byte-wise sorted order, archived without recursion
+# so that the order never depends on the file system.
+(cd "$work_dir" && find "$archive_name" -print | LC_ALL=C sort) >"$work_dir/entries"
+
+gnu_tar=""
+for candidate in tar gtar; do
+    if "$candidate" --version 2>/dev/null | grep -q 'GNU tar'; then
+        gnu_tar=$candidate
+        break
+    fi
+done
+
+if [ -n "$gnu_tar" ]; then
+    (cd "$work_dir" && "$gnu_tar" --create --format=gnu --no-recursion \
+        --owner=0 --group=0 --numeric-owner --mtime="@${src_date}" \
+        --file "$work_dir/archive.tar" --files-from "$work_dir/entries")
 else
-    # BSD/macOS tar has no --sort/--mtime/--owner; the archive is still
-    # correct, just not necessarily byte-for-byte reproducible.
-    COPYFILE_DISABLE=1 tar --create --gzip --file "$archive_path" -C "$work_dir" "$archive_name"
+    # BSD tar has no --mtime, so every staged entry gets the same timestamp
+    # first (`date -r SECONDS` is the BSD spelling, `date -d @SECONDS` the GNU
+    # one). The ustar format records nothing beyond what is fixed here (no
+    # extended attributes), and COPYFILE_DISABLE stops macOS from adding
+    # AppleDouble "._" entries.
+    stamp=$(TZ=UTC0 date -r "$src_date" '+%Y%m%d%H%M.%S' 2>/dev/null ||
+        TZ=UTC0 date -d "@$src_date" '+%Y%m%d%H%M.%S')
+    find "$stage_dir" -exec env TZ=UTC0 touch -t "$stamp" {} +
+    (cd "$work_dir" && COPYFILE_DISABLE=1 tar --create --format=ustar --no-recursion \
+        --uid 0 --gid 0 --uname '' --gname '' \
+        --file "$work_dir/archive.tar" -T "$work_dir/entries")
 fi
+# -n: no file name or timestamp in the gzip header.
+gzip -n -c "$work_dir/archive.tar" >"$work_dir/archive.tar.gz"
 
-# Self-check: the archive must list exactly the four intended entries under
-# one top-level directory, nothing more.
-listing=$(tar --list --file "$archive_path" | LC_ALL=C sort)
+# Self-check before anything reaches output-dir: the archive must list exactly
+# the intended entries under one top-level directory, nothing more. Directory
+# names are compared without the trailing slash that tar may print.
+listing=$(tar --list --file "$work_dir/archive.tar.gz" | sed 's:/*$::' | LC_ALL=C sort)
 expected=$(printf '%s\n' \
-    "$archive_name/" \
+    "$archive_name" \
     "$archive_name/CHANGELOG.md" \
     "$archive_name/LICENSE" \
     "$archive_name/README.md" \
     "$archive_name/iris" | LC_ALL=C sort)
 if [ "$listing" != "$expected" ]; then
-    echo "package-release: unexpected archive contents in $archive_path" >&2
+    echo "package-release: unexpected archive contents for ${archive_name}.tar.gz" >&2
     echo "--- got ---" >&2
     echo "$listing" >&2
     echo "--- expected ---" >&2
     echo "$expected" >&2
     exit 1
 fi
+
+mkdir -p "$out_dir"
+# Resolve out_dir to an absolute path, so a relative output-dir is taken
+# relative to the repo root, where this script runs.
+out_dir=$(CDPATH='' cd -- "$out_dir" && pwd)
+archive_path="$out_dir/${archive_name}.tar.gz"
+mv -f "$work_dir/archive.tar.gz" "$archive_path"
 
 echo "$archive_path"
