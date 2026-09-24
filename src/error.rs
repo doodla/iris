@@ -30,7 +30,10 @@ pub mod exit {
 }
 
 /// Stable, public error codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+///
+/// Deserialization is tolerant: a code this binary does not know (written by a newer
+/// Iris into a persisted job record) reads as `internal_error` instead of failing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     UsageError,
@@ -66,8 +69,8 @@ pub enum ErrorCode {
     Interrupted,
 }
 
-/// Coarse, stable grouping of error codes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+/// Coarse, stable grouping of error codes. Deserialization is tolerant like [`ErrorCode`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCategory {
     Usage,
@@ -222,6 +225,56 @@ impl ErrorCode {
             ProviderError | ProviderBadResponse | InvalidMedia | IoError | InternalError => None,
             _ => Some(false),
         }
+    }
+}
+
+impl ErrorCategory {
+    pub const ALL: &'static [ErrorCategory] = &[
+        ErrorCategory::Usage,
+        ErrorCategory::Validation,
+        ErrorCategory::Config,
+        ErrorCategory::Conflict,
+        ErrorCategory::NotFound,
+        ErrorCategory::Auth,
+        ErrorCategory::Access,
+        ErrorCategory::Quota,
+        ErrorCategory::RateLimit,
+        ErrorCategory::Content,
+        ErrorCategory::Provider,
+        ErrorCategory::Network,
+        ErrorCategory::Timeout,
+        ErrorCategory::Artifact,
+        ErrorCategory::Io,
+        ErrorCategory::Internal,
+        ErrorCategory::Pending,
+        ErrorCategory::Uncertain,
+        ErrorCategory::Interrupted,
+    ];
+}
+
+/// Deserialize a unit enum from its serialized string, falling back when unknown.
+fn tolerant_enum<'de, D, T>(deserializer: D, all: &[T], fallback: T) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Serialize + Copy,
+{
+    let raw = String::deserialize(deserializer)?;
+    Ok(all
+        .iter()
+        .copied()
+        .find(|v| serde_json::to_value(v).ok().and_then(|j| j.as_str().map(|s| s == raw)).unwrap_or(false))
+        .unwrap_or(fallback))
+}
+
+impl<'de> Deserialize<'de> for ErrorCode {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        tolerant_enum(deserializer, ErrorCode::ALL, ErrorCode::InternalError)
+    }
+}
+
+impl<'de> Deserialize<'de> for ErrorCategory {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        tolerant_enum(deserializer, ErrorCategory::ALL, ErrorCategory::Internal)
     }
 }
 
@@ -387,6 +440,23 @@ mod tests {
             assert_eq!(json, serde_json::Value::String(code.as_str().to_string()));
             assert!(seen.insert(code.as_str()), "duplicate code {}", code.as_str());
         }
+    }
+
+    #[test]
+    fn deserialization_round_trips_and_tolerates_unknown_values() {
+        for code in ErrorCode::ALL {
+            let json = serde_json::to_string(code).unwrap();
+            assert_eq!(serde_json::from_str::<ErrorCode>(&json).unwrap(), *code);
+        }
+        for cat in ErrorCategory::ALL {
+            let json = serde_json::to_string(cat).unwrap();
+            assert_eq!(serde_json::from_str::<ErrorCategory>(&json).unwrap(), *cat);
+        }
+        assert_eq!(
+            serde_json::from_str::<ErrorCode>("\"some_future_code\"").unwrap(),
+            ErrorCode::InternalError
+        );
+        assert_eq!(serde_json::from_str::<ErrorCategory>("\"future\"").unwrap(), ErrorCategory::Internal);
     }
 
     #[test]
