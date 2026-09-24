@@ -325,9 +325,14 @@ fn download_states_never_change_job_status() {
     assert_eq!(rec.outputs()[0].download_state, DownloadState::Failed);
     assert_eq!(rec.outputs()[0].last_error.as_ref().unwrap().code, ErrorCode::DownloadFailed);
 
+    assert!(rec.outputs()[0].recorded_file().is_none(), "nothing saved yet");
     rec.mark_output_downloaded(0, &artifact(0), ts(41)).unwrap();
     let out = &rec.outputs()[0];
     assert_eq!(out.download_state, DownloadState::Downloaded);
+    let recorded = out.recorded_file().unwrap();
+    assert_eq!(recorded.path, std::path::Path::new("/tmp/out/job-0.mp4"));
+    assert_eq!((recorded.bytes, recorded.sha256), (1234, "ab".repeat(32).as_str()));
+    assert_eq!(recorded.media_type, Some("video/mp4"));
     assert!(out.last_error.is_none());
     assert_eq!(out.bytes, Some(1234));
     assert_eq!(out.downloaded_at, Some(ts(41)));

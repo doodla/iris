@@ -29,6 +29,7 @@ use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
 use super::JobId;
+use crate::artifacts::RecordedFile;
 use crate::catalog::{InputCounts, ModelSpec, OptionKind, ResolvedOptions};
 use crate::domain::{
     Artifact, CostEstimate, DownloadState, JobStatus, Operation, ProviderId, Usage, Warning,
@@ -200,6 +201,21 @@ impl JobOutput {
             duration_seconds: None,
             extra: Map::new(),
         }
+    }
+
+    /// The recorded saved file of a `downloaded` output, as
+    /// [`decide_download`](crate::artifacts::decide_download) needs it (`None` if
+    /// the output is not downloaded or its record is incomplete).
+    pub fn recorded_file(&self) -> Option<RecordedFile<'_>> {
+        if self.download_state != DownloadState::Downloaded {
+            return None;
+        }
+        Some(RecordedFile {
+            path: self.local_path.as_deref()?,
+            bytes: self.bytes?,
+            sha256: self.sha256.as_deref()?,
+            media_type: self.media_type.as_deref(),
+        })
     }
 
     /// The saved artifact, if this output is downloaded.

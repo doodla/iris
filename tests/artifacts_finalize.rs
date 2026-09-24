@@ -37,6 +37,11 @@ fn mp4(duration_ms: u32) -> Vec<u8> {
     [ftyp, bx(b"moov", &bx(b"mvhd", &mvhd)), bx(b"mdat", &[0x42; 512])].concat()
 }
 
+/// A minimal valid QuickTime file.
+fn mov() -> Vec<u8> {
+    [bx(b"ftyp", b"qt  \0\0\0\0qt  "), bx(b"moov", &[])].concat()
+}
+
 /// Names in `dir`, asserting no temp/part files were left behind.
 fn listing(dir: &Path) -> Vec<String> {
     let mut names: Vec<String> =
@@ -234,7 +239,12 @@ fn download_decisions() {
     let content = mp4(4000);
     fs::write(&recorded, &content).unwrap();
     let sha = sha256_bytes(&content);
-    let rec = RecordedFile { path: &recorded, bytes: content.len() as u64, sha256: &sha };
+    let rec = RecordedFile {
+        path: &recorded,
+        bytes: content.len() as u64,
+        sha256: &sha,
+        media_type: Some("video/mp4"),
+    };
 
     assert_eq!(decide_download(None, &recorded), DownloadDecision::Fetch);
     assert_eq!(decide_download(Some(rec), &recorded), DownloadDecision::AlreadyDownloaded);
@@ -255,13 +265,107 @@ fn download_decisions() {
 }
 
 #[test]
+fn repeat_downloads_recognize_a_file_saved_under_an_adjusted_extension() {
+    // Planned job_x.mp4, the provider returned QuickTime, saved as job_x.mov.
+    let dir = tempfile::tempdir().unwrap();
+    let saved = dir.path().join("job_x.mov");
+    let content = mov();
+    fs::write(&saved, &content).unwrap();
+    let sha = sha256_bytes(&content);
+    let rec = RecordedFile {
+        path: &saved,
+        bytes: content.len() as u64,
+        sha256: &sha,
+        media_type: Some("video/quicktime"),
+    };
+    let planned = dir.path().join("job_x.mp4");
+    assert_eq!(decide_download(Some(rec), &planned), DownloadDecision::AlreadyDownloaded);
+    assert_eq!(decide_download(Some(rec), &saved), DownloadDecision::AlreadyDownloaded);
+    assert_eq!(decide_download(Some(rec), &dir.path().join("other.mp4")), DownloadDecision::CopyLocal);
+    // Without the media type Iris cannot know the adjusted name: copy (still no network).
+    let untyped = RecordedFile { media_type: None, ..rec };
+    assert_eq!(decide_download(Some(untyped), &planned), DownloadDecision::CopyLocal);
+}
+
+#[test]
+fn overwrite_never_replaces_a_file_at_an_extension_adjusted_path() {
+    let dir = tempfile::tempdir().unwrap();
+
+    // Paid image: -o photo.png --overwrite, the provider returns a JPEG, and an
+    // unrelated photo.jpg exists. It is kept; the output goes next to it.
+    let unrelated = dir.path().join("photo.jpg");
+    fs::write(&unrelated, b"a holiday picture").unwrap();
+    let jpeg = image(ImageFormat::Jpeg, 7);
+    let saved =
+        save_image(&jpeg, &dir.path().join("photo.png"), 0, FinalizeMode::for_generated(true)).unwrap();
+    assert_eq!(fs::read(&unrelated).unwrap(), b"a holiday picture");
+    assert_eq!(Path::new(&saved.artifact.path), dir.path().join("photo.1.jpg"));
+    assert_eq!(saved.outcome, SaveOutcome::Renamed { requested: unrelated.clone() });
+    let codes: Vec<&str> = saved.warnings.iter().map(|w| w.code.as_str()).collect();
+    assert_eq!(codes, vec!["output_extension_adjusted", "output_renamed"]);
+    assert_eq!(fs::read(dir.path().join("photo.1.jpg")).unwrap(), jpeg);
+
+    // --overwrite still replaces the path the user named when no adjustment happens.
+    let named = dir.path().join("named.jpg");
+    fs::write(&named, b"old").unwrap();
+    save_image(&jpeg, &named, 0, FinalizeMode::for_generated(true)).unwrap();
+    assert_eq!(fs::read(&named).unwrap(), jpeg);
+
+    // Download: -o job_x.mp4 --overwrite, QuickTime content, unrelated job_x.mov.
+    let other_mov = dir.path().join("job_x.mov");
+    fs::write(&other_mov, b"someone's edit").unwrap();
+    let mut part = PartFile::create_for(&dir.path().join("job_x.mp4")).unwrap();
+    part.file_mut().write_all(&mov()).unwrap();
+    let err = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(true)).unwrap_err();
+    assert_eq!(err.code, ErrorCode::OutputExists);
+    assert!(err.message.contains("video/quicktime"), "{}", err.message);
+    assert!(err.hint.as_deref().unwrap().contains("only replaces the path you named"));
+    assert_eq!(err.details["path"], other_mov.to_str().unwrap());
+    assert_eq!(fs::read(&other_mov).unwrap(), b"someone's edit");
+
+    // Identical content there is still a successful no-op.
+    fs::write(&other_mov, mov()).unwrap();
+    let mut part = PartFile::create_for(&dir.path().join("job_x.mp4")).unwrap();
+    part.file_mut().write_all(&mov()).unwrap();
+    let again = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(true)).unwrap();
+    assert_eq!(again.outcome, SaveOutcome::AlreadyPresent);
+
+    // Local copy with the same rule.
+    let source = dir.path().join("src.mov");
+    fs::write(&source, mov()).unwrap();
+    let sha = sha256_bytes(&mov());
+    let rec = RecordedFile {
+        path: &source,
+        bytes: mov().len() as u64,
+        sha256: &sha,
+        media_type: Some("video/quicktime"),
+    };
+    let clip_mov = dir.path().join("clip.mov");
+    fs::write(&clip_mov, b"unrelated").unwrap();
+    let err = copy_local(rec, &dir.path().join("clip.mp4"), 0, VIDEO_TYPES, FinalizeMode::for_download(true))
+        .unwrap_err();
+    assert_eq!(err.code, ErrorCode::OutputExists);
+    assert_eq!(fs::read(&clip_mov).unwrap(), b"unrelated");
+    assert!(!dir.path().join("clip.mp4").exists());
+
+    let mut names = listing(dir.path());
+    names.sort();
+    assert_eq!(names, vec!["clip.mov", "job_x.mov", "named.jpg", "photo.1.jpg", "photo.jpg", "src.mov"]);
+}
+
+#[test]
 fn local_copies_need_no_network_and_verify_the_source() {
     let dir = tempfile::tempdir().unwrap();
     let recorded = dir.path().join("job_x.mp4");
     let content = mp4(4000);
     fs::write(&recorded, &content).unwrap();
     let sha = sha256_bytes(&content);
-    let rec = RecordedFile { path: &recorded, bytes: content.len() as u64, sha256: &sha };
+    let rec = RecordedFile {
+        path: &recorded,
+        bytes: content.len() as u64,
+        sha256: &sha,
+        media_type: Some("video/mp4"),
+    };
 
     let target = dir.path().join("copies").join("clip.mp4");
     let saved = copy_local(rec, &target, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap();
@@ -291,10 +395,8 @@ fn same_kind_types_are_kept_and_other_kinds_rejected_for_downloads() {
     let target = dir.path().join("job_x.mp4");
 
     // A valid QuickTime file where MP4 was declared: kept, under .mov.
-    let mut mov = bx(b"ftyp", b"qt  \0\0\0\0qt  ");
-    mov.extend(bx(b"moov", &[]));
     let part = PartFile::create_for(&target).unwrap();
-    fs::write(part.path(), &mov).unwrap();
+    fs::write(part.path(), mov()).unwrap();
     let saved = finalize_download(part, 0, VIDEO_TYPES, FinalizeMode::for_download(false)).unwrap();
     assert_eq!(Path::new(&saved.artifact.path), dir.path().join("job_x.mov"));
     assert_eq!(saved.artifact.media_type, "video/quicktime");

@@ -14,17 +14,21 @@ use sha2::{Digest, Sha256};
 
 use crate::error::{ErrorCode, IrisError};
 
-use super::finalize::{FinalizeMode, PartFile, SavedArtifact, build_artifact, place};
+use super::finalize::{FinalizeMode, PartFile, SavedArtifact};
 use super::{finalize, paths};
 
-/// What the job record says about a previously downloaded output.
-#[derive(Debug, Clone, Copy)]
+/// What the job record says about a previously downloaded output (see
+/// `JobOutput::recorded_file`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RecordedFile<'a> {
     /// Absolute path recorded at download time.
     pub path: &'a Path,
     pub bytes: u64,
     /// Lowercase hex SHA-256 recorded at download time.
     pub sha256: &'a str,
+    /// Media type of the saved file (sniffed at download time), used to recognize a
+    /// file saved under an adjusted extension.
+    pub media_type: Option<&'a str>,
 }
 
 /// How to obtain one output at `target`.
@@ -40,8 +44,13 @@ pub enum DownloadDecision {
 }
 
 /// Decide per C-04: `AlreadyDownloaded` if the recorded file exists with the
-/// recorded size and SHA-256 and equals `target`; `CopyLocal` if it is intact but
-/// `target` differs; otherwise `Fetch`.
+/// recorded size and SHA-256 and is the file `target` would become; `CopyLocal` if
+/// it is intact but `target` differs; otherwise `Fetch`.
+///
+/// "The file `target` would become" is `target` itself or, when the recorded media
+/// type needs another extension, `target` with that extension: a MOV planned as
+/// `job.mp4` was saved as `job.mov`, and repeating the download must not copy it.
+/// Report the `already_downloaded` warning with the recorded path.
 pub fn decide_download(recorded: Option<RecordedFile<'_>>, target: &Path) -> DownloadDecision {
     let Some(rec) = recorded else {
         return DownloadDecision::Fetch;
@@ -49,7 +58,11 @@ pub fn decide_download(recorded: Option<RecordedFile<'_>>, target: &Path) -> Dow
     if !is_intact(&rec) {
         return DownloadDecision::Fetch;
     }
-    if same_path(rec.path, target) {
+    let adjusted_target = rec.media_type.and_then(|t| match paths::adjust_extension(target, t) {
+        (adjusted, Some(_)) => Some(adjusted),
+        (_, None) => None,
+    });
+    if same_path(rec.path, target) || adjusted_target.is_some_and(|t| same_path(rec.path, &t)) {
         DownloadDecision::AlreadyDownloaded
     } else {
         DownloadDecision::CopyLocal
@@ -69,8 +82,11 @@ pub fn is_intact(rec: &RecordedFile<'_>) -> bool {
 /// Copy an intact downloaded file to `target` without network access: temp file in
 /// the target directory (hashing while copying) → verify the hash still matches the
 /// record → validate media → finalize with `mode` (normally
-/// [`FinalizeMode::for_download`]). If the source changed, `io_error` is returned
-/// and the caller should fall back to [`DownloadDecision::Fetch`].
+/// [`FinalizeMode::for_download`]; at an extension-adjusted path `Overwrite` acts
+/// as `NoClobber`, see [`finalize_download`](super::finalize_download)). If the
+/// source changed, `io_error` is returned and the caller should fall back to
+/// [`DownloadDecision::Fetch`]. Every error here is local: the job record's
+/// download state must not be changed because of it.
 pub fn copy_local(
     source: RecordedFile<'_>,
     target: &Path,
@@ -91,10 +107,7 @@ pub fn copy_local(
         .with_detail("path", source.path.to_string_lossy().into_owned()));
     }
     let info = finalize::validate_output_file(part.path(), expected)?;
-    let (final_target, adjusted) = paths::adjust_extension(target, info.media_type);
-    let (path, outcome) = place(part, &final_target, &sha256, mode)?;
-    let warnings = adjusted.into_iter().chain(finalize::outcome_warning(&path, &outcome)).collect();
-    Ok(SavedArtifact { artifact: build_artifact(index, &path, &info, copied, sha256), outcome, warnings })
+    finalize::finish(part, index, info, copied, sha256, mode, FinalizeMode::NoClobber)
 }
 
 fn copy_hashing(input: &mut impl Read, output: &mut impl Write) -> io::Result<(u64, String)> {

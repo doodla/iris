@@ -13,6 +13,12 @@
 //!   `<stem>.<n>.<ext>` with warning `output_renamed`. Used for paid synchronous
 //!   outputs, which must never be discarded.
 //!
+//! When the content needs another extension than the requested path
+//! (`output_extension_adjusted`, e.g. a JPEG for `photo.png`), the output goes to a
+//! path the user never named and preflight never checked. `--overwrite` does not
+//! extend to it: `Overwrite` becomes `RenameOnConflict` for generated outputs and
+//! `NoClobber` for downloads there, so an unrelated `photo.jpg` is never replaced.
+//!
 //! The temp file is removed on every failure path. Content is validated (decode /
 //! ISO-BMFF walk) before it is given its final name.
 
@@ -24,7 +30,7 @@ use sha2::{Digest, Sha256};
 use tempfile::NamedTempFile;
 
 use crate::domain::{Artifact, Warning};
-use crate::error::IrisError;
+use crate::error::{ErrorCode, IrisError};
 
 use super::media::{self, MediaInfo};
 use super::paths;
@@ -34,7 +40,8 @@ const MAX_RENAME_ATTEMPTS: u32 = 9999;
 /// Longest part of the target name reused in a temp file name.
 const MAX_NAME_IN_PART: usize = 120;
 
-/// What to do when the target path already exists at finalize time.
+/// What to do when the target path already exists at finalize time. The mode
+/// applies to the requested path; see the module docs for extension-adjusted paths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FinalizeMode {
     /// Refuse (`output_exists`) unless the existing file has identical content.
@@ -131,12 +138,13 @@ impl PartFile {
 
 /// Validate and save a paid synchronous image (bytes held in memory) to `target`.
 ///
-/// Steps: validate (sniff + full decode of PNG/JPEG/WebP) → fix the extension if
-/// the content type differs from `target`'s (`output_extension_adjusted`) → temp
-/// file → finalize with `mode` (normally [`FinalizeMode::for_generated`]).
-/// Any valid image type is kept, even one the model does not declare: paid output
-/// is never discarded for its format. Content that is not a valid image is
-/// `invalid_media` and nothing is written.
+/// Steps: validate (sniff + full decode of PNG/JPEG/WebP) → temp file → fix the
+/// extension if the content type differs from `target`'s
+/// (`output_extension_adjusted`) → finalize with `mode` (normally
+/// [`FinalizeMode::for_generated`]; at an adjusted path `Overwrite` acts as
+/// `RenameOnConflict`). Any valid image type is kept, even one the model does not
+/// declare: paid output is never discarded for its format. Content that is not a
+/// valid image is `invalid_media` and nothing is written.
 pub fn save_image(
     bytes: &[u8],
     target: &Path,
@@ -146,17 +154,16 @@ pub fn save_image(
     let info = media::validate_bytes(bytes, &[])?;
     if !media::is_image(info.media_type) {
         return Err(IrisError::new(
-            crate::error::ErrorCode::InvalidMedia,
+            ErrorCode::InvalidMedia,
             format!("content is {}, expected an image", info.media_type),
         ));
     }
-    let (target, adjusted) = paths::adjust_extension(target, info.media_type);
-    let mut part = PartFile::create_for(&target)?;
+    let mut part = PartFile::create_for(target)?;
     part.file_mut()
         .write_all(bytes)
         .map_err(|e| IrisError::io(format_args!("cannot write {}", part.path().display()), &e))?;
     let sha256 = sha256_bytes(bytes);
-    finish(part, &target, index, info, bytes.len() as u64, sha256, adjusted, mode)
+    finish(part, index, info, bytes.len() as u64, sha256, mode, FinalizeMode::RenameOnConflict)
 }
 
 /// Validate a downloaded temp file and move it to its target (normally with
@@ -167,7 +174,9 @@ pub fn save_image(
 /// and is saved under its own extension (`output_extension_adjusted`); content of
 /// another kind, unrecognized content (e.g. an error body), or a broken file is
 /// `invalid_media`, and the temp file is removed. The final name never holds
-/// unvalidated content.
+/// unvalidated content. At an adjusted path `Overwrite` acts as `NoClobber`: an
+/// existing different file there is `output_exists` (the download can be repeated
+/// to another path; nothing unrelated is replaced).
 pub fn finalize_download(
     part: PartFile,
     index: u32,
@@ -176,10 +185,9 @@ pub fn finalize_download(
 ) -> Result<SavedArtifact, IrisError> {
     let info = validate_output_file(part.path(), expected)
         .map_err(|e| e.with_detail("path", part.target().to_string_lossy().into_owned()))?;
-    let (target, adjusted) = paths::adjust_extension(part.target(), info.media_type);
     let (bytes, sha256) = sha256_file(part.path())
         .map_err(|e| IrisError::io(format_args!("cannot read {}", part.path().display()), &e))?;
-    finish(part, &target, index, info, bytes, sha256, adjusted, mode)
+    finish(part, index, info, bytes, sha256, mode, FinalizeMode::NoClobber)
 }
 
 /// Validate a finished output file; see [`finalize_download`] for how `expected`
@@ -202,26 +210,55 @@ fn require_same_kind(expected: &[&str], media_type: &str) -> Result<(), IrisErro
         Ok(())
     } else {
         Err(IrisError::new(
-            crate::error::ErrorCode::InvalidMedia,
+            ErrorCode::InvalidMedia,
             format!("content is {media_type}, expected {}", expected.join(" or ")),
         ))
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn finish(
+/// Place a validated temp file at its requested path, or at the path with the
+/// extension of its content type (`output_extension_adjusted`). `Overwrite` only
+/// applies to the requested path; at an adjusted path it becomes `at_adjusted`.
+pub(super) fn finish(
     part: PartFile,
-    target: &Path,
     index: u32,
     info: MediaInfo,
     bytes: u64,
     sha256: String,
-    adjusted: Option<Warning>,
     mode: FinalizeMode,
+    at_adjusted: FinalizeMode,
 ) -> Result<SavedArtifact, IrisError> {
-    let (path, outcome) = place(part, target, &sha256, mode)?;
+    let requested = part.target().to_path_buf();
+    let (target, adjusted) = paths::adjust_extension(&requested, info.media_type);
+    let mode = if adjusted.is_some() && mode == FinalizeMode::Overwrite { at_adjusted } else { mode };
+    let (path, outcome) = place(part, &target, &sha256, mode).map_err(|e| {
+        if adjusted.is_some() && e.code == ErrorCode::OutputExists {
+            adjusted_target_exists(&requested, &target, info.media_type)
+        } else {
+            e
+        }
+    })?;
     let warnings = adjusted.into_iter().chain(outcome_warning(&path, &outcome)).collect();
     Ok(SavedArtifact { artifact: build_artifact(index, &path, &info, bytes, sha256), outcome, warnings })
+}
+
+/// `output_exists` for an extension-adjusted path, explaining why `--overwrite`
+/// did not apply to it.
+fn adjusted_target_exists(requested: &Path, adjusted: &Path, media_type: &str) -> IrisError {
+    IrisError::new(
+        ErrorCode::OutputExists,
+        format!(
+            "the content is {media_type}, so it is saved as {} instead of {}, and a different file already \
+             exists there",
+            adjusted.display(),
+            requested.display()
+        ),
+    )
+    .with_detail("path", adjusted.to_string_lossy().into_owned())
+    .with_hint(
+        "--overwrite only replaces the path you named; move the existing file away, or choose another \
+         -o/--output or -d/--out-dir",
+    )
 }
 
 /// The warning that goes with a non-trivial [`SaveOutcome`] (`already_downloaded`
@@ -233,7 +270,7 @@ pub(super) fn outcome_warning(path: &Path, outcome: &SaveOutcome) -> Option<Warn
         SaveOutcome::Renamed { requested } => Some(Warning::new(
             "output_renamed",
             format!(
-                "{} appeared while Iris was working; saved to {} instead",
+                "a different file already exists at {}; saved to {} instead so nothing is overwritten",
                 requested.display(),
                 path.display()
             ),
@@ -296,7 +333,7 @@ pub fn place(
                         }
                         let path = placed.ok_or_else(|| {
                             IrisError::new(
-                                crate::error::ErrorCode::IoError,
+                                ErrorCode::IoError,
                                 format!("could not find a free file name next to {}", target.display()),
                             )
                         })?;
