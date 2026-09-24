@@ -212,6 +212,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: Some(validate_options),
         estimate: Some(estimate_gpt_image_2_5),
+        estimate_usage: Some(cost_from_usage),
     },
     ModelSpec {
         id: "gpt-image-2.5-flare",
@@ -230,6 +231,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: Some(validate_options),
         estimate: Some(estimate_gpt_image_2_5),
+        estimate_usage: Some(cost_from_usage),
     },
     ModelSpec {
         id: "gpt-image-2",
@@ -248,6 +250,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: Some(validate_options),
         estimate: Some(estimate_gpt_image_2),
+        estimate_usage: Some(cost_from_usage),
     },
 ];
 

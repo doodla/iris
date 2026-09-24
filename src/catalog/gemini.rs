@@ -200,6 +200,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: None,
         estimate: Some(estimate_image),
+        estimate_usage: Some(estimate_from_usage),
     },
     ModelSpec {
         id: "gemini-3.1-flash-lite-image",
@@ -222,6 +223,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: None,
         estimate: Some(estimate_image),
+        estimate_usage: Some(estimate_from_usage),
     },
     ModelSpec {
         id: "gemini-3-pro-image",
@@ -240,6 +242,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: None,
         estimate: Some(estimate_image),
+        estimate_usage: Some(estimate_from_usage),
     },
 ];
 

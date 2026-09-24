@@ -115,8 +115,12 @@ pub struct PriceRule {
 /// the number of inputs by role.
 pub type RequestValidator = fn(&ValidationInput<'_>) -> Result<(), IrisError>;
 
-/// Cost estimator hook.
+/// Cost estimator hook (before the call, from options).
 pub type CostEstimator = fn(&ModelSpec, &EstimateInput<'_>) -> Option<CostEstimate>;
+
+/// Post-call cost estimator hook, from provider-reported usage. The usage already
+/// covers every output of the response, so implementations must not multiply by count.
+pub type UsageEstimator = fn(&ModelSpec, &crate::domain::Usage) -> Option<CostEstimate>;
 
 /// Data available to a [`RequestValidator`].
 #[derive(Debug)]
@@ -161,6 +165,8 @@ pub struct ModelSpec {
     pub docs_url: &'static str,
     pub validate: Option<RequestValidator>,
     pub estimate: Option<CostEstimator>,
+    /// Post-call estimate from reported usage (preferred over `estimate` when it returns a value).
+    pub estimate_usage: Option<UsageEstimator>,
 }
 
 impl ModelSpec {

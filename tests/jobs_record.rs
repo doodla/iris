@@ -532,6 +532,7 @@ static TEST_SPEC: ModelSpec = ModelSpec {
     docs_url: "https://example.invalid/docs",
     validate: None,
     estimate: None,
+    estimate_usage: None,
 };
 
 #[test]

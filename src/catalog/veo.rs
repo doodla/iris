@@ -213,6 +213,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: Some(validate_video),
         estimate: Some(estimate_video),
+        estimate_usage: None,
     },
     ModelSpec {
         id: "veo-3.1-generate-preview",
@@ -245,6 +246,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: Some(validate_video),
         estimate: Some(estimate_video),
+        estimate_usage: None,
     },
     ModelSpec {
         id: "veo-3.1-lite-generate-preview",
@@ -275,6 +277,7 @@ pub static MODELS: &[ModelSpec] = &[
         docs_url: DOCS_URL,
         validate: Some(validate_video),
         estimate: Some(estimate_video),
+        estimate_usage: None,
     },
 ];
 
