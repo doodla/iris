@@ -1,130 +1,99 @@
 # Live verification (paid, opt-in)
 
-Everything else in this repository's test suite runs offline, needs no credentials, and costs
-nothing — see [CONTRIBUTING.md](../CONTRIBUTING.md). Live verification is different: it makes
-real, billed requests to OpenAI and Google with real credentials, so it is **never** run by CI,
-never run automatically, and never run by accident.
+The normal test suite (`cargo test`) runs offline against local mock servers, needs no
+credentials, and costs nothing — see [CONTRIBUTING.md](../CONTRIBUTING.md). Live verification is
+different: it sends real, billed requests to OpenAI and Google with your keys. CI never runs it,
+and nothing runs it automatically.
 
-## Status in this checkout
+## What it checks
 
-As of this writing, the dedicated live-verification entry point (`scripts/live-verify.sh` and
-`tests/live/README.md`, tracked separately from this documentation) is **not present** in this
-checkout. This page documents the live-verification *policy* — what must be checked, the cost
-budget, and how to run each step by hand with the real `iris` binary — so that policy is usable
-today, and so it matches whatever `scripts/live-verify.sh` implements once it lands (this page
-does not get to invent a different policy). Do not run `scripts/live-verify.sh` unless you have
-read it yourself and understand exactly what it will charge; the same caution applies to running
-any of the manual commands below.
-
-## What must be verified, and why
-
-Iris's own offline tests exercise every code path against mock servers, but they cannot prove
-Iris's understanding of the *real* wire format is correct — a provider's documentation can be
-wrong, incomplete, or have changed. Live verification closes that gap with the smallest set of
-real requests that actually exercises every integration:
+The smallest set of real requests that exercises every integration:
 
 1. OpenAI image generation.
 2. Gemini image generation.
-3. Editing/reference input on each implemented image provider — reusing the images generated in
-   steps 1–2 as inputs, so no extra generation is paid for just to get an input image.
-4. Veo video generation, submitted without waiting (`--detach`).
-5. Resuming that same job from a **separate** `iris` invocation (`jobs status` / `jobs wait`).
-6. Downloading it, without resubmission.
-7. A safe repeat retrieval of the same download (proving it doesn't re-fetch or re-charge).
-8. At least one of the above run in `--json` mode, to prove the JSON contract holds against a
-   real response, not just a mock one.
+3. Editing with a reference image on each image provider, reusing the images from steps 1–2.
+4. One Veo video submission, without waiting (`--detach`).
+5. Resuming that job from a **separate** `iris` process (`jobs status`).
+6. Waiting and downloading it without resubmitting (`jobs wait`).
+7. Repeating the download safely (`jobs download`, then to another directory).
+8. JSON mode throughout, plus independent checks that images decode and the MP4 is valid.
 
-Steps 4–7 all reuse the **same single** Veo job — Veo generation is the expensive part of this
-list, so the budget (below) allows only one submission. Every image produced is validated as
-real, decodable media before Iris saves it under its final name, and every video is validated as
-a structurally valid MP4 (`ftyp`/`moov` boxes present, duration read where parseable) — see
-[architecture.md](architecture.md#modules) (`artifacts::media`).
+Steps 4–7 share **one** Veo job: video is the expensive part, so a run submits at most one.
 
-## Budget: an estimated $10 total
+## Running it
 
-Check official, current pricing before every call — provider prices change. Choose the cheapest
-settings that still exercise the feature:
-
-- OpenAI: the default model (`gpt-image-2.5-sunburst`) with `--size 1024x1024 --quality low`.
-- Gemini images: `gemini-3.1-flash-image --resolution 512 --aspect-ratio 1:1` (the cheapest
-  documented resolution).
-- Veo: `veo-3.1-lite-generate-preview` (the cheapest model), the shortest supported duration
-  (`--duration 4`), the lowest resolution (`--resolution 720p`) — audio cannot be disabled on the
-  Gemini API, so there is no audio-off option to reduce cost further.
-
-Reserve (mentally or in a tracking sheet) the estimated cost of a call **before** sending it, and
-keep a running total. Never send a request whose cost cannot be reasonably bounded up front (e.g.
-an unconstrained `--count` or an `auto` size/quality that Iris itself already flags with
-`cost_estimate_unavailable` — treat that warning as a signal to add an explicit, boundable value
-before running it live). Never exceed the budget, and never add billing headroom just to keep
-going — if a step would blow the budget, stop and report it as a blocker instead.
-
-**Veo, specifically:** make **at most one submission**, ever, per verification pass. If its
-estimated cost would exceed half of whatever budget remains, or if your account lacks the
-required billing tier or region access, do not submit it — record that as a blocker rather than
-guessing at whether it would work.
-
-## Running it by hand today
-
-Every command below is the real `iris` CLI — nothing here is simulated. Running any of them
-sends a real, billed request. Do not run them without your own `OPENAI_API_KEY` /
-`GEMINI_API_KEY`, without having checked current pricing yourself, and without intending to spend
-real money.
-
-Run every paid command with `--dry-run` first (no credential or network call required) to read
-its cost estimate before sending it for real — this also catches a `cost_estimate_unavailable`
-warning early, while it's still free to fix (see the budget rule above: an unbounded `auto`
-size/quality is exactly what that warning is for). For example:
+[`scripts/live-verify.sh`](../scripts/live-verify.sh) runs the steps through the built binary with
+the cheapest settings, one step at a time or all in order. Read
+[tests/live/README.md](../tests/live/README.md) and the script before running it.
 
 ```console
-$ iris image edit -i openai.png "..." -o openai-edit.png --size 1024x1024 --quality low --dry-run --json
+$ cargo build --release
+$ scripts/live-verify.sh --plan                      # free: prints each step's estimated cost
+$ IRIS_LIVE_CONFIRM=yes-i-accept-charges scripts/live-verify.sh --step 1
 ```
+
+Safeguards built into the script: every step needs `IRIS_LIVE_CONFIRM=yes-i-accept-charges`, the
+Veo step additionally needs `IRIS_LIVE_VEO_CONFIRM=submit-one-veo-job` and refuses a second
+submission, each paid step prints Iris's own `--dry-run` estimate first and is refused if there is
+no estimate or it exceeds the per-step cap, keys are checked for presence only, and saved evidence
+is scanned for key values.
+
+### By hand
+
+The same steps with the plain CLI. Every command below except `--dry-run` sends a real, billed
+request. Run each paid command with `--dry-run` first to read its estimate; an `auto` size or
+quality produces `cost_estimate_unavailable`, so always pass explicit values.
 
 ```console
-# 1-2: image generation, cheapest bounded settings
-$ iris image generate "..." --size 1024x1024 --quality low -o openai.png --json
-$ iris image generate "..." --provider gemini --resolution 512 --aspect-ratio 1:1 -o gemini.png --json
+# 1–2: generation
+$ iris --json image generate "a red paper kite over a hill" --size 1024x1024 --quality low -o openai.png
+$ iris --json image generate "a red paper kite over a hill" --provider gemini --resolution 512 --aspect-ratio 1:1 -o gemini.jpg
 
-# 3: editing, reusing the images just generated (no extra generation cost) — bounded settings
-# here too: an unqualified edit defaults to size=auto/quality=auto on OpenAI, which Iris cannot
-# estimate the cost of before sending (a --dry-run of the unbounded form reproduces
-# cost_estimate_unavailable; don't send that form live)
-$ iris image edit -i openai.png "..." -o openai-edit.png --size 1024x1024 --quality low --json
-$ iris image edit -i gemini.png "..." --provider gemini -o gemini-edit.png --resolution 512 --json
+# 3: edits reusing those images
+$ iris --json image edit "add a small yellow sun" -i openai.png --size 1024x1024 --quality low -o openai-edit.png
+$ iris --json image edit "add a small yellow sun" --provider gemini -i gemini.jpg --resolution 512 -o gemini-edit.jpg
 
-# 4: Veo submit-and-return (the one allowed submission)
-$ iris video generate "..." --model veo-3.1-lite-generate-preview --duration 4 --resolution 720p --detach --json
-# note the job_id printed above, then from here on nothing resubmits anything:
+# 4: the one Veo submission, returning immediately
+$ iris --json video generate "a slow aerial shot over a calm lake at sunrise" -m veo-lite --duration 4 --resolution 720p --aspect-ratio 16:9 --detach
 
-# 5: resume from a separate invocation, without downloading yet (so step 6 below is
-# `jobs download`'s own separate, non-resubmitting step, per SPEC §7 — `jobs wait` without
-# --no-download would already download and step 6 would just repeat it)
-$ iris jobs status <job_id> --json
-$ iris jobs wait <job_id> --no-download --json
-
-# 6: download, as its own step (never resubmits or regenerates)
-$ iris jobs download <job_id> --json
-
-# 7: repeat the same download (safe; expect a warning `already_downloaded`, no network call,
-# no re-charge)
-$ iris jobs download <job_id> --json
+# 5–7: later processes; nothing here resubmits
+$ iris --json jobs status <job_id>
+$ iris --json jobs wait <job_id>
+$ iris --json jobs download <job_id>              # warning already_downloaded, no network
+$ iris --json jobs download <job_id> -d copy/     # local copy, no network
 ```
 
-After each step, sanity-check the result: `ok: true`, a real `artifacts[].sha256`/`bytes`, and (for
-images) dimensions that make sense. `iris` itself already rejects a payload that fails media
-validation before saving it, so a `succeeded` result with an `artifacts[]` entry is meaningful
-evidence, not just "the HTTP call didn't error."
+Gemini chooses its output format; if it returns PNG for a `.jpg` path, Iris saves it as `.png` and
+says so with an `output_extension_adjusted` warning.
 
-## Recording results
+## Budget rules
 
-Store sanitized evidence (the `--json` output of each step, with nothing secret in it — Iris
-already never prints credential values) rather than a narrative claim of success. Never claim a
-live success based on a mock-server run; conversely, mock-server evidence (like the transcripts
-throughout this repository's other docs) is clearly distinguishable from live evidence because it
-points at `127.0.0.1`, not a real provider host, in `providers.list`/`config show` output.
+- Check the providers' current pricing pages before each call; prices change.
+- Record each call's estimated cost before sending it and keep a running total.
+- Never send a request whose cost cannot be bounded up front.
+- Submit at most one Veo job, and skip it if its estimate exceeds half of the remaining budget or
+  your account lacks the paid tier Veo requires.
+- If access, quota, billing, or budget blocks a step, finish the others, name exactly what stayed
+  unverified, and keep offline (mock) evidence and live evidence labeled as what they are.
 
-If access, quota, billing setup, pricing uncertainty, or the budget prevents completing a step:
-finish everything else that isn't blocked, name the exact behavior that is unverified, keep
-offline evidence and live evidence clearly labeled as what they are, and record the opt-in
-command that would finish the job once the blocker is resolved — don't mark the behavior
-"supported" on the strength of a mock alone.
+## Last live run
+
+Run on 2026-09-24 against version 0.1.0, by hand through the release binary, following the steps
+above. Costs are Iris's usage-based estimates, not invoices.
+
+| Step | Model and settings | Result | Estimated cost |
+|---|---|---|---|
+| 1 OpenAI generate | `gpt-image-2.5-sunburst`, 1024x1024, low | 1024×1024 PNG, decoded; 196 output tokens | $0.0060 |
+| 2 Gemini generate | `gemini-3.1-flash-image`, 512, 1:1 | 512×512 JPEG, valid | $0.0460 |
+| 3a OpenAI edit | step 1 image as input, 1024x1024, low | 1024×1024 PNG; JSON data-URL edit encoding confirmed | $0.0142 |
+| 3b Gemini edit | step 2 image as reference, 512 | 512×512 JPEG, valid | $0.0456 |
+| 4 Veo submit | `veo-3.1-lite-generate-preview`, 4 s, 720p, 16:9, `--detach` | accepted in under a second; job recorded | $0.20 |
+| 5 Resume | `jobs status` in a new process | `running`, polled remotely | free |
+| 6 Wait + download | `jobs wait` in a new process | done after about 20 s; 1280×720 H.264 + AAC MP4, 4.0 s | free |
+| 7 Repeat | `jobs download` ×3 | `already_downloaded`; local copy; re-fetch gave an identical SHA-256; one submission total | free |
+| 8 JSON | all steps in `--json` mode | one envelope per command | — |
+
+Total estimated spend: about $0.31. A scan of every saved output, log, and job record found no key
+values. Observed facts that the offline tests cannot show: Gemini returned JPEG for both calls,
+Veo honored the 4-second duration (so the charge matches the estimate), and the Veo file download
+was served directly by the API host with no redirect.
