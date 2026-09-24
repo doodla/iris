@@ -1,0 +1,424 @@
+//! Job store: atomic writes, locking, listing, deletion (C-04 "State directory", "Writes").
+
+use std::fs;
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::time::Duration;
+
+use iris::domain::{JobStatus, Operation, ProviderId};
+use iris::error::{ErrorCode, IrisError};
+use iris::jobs::{JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord};
+use iris::providers::SubmittedOperation;
+use jiff::Timestamp;
+use serde_json::{Map, Value, json};
+
+fn new_job() -> NewJob {
+    NewJob {
+        provider: ProviderId::Gemini,
+        model: "veo-test".into(),
+        operation: Operation::VideoGenerate,
+        request: Map::new(),
+        prompt: PromptRecord::new("a lighthouse at dusk", false),
+        output_plan: OutputPlan::default(),
+        cost_estimate: None,
+    }
+}
+
+fn now() -> Timestamp {
+    iris::jobs::now()
+}
+
+fn ago(secs: i64) -> Timestamp {
+    Timestamp::from_second(now().as_second() - secs).unwrap()
+}
+
+/// A fresh store in a temp dir with one `running` job.
+fn store_with_running_job() -> (tempfile::TempDir, JobStore, JobId) {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let mut rec = JobRecord::new(new_job(), now()).unwrap();
+    rec.mark_submitted(
+        &SubmittedOperation { remote_id: "operations/1".into(), provider_request_id: None },
+        now(),
+    )
+    .unwrap();
+    store.create(&rec).unwrap();
+    let id = rec.job_id().clone();
+    (dir, store, id)
+}
+
+fn counter(rec: &JobRecord) -> u64 {
+    rec.extra().get("test_counter").and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn increment(store: &JobStore, id: &JobId) {
+    store
+        .update(id, |rec| {
+            let next = counter(rec) + 1;
+            rec.set_extra("test_counter", json!(next))
+        })
+        .unwrap();
+}
+
+fn names_in(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> =
+        fs::read_dir(dir).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn create_and_load_round_trip_with_private_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join("state");
+    let store = JobStore::new(&state);
+    assert!(!state.exists(), "constructing a store touches nothing");
+    let rec = JobRecord::new(new_job(), now()).unwrap();
+    store.create(&rec).unwrap();
+
+    let path = store.record_path(rec.job_id());
+    assert_eq!(path, state.join("jobs").join(format!("{}.json", rec.job_id())));
+    let loaded = store.load(rec.job_id()).unwrap();
+    assert_eq!(serde_json::to_value(&loaded).unwrap(), serde_json::to_value(&rec).unwrap());
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&path), 0o600);
+        assert_eq!(mode(&state.join("jobs")), 0o700);
+        assert_eq!(mode(&state), 0o700);
+    }
+}
+
+#[test]
+fn create_never_overwrites() {
+    let (_dir, store, id) = store_with_running_job();
+    let before = fs::read(store.record_path(&id)).unwrap();
+    let mut dup = JobRecord::with_id(id.clone(), new_job(), now()).unwrap();
+    dup.set_extra("dup", json!(true)).unwrap();
+    let err = store.create(&dup).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InternalError);
+    assert_eq!(fs::read(store.record_path(&id)).unwrap(), before);
+}
+
+#[test]
+fn missing_jobs_are_not_found_without_creating_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let id = JobId::generate();
+    assert_eq!(store.load(&id).unwrap_err().code, ErrorCode::JobNotFound);
+    assert_eq!(store.update(&id, |_| Ok(())).unwrap_err().code, ErrorCode::JobNotFound);
+    assert_eq!(store.download_lock(&id).unwrap_err().code, ErrorCode::JobNotFound);
+    assert_eq!(store.delete(&id, true).unwrap_err().code, ErrorCode::JobNotFound);
+    assert!(store.list().unwrap().records.is_empty(), "missing jobs dir lists as empty");
+
+    fs::create_dir_all(store.dir()).unwrap();
+    assert_eq!(store.update(&id, |_| Ok(())).unwrap_err().code, ErrorCode::JobNotFound);
+    assert!(names_in(store.dir()).is_empty(), "no stray lock files: {:?}", names_in(store.dir()));
+}
+
+#[test]
+fn update_persists_and_failed_update_writes_nothing() {
+    let (_dir, store, id) = store_with_running_job();
+    let (rec, value) = store
+        .update(&id, |rec| {
+            rec.set_extra("note", json!("hello"))?;
+            Ok(42)
+        })
+        .unwrap();
+    assert_eq!(value, 42);
+    assert_eq!(rec.extra()["note"], "hello");
+    assert_eq!(store.load(&id).unwrap().extra()["note"], "hello");
+
+    let before = fs::read(store.record_path(&id)).unwrap();
+    let err = store
+        .update(&id, |rec| -> Result<(), IrisError> {
+            rec.set_extra("note", json!("changed"))?;
+            Err(IrisError::internal("closure failed"))
+        })
+        .unwrap_err();
+    assert_eq!(err.message, "closure failed");
+    assert_eq!(fs::read(store.record_path(&id)).unwrap(), before);
+}
+
+#[test]
+fn concurrent_updates_from_threads_never_lose_a_write() {
+    let (_dir, store, id) = store_with_running_job();
+    let store = Arc::new(store);
+    const THREADS: u64 = 8;
+    const PER_THREAD: u64 = 25;
+    let handles: Vec<_> = (0..THREADS)
+        .map(|_| {
+            let store = Arc::clone(&store);
+            let id = id.clone();
+            std::thread::spawn(move || {
+                for _ in 0..PER_THREAD {
+                    increment(&store, &id);
+                }
+            })
+        })
+        .collect();
+    // Lock-free readers only ever see complete records.
+    for _ in 0..200 {
+        let listing = store.list().unwrap();
+        assert!(listing.warnings.is_empty(), "{:?}", listing.warnings);
+        assert_eq!(listing.records.len(), 1);
+    }
+    for h in handles {
+        h.join().unwrap();
+    }
+    assert_eq!(counter(&store.load(&id).unwrap()), THREADS * PER_THREAD);
+    // Only the record and its lock file remain (temp files were renamed away).
+    assert_eq!(names_in(store.dir()), vec![format!("{id}.json"), format!("{id}.lock")]);
+}
+
+const HELPER_DIR: &str = "IRIS_T07_HELPER_STATE_DIR";
+const HELPER_JOB: &str = "IRIS_T07_HELPER_JOB_ID";
+const HELPER_COUNT: &str = "IRIS_T07_HELPER_COUNT";
+
+/// Not a test on its own: the body of the child processes spawned by
+/// `concurrent_updates_from_processes_never_lose_a_write`.
+#[test]
+#[ignore = "helper process for concurrent_updates_from_processes_never_lose_a_write"]
+fn helper_process_increments() {
+    let (Ok(dir), Ok(job), Ok(count)) =
+        (std::env::var(HELPER_DIR), std::env::var(HELPER_JOB), std::env::var(HELPER_COUNT))
+    else {
+        return;
+    };
+    let store = JobStore::new(dir);
+    let id = JobId::parse(&job).unwrap();
+    for _ in 0..count.parse::<u64>().unwrap() {
+        increment(&store, &id);
+    }
+}
+
+#[test]
+fn concurrent_updates_from_processes_never_lose_a_write() {
+    let (dir, store, id) = store_with_running_job();
+    const PROCESSES: u64 = 3;
+    const PER_PROCESS: u64 = 40;
+    let exe = std::env::current_exe().unwrap();
+    let children: Vec<_> = (0..PROCESSES)
+        .map(|_| {
+            Command::new(&exe)
+                .args(["helper_process_increments", "--exact", "--ignored", "--test-threads=1", "--quiet"])
+                .env(HELPER_DIR, dir.path())
+                .env(HELPER_JOB, id.as_str())
+                .env(HELPER_COUNT, PER_PROCESS.to_string())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    // This process competes too.
+    for _ in 0..PER_PROCESS {
+        increment(&store, &id);
+    }
+    for child in children {
+        let out = child.wait_with_output().unwrap();
+        assert!(
+            out.status.success(),
+            "helper process failed:\n{}\n{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        // The helper really ran (it is #[ignore]d unless selected explicitly).
+        assert!(String::from_utf8_lossy(&out.stdout).contains("1 passed"));
+    }
+    assert_eq!(counter(&store.load(&id).unwrap()), (PROCESSES + 1) * PER_PROCESS);
+}
+
+#[test]
+fn corrupt_records_are_skipped_by_list_with_a_warning() {
+    let (_dir, store, good) = store_with_running_job();
+    let bad = JobId::generate();
+    fs::write(store.record_path(&bad), b"{\"schema_version\": 1, \"job_id\": \"trunc").unwrap();
+
+    let listing = store.list().unwrap();
+    assert_eq!(listing.records.len(), 1);
+    assert_eq!(listing.records[0].job_id(), &good);
+    assert_eq!(listing.warnings.len(), 1);
+    assert_eq!(listing.warnings[0].code, "job_record_unreadable");
+    assert!(listing.warnings[0].message.contains(bad.as_str()));
+
+    let err = store.load(&bad).unwrap_err();
+    assert_eq!(err.code, ErrorCode::StateInvalid);
+    assert_eq!(err.job_id.as_deref(), Some(bad.as_str()));
+}
+
+#[test]
+fn records_from_a_newer_iris_are_rejected_not_rewritten() {
+    let (_dir, store, id) = store_with_running_job();
+    let path = store.record_path(&id);
+    let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["schema_version"] = json!(2);
+    value["status"] = json!("some_future_status");
+    let newer = serde_json::to_vec(&value).unwrap();
+    fs::write(&path, &newer).unwrap();
+
+    let err = store.load(&id).unwrap_err();
+    assert_eq!(err.code, ErrorCode::StateInvalid);
+    assert!(err.message.contains("newer iris"), "{}", err.message);
+    assert_eq!(store.update(&id, |_| Ok(())).unwrap_err().code, ErrorCode::StateInvalid);
+    assert_eq!(fs::read(&path).unwrap(), newer, "never rewritten by an older binary");
+
+    let listing = store.list().unwrap();
+    assert!(listing.records.is_empty());
+    assert_eq!(listing.warnings[0].code, "job_record_unreadable");
+}
+
+#[test]
+fn unknown_fields_are_preserved_by_locked_updates() {
+    let (_dir, store, id) = store_with_running_job();
+    let path = store.record_path(&id);
+    let mut value: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    value["added_in_1_1"] = json!({"nested": [1, 2, 3]});
+    value["prompt"]["added_in_1_1"] = json!("p");
+    fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+    store
+        .update(&id, |rec| {
+            rec.apply_poll(iris::providers::RemoteStatus::Running { progress: None }, None, now())
+        })
+        .unwrap();
+    let after: Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+    assert_eq!(after["added_in_1_1"], json!({"nested": [1, 2, 3]}));
+    assert_eq!(after["prompt"]["added_in_1_1"], "p");
+    assert!(after["last_checked_at"].is_string());
+}
+
+#[test]
+fn a_record_whose_id_disagrees_with_its_file_name_is_invalid() {
+    let (_dir, store, id) = store_with_running_job();
+    let other = JobId::generate();
+    fs::copy(store.record_path(&id), store.record_path(&other)).unwrap();
+    let err = store.load(&other).unwrap_err();
+    assert_eq!(err.code, ErrorCode::StateInvalid);
+}
+
+#[test]
+fn list_is_newest_first_and_ignores_other_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let old = JobRecord::new(new_job(), ago(300)).unwrap();
+    let mid = JobRecord::new(new_job(), ago(200)).unwrap();
+    let new = JobRecord::new(new_job(), ago(100)).unwrap();
+    for rec in [&mid, &old, &new] {
+        store.create(rec).unwrap();
+    }
+    // Leftovers of an interrupted write, lock files, and unrelated files are ignored.
+    fs::write(store.dir().join(format!(".{}.json.abcdef12.tmp", new.job_id())), b"{\"partial").unwrap();
+    fs::write(store.dir().join(format!("{}.lock", old.job_id())), b"").unwrap();
+    fs::write(store.dir().join("notes.json"), b"{}").unwrap();
+    fs::write(store.dir().join("job_UPPERCASE0000000000000000.json"), b"{}").unwrap();
+
+    let listing = store.list().unwrap();
+    assert!(listing.warnings.is_empty(), "{:?}", listing.warnings);
+    let ids: Vec<&JobId> = listing.records.iter().map(|r| r.job_id()).collect();
+    assert_eq!(ids, vec![new.job_id(), mid.job_id(), old.job_id()]);
+    // The interrupted temp write did not disturb the record.
+    assert_eq!(store.load(new.job_id()).unwrap().created_at(), new.created_at());
+}
+
+#[test]
+fn stale_submitting_records_are_reported_and_rewritten_as_submission_unknown() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let stale = JobRecord::new(new_job(), ago(3600)).unwrap();
+    let fresh = JobRecord::new(new_job(), ago(5)).unwrap();
+    store.create(&stale).unwrap();
+    store.create(&fresh).unwrap();
+    let raw_status = |id: &JobId| -> String {
+        let v: Value = serde_json::from_slice(&fs::read(store.record_path(id)).unwrap()).unwrap();
+        v["status"].as_str().unwrap().to_string()
+    };
+
+    // Reported (load and list) without rewriting.
+    assert_eq!(store.load(stale.job_id()).unwrap().status(), JobStatus::SubmissionUnknown);
+    let listing = store.list().unwrap();
+    let status_of = |id: &JobId| listing.records.iter().find(|r| r.job_id() == id).unwrap().status();
+    assert_eq!(status_of(stale.job_id()), JobStatus::SubmissionUnknown);
+    assert_eq!(status_of(fresh.job_id()), JobStatus::Submitting);
+    assert_eq!(raw_status(stale.job_id()), "submitting");
+
+    // Rewritten on the next locked update.
+    let (rec, ()) = store.update(stale.job_id(), |_| Ok(())).unwrap();
+    assert_eq!(rec.status(), JobStatus::SubmissionUnknown);
+    assert_eq!(rec.error().unwrap().code, ErrorCode::SubmissionUncertain);
+    assert_eq!(raw_status(stale.job_id()), "submission_unknown");
+    assert_eq!(store.load(fresh.job_id()).unwrap().status(), JobStatus::Submitting);
+
+    // A longer configured submit timeout moves the threshold.
+    let patient = JobStore::new(dir.path()).with_submit_timeout(Duration::from_secs(7200));
+    let another = JobRecord::new(new_job(), ago(3600)).unwrap();
+    patient.create(&another).unwrap();
+    assert_eq!(patient.load(another.job_id()).unwrap().status(), JobStatus::Submitting);
+}
+
+#[test]
+fn delete_removes_local_files_only_and_protects_active_jobs() {
+    let (_dir, store, running) = store_with_running_job();
+    // Lock files exist after an update and a download lock.
+    increment(&store, &running);
+    drop(store.download_lock(&running).unwrap());
+    assert_eq!(names_in(store.dir()).len(), 3);
+
+    let err = store.delete(&running, false).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_eq!(err.job_status, Some(JobStatus::Running));
+    assert!(err.hint.as_deref().unwrap().contains("--force"));
+    assert!(store.load(&running).is_ok());
+
+    store.delete(&running, true).unwrap();
+    assert!(names_in(store.dir()).is_empty(), "{:?}", names_in(store.dir()));
+    assert_eq!(store.load(&running).unwrap_err().code, ErrorCode::JobNotFound);
+
+    // Terminal jobs need no force; stale submitting counts as terminal.
+    let stale = JobRecord::new(new_job(), ago(3600)).unwrap();
+    store.create(&stale).unwrap();
+    store.delete(stale.job_id(), false).unwrap();
+
+    // Unreadable records can be removed with --force only.
+    let corrupt = JobId::generate();
+    fs::write(store.record_path(&corrupt), b"not json").unwrap();
+    assert_eq!(store.delete(&corrupt, false).unwrap_err().code, ErrorCode::StateInvalid);
+    store.delete(&corrupt, true).unwrap();
+    assert!(!store.record_path(&corrupt).exists());
+}
+
+#[test]
+fn download_lock_is_exclusive() {
+    let (_dir, store, id) = store_with_running_job();
+    let held = store.download_lock(&id).unwrap();
+    assert_eq!(held.job_id(), &id);
+    assert!(store.try_download_lock(&id).unwrap().is_none(), "second holder must be refused");
+    // The record lock is independent of the download lock.
+    increment(&store, &id);
+    drop(held);
+    let again = store.try_download_lock(&id).unwrap();
+    assert!(again.is_some());
+}
+
+#[test]
+fn download_lock_blocks_until_released() {
+    let (_dir, store, id) = store_with_running_job();
+    let store = Arc::new(store);
+    let held = store.download_lock(&id).unwrap();
+    let (tx, rx) = std::sync::mpsc::channel();
+    let waiter = {
+        let store = Arc::clone(&store);
+        let id = id.clone();
+        std::thread::spawn(move || {
+            let _lock = store.download_lock(&id).unwrap();
+            tx.send(()).unwrap();
+        })
+    };
+    assert!(rx.recv_timeout(Duration::from_millis(200)).is_err(), "must wait while the lock is held");
+    drop(held);
+    rx.recv_timeout(Duration::from_secs(10)).expect("acquired after release");
+    waiter.join().unwrap();
+}

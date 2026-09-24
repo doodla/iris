@@ -1,0 +1,482 @@
+//! The job store over `<state_dir>/jobs/` (C-04 "State directory", "Writes").
+//!
+//! Layout: `<job_id>.json` (record), `<job_id>.lock` (exclusive advisory lock held
+//! only for a read-modify-write), `<job_id>.download.lock` (exclusive lock held for
+//! a whole download). Directories are created 0700 and files 0600.
+//!
+//! Records are replaced atomically (temp file in the same directory → `sync_all` →
+//! rename → best-effort directory fsync), so lock-free readers never see a partial
+//! record. Locks use `std::fs::File::lock` (flock on Linux and macOS): they are per
+//! open file description, so threads of one process exclude each other as well as
+//! separate processes.
+
+use std::fs::{self, File, OpenOptions};
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use serde_json::Value;
+
+use super::record::{JOB_RECORD_VERSION, JobRecord};
+use super::{JobId, now};
+use crate::domain::Warning;
+use crate::error::{ErrorCode, IrisError};
+use crate::http::Timeouts;
+
+/// Name of the jobs directory inside the state directory.
+const JOBS_DIR: &str = "jobs";
+
+/// Records returned by [`JobStore::list`], newest first, plus one
+/// `job_record_unreadable` warning per skipped record.
+#[derive(Debug, Clone, Default)]
+pub struct JobListing {
+    pub records: Vec<JobRecord>,
+    pub warnings: Vec<Warning>,
+}
+
+/// Exclusive lock on `<job_id>.download.lock`, held for the whole download of a
+/// job's outputs. Released when dropped.
+#[derive(Debug)]
+pub struct DownloadLock {
+    _file: File,
+    job_id: JobId,
+}
+
+impl DownloadLock {
+    pub fn job_id(&self) -> &JobId {
+        &self.job_id
+    }
+}
+
+/// Exclusive lock on `<job_id>.lock` for one read-modify-write. Released when dropped.
+struct RecordLock {
+    _file: File,
+}
+
+/// Persistent store of job records under `<state_dir>/jobs/`.
+///
+/// Constructing a store touches nothing on disk; directories are created on the
+/// first write. Every method takes a validated [`JobId`], so paths cannot escape
+/// the jobs directory.
+#[derive(Debug, Clone)]
+pub struct JobStore {
+    dir: PathBuf,
+    submit_timeout: Duration,
+}
+
+impl JobStore {
+    /// A store for `<state_dir>/jobs/`, using the default submit timeout (C-04: 60s)
+    /// for the stale-`submitting` rule.
+    pub fn new(state_dir: impl AsRef<Path>) -> JobStore {
+        JobStore { dir: state_dir.as_ref().join(JOBS_DIR), submit_timeout: Timeouts::default().submit }
+    }
+
+    /// Use the configured submit timeout for the stale-`submitting` rule
+    /// (a `submitting` record older than `submit_timeout + SUBMIT_GRACE` is reported
+    /// and rewritten as `submission_unknown`).
+    pub fn with_submit_timeout(mut self, submit_timeout: Duration) -> JobStore {
+        self.submit_timeout = submit_timeout;
+        self
+    }
+
+    /// The jobs directory (`<state_dir>/jobs`).
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+
+    /// Path of a job's record file.
+    pub fn record_path(&self, id: &JobId) -> PathBuf {
+        self.dir.join(format!("{id}.json"))
+    }
+
+    fn lock_path(&self, id: &JobId) -> PathBuf {
+        self.dir.join(format!("{id}.lock"))
+    }
+
+    fn download_lock_path(&self, id: &JobId) -> PathBuf {
+        self.dir.join(format!("{id}.download.lock"))
+    }
+
+    /// Persist a new record. Fails (`internal_error`) if a record with this id
+    /// already exists; never overwrites.
+    pub fn create(&self, record: &JobRecord) -> Result<(), IrisError> {
+        self.ensure_dir()?;
+        let path = self.record_path(record.job_id());
+        let bytes = encode(record)?;
+        write_atomic(&path, &bytes, Replace::No, &mut |_| Ok(())).map_err(|e| {
+            if e.kind() == io::ErrorKind::AlreadyExists {
+                IrisError::internal(format!("job record {} already exists", path.display()))
+            } else {
+                IrisError::io(format_args!("cannot write job record {}", path.display()), &e)
+            }
+        })
+    }
+
+    /// Read one record (without locking). A `submitting` record past the stale
+    /// threshold is returned as `submission_unknown` (not persisted here).
+    ///
+    /// Errors: `job_not_found`, `state_invalid` (corrupt, mismatched id, or written
+    /// by a newer iris), `io_error`.
+    pub fn load(&self, id: &JobId) -> Result<JobRecord, IrisError> {
+        let mut record = self.read(id)?;
+        record.resolve_stale_submitting(now(), self.submit_timeout);
+        Ok(record)
+    }
+
+    /// Locked read-modify-write. Takes the job's exclusive record lock (blocking),
+    /// re-reads the record, applies the stale-`submitting` rule, runs `f`, and
+    /// atomically writes the result. If `f` fails nothing is written.
+    ///
+    /// Returns the record as written and `f`'s value. Do not call `update` for the
+    /// same job from inside `f` (it would wait for itself).
+    pub fn update<T>(
+        &self,
+        id: &JobId,
+        f: impl FnOnce(&mut JobRecord) -> Result<T, IrisError>,
+    ) -> Result<(JobRecord, T), IrisError> {
+        let _lock = self.lock_record(id)?;
+        let mut record = self.read(id)?;
+        record.resolve_stale_submitting(now(), self.submit_timeout);
+        let value = f(&mut record)?;
+        self.write(&record)?;
+        Ok((record, value))
+    }
+
+    /// All readable records, newest first (by `created_at`, then id), without
+    /// locking. Unreadable records are skipped with a `job_record_unreadable`
+    /// warning; temp and lock files are ignored. A missing jobs directory is an
+    /// empty list.
+    pub fn list(&self) -> Result<JobListing, IrisError> {
+        let entries = match fs::read_dir(&self.dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(JobListing::default()),
+            Err(e) => {
+                return Err(IrisError::io(
+                    format_args!("cannot read job directory {}", self.dir.display()),
+                    &e,
+                ));
+            }
+        };
+        let now = now();
+        let mut listing = JobListing::default();
+        for entry in entries {
+            let entry = entry.map_err(|e| {
+                IrisError::io(format_args!("cannot read job directory {}", self.dir.display()), &e)
+            })?;
+            let name = entry.file_name();
+            let Some(id) = name.to_str().and_then(|n| n.strip_suffix(".json")).filter(|s| JobId::is_valid(s))
+            else {
+                continue;
+            };
+            let Ok(id) = JobId::parse(id) else { continue };
+            match self.read(&id) {
+                Ok(mut record) => {
+                    record.resolve_stale_submitting(now, self.submit_timeout);
+                    listing.records.push(record);
+                }
+                // Deleted between read_dir and read: not an error for a listing.
+                Err(e) if e.code == ErrorCode::JobNotFound => {}
+                Err(e) => listing.warnings.push(Warning::new(
+                    "job_record_unreadable",
+                    format!("skipped job record {}: {}", entry.path().display(), e.message),
+                )),
+            }
+        }
+        listing
+            .records
+            .sort_by(|a, b| b.created_at().cmp(&a.created_at()).then_with(|| b.job_id().cmp(a.job_id())));
+        Ok(listing)
+    }
+
+    /// Delete a job's LOCAL record and its lock files (never downloaded media, never
+    /// anything remote). Refuses active jobs (`submitting`/`running`, which would
+    /// become unrecoverable) and unreadable records unless `force`.
+    pub fn delete(&self, id: &JobId, force: bool) -> Result<(), IrisError> {
+        let _lock = self.lock_record(id)?;
+        match self.read(id) {
+            Ok(mut record) => {
+                record.resolve_stale_submitting(now(), self.submit_timeout);
+                if record.is_active() && !force {
+                    return Err(IrisError::invalid(format!(
+                        "job {id} is still {}; deleting its local record would make the job unrecoverable",
+                        record.status()
+                    ))
+                    .with_job(id.to_string(), Some(record.status()))
+                    .with_hint(
+                        "wait for the job to finish (`iris jobs wait`), or pass --force to delete the local \
+                         record anyway (the remote job is not cancelled)",
+                    ));
+                }
+            }
+            Err(e) if e.code == ErrorCode::JobNotFound => return Err(e),
+            Err(e) if !force => {
+                return Err(e.with_hint("pass --force to delete the unreadable local record"));
+            }
+            Err(_) => {}
+        }
+        let record_path = self.record_path(id);
+        fs::remove_file(&record_path).or_else(ignore_not_found).map_err(|e| {
+            IrisError::io(format_args!("cannot delete job record {}", record_path.display()), &e)
+        })?;
+        let _ = fs::remove_file(self.download_lock_path(id));
+        let _ = fs::remove_file(self.lock_path(id));
+        sync_dir(&self.dir);
+        Ok(())
+    }
+
+    /// Take the job's exclusive download lock, waiting for any other download of the
+    /// same job to finish. Re-read the record after acquiring it.
+    pub fn download_lock(&self, id: &JobId) -> Result<DownloadLock, IrisError> {
+        let path = self.download_lock_path(id);
+        let file = self.open_lock(id, &path)?;
+        file.lock().map_err(|e| IrisError::io(format_args!("cannot lock {}", path.display()), &e))?;
+        self.confirm_exists_or_cleanup(id, &path)?;
+        Ok(DownloadLock { _file: file, job_id: id.clone() })
+    }
+
+    /// Like [`JobStore::download_lock`] but returns `None` instead of waiting when
+    /// another process is downloading this job.
+    pub fn try_download_lock(&self, id: &JobId) -> Result<Option<DownloadLock>, IrisError> {
+        let path = self.download_lock_path(id);
+        let file = self.open_lock(id, &path)?;
+        match file.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Ok(None),
+            Err(fs::TryLockError::Error(e)) => {
+                return Err(IrisError::io(format_args!("cannot lock {}", path.display()), &e));
+            }
+        }
+        self.confirm_exists_or_cleanup(id, &path)?;
+        Ok(Some(DownloadLock { _file: file, job_id: id.clone() }))
+    }
+
+    // ----- internals ---------------------------------------------------------
+
+    fn read(&self, id: &JobId) -> Result<JobRecord, IrisError> {
+        let path = self.record_path(id);
+        let bytes = fs::read(&path).map_err(|e| {
+            if e.kind() == io::ErrorKind::NotFound {
+                not_found(id, &self.dir)
+            } else {
+                IrisError::io(format_args!("cannot read job record {}", path.display()), &e)
+            }
+        })?;
+        parse_record(&bytes, &path, id)
+    }
+
+    fn write(&self, record: &JobRecord) -> Result<(), IrisError> {
+        let path = self.record_path(record.job_id());
+        let bytes = encode(record)?;
+        write_atomic(&path, &bytes, Replace::Yes, &mut |_| Ok(()))
+            .map_err(|e| IrisError::io(format_args!("cannot write job record {}", path.display()), &e))
+    }
+
+    fn lock_record(&self, id: &JobId) -> Result<RecordLock, IrisError> {
+        let path = self.lock_path(id);
+        let file = self.open_lock(id, &path)?;
+        file.lock().map_err(|e| IrisError::io(format_args!("cannot lock {}", path.display()), &e))?;
+        self.confirm_exists_or_cleanup(id, &path)?;
+        Ok(RecordLock { _file: file })
+    }
+
+    /// Open (creating 0600 if needed) a lock file of an existing job.
+    fn open_lock(&self, id: &JobId, path: &Path) -> Result<File, IrisError> {
+        // Do not create lock files for jobs that do not exist.
+        if !self.record_path(id).exists() {
+            return Err(not_found(id, &self.dir));
+        }
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        options
+            .open(path)
+            .map_err(|e| IrisError::io(format_args!("cannot open lock file {}", path.display()), &e))
+    }
+
+    /// After acquiring a lock: if the record was deleted meanwhile, remove the lock
+    /// file this call may have re-created and report `job_not_found`. (Job ids are
+    /// never reused, so a deleted record cannot come back.)
+    fn confirm_exists_or_cleanup(&self, id: &JobId, lock_path: &Path) -> Result<(), IrisError> {
+        if self.record_path(id).exists() {
+            Ok(())
+        } else {
+            let _ = fs::remove_file(lock_path);
+            Err(not_found(id, &self.dir))
+        }
+    }
+
+    fn ensure_dir(&self) -> Result<(), IrisError> {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&self.dir).map_err(|e| {
+            IrisError::io(format_args!("cannot create job directory {}", self.dir.display()), &e)
+        })
+    }
+}
+
+fn not_found(id: &JobId, dir: &Path) -> IrisError {
+    IrisError::new(ErrorCode::JobNotFound, format!("no local job record for {id} in {}", dir.display()))
+        .with_job(id.to_string(), None)
+        .with_hint("run `iris jobs list` to see local jobs (records live in the state directory)")
+}
+
+fn state_invalid(path: &Path, id: &JobId, why: impl std::fmt::Display) -> IrisError {
+    IrisError::new(ErrorCode::StateInvalid, format!("job record {} is unreadable: {why}", path.display()))
+        .with_job(id.to_string(), None)
+        .with_detail("path", path.to_string_lossy().into_owned())
+        .with_hint("the file may be corrupt; `iris jobs delete <JOB_ID> --force` removes the local record")
+}
+
+/// Parse a record, enforcing the version rule before the structural parse so a
+/// newer record gets a precise error even if its shape changed.
+fn parse_record(bytes: &[u8], path: &Path, id: &JobId) -> Result<JobRecord, IrisError> {
+    let value: Value = serde_json::from_slice(bytes).map_err(|e| state_invalid(path, id, e))?;
+    let version = value
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .ok_or_else(|| state_invalid(path, id, "missing or invalid schema_version"))?;
+    if version > u64::from(JOB_RECORD_VERSION) {
+        return Err(IrisError::new(
+            ErrorCode::StateInvalid,
+            format!(
+                "job record {} was written by a newer iris (record schema_version {version}; this iris reads up \
+                 to {JOB_RECORD_VERSION})",
+                path.display()
+            ),
+        )
+        .with_job(id.to_string(), None)
+        .with_detail("path", path.to_string_lossy().into_owned())
+        .with_hint("upgrade iris to read this job"));
+    }
+    let record: JobRecord = serde_json::from_value(value).map_err(|e| state_invalid(path, id, e))?;
+    if record.job_id() != id {
+        return Err(state_invalid(
+            path,
+            id,
+            format!("it contains job_id {} but the file name says {id}", record.job_id()),
+        ));
+    }
+    Ok(record)
+}
+
+/// Serialize a record as written by this version (pretty JSON, trailing newline).
+fn encode(record: &JobRecord) -> Result<Vec<u8>, IrisError> {
+    let mut value = serde_json::to_value(record)
+        .map_err(|e| IrisError::internal(format!("cannot serialize job record: {e}")))?;
+    value["schema_version"] = Value::from(JOB_RECORD_VERSION);
+    let mut bytes = serde_json::to_vec_pretty(&value)
+        .map_err(|e| IrisError::internal(format!("cannot serialize job record: {e}")))?;
+    bytes.push(b'\n');
+    Ok(bytes)
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Replace {
+    Yes,
+    No,
+}
+
+/// Atomically place `bytes` at `target`: temp file in the same directory →
+/// write → `sync_all` → rename (or no-clobber rename) → best-effort directory fsync.
+/// `before_persist` runs after the temp file is durable and before the rename (a
+/// test seam for simulated interruptions). On any error the temp file is removed
+/// and `target` is untouched.
+fn write_atomic(
+    target: &Path,
+    bytes: &[u8],
+    replace: Replace,
+    before_persist: &mut dyn FnMut(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    let dir = target.parent().ok_or_else(|| io::Error::other("record path has no parent directory"))?;
+    let file_name = target.file_name().and_then(|n| n.to_str()).unwrap_or("record");
+    let prefix = format!(".{file_name}.");
+    let mut tmp = tempfile::Builder::new().prefix(&prefix).suffix(".tmp").rand_bytes(8).tempfile_in(dir)?;
+    tmp.write_all(bytes)?;
+    tmp.as_file().sync_all()?;
+    before_persist(tmp.path())?;
+    match replace {
+        Replace::Yes => tmp.persist(target).map_err(|e| e.error)?,
+        Replace::No => tmp.persist_noclobber(target).map_err(|e| e.error)?,
+    };
+    sync_dir(dir);
+    Ok(())
+}
+
+/// Best-effort fsync of a directory so a rename survives a crash.
+fn sync_dir(dir: &Path) {
+    if let Ok(d) = File::open(dir) {
+        let _ = d.sync_all();
+    }
+}
+
+fn ignore_not_found(e: io::Error) -> io::Result<()> {
+    if e.kind() == io::ErrorKind::NotFound { Ok(()) } else { Err(e) }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_dir_names(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn interrupted_write_leaves_the_previous_record_intact() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("job.json");
+        write_atomic(&target, b"{\"v\":1}\n", Replace::Yes, &mut |_| Ok(())).unwrap();
+
+        // Fail after the new content is fully written and synced to the temp file,
+        // just before the rename (e.g. the process is interrupted at that point).
+        let mut saw_temp = None;
+        let err = write_atomic(&target, b"{\"v\":2}\n", Replace::Yes, &mut |tmp| {
+            assert_eq!(fs::read(tmp).unwrap(), b"{\"v\":2}\n");
+            saw_temp = Some(tmp.to_path_buf());
+            Err(io::Error::other("simulated interruption"))
+        })
+        .unwrap_err();
+        assert_eq!(err.to_string(), "simulated interruption");
+
+        assert_eq!(fs::read(&target).unwrap(), b"{\"v\":1}\n");
+        let tmp = saw_temp.unwrap();
+        assert!(tmp.file_name().unwrap().to_str().unwrap().starts_with(".job.json."));
+        assert!(!tmp.exists(), "temp file is cleaned up on failure");
+        assert_eq!(read_dir_names(dir.path()), vec!["job.json".to_string()]);
+    }
+
+    #[test]
+    fn no_clobber_write_refuses_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("job.json");
+        write_atomic(&target, b"first", Replace::No, &mut |_| Ok(())).unwrap();
+        let err = write_atomic(&target, b"second", Replace::No, &mut |_| Ok(())).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read(&target).unwrap(), b"first");
+        assert_eq!(read_dir_names(dir.path()), vec!["job.json".to_string()]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn written_records_are_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("job.json");
+        write_atomic(&target, b"x", Replace::Yes, &mut |_| Ok(())).unwrap();
+        assert_eq!(fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
+    }
+}
