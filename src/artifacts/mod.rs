@@ -1,1 +1,31 @@
-//! Local artifact handling: output paths, media validation, atomic finalization (C-02, C-04). Implemented by T-07.
+//! Local artifact handling (contracts C-02 "Output paths and filenames", C-04
+//! "Downloads", "Artifact validation", "Filenames and paths").
+//!
+//! * [`paths`] — plan absolute output paths (default names, `-o` rules,
+//!   extension/format consistency) and the `output_exists` preflight.
+//! * [`media`] — sniff media types from magic bytes, decode images, validate
+//!   ISO-BMFF video structure, inspect PNG alpha/dimensions.
+//! * [`read_input_image`] — validate local input images against a model's
+//!   declared input capabilities before any paid request.
+//! * [`save_image`], [`finalize_download`], [`PartFile`] — atomic, no-clobber (or
+//!   `--overwrite`) finalization through `.<name>.iris-part-*` temp files, with the
+//!   rename fallback that keeps paid synchronous outputs.
+//! * [`decide_download`], [`copy_local`] — repeat downloads without the network.
+//!
+//! Nothing here talks to the network: streaming a remote artifact is
+//! `crate::http::download`, which writes into a [`PartFile`] path.
+
+mod download;
+mod finalize;
+mod input;
+pub mod media;
+pub mod paths;
+
+pub use download::{DownloadDecision, RecordedFile, copy_local, decide_download, is_intact};
+pub use finalize::{
+    FinalizeMode, PartFile, SaveOutcome, SavedArtifact, already_present_warning, build_artifact,
+    finalize_download, place, save_image, sha256_bytes, sha256_file,
+};
+pub use input::read_input_image;
+pub use media::{ImageDetails, IsoBmffInfo, MediaInfo};
+pub use paths::{Naming, PathRequest, PlannedOutputs, adjust_extension, plan_outputs, preflight};
