@@ -1,4 +1,4 @@
-//! Option values and their validation against declared [`OptionSpec`]s.
+//! Option values and their validation against declared [`OptionSpec`](super::types::OptionSpec)s.
 
 use std::collections::BTreeMap;
 use std::fmt;
