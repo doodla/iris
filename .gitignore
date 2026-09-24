@@ -20,7 +20,8 @@ target
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Iris: generated media, local state, private configuration, secrets
+# Iris: generated media (saved to the current directory by default), except
+# test fixtures and documentation images
 *.png
 *.jpg
 *.jpeg
@@ -33,18 +34,24 @@ target
 *.webm
 !/tests/fixtures/**
 !/docs/assets/**
-.iris-state/
-/out/
-/outputs/
+# Temporary files of an interrupted download or save
 *.iris-part-*
+
+# Secrets, and a private config file kept in the checkout (IRIS_CONFIG=config.local.toml)
 .env
 .env.*
 *.pem
 *.key
 config.local.toml
 
+# Release archives written by scripts/package-release.sh
+/dist/
+
 # Local scratch and temporary work files
 /scratch/
 /tmp/
 *.orig
 *.rej
+
+# Local agent work files
+/.iris-work/
