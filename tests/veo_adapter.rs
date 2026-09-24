@@ -3,7 +3,11 @@
 //! rules (D-08), poll status mapping, operation-name and output-URI validation.
 //! Offline; fake key only.
 
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpListener;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
 use iris::catalog::{OptionValue, ResolvedOptions};
@@ -25,6 +29,10 @@ const FAST: &str = "veo-3.1-fast-generate-preview";
 const OPERATION: &str = "models/veo-3.1-lite-generate-preview/operations/abc123xyz";
 
 fn ctx_with(server: &MockServer, submit: Duration) -> ProviderContext {
+    ctx_for(&server.uri(), submit)
+}
+
+fn ctx_for(base: &str, submit: Duration) -> ProviderContext {
     let http = HttpClient::new(&HttpSettings {
         connect_timeout: Duration::from_secs(2),
         retry: RetryPolicy {
@@ -38,7 +46,7 @@ fn ctx_with(server: &MockServer, submit: Duration) -> ProviderContext {
     .unwrap();
     ProviderContext {
         http,
-        base_url: url::Url::parse(&server.uri()).unwrap(),
+        base_url: url::Url::parse(base).unwrap(),
         credential: Secret::new(KEY),
         timeouts: Timeouts {
             connect: Duration::from_secs(2),
@@ -134,6 +142,7 @@ async fn sent_body(req: &VideoRequest) -> Value {
     let reqs = requests(&server).await;
     assert_eq!(reqs.len(), 1);
     assert_header_auth(&reqs);
+    assert_eq!(reqs[0].headers.get("content-type").unwrap().to_str().unwrap(), "application/json");
     body_of(&reqs[0])
 }
 
@@ -280,7 +289,13 @@ async fn a_rate_limited_submit_is_retried_and_then_accepted() {
         .await;
     let op = submit(&server, &request(LITE, &[])).await.unwrap();
     assert_eq!(op.remote_id, OPERATION);
-    assert_eq!(requests(&server).await.len(), 2);
+    let reqs = requests(&server).await;
+    assert_eq!(reqs.len(), 2);
+    assert_header_auth(&reqs);
+    assert_eq!(reqs[0].body, reqs[1].body, "the retry resends the identical request");
+    for r in &reqs {
+        assert_eq!(r.headers.get("content-type").unwrap().to_str().unwrap(), "application/json");
+    }
 }
 
 async fn uncertain_case(template: ResponseTemplate) -> (IrisError, usize) {
@@ -332,6 +347,64 @@ async fn a_submit_timeout_after_sending_is_uncertain() {
     assert_uncertain(&err);
     assert_eq!(err.details["transport"], "timeout");
     assert_eq!(requests(&server).await.len(), 1);
+}
+
+/// One scripted raw HTTP exchange per connection: read the request (headers and
+/// `Content-Length` body), write `response` (possibly nothing), close. Returns the
+/// base URL and the number of connections accepted.
+fn raw_server(responses: Vec<Vec<u8>>) -> (String, Arc<AtomicUsize>) {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let count = Arc::new(AtomicUsize::new(0));
+    let seen = count.clone();
+    std::thread::spawn(move || {
+        for response in responses {
+            let Ok((stream, _)) = listener.accept() else { return };
+            seen.fetch_add(1, Ordering::SeqCst);
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                if reader.read_line(&mut line).unwrap_or(0) == 0 || line == "\r\n" {
+                    break;
+                }
+                if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    content_length = v.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0u8; content_length];
+            let _ = reader.read_exact(&mut body);
+            let mut stream = stream;
+            let _ = stream.write_all(&response);
+            let _ = stream.flush();
+        }
+    });
+    (base, count)
+}
+
+#[tokio::test]
+async fn a_reset_or_truncated_answer_after_sending_is_uncertain_and_never_resent() {
+    let accepted = format!(
+        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+        json!({"name": OPERATION}).to_string().len(),
+        json!({"name": OPERATION})
+    )
+    .into_bytes();
+    let truncated =
+        b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 100\r\n\r\n{\"name\":"
+            .to_vec();
+    let closed_without_answer = Vec::new();
+    for first in [truncated, closed_without_answer] {
+        // A resend would reach the second, accepting exchange and succeed.
+        let (base, connections) = raw_server(vec![first, accepted.clone()]);
+        let err = GeminiProvider::new()
+            .submit(&request(LITE, &[]), &ctx_for(&base, Duration::from_secs(5)))
+            .await
+            .unwrap_err();
+        assert_uncertain(&err);
+        assert_eq!(err.details["transport"], "other", "{}", err.message);
+        assert_eq!(connections.load(Ordering::SeqCst), 1, "a paid submit is never resent after sending");
+    }
 }
 
 #[tokio::test]
@@ -470,6 +543,35 @@ async fn a_succeeded_operation_returns_validated_download_uris() {
             assert_eq!(outputs[0].media_type.as_deref(), Some("video/mp4"));
             assert!(usage.is_none());
             assert!(warnings.is_empty());
+        }
+        other => panic!("expected Succeeded, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_success_with_filtered_outputs_carries_a_content_filtered_warning() {
+    let server = MockServer::start().await;
+    let uri = format!("{}/v1beta/files/abc-123:download?alt=media", server.uri());
+    Mock::given(method("GET"))
+        .and(path(format!("/v1beta/{OPERATION}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "name": OPERATION,
+            "done": true,
+            "response": {"generateVideoResponse": {
+                "generatedSamples": [{"video": {"uri": uri}}],
+                "raiMediaFilteredCount": 1,
+                "raiMediaFilteredReasons": ["One output was blocked for safety reasons."]
+            }}
+        })))
+        .mount(&server)
+        .await;
+    match GeminiProvider::new().poll(OPERATION, &ctx(&server)).await.unwrap() {
+        RemoteStatus::Succeeded { outputs, warnings, .. } => {
+            assert_eq!(outputs.len(), 1);
+            assert_eq!(outputs[0].uri, uri);
+            assert_eq!(warnings.len(), 1);
+            assert_eq!(warnings[0].code, "content_filtered");
+            assert!(warnings[0].message.contains("filtered 1 output"), "{}", warnings[0].message);
         }
         other => panic!("expected Succeeded, got {other:?}"),
     }
