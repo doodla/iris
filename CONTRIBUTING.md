@@ -34,21 +34,31 @@ $ cargo check --locked --all-targets     # also run on the pinned MSRV toolchain
 $ cargo deny check                        # dependency licenses and advisories
 ```
 
-If you touched `install.sh`, also run its offline test suite and `shellcheck`:
+If you touched `install.sh`, `scripts/`, or `tests/installer/`, also run `shellcheck` and the
+installer's offline test suite:
 
 ```console
 $ shellcheck -s sh install.sh
+$ shellcheck scripts/*.sh tests/installer/*.sh
 $ sh tests/installer/run.sh
 ```
 
-If you touched anything under `schema/` or the DTOs it's generated from, make sure the committed
-schema file still matches what `cargo test` regenerates (a test enforces this — a mismatch fails
-the build, not just a lint).
+If you changed anything that appears in `--json` output (the result and error types the schema is
+generated from), regenerate the committed schema and review its diff:
 
-CI also builds and tests on macOS (Intel and Apple silicon) in addition to Linux, and packages
-the crate (`cargo package --list`) to catch anything accidentally included or excluded — those
-jobs are hosted-only; running the Linux checks above locally covers the parts you can verify
-before pushing.
+```console
+$ cargo run -q -- schema > schema/iris-output.v1.schema.json
+```
+
+`cargo test` never writes that file: it only compares it with the schema generated from the code
+and fails on any difference. Removing or renaming a field, or changing its meaning, also needs a
+`schema_version` bump (see [docs/json-contract.md](docs/json-contract.md)).
+
+CI also builds and tests on macOS (Intel and Apple silicon) in addition to Linux, packages the
+crate (`cargo package --list`) to catch anything accidentally included or excluded, and runs a
+release dry run: it builds the Linux musl binary, packages it, and smoke-tests the archive and
+`install.sh` with it. The macOS jobs are hosted-only; the release dry run can be replayed locally
+as shown in [docs/install.md](docs/install.md#testing-the-installer-without-a-real-release).
 
 ## Tests
 
@@ -72,6 +82,34 @@ Iris's commit policy is stated once, concisely, in [AGENTS.md](AGENTS.md#working
 commits that build and pass tests, with an imperative subject and any non-obvious reasoning in the
 body; explicit `git add` of the paths a commit actually touches; no secrets, generated media, or
 local state ever committed.
+
+## Releasing
+
+Maintainers cut a release from `main`:
+
+1. On a branch, set the new `version` in `Cargo.toml` and run `cargo check` (without `--locked`)
+   so that `Cargo.lock` records it too. Commit both.
+2. In `CHANGELOG.md`, move the entries under `## [Unreleased]` to a new `## [X.Y.Z] - YYYY-MM-DD`
+   heading below it, and leave `[Unreleased]` empty.
+3. Merge that change, and wait until CI has passed on the resulting `main` commit. Only ever tag
+   a `main` commit whose CI is green.
+4. Tag that commit and push the tag:
+
+   ```console
+   $ git tag vX.Y.Z <commit>
+   $ git push origin vX.Y.Z
+   ```
+
+Pushing a `v*` tag starts the release workflow (`.github/workflows/release.yml`). It fails unless
+the tag is `v` followed by the `Cargo.toml` version; reruns formatting, Clippy, and the tests on the
+tagged commit; builds the Linux musl binary and both macOS binaries on their own runners; packages
+each as `iris-vX.Y.Z-<target>.tar.gz` (the binary, `LICENSE`, `README.md`, `CHANGELOG.md`, and
+`docs/`); and smoke-tests every archive, including installing it with `install.sh`. Only when all
+of that passes does it create the GitHub release, with the three archives, `SHA256SUMS`, and
+`install.sh`; a version with a `-` suffix (such as `1.2.0-rc.1`) becomes a pre-release. If any job
+fails, nothing is published: re-run a job that failed for a transient reason, and otherwise fix the
+problem on `main` and release a new version rather than moving a pushed tag. Running the workflow
+by hand (workflow_dispatch) does everything except publishing.
 
 ## Reporting a security issue
 
