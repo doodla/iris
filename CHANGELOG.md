@@ -1,0 +1,60 @@
+# Changelog
+
+All notable changes to this project are documented in this file. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Iris intends to follow
+[Semantic Versioning](https://semver.org/) once it reaches 1.0.
+
+## [Unreleased]
+
+Nothing yet.
+
+## [0.1.0] — initial release
+
+Iris's first release: a Rust CLI that generates and edits images and generates videos through
+OpenAI and Google, with a durable job model for provider-native asynchronous work and a
+machine-readable contract for agents.
+
+### Added
+
+- **Image generation and editing** on OpenAI's Images API (GPT Image 2.5 Sunburst, GPT Image 2.5
+  Flare, GPT Image 2) and Google's Gemini API (Nano Banana 2, Nano Banana 2 Lite, Nano Banana
+  Pro), including editing/composing from local reference images and, on OpenAI, a mask. Both are
+  synchronous.
+- **Video generation** on Google Veo (3.1, 3.1 Fast, 3.1 Lite — all preview), a provider-native
+  asynchronous job: durable local job records, `--detach` submit-and-return, and
+  `jobs status`/`wait`/`download`/`delete` recovery from any later process. First-frame,
+  last-frame, and reference-image inputs where the model documents support for them.
+  Submission uncertainty (an ambiguous paid submit) is reported as `submission_unknown` and never
+  resubmitted automatically.
+- **A versioned `--json` contract**: one JSON envelope per command, a published JSON Schema
+  (`iris schema`), a stable error-code taxonomy with a documented exit-code mapping, and
+  structured warnings. See [docs/json-contract.md](docs/json-contract.md).
+- **`iris models list`/`show`** describing every built-in model's declared capabilities, options,
+  limits, published pricing, and documented access requirements, plus `--check-access` for a free
+  per-account metadata check.
+- **`iris jobs`** (`list`, `status`, `wait`, `download`, `delete`) for provider-native async job
+  recovery, with atomic, versioned, lock-protected local persistence. Downloads are safe to
+  repeat and never re-trigger generation. See [docs/jobs.md](docs/jobs.md).
+- **`iris config`** (`show`, `path`) and **`iris doctor`** for configuration inspection and
+  credential/access diagnostics (presence only — values are never printed). See
+  [docs/configuration.md](docs/configuration.md).
+- **`iris completions`** for bash, zsh, fish, and elvish, and **`iris version`**.
+- **Cost estimates** (pre-call where supportable, post-call from reported usage otherwise),
+  always explicitly labeled as estimates, never an invoice.
+- A one-command installer (`install.sh`) for Linux x86_64 and macOS x86_64/ARM64, with checksum
+  verification, pinned installs, and no `sudo`. See [docs/install.md](docs/install.md). (No
+  release has been published yet — see that document for what works today.)
+- CI (formatting, Clippy, offline tests on Linux and macOS, a pinned MSRV check, dependency
+  license/advisory scanning) and a tag-triggered release workflow producing checksummed archives.
+- `AGENTS.md`/`CLAUDE.md` durable agent instructions, and this project's documentation set under
+  `docs/`.
+
+### Known limitations
+
+- A synchronous image call cannot be recovered if the connection is lost after the provider
+  accepted it — there is no job to resume, unlike video (see
+  [docs/jobs.md](docs/jobs.md#why-synchronous-calls-have-no-job-record)).
+- Veo audio cannot be disabled (not an option the Gemini API offers), Veo outputs are retained by
+  the provider for about 2 days, and all Veo models are labeled preview by Google.
+- No remote job cancellation of any kind — `jobs delete` removes only the local record.
+- No Windows support (builds, CI, or installer) in v1; Linux and macOS only.
