@@ -3,7 +3,6 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
@@ -29,10 +28,12 @@ pub const CREDENTIAL_VARS: &[&str] = &["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOG
 /// Upper bound for one `iris` invocation; the slowest scenario takes a few seconds.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(90);
 
-/// A port nothing listens on (bound, then released).
-pub fn closed_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
+/// The base URL of a port nothing listens on: the unreachable default provider and
+/// proxy of every run. Port 9 (discard) lies below every OS's ephemeral port range,
+/// so no mock server of a test running in parallel can ever be assigned it (a
+/// bound-then-released ephemeral port could be reused by one, and a stray request
+/// would then land in that test's mock).
+pub const DEAD_URL: &str = "http://127.0.0.1:9";
 
 /// A temp directory with `home/`, `work/` (the current directory of every run, so
 /// the default output directory), and `state/` (`IRIS_STATE_DIR`). The root is
@@ -154,7 +155,7 @@ pub struct Iris {
 
 impl Iris {
     pub fn new(sandbox: &Sandbox) -> Iris {
-        let dead = format!("http://127.0.0.1:{}", closed_port());
+        let dead = DEAD_URL;
         let mut env = BTreeMap::new();
         let mut set = |k: &str, v: &OsStr| {
             env.insert(OsString::from(k), v.to_os_string());
@@ -162,11 +163,11 @@ impl Iris {
         set("HOME", sandbox.home().as_os_str());
         set("IRIS_STATE_DIR", sandbox.state().as_os_str());
         set("IRIS_OPENAI_BASE_URL", OsStr::new(&format!("{dead}/v1")));
-        set("IRIS_GEMINI_BASE_URL", OsStr::new(&dead));
+        set("IRIS_GEMINI_BASE_URL", OsStr::new(dead));
         // Safety net: any https request (a real provider) goes to a dead proxy;
         // plain-http 127.0.0.1 mock traffic is exempt.
-        set("HTTPS_PROXY", OsStr::new(&dead));
-        set("https_proxy", OsStr::new(&dead));
+        set("HTTPS_PROXY", OsStr::new(dead));
+        set("https_proxy", OsStr::new(dead));
         set("NO_PROXY", OsStr::new("127.0.0.1,localhost"));
         set("no_proxy", OsStr::new("127.0.0.1,localhost"));
         Iris { args: Vec::new(), env, cwd: sandbox.work(), stdin: None }
@@ -312,6 +313,18 @@ impl Running {
                 Err(e) => panic!("{:?}: no stderr line containing {needle:?} ({e:?})", self.args),
             }
         }
+    }
+
+    /// True if a stderr line that arrived since the last check contains `needle`
+    /// (non-blocking; the lines it reads are consumed, but [`Running::finish`] still
+    /// returns the whole stderr).
+    pub fn stderr_has(&self, needle: &str) -> bool {
+        while let Ok(line) = self.lines.try_recv() {
+            if line.contains(needle) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Send SIGINT through the `kill` utility (as a terminal's Ctrl-C would).

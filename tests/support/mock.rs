@@ -6,7 +6,7 @@
 //! no request from one test can reach another test's server.
 
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
@@ -14,6 +14,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use super::media::{b64, mp4};
+use super::process::{GEMINI_KEY, OPENAI_KEY};
 
 /// A running mock server with a small synchronous API (the server runs on its own
 /// thread; this runtime only drives registration and request inspection).
@@ -76,6 +77,39 @@ impl MockApi {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+
+    /// Assert that no request this server received carries a credential outside
+    /// `allowed` (a header name and the one key it may hold): no key in any other
+    /// header, and no key value or `key` query parameter in any request URL.
+    pub fn assert_credentials_only_in(&self, allowed: Option<(&str, &str)>) {
+        for req in self.requests() {
+            let url = req.url.as_str();
+            for key in [OPENAI_KEY, GEMINI_KEY] {
+                assert!(!url.contains(key), "a key in a request URL: {url}");
+            }
+            assert!(
+                !req.url.query_pairs().any(|(k, _)| k.eq_ignore_ascii_case("key")),
+                "a `key` query parameter in a request URL: {url}"
+            );
+            for (name, value) in &req.headers {
+                let value = String::from_utf8_lossy(value.as_bytes());
+                match allowed {
+                    Some((header, key)) if name.as_str().eq_ignore_ascii_case(header) => {
+                        assert_eq!(value, key, "{name} of {} {url} holds the wrong credential", req.method);
+                    }
+                    _ => {
+                        for key in [OPENAI_KEY, GEMINI_KEY] {
+                            assert!(
+                                !value.contains(key),
+                                "{} {url} carries a key in header {name}",
+                                req.method
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// A request header as a string (`None` if absent).
@@ -121,6 +155,40 @@ impl Respond for Switch {
     fn respond(&self, _request: &Request) -> ResponseTemplate {
         let mut queue = self.0.lock().unwrap();
         if queue.len() > 1 { queue.pop_front().unwrap() } else { queue[0].clone() }
+    }
+}
+
+/// Answers its template only once [`Gate::open`] was called (or its time limit has
+/// passed): holds a response until the test has seen what it waits for.
+///
+/// It blocks the server's own thread while closed, so use it only on a server that
+/// has one request in flight at a time (the file host).
+#[derive(Clone)]
+pub struct Gate {
+    template: ResponseTemplate,
+    open: Arc<(Mutex<bool>, Condvar)>,
+    limit: Duration,
+}
+
+impl Gate {
+    pub fn new(template: ResponseTemplate, limit: Duration) -> Gate {
+        Gate { template, open: Arc::new((Mutex::new(false), Condvar::new())), limit }
+    }
+
+    /// Release every held response and answer further requests at once.
+    pub fn open(&self) {
+        let (lock, cvar) = &*self.open;
+        *lock.lock().unwrap() = true;
+        cvar.notify_all();
+    }
+}
+
+impl Respond for Gate {
+    fn respond(&self, _request: &Request) -> ResponseTemplate {
+        let (lock, cvar) = &*self.open;
+        let guard = lock.lock().unwrap();
+        let _held = cvar.wait_timeout_while(guard, self.limit, |open| !*open).unwrap();
+        self.template.clone()
     }
 }
 
@@ -302,6 +370,29 @@ impl VeoMock {
     /// Requests to the file host (the second origin).
     pub fn file_fetches(&self) -> usize {
         self.files.total()
+    }
+
+    /// From now on the file host holds its answer (`template`) until the returned
+    /// gate is opened, or for `limit` at most.
+    pub fn hold_file(&self, template: ResponseTemplate, limit: Duration) -> Gate {
+        let gate = Gate::new(template, limit);
+        self.files.mount(
+            Mock::given(method("GET"))
+                .and(path(format!("/bucket/{VEO_FILE_ID}.mp4")))
+                .respond_with(gate.clone())
+                .with_priority(1),
+        );
+        gate
+    }
+
+    /// The credential went only where it belongs: every request to the API origin
+    /// carries the Gemini key in `x-goog-api-key` and nowhere else, the file host
+    /// (another origin, reached through a redirect) never receives a key, and no
+    /// request URL (submit, polls, `files/<id>:download?alt=media`, the signed
+    /// file-host URL) holds a key or a `key` parameter.
+    pub fn assert_no_credential_leaks(&self) {
+        self.api.assert_credentials_only_in(Some(("x-goog-api-key", GEMINI_KEY)));
+        self.files.assert_credentials_only_in(None);
     }
 }
 

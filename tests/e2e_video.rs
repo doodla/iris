@@ -9,6 +9,9 @@
 //! the one-command wait-and-save flow, provider-side outcomes seen by later
 //! processes (poll retries, remote failure, safety block, operation gone), and a
 //! rate-limited submission that is retried into a single job.
+//!
+//! Every test ends with [`VeoMock::assert_no_credential_leaks`]: the key reached the
+//! API origin only as `x-goog-api-key`, never the file host, and never a URL.
 
 mod support;
 
@@ -157,6 +160,7 @@ fn a_veo_job_is_followed_across_processes_and_downloaded_through_a_redirect() {
 
     assert_eq!(veo.submits(), 1, "no step ever resubmitted");
     assert_eq!(veo.polls(), 2, "status refreshed once; wait polled once; downloads never poll");
+    veo.assert_no_credential_leaks();
 }
 
 #[test]
@@ -186,6 +190,7 @@ fn video_generate_waits_and_saves_in_one_command() {
     assert_video(&job["artifacts"][0], &sb.path(&format!("clips/{id}.mp4")));
     assert_eq!(sb.record(id)["outputs"][0]["download_state"], "downloaded");
     assert_eq!(veo.submits(), 2, "one submission per command");
+    veo.assert_no_credential_leaks();
 }
 
 #[test]
@@ -221,6 +226,7 @@ fn provider_side_outcomes_of_a_running_job_are_reported_by_later_processes() {
         .run()
         .err(1, "remote_job_failed");
     assert_eq!(v["error"]["job_id"], id.as_str());
+    veo.assert_no_credential_leaks();
 
     // The provider's safety filters blocked the video.
     let sb = Sandbox::new();
@@ -240,6 +246,7 @@ fn provider_side_outcomes_of_a_running_job_are_reported_by_later_processes() {
     let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "content_blocked");
     assert_eq!(v["error"]["job_status"], "failed");
     assert!(v["error"]["hint"].as_str().unwrap().contains("not charged"), "{v}");
+    veo.assert_no_credential_leaks();
 
     // The operation is gone at the provider.
     let sb = Sandbox::new();
@@ -249,6 +256,7 @@ fn provider_side_outcomes_of_a_running_job_are_reported_by_later_processes() {
     sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "artifact_expired");
     assert_eq!(sb.record(&id)["status"], "expired");
     assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
 }
 
 #[test]
@@ -266,6 +274,7 @@ fn a_rate_limited_veo_submission_is_retried_into_one_job() {
     assert_eq!(veo.submits(), 2, "the 429 was a definite rejection, so it was resent once");
     assert_eq!(files_in(&sb.jobs_dir()).iter().filter(|n| n.ends_with(".json")).count(), 1, "one job record");
     assert_eq!(sb.record(&id)["status"], "running");
+    veo.assert_no_credential_leaks();
 }
 
 // ----- scenario 6: submission uncertainty ------------------------------------------------------
@@ -318,6 +327,7 @@ fn an_uncertain_veo_submission_is_recorded_and_never_resubmitted() {
         assert_eq!(veo.submits(), 1, "no process ever resubmits");
         assert_eq!(veo.api.total(), 1, "nothing else was requested (no operation id to poll)");
         assert!(files_in(&sb.work()).is_empty());
+        veo.assert_no_credential_leaks();
     }
 }
 
@@ -350,6 +360,7 @@ fn a_wait_limit_exits_4_and_leaves_the_job_running() {
     let v = sb.iris().args(["jobs", "status", &id, "--no-refresh", "--json"]).run().ok();
     assert_eq!(job_of(&v)["status"], "running");
     assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
 }
 
 #[test]
@@ -376,6 +387,7 @@ fn ctrl_c_during_jobs_wait_exits_130_and_leaves_the_job_running() {
 
     assert_eq!(sb.record(&id)["status"], "running", "Ctrl-C never fails the job");
     assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
 }
 
 // ----- scenario 8: download failure, recovery, expiry --------------------------------------------
@@ -416,6 +428,8 @@ fn a_failed_download_keeps_the_job_succeeded_and_a_later_download_recovers() {
     assert_eq!(sb.record(&id)["outputs"][0]["download_state"], "downloaded");
     assert_eq!(veo.submits(), 1);
     assert_eq!(files_in(&sb.work()), [format!("{id}.mp4")]);
+    // The five retried file-host fetches and the recovery carried no credential.
+    veo.assert_no_credential_leaks();
 }
 
 #[test]
@@ -431,6 +445,7 @@ fn an_error_document_served_as_media_is_invalid_media_and_nothing_is_saved() {
     assert_eq!(sb.record(&id)["status"], "succeeded");
     assert!(files_in(&sb.work()).is_empty());
     assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
 }
 
 /// Shift every `*_at` timestamp of a job record back by `days`, as if the job had
@@ -467,6 +482,7 @@ fn outputs_gone_from_the_file_host_or_past_retention_are_artifact_expired() {
     assert_eq!(rec["status"], "succeeded", "the job itself stays succeeded");
     assert_eq!(rec["outputs"][0]["download_state"], "expired");
     assert_eq!(veo.file_fetches(), 1, "404 is never retried");
+    veo.assert_no_credential_leaks();
 
     // The job finished three days ago: the 2-day retention has passed, so Iris does
     // not even ask.
@@ -483,6 +499,7 @@ fn outputs_gone_from_the_file_host_or_past_retention_are_artifact_expired() {
     assert_eq!(sb.record(&id)["outputs"][0]["download_state"], "expired");
     assert_eq!((veo.api_downloads(), veo.file_fetches()), (0, 0), "nothing was requested");
     assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
 }
 
 // ----- scenario 9: concurrent waits --------------------------------------------------------------
@@ -492,12 +509,12 @@ fn two_concurrent_waits_download_the_output_once() {
     let sb = Sandbox::new();
     let veo = VeoMock::start();
     let id = submit_detached(&sb, &veo, &[]);
-    // A slow file host keeps the first download in progress while the second waiter
-    // reaches the download lock.
-    veo.file.set(
-        wiremock::ResponseTemplate::new(200)
-            .set_body_raw(veo_video(), "video/mp4")
-            .set_delay(Duration::from_millis(1500)),
+    // The file host holds the first download until the other waiter has reached the
+    // download lock, so the two downloads overlap however the processes are
+    // scheduled (the limit only bounds a failing run).
+    let gate = veo.hold_file(
+        wiremock::ResponseTemplate::new(200).set_body_raw(veo_video(), "video/mp4"),
+        Duration::from_secs(30),
     );
 
     let wait = || {
@@ -507,9 +524,20 @@ fn two_concurrent_waits_download_the_output_once() {
             .spawn()
     };
     let (a, b) = (wait(), wait());
-    // Both have polled once and are waiting; then the provider finishes.
-    veo.api.wait_for("GET", &format!("/v1beta/{}", veo.op_name), 2, Duration::from_secs(30));
+    // Each process has polled once and is waiting; then the provider finishes.
+    let running = format!("Job {id} is running");
+    a.wait_for_stderr(&running, Duration::from_secs(30));
+    b.wait_for_stderr(&running, Duration::from_secs(30));
     veo.succeed();
+    // One process downloads (held by the file host); the other reaches the lock and
+    // waits for it. Only then does the file host answer.
+    let waited = format!("Waiting for another iris process that is downloading job {id}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while !(a.stderr_has(&waited) || b.stderr_has(&waited)) {
+        assert!(std::time::Instant::now() < deadline, "neither process waited for the other's download lock");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    gate.open();
     let (a, b) = (a.finish(), b.finish());
     let (va, vb) = (a.ok(), b.ok());
 
@@ -542,6 +570,7 @@ fn two_concurrent_waits_download_the_output_once() {
     assert_eq!(rec["outputs"][0]["download_state"], "downloaded");
     assert_eq!(rec["outputs"][0]["sha256"], sha256_hex(&veo_video()));
     assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
 }
 
 // ----- scenario 10 (video): secret hygiene with -vv ---------------------------------------------
@@ -590,4 +619,5 @@ fn verbose_video_runs_never_reveal_the_key_or_signed_urls() {
         assert_eq!(mode(&sb.jobs_dir()), 0o700, "jobs directory is private");
         assert_eq!(mode(&sb.record_path(&id)), 0o600, "job records are private");
     }
+    veo.assert_no_credential_leaks();
 }

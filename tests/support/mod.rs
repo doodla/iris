@@ -8,9 +8,9 @@
 //! * every child process starts from an empty environment (`env_clear`, plus an
 //!   explicit `env_remove` of the credential variables) and receives only a temp
 //!   `HOME`, `IRIS_STATE_DIR`, and fake keys set through `Command::env`;
-//! * provider base URLs point at an unused 127.0.0.1 port unless a test attaches a
-//!   mock server, and `HTTPS_PROXY` points at that dead port too, so a request that
-//!   should not happen fails locally instead of reaching a paid API.
+//! * provider base URLs point at `127.0.0.1:9`, where nothing listens, unless a
+//!   test attaches a mock server, and `HTTPS_PROXY` points there too, so a request
+//!   that should not happen fails locally instead of reaching a paid API.
 //!
 //! Modules: [`process`] (sandbox + process runner), [`mock`] (mock servers and
 //! provider wire fixtures), [`media`] (image/video fixtures), [`schema`] (validation

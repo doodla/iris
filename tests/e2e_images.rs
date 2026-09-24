@@ -584,7 +584,11 @@ fn verbose_image_runs_never_reveal_the_key_or_signed_urls() {
         .openai(&api)
         .args(["-vv", "image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
         .run();
+    // Exit 2 here is a request the provider refused outright (sent, rejected, not
+    // charged), not a local validation failure: `provider_status` tells them apart.
     let v = out.err(2, "invalid_argument");
+    assert_eq!(v["error"]["provider_status"], 400, "{v}");
+    assert_eq!(api.count("POST", OPENAI_GENERATIONS), 1);
     for text in [&out.stdout, &out.stderr] {
         assert!(!text.contains(SIGNATURE), "signed URL value leaked: {text}");
     }
