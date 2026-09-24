@@ -163,6 +163,56 @@ fn part_files_are_hidden_named_and_removed_on_drop() {
 }
 
 #[test]
+fn stale_part_files_of_the_same_target_are_removed_and_nothing_else() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("job_x.mp4");
+    // A part file really created for the target and then abandoned (as after
+    // SIGKILL), plus one named by hand the same way.
+    let abandoned = PartFile::create_for(&target).unwrap();
+    let abandoned_path = abandoned.path().to_path_buf();
+    std::mem::forget(abandoned);
+    let stale = dir.path().join(".job_x.mp4.iris-part-AbCd1234");
+    fs::write(&stale, b"partial").unwrap();
+    let keep = [
+        "job_x.mp4",
+        ".job_x.mp4.iris-part-short",
+        ".job_x.mp4.iris-part-AbCd12345",
+        ".job_x.mp4.iris-part-AbCd-234",
+        ".job_y.mp4.iris-part-AbCd1234",
+        ".iris-preflight.iris-part-AbCd1234",
+        "job_x.mp4.iris-part-AbCd1234",
+    ];
+    for name in keep {
+        fs::write(dir.path().join(name), b"keep").unwrap();
+    }
+    fs::create_dir(dir.path().join(".job_x.mp4.iris-part-DirDir12")).unwrap();
+    #[cfg(unix)]
+    {
+        let outside = dir.path().join("outside.bin");
+        fs::write(&outside, b"never touched").unwrap();
+        std::os::unix::fs::symlink(&outside, dir.path().join(".job_x.mp4.iris-part-Link1234")).unwrap();
+    }
+
+    let mut removed = PartFile::remove_stale(&target);
+    removed.sort();
+    let mut expected = vec![abandoned_path.clone(), stale.clone()];
+    expected.sort();
+    assert_eq!(removed, expected);
+    assert!(!abandoned_path.exists() && !stale.exists());
+    for name in keep {
+        assert!(dir.path().join(name).exists(), "{name} was removed");
+    }
+    assert!(dir.path().join(".job_x.mp4.iris-part-DirDir12").is_dir());
+    #[cfg(unix)]
+    {
+        assert!(fs::symlink_metadata(dir.path().join(".job_x.mp4.iris-part-Link1234")).is_ok());
+        assert_eq!(fs::read(dir.path().join("outside.bin")).unwrap(), b"never touched");
+    }
+    // A missing directory is not an error.
+    assert!(PartFile::remove_stale(&dir.path().join("missing").join("job_x.mp4")).is_empty());
+}
+
+#[test]
 fn part_files_are_reset_and_synced_through_the_open_handle() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("job_x.mp4");

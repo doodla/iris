@@ -640,7 +640,16 @@ async fn download_outputs(
     let mut remote_failure: Option<IrisError> = None;
     for (out, path) in rec.outputs().iter().zip(&plan.paths) {
         let recorded = out.recorded_file();
-        match artifacts::decide_download(recorded, path) {
+        let decision = artifacts::decide_download(recorded, path);
+        if decision != DownloadDecision::AlreadyDownloaded {
+            // Partial files of this target left by a killed earlier run (this
+            // process holds the job's download lock, so none is in use).
+            for stale in PartFile::remove_stale(path) {
+                ctx.progress
+                    .line(format!("Removed a partial download left by an earlier run: {}", stale.display()));
+            }
+        }
+        match decision {
             DownloadDecision::AlreadyDownloaded => {
                 if let Some(file) = recorded {
                     warnings.push(artifacts::already_present_warning(file.path));

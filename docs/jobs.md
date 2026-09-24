@@ -244,6 +244,24 @@ Order of decision for each output, under the job's download lock:
 4. Finalize through a temp file in the target directory and a no-clobber (or, with `--overwrite`,
    atomic-replace) rename — never a partial file under the final name.
 
+Before a new download (or local copy) of a target, Iris removes temp files that an earlier run
+left for that same target (`.<name>.iris-part-<8 random characters>`, regular files only), while
+it holds the job's download lock, so no other download of the job can be using them.
+
+**What a killed process can leave behind.** Ctrl-C, SIGTERM, and SIGHUP are handled (see above)
+and clean up after themselves; SIGKILL, a crash, or a power loss cannot. Nothing partial ever
+carries a final name, but these may remain:
+
+- in the output directory, `.<name>.iris-part-<random>` from an interrupted download or save
+  (removed by the next download of the same target, or delete it by hand), and an empty
+  `.iris-preflight.iris-part-<random>` from the output-directory check;
+- in the jobs directory, `.<job_id>.json.<random>.tmp` from a record write cut off before its
+  atomic rename (the record itself is intact, and listings ignore these), and the 0-byte lock
+  files;
+- a record still `submitting` if the process died during the paid submission (reported as
+  `submission_unknown` once the submission budget has passed, see
+  [Lifecycle states and transitions](#lifecycle-states-and-transitions)).
+
 Real end-to-end sequence, run as four **separate process invocations** against the same job:
 
 ```console

@@ -119,6 +119,9 @@ machine-readable contract for agents.
 - An interrupted Veo submission (the deferred first interrupt, or a second one) reports
   `retryable: false` and `details.charge_possible: true`.
 
+- Partial download files (`.<name>.iris-part-*`) that a killed process left for a target are
+  removed before the next download of that target; docs/jobs.md lists what SIGKILL can leave.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

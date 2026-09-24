@@ -311,6 +311,30 @@ async fn failed_downloads_keep_the_job_succeeded_and_a_later_download_needs_no_r
 }
 
 #[tokio::test]
+async fn partial_files_left_by_a_killed_download_are_removed_by_the_next_one() {
+    let f = Fixture::new().await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    // What a download killed with SIGKILL leaves next to its target, and an
+    // unrelated temp file that must stay.
+    let stale = f.sandbox.path(&format!(".{id}.mp4.iris-part-Kill9xyz"));
+    std::fs::write(&stale, vec![0u8; 4096]).unwrap();
+    let unrelated = f.sandbox.path(".other.mp4.iris-part-Kill9xyz");
+    std::fs::write(&unrelated, b"x").unwrap();
+
+    f.mount_video(1).await;
+    f.gemini.videos().push_poll(Ok(remote_success(&f.uri())));
+    jobs::wait(&ctx, &id, &WaitArgs { download: true, target: Target::default() }, &mut w).await.unwrap();
+    assert!(!stale.exists(), "the stale partial file was removed");
+    assert!(unrelated.exists());
+    assert_eq!(
+        files_in(&f.sandbox.work()),
+        vec![".other.mp4.iris-part-Kill9xyz".to_string(), format!("{id}.mp4")]
+    );
+}
+
+#[tokio::test]
 async fn a_new_context_resumes_a_job_submitted_by_an_earlier_one() {
     let f = Fixture::new().await;
     let id = {

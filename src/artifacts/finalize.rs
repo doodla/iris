@@ -47,6 +47,8 @@ use super::paths;
 const MAX_RENAME_ATTEMPTS: u32 = 9999;
 /// Longest part of the target name reused in a temp file name.
 const MAX_NAME_IN_PART: usize = 120;
+/// Random characters at the end of a temp file name.
+const PART_RANDOM_CHARS: usize = 8;
 
 /// What to do when the target path already exists at finalize time. The mode
 /// applies to the requested path; see the module docs for extension-adjusted paths.
@@ -117,11 +119,9 @@ impl PartFile {
         fs::create_dir_all(dir).map_err(|e| {
             IrisError::io(format_args!("cannot create output directory {}", dir.display()), &e)
         })?;
-        let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let name: String = name.chars().take(MAX_NAME_IN_PART).collect();
-        let prefix = format!(".{name}.iris-part-");
+        let prefix = part_prefix(target);
         let mut builder = tempfile::Builder::new();
-        builder.prefix(&prefix).rand_bytes(8);
+        builder.prefix(&prefix).rand_bytes(PART_RANDOM_CHARS);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -131,6 +131,40 @@ impl PartFile {
             IrisError::io(format_args!("cannot create a temporary file in {}", dir.display()), &e)
         })?;
         Ok(PartFile { tmp, target: target.to_path_buf() })
+    }
+
+    /// Remove temp files that earlier runs left for `target` (a process killed
+    /// with SIGKILL, or a crash, cannot remove its own), returning their paths.
+    ///
+    /// Only regular files named exactly like the temp files of `target`
+    /// (`.<name>.iris-part-` plus 8 random letters or digits) are removed, never
+    /// followed symbolic links or anything else; failures are ignored. Call it only
+    /// while no other download of `target` can be running (Iris holds the job's
+    /// download lock).
+    pub fn remove_stale(target: &Path) -> Vec<PathBuf> {
+        let Some(dir) = target.parent().filter(|p| !p.as_os_str().is_empty()) else {
+            return Vec::new();
+        };
+        let Ok(entries) = fs::read_dir(dir) else {
+            return Vec::new();
+        };
+        let prefix = part_prefix(target);
+        let mut removed = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(random) = name.to_str().and_then(|n| n.strip_prefix(prefix.as_str())) else {
+                continue;
+            };
+            if random.len() != PART_RANDOM_CHARS || !random.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                continue;
+            }
+            let path = entry.path();
+            let regular = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file());
+            if regular && fs::remove_file(&path).is_ok() {
+                removed.push(path);
+            }
+        }
+        removed
     }
 
     /// Path of the temp file, for messages. Do not open it: write through
@@ -168,6 +202,13 @@ impl PartFile {
             .and_then(|_| sha256_reader(file))
             .map_err(|e| IrisError::io(format_args!("cannot read {}", shown.display()), &e))
     }
+}
+
+/// `.<name>.iris-part-` for `target` (the name cut to [`MAX_NAME_IN_PART`] characters).
+fn part_prefix(target: &Path) -> String {
+    let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+    let name: String = name.chars().take(MAX_NAME_IN_PART).collect();
+    format!(".{name}.iris-part-")
 }
 
 /// Validate and save a paid synchronous image (bytes held in memory) to `target`.
