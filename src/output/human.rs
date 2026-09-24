@@ -11,7 +11,6 @@ use serde_json::Value;
 
 use crate::domain::{Artifact, CostEstimate, JobStatus, Warning};
 use crate::providers::AccountAccess;
-use crate::providers::gemini::WARNING_TEXT_OUTPUT;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
 use super::results::*;
@@ -64,11 +63,16 @@ pub fn schema_document(schema: &Value) -> String {
     text
 }
 
+/// The public warning code (docs/json-contract.md) for text a model returned
+/// alongside its images. Its JSON message points at the result's `text` field,
+/// which human mode prints as a "Model text" line instead, so [`warning`] rewords it.
+pub const PROVIDER_TEXT_OUTPUT: &str = "provider_text_output";
+
 /// One warning line for stderr. A message written for the JSON result is reworded
 /// where human mode shows the thing it points at somewhere else.
 pub fn warning(w: &Warning) -> String {
     let message = match w.code.as_str() {
-        WARNING_TEXT_OUTPUT => {
+        PROVIDER_TEXT_OUTPUT => {
             "the model also returned text alongside the image; it is printed as \"Model text\""
         }
         _ => w.message.as_str(),
