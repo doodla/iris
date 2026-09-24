@@ -113,8 +113,12 @@ Healthy.
 ```
 
 `iris doctor --check-access` additionally makes one free, unbilled metadata call per **default
-model** (openai image, gemini image, gemini video — three calls today) to confirm your account can
-actually reach each one, not just that a key is present.
+model** (openai image, gemini image, gemini video — three calls today) to see whether each one is
+visible to your key, not just that a key is present. That read does not check billing tier,
+prepaid credit, or OpenAI organization verification, so a paid request can still be refused.
+
+`iris doctor` exits 0 whenever its checks ran, even when it finds problems: scripts should read
+`healthy` (`result.healthy` with `--json`) or look for `[error]` lines, not the exit code.
 
 Gemini image and Veo models have **no free tier**: the key's project needs a paid-tier billing plan
 (on Prepay, a positive credit balance). Use an auth API key: Google says the Gemini API will reject

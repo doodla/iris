@@ -1,6 +1,10 @@
 //! `doctor`: local health checks (credential presence, configuration validity,
 //! state and output directories, base URL overrides), plus optional free
 //! metadata calls (`--check-access`). Never prints credential values.
+//!
+//! Every check has a unique `id`. The command succeeds (exit 0) whenever the
+//! diagnostics ran; problems are reported through `healthy: false` and `error`
+//! checks, never through the exit code.
 
 use std::path::Path;
 
@@ -28,7 +32,8 @@ pub enum DoctorTarget<'a> {
     Invalid { error: &'a IrisError, env: &'a EnvSnapshot },
 }
 
-/// Run every check. `healthy` is false if any check has status `error`.
+/// Run every check. `healthy` is false if any check has status `error`; the
+/// command itself still succeeds, since the diagnostics ran.
 pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec<Warning>) -> DoctorResult {
     let mut checks = Vec::new();
     let settings: Option<&Settings> = match &target {
@@ -124,6 +129,10 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
     DoctorResult { healthy, checks }
 }
 
+/// One check per default model (`access.<provider>.<model>`), or one per provider
+/// (`access.<provider>`) when its models could not be checked. A model the metadata
+/// read finds is only *visible to the key*: billing tier, credit, and organization
+/// verification are not part of that read.
 async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
     for provider in ProviderId::ALL {
         let id = format!("access.{provider}");
@@ -158,6 +167,7 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
                 }
             };
         for model in models {
+            let id = format!("access.{provider}.{model}");
             ctx.interrupt.arm();
             let seen = ctx.interrupt.count();
             let result = tokio::select! {
@@ -168,11 +178,25 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
                 }
             };
             checks.push(match result {
-                Ok(AccountAccess::Available) => ok(&id, format!("this account can use {model}")),
-                Ok(AccountAccess::Unavailable) => {
-                    check(&id, CheckStatus::Warning, format!("{model} is not available to this key/project"))
-                }
-                Ok(_) => check(&id, CheckStatus::Warning, format!("could not determine access to {model}")),
+                Ok(AccountAccess::Available) => ok(
+                    &id,
+                    format!(
+                        "{model} is visible to this key (model metadata only; billing tier, prepaid credit, \
+                         and organization verification are not checked)"
+                    ),
+                ),
+                Ok(AccountAccess::Unavailable) => check(
+                    &id,
+                    CheckStatus::Warning,
+                    format!(
+                        "{model} is not visible to this key or its project (the metadata read found no model)"
+                    ),
+                ),
+                Ok(_) => check(
+                    &id,
+                    CheckStatus::Warning,
+                    format!("could not determine whether {model} is visible to this key"),
+                ),
                 Err(e) => check(&id, CheckStatus::Error, format!("{model}: {} ({})", e.message, e.code)),
             });
         }

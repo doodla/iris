@@ -137,6 +137,11 @@ machine-readable contract for agents.
   what Google documents: no free tier (a paid-tier billing plan is needed), and standard API keys
   "will" be rejected from September 2026 with no exact day given, so Iris recommends an auth key
   instead of claiming the cutoff is already enforced. Both catalogs share one wording.
+- `iris doctor --check-access` gives each check a unique id (`access.<provider>.<model>`) and
+  reports a successful metadata read as "visible to this key" rather than "this account can use"
+  it: billing tier, prepaid credit, and organization verification are not checked. `doctor`'s
+  help, the README, and the JSON contract now say that it exits 0 whenever its checks ran, so
+  callers must read `healthy`.
 
 ### Known limitations
 

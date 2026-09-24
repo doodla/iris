@@ -397,6 +397,13 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     assert_eq!(v["result"]["model"]["access"]["account_access"], "available");
     assert!(v["result"]["model"]["access"]["checked_at"].is_string());
     assert_eq!(f.gemini.access_calls.load(Ordering::SeqCst), 1);
+    let run = f.run(&["models", "show", "fake-video-1", "--check-access"]).await;
+    assert!(run.stdout.contains("account access: visible to this key (checked "), "{}", run.stdout);
+    assert!(
+        run.stdout.contains("model metadata only, billing and verification not checked"),
+        "{}",
+        run.stdout
+    );
 
     let run = f.run(&["models", "show", "nope", "--json"]).await;
     assert_eq!(run.error_code(), "unknown_model");
@@ -472,8 +479,67 @@ async fn invalid_configuration_is_config_invalid_but_doctor_still_reports() {
 
     let v = f.run(&["doctor", "--check-access", "--json"]).await.json();
     let checks = v["result"]["checks"].as_array().unwrap();
-    assert!(checks.iter().any(|c| c["id"] == "access.openai" && c["status"] == "ok"), "{v}");
+    assert!(checks.iter().any(|c| c["id"] == "access.openai.fake-image-1" && c["status"] == "ok"), "{v}");
     assert!(f.openai.access_calls.load(Ordering::SeqCst) >= 1);
+}
+
+#[tokio::test]
+async fn doctor_check_ids_are_unique_and_access_means_visible_to_the_key() {
+    let f = Fixture::new();
+    // Gemini has two default models in the fake catalog (image and video): one check each.
+    let run = f.run(&["doctor", "--check-access", "--json"]).await;
+    assert_eq!(run.code, 0);
+    let v = run.json();
+    let checks = v["result"]["checks"].as_array().unwrap();
+    let ids: Vec<&str> = checks.iter().map(|c| c["id"].as_str().unwrap()).collect();
+    let mut unique = ids.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), ids.len(), "duplicate check ids: {ids:?}");
+    let access: Vec<&str> = ids.iter().copied().filter(|id| id.starts_with("access.")).collect();
+    assert_eq!(
+        access,
+        ["access.openai.fake-image-1", "access.gemini.fake-gemini-image", "access.gemini.fake-video-1"]
+    );
+    for check in checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")) {
+        let message = check["message"].as_str().unwrap();
+        assert!(message.contains("is visible to this key"), "{message}");
+        assert!(message.contains("organization verification are not checked"), "{message}");
+        assert!(!message.contains("can use"), "{message}");
+    }
+
+    // A provider whose key is not set gets one skipped check under its own id.
+    let setup = CliSetup::new(
+        f.sandbox.env_without_keys().with_var("OPENAI_API_KEY", OPENAI_KEY),
+        vec![f.openai.clone(), f.gemini.clone()],
+    );
+    let v = run_cli(setup, &["doctor", "--check-access", "--json"]).await.json();
+    let checks = v["result"]["checks"].as_array().unwrap();
+    let gemini: Vec<&Value> = checks.iter().filter(|c| c["id"] == "access.gemini").collect();
+    assert_eq!(gemini.len(), 1, "{v}");
+    assert_eq!(gemini[0]["status"], "warning");
+
+    // Problems found still exit 0 (the diagnostics ran); `healthy` carries the verdict.
+    f.gemini.access.lock().unwrap().clone_from(&Err(iris::error::IrisError::new(
+        iris::error::ErrorCode::AuthenticationFailed,
+        "the key was rejected",
+    )));
+    let run = f.run(&["doctor", "--check-access", "--json"]).await;
+    assert_eq!(run.code, 0);
+    let v = run.json();
+    assert_eq!(v["ok"], true);
+    assert_eq!(v["result"]["healthy"], false, "{v}");
+    let human = f.run(&["doctor", "--check-access"]).await;
+    assert_eq!(human.code, 0);
+    assert!(human.stdout.contains("[error]   access.gemini.fake-video-1: "), "{}", human.stdout);
+    assert!(human.stdout.ends_with("Problems found (see [error] lines).\n"), "{}", human.stdout);
+
+    // The help says so, and says what the access check does not cover.
+    let help = f.run(&["doctor", "--help"]).await;
+    let words = help.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(words.contains("doctor exits 0 whenever its checks ran, even when it finds problems"), "{words}");
+    assert!(words.contains("result.healthy"), "{words}");
+    assert!(words.contains("visible to your key"), "{words}");
 }
 
 #[tokio::test]

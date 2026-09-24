@@ -10,6 +10,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use crate::domain::{Artifact, CostEstimate, Warning};
+use crate::providers::AccountAccess;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
 use super::results::*;
@@ -362,13 +363,20 @@ fn model_show(m: &ModelCapabilities) -> String {
         }
     }
     let a = &m.access;
-    let access = lifecycle(&a.account_access);
+    let access = match a.account_access {
+        AccountAccess::Available => "visible to this key".to_string(),
+        AccountAccess::Unavailable => "not visible to this key".to_string(),
+        other => lifecycle(&other),
+    };
+    let checked = match &a.checked_at {
+        Some(t) => format!(" (checked {t}; model metadata only, billing and verification not checked)"),
+        None => String::new(),
+    };
     let _ = writeln!(
         out,
-        "  access:      {} {}; account access: {access}{}",
+        "  access:      {} {}; account access: {access}{checked}",
         a.credential_env,
         if a.credential_present { "is set" } else { "is not set" },
-        a.checked_at.as_deref().map(|t| format!(" (checked {t})")).unwrap_or_default()
     );
     for req in &a.requirements {
         let _ = writeln!(out, "    - {req}");

@@ -4,7 +4,7 @@
       "properties": {
         "account_access": {
           "$ref": "#/$defs/AccountAccess",
-          "description": "Result of an account check; `not_checked` unless `--check-access` was used."
+          "description": "Result of `--check-access` (`not_checked` without it): `available` means the\nprovider's model metadata is visible to this key. Billing tier, prepaid credit,\nand organization verification are not checked."
         },
         "checked_at": {
           "type": [
@@ -253,6 +253,7 @@
     "DoctorCheck": {
       "properties": {
         "id": {
+          "description": "Unique within one result, e.g. `credentials.openai` or `access.gemini.<model>`.",
           "type": "string"
         },
         "message": {
@@ -270,7 +271,7 @@
       "type": "object"
     },
     "DoctorResult": {
-      "description": "`doctor`.",
+      "description": "`doctor`. The command exits 0 whenever the checks ran; read `healthy`.",
       "properties": {
         "checks": {
           "items": {
@@ -279,6 +280,7 @@
           "type": "array"
         },
         "healthy": {
+          "description": "False if any check has status `error`.",
           "type": "boolean"
         }
       },

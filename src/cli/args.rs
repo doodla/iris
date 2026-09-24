@@ -148,7 +148,11 @@ pub enum Command {
     #[command(
         long_about = "Check credential presence (never values), configuration validity, state and output \
                       directory writability, and base URL overrides. --check-access additionally makes free \
-                      metadata calls to see whether your account can use each provider's default models.",
+                      metadata calls to see whether each provider's default models are visible to your key; \
+                      they do not check billing tier, prepaid credit, or organization verification, so a paid \
+                      request can still be refused.\n\nExit status: doctor exits 0 whenever its checks ran, \
+                      even when it finds problems. Read `healthy` (result.healthy with --json) or look for \
+                      [error] lines instead of relying on the exit code.",
         after_help = "Examples:\n  iris doctor\n  iris doctor --check-access --json"
     )]
     Doctor(DoctorArgs),
@@ -534,8 +538,9 @@ pub enum ModelsCommand {
     #[command(
         long_about = "Show one model's declared capabilities: operations, inputs, options (with the typed \
                       flag or -O key for each), defaults, output types, limits, published prices, and \
-                      documented access requirements. --check-access asks the provider (a free metadata \
-                      call) whether your account can use it.",
+                      documented access requirements. --check-access asks the provider with a free \
+                      metadata call whether the model is visible to your key; billing tier, prepaid credit, \
+                      and organization verification are not checked.",
         after_help = "Examples:\n  iris models show nano-banana\n  iris models show gpt-image-2 --json\n  iris \
                       models show veo-fast --check-access"
     )]
@@ -557,7 +562,7 @@ pub struct ModelsShowArgs {
     /// Model id or alias
     #[arg(value_name = "MODEL")]
     pub model: String,
-    /// Check account access with a free metadata call (needs the provider's API key)
+    /// Check with a free metadata call whether the model is visible to your key (needs the provider's API key)
     #[arg(long)]
     pub check_access: bool,
 }
@@ -600,7 +605,7 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Also check account access with free metadata calls
+    /// Also check with free metadata calls whether the default models are visible to your key
     #[arg(long)]
     pub check_access: bool,
 }

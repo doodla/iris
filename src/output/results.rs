@@ -160,7 +160,9 @@ pub struct AccessView {
     pub credential_present: bool,
     /// Documented account requirements (tier, verification, allowlists).
     pub requirements: Vec<String>,
-    /// Result of an account check; `not_checked` unless `--check-access` was used.
+    /// Result of `--check-access` (`not_checked` without it): `available` means the
+    /// provider's model metadata is visible to this key. Billing tier, prepaid credit,
+    /// and organization verification are not checked.
     pub account_access: AccountAccess,
     pub checked_at: Option<String>,
 }
@@ -259,14 +261,16 @@ pub enum CheckStatus {
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DoctorCheck {
+    /// Unique within one result, e.g. `credentials.openai` or `access.gemini.<model>`.
     pub id: String,
     pub status: CheckStatus,
     pub message: String,
 }
 
-/// `doctor`.
+/// `doctor`. The command exits 0 whenever the checks ran; read `healthy`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct DoctorResult {
+    /// False if any check has status `error`.
     pub healthy: bool,
     pub checks: Vec<DoctorCheck>,
 }

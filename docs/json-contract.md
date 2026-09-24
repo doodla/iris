@@ -178,6 +178,9 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
 
 `account_access` is `not_checked` unless `--check-access` was passed, in which case it becomes
 `available` / `unavailable` / `unknown` from one free metadata call, and `checked_at` is set.
+`available` means only that the provider's model metadata read succeeded: the model is visible to
+this key. It does not check billing tier, prepaid credit, or organization verification, so a paid
+request can still be refused with `permission_denied` or `quota_exceeded`.
 
 ### `providers.list` → `{ "providers": [ { "id", "display_name", "credential_env", "credential_present", "operations": [], "base_url", "docs_url" } ] }`
 
@@ -192,6 +195,18 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
 (reproduced): you can run `doctor` and every offline command with neither key set, and the
 missing-credential checks show up as `warning` entries in `checks[]` for you to notice, not as a
 reason `healthy` flips to `false`.
+
+**`doctor` exits 0 whenever its checks ran, including when it finds problems** (`ok: true`,
+`healthy: false`): read `result.healthy` and the `checks[]` statuses, not the exit code. A
+non-zero exit means doctor itself could not run (for example a usage error).
+
+Check ids are unique within one result: `config`, `credentials.<provider>`,
+`credentials.google_api_key`, `state_dir`, `output_dir`, `base_url.<provider>`, `jobs`, and with
+`--check-access` one `access.<provider>.<model>` per default model (or a single
+`access.<provider>` when that provider's models were not checked, e.g. its key is not set, and
+`access` when the configuration is invalid). An `ok` access check means the model is visible to
+the key (a free metadata read), not that billing tier, prepaid credit, or organization
+verification allow a paid request.
 
 ### `schema` → `{ "schema": { "...": "the JSON Schema document itself" } }` (without `--json`, the raw schema is printed instead)
 
