@@ -257,7 +257,7 @@ Exit codes are a stable, documented contract — an agent can branch on them wit
 | 3 | credentials, access, or quota problem |
 | 4 | not finished yet — the job continues remotely (wait timeout, or outputs not ready) |
 | 5 | outcome uncertain — a paid submission may or may not have gone through; Iris never resubmits automatically |
-| 130 | interrupted (Ctrl-C) |
+| 130 | interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP) |
 
 Exit 2 covers both local validation (nothing was sent) and a definite provider rejection of a
 malformed request (e.g. an OpenAI HTTP 400) — the request itself was bad either way. Tell them

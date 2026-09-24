@@ -183,6 +183,8 @@ machine-readable contract for agents.
 - Human output: `jobs status` no longer prints a `completed:` time for a job that is still running
   or whose submission outcome is unknown, and the `provider_text_output` warning points at the
   "Model text" line instead of a JSON field.
+- `iris --help` and the README's exit-code table name every signal behind exit 130 (Ctrl-C/SIGINT,
+  SIGTERM, SIGHUP), as the JSON contract already did.
 
 ### Removed
 

@@ -47,7 +47,7 @@ Examples:
 Exit codes: 0 success, 1 runtime or provider failure, 2 invalid request: fix it before retrying \
 (error.provider_status null means nothing was sent; otherwise the provider rejected it), 3 \
 credentials/access/quota, 4 job not finished yet (it continues remotely), 5 outcome uncertain (do \
-not resubmit blindly), 130 interrupted.
+not resubmit blindly), 130 interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP).
 
 Provider usage is billed by the provider; `--dry-run` validates a request without sending it.";
 
