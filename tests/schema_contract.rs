@@ -256,10 +256,16 @@ fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
     mismatched["code"] = "usage_error".into();
     mismatched["category"] = "quota".into();
     assert!(!valid(&envelope(false, Value::Null, Value::Null, mismatched)));
-    let mut matched = error_body;
+    let mut matched = error_body.clone();
     matched["code"] = "quota_exceeded".into();
     matched["category"] = "quota".into();
     assert!(valid(&envelope(false, Value::Null, Value::Null, matched)));
+    // internal_error is no exception: an unknown code read back from a job record
+    // is shown with category internal (the original goes to details.recorded_code).
+    let mut unknown = error_body;
+    unknown["code"] = "internal_error".into();
+    unknown["category"] = "quota".into();
+    assert!(!valid(&envelope(false, Value::Null, Value::Null, unknown)));
 }
 
 /// Every command has a result mapping, and every mapped type is in `$defs`.
@@ -283,4 +289,30 @@ fn every_command_maps_to_result_types_in_the_schema() {
             assert!(schema["$defs"].get(&def).is_some(), "{name}: no $defs/{def}");
         }
     }
+}
+
+/// A job record written by a newer Iris can hold an error code this binary does not
+/// know; it reads as internal_error with the stored category, and what Iris then
+/// prints must still match the published schema.
+#[tokio::test]
+async fn a_job_error_with_a_newer_code_still_matches_the_schema() {
+    let sandbox = Sandbox::new();
+    let gemini = Arc::new(FakeProvider::gemini());
+    let setup = || CliSetup::new(sandbox.env(), vec![Arc::new(FakeProvider::openai()), gemini.clone()]);
+    gemini.videos().push_submit(Err(iris::error::IrisError::new(ErrorCode::QuotaExceeded, "out of quota")));
+    let v = run_cli(setup(), &["video", "generate", "boat", "--json"]).await.json();
+    let id = v["error"]["job_id"].as_str().unwrap().to_string();
+    let path = sandbox.state().join("jobs").join(format!("{id}.json"));
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("\"quota_exceeded\""), "{text}");
+    std::fs::write(&path, text.replace("\"quota_exceeded\"", "\"quota_exceeded_for_a_new_reason\"")).unwrap();
+
+    // run_cli validates every --json output against the committed schema.
+    let v = run_cli(setup(), &["jobs", "status", &id, "--no-refresh", "--json"]).await.json();
+    assert_eq!(v["result"]["job"]["error"]["code"], "internal_error", "{v}");
+    assert_eq!(v["result"]["job"]["error"]["category"], "internal", "{v}");
+    assert_eq!(
+        v["result"]["job"]["error"]["details"]["recorded_code"], "quota_exceeded_for_a_new_reason",
+        "{v}"
+    );
 }

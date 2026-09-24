@@ -243,7 +243,9 @@ pub fn schema() -> serde_json::Value {
 ///   reverse);
 /// * a successful envelope's `result` has its command's type
 ///   ([`CommandName::result_types`]), and one with `command: null` is `--help`;
-/// * an error's `category` is the one of its `code`.
+/// * an error's `category` is the one of its `code` (an error read back from a job
+///   record written by a newer Iris shows an unknown code as `internal_error` with
+///   category `internal`, keeping the original in `details.recorded_code`).
 fn add_contract_rules(schema: &mut serde_json::Value) {
     use serde_json::json;
     let def = |name: &str| json!({ "$ref": format!("#/$defs/{name}") });
