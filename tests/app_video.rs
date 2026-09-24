@@ -581,39 +581,32 @@ async fn second_ctrl_c_during_submission_exits_at_once_leaving_the_record_submit
 #[tokio::test]
 async fn an_interrupt_before_the_request_is_sent_stops_without_sending_it() {
     // The interrupt lands after the handlers are armed and the record is written,
-    // but before the paid request goes out: counted at once (`trigger`), or by
-    // another task of the runtime, as a real signal is.
-    for from_task in [false, true] {
-        let f = Fixture::new().await;
-        let interrupt = Interrupt::manual();
-        let on_submit = interrupt.clone();
-        let progress = iris::app::Progress::new(move |line| {
-            if line.starts_with("Submitting job") {
-                if from_task {
-                    let i = on_submit.clone();
-                    tokio::spawn(async move { i.trigger() });
-                } else {
-                    on_submit.trigger();
-                }
-            }
-        });
-        let ctx = iris::app::AppContext::new(f.settings(), deps(vec![f.gemini.clone()], interrupt), progress);
-        let mut w = Vec::new();
-        let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
-        assert_eq!(e.code, ErrorCode::Interrupted, "{e:?}");
-        assert_eq!(e.exit_code(), 130);
-        // Nothing was sent: running the command again is harmless, and there is no
-        // job to point at.
-        assert_eq!(e.retryable, Some(true));
-        assert!(!e.details.contains_key("charge_possible"), "{e:?}");
-        assert_eq!(e.provider, Some(ProviderId::Gemini));
-        assert_eq!(e.provider_status, None);
-        assert!(e.job_id.is_none() && e.job_status.is_none(), "{e:?}");
-        assert!(e.message.contains("nothing was submitted"), "{}", e.message);
-        assert_eq!(f.submits(), 0, "the paid request was not sent (from_task: {from_task})");
-        let listing = JobStore::new(f.sandbox.state()).list().unwrap();
-        assert!(listing.records.is_empty(), "no record: {:?}", listing.records);
-    }
+    // but before the paid request goes out. This one is manual; a real signal in
+    // the same window is covered by tests/app_video_signal.rs.
+    let f = Fixture::new().await;
+    let interrupt = Interrupt::manual();
+    let on_submit = interrupt.clone();
+    let progress = iris::app::Progress::new(move |line| {
+        if line.starts_with("Submitting job") {
+            on_submit.trigger();
+        }
+    });
+    let ctx = iris::app::AppContext::new(f.settings(), deps(vec![f.gemini.clone()], interrupt), progress);
+    let mut w = Vec::new();
+    let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::Interrupted, "{e:?}");
+    assert_eq!(e.exit_code(), 130);
+    // Nothing was sent: running the command again is harmless, and there is no
+    // job to point at.
+    assert_eq!(e.retryable, Some(true));
+    assert!(!e.details.contains_key("charge_possible"), "{e:?}");
+    assert_eq!(e.provider, Some(ProviderId::Gemini));
+    assert_eq!(e.provider_status, None);
+    assert!(e.job_id.is_none() && e.job_status.is_none(), "{e:?}");
+    assert!(e.message.contains("nothing was submitted"), "{}", e.message);
+    assert_eq!(f.submits(), 0, "the paid request was not sent");
+    let listing = JobStore::new(f.sandbox.state()).list().unwrap();
+    assert!(listing.records.is_empty(), "no record: {:?}", listing.records);
 }
 
 #[tokio::test]

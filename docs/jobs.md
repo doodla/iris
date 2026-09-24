@@ -123,7 +123,7 @@ request within the inline size limit), the credential's presence, and the output
 request refused locally therefore never leaves a job behind; if the adapter still refuses one
 while submitting (exit 2 with `provider_status: null`, so nothing was sent), the just-created
 record is deleted rather than kept as a `failed` job that was never submitted. The same holds for
-an interrupt that arrives before the request is sent (see
+an interrupt that arrives before Iris starts sending the request (see
 [signals](#waiting---timeout-ctrl-c-and-other-signals)).
 
 A record still `submitting` more than (the full paid-submission timeout budget + 60 seconds) after
@@ -213,11 +213,11 @@ The poll loop's backoff sleeps are also interruptible, so Ctrl-C is responsive e
 `timeout` wrapper, or a closed terminal also ends with one `interrupted` result (one JSON envelope
 in `--json` mode) and exit **130**, never a silent death.
 
-An interrupt that arrives after the job record is written but before the paid request is sent
-stops there: nothing is sent or billed, the record is deleted, and the command exits 130 with
-`interrupted`, `retryable: true`, and no job id. Deferral applies only once the request is in
-flight: then the first interrupt is **deferred** until the provider answers, so the operation id
-gets recorded, and the command exits 130 with the job `running` (resume with
+An interrupt that arrives while the job record is written, or after that but before Iris starts
+sending the paid request, stops there: nothing is sent or billed, the record is deleted, and the
+command exits 130 with `interrupted`, `retryable: true`, and no job id. Once Iris has started
+sending the request, the first interrupt is **deferred** until the provider answers, so the
+operation id gets recorded, and the command exits 130 with the job `running` (resume with
 `iris jobs wait <id>`). A second interrupt stops at once; the job stays `submitting` (reported as
 `submission_unknown` once the paid-submission budget has passed, since Iris cannot follow it without
 an operation id — `iris jobs status <id>` shows which). These two say `retryable: false` and

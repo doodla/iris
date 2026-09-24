@@ -57,6 +57,11 @@ tracing-subscriber = { version = "0.3.23", default-features = false, features = 
 ulid = "3.0.0"
 url = "2.5.8"
 
+[target.'cfg(unix)'.dependencies]
+# Notes SIGINT/SIGTERM/SIGHUP inside the OS signal handler through a safe atomic flag
+# (the crate forbids unsafe code), so a check can see a signal before the runtime does.
+signal-hook = { version = "0.4.4", default-features = false }
+
 [dev-dependencies]
 assert_cmd = "2.2.2"
 jsonschema = { version = "0.57.0", default-features = false }

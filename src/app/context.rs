@@ -4,7 +4,7 @@
 
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use jiff::Timestamp;
 use tokio::sync::watch;
@@ -211,15 +211,37 @@ impl fmt::Debug for Clock {
 /// (terminate), which is right for quick local commands. Once installed, they stay
 /// for the rest of the process (tokio cannot uninstall them), so every
 /// long-running phase afterwards must watch the interrupt.
+///
+/// Two views of the same interrupts: [`Interrupt::count`] and [`Interrupt::after`]
+/// follow them as the runtime processes them (a signal is forwarded by a runtime
+/// task, which runs only when the workflow awaits), while [`Interrupt::delivered`]
+/// also sees a signal the moment its OS handler runs, for a check that must not
+/// miss one that already arrived.
 #[derive(Clone)]
 pub struct Interrupt {
     inner: Arc<InterruptInner>,
 }
 
 struct InterruptInner {
+    /// Interrupts as the runtime has processed them: advanced by `trigger` and by
+    /// the tasks that forward each signal stream. Drives [`Interrupt::after`].
     count: watch::Sender<u64>,
+    /// Set inside the OS signal handler itself (Unix) whenever SIGINT, SIGTERM, or
+    /// SIGHUP is delivered; folded into `delivered` by [`Interrupt::delivered`].
+    raised: Arc<AtomicBool>,
+    /// What [`Interrupt::delivered`] returns: advanced by `trigger` and by each
+    /// `raised` it finds set.
+    delivered: Mutex<u64>,
     from_signal: bool,
     armed: AtomicBool,
+}
+
+impl InterruptInner {
+    /// Record one interrupt in both views.
+    fn record(&self) {
+        *self.delivered.lock().unwrap_or_else(PoisonError::into_inner) += 1;
+        self.count.send_modify(|n| *n += 1);
+    }
 }
 
 impl Interrupt {
@@ -237,6 +259,8 @@ impl Interrupt {
         Interrupt {
             inner: Arc::new(InterruptInner {
                 count: watch::Sender::new(0),
+                raised: Arc::new(AtomicBool::new(false)),
+                delivered: Mutex::new(0),
                 from_signal,
                 armed: AtomicBool::new(false),
             }),
@@ -245,12 +269,28 @@ impl Interrupt {
 
     /// Record one interrupt, as a Ctrl-C would.
     pub fn trigger(&self) {
-        self.inner.count.send_modify(|n| *n += 1);
+        self.inner.record();
     }
 
-    /// Interrupts seen so far.
+    /// Interrupts the runtime has processed so far (the baseline for
+    /// [`Interrupt::after`]). A signal is counted only once the runtime has run the
+    /// task forwarding it, so a synchronous check can miss one that has already
+    /// arrived; use [`Interrupt::delivered`] for that.
     pub fn count(&self) -> u64 {
         *self.inner.count.borrow()
+    }
+
+    /// A number that grows whenever an interrupt is delivered: compare two values
+    /// to tell whether one arrived in between. On Unix the OS signal handler itself
+    /// notes each signal, so this sees one at once, without yielding to the runtime
+    /// (several signals between two calls may add only one). Elsewhere a Ctrl-C is
+    /// seen only once the runtime has processed it, as with [`Interrupt::count`].
+    pub fn delivered(&self) -> u64 {
+        let mut n = self.inner.delivered.lock().unwrap_or_else(PoisonError::into_inner);
+        if self.inner.raised.swap(false, Ordering::SeqCst) {
+            *n += 1;
+        }
+        *n
     }
 
     /// Install the signal handlers (idempotent; no-op for manual interrupts).
@@ -277,6 +317,15 @@ impl Interrupt {
                 match signal(kind) {
                     Ok(mut stream) => {
                         installed += 1;
+                        // Also note the signal inside the OS handler (an atomic store),
+                        // so `delivered()` sees it before the runtime runs the forwarding
+                        // task below. Added only after tokio's handler is in place: were
+                        // the flag the signal's only handler, it would neither end the
+                        // process nor reach any waiter.
+                        let raised = Arc::clone(&self.inner.raised);
+                        if let Err(e) = signal_hook::flag::register(kind.as_raw_value(), raised) {
+                            tracing::warn!("cannot note {name} as it is delivered: {e}");
+                        }
                         let inner = Arc::clone(&self.inner);
                         tokio::spawn(async move {
                             while stream.recv().await.is_some() {
@@ -296,7 +345,7 @@ impl Interrupt {
             let inner = Arc::clone(&self.inner);
             tokio::spawn(async move {
                 while tokio::signal::ctrl_c().await.is_ok() {
-                    inner.count.send_modify(|n| *n += 1);
+                    inner.record();
                 }
             });
         }
@@ -339,11 +388,28 @@ mod tests {
         };
         tokio::task::yield_now().await;
         assert!(!waiter.is_finished());
+        let delivered = int.delivered();
         int.trigger();
+        // Both views see a manual interrupt at once.
+        assert!(int.delivered() > delivered);
         waiter.await.unwrap();
         assert_eq!(int.count(), 1);
         // An interrupt that already happened resolves immediately.
         int.after(0).await;
+    }
+
+    #[test]
+    fn delivered_sees_a_signal_before_the_runtime_forwards_it() {
+        let int = Interrupt::manual();
+        let before = int.delivered();
+        assert_eq!(int.delivered(), before, "nothing delivered, nothing changes");
+        // What the OS signal handler does when a signal arrives.
+        int.inner.raised.store(true, Ordering::SeqCst);
+        let after = int.delivered();
+        assert!(after > before);
+        assert_eq!(int.count(), 0, "not processed by the runtime yet");
+        // Noted once: a later call does not count the same signal again.
+        assert_eq!(int.delivered(), after);
     }
 
     #[test]

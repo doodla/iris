@@ -187,15 +187,16 @@ pub async fn run(
     // and recording the provider's answer.
     ctx.interrupt.arm();
     let seen = ctx.interrupt.count();
+    let delivered = ctx.interrupt.delivered();
     ctx.store.create(&record)?;
 
     ctx.progress
         .line(format!("Submitting job {job_id} to {provider} ({}); this is a paid request", resolved.id));
-    // One that arrived before the request is sent stops here, without sending it.
-    // Signals are counted by tasks of this (single-threaded) runtime, so yield once
-    // to let them record any signal already delivered.
-    tokio::task::yield_now().await;
-    if ctx.interrupt.count() > seen {
+    // One that arrived before the request is sent (while the record was written or
+    // the line printed) stops here, without sending it. `count()` would miss it: the
+    // runtime has not been polled since, so the task forwarding a signal has not run.
+    // `delivered()` is noted by the OS signal handler itself.
+    if ctx.interrupt.delivered() > delivered {
         let e = IrisError::new(
             ErrorCode::Interrupted,
             format!("interrupted before job {job_id} was sent to {provider}; nothing was submitted"),

@@ -114,9 +114,9 @@ machine-readable contract for agents.
   losing the operation id).
 - An interrupted Veo submission (the deferred first interrupt, or a second one) reports
   `retryable: false` and `details.charge_possible: true`.
-- An interrupt that arrives after `video generate` has written the job record but before the paid
-  request is sent stops without sending it: the record is deleted and the result is
-  `interrupted` with `retryable: true` and no job id.
+- An interrupt that arrives while `video generate` writes the job record, or after that but before
+  it starts sending the paid request, stops without sending it: the record is deleted and the
+  result is `interrupted` with `retryable: true` and no job id.
 - Partial download files (`.<name>.iris-part-*`) that a killed process left for a target are
   removed before the next download of that target; docs/jobs.md lists what SIGKILL can leave.
 - Artifact downloads are capped at 4 GiB: a larger declared `Content-Length` or body is
