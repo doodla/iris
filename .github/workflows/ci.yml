@@ -110,7 +110,43 @@ jobs:
           tool: shellcheck
       # Offline installer tests: fixtures served from 127.0.0.1 only.
       - run: shellcheck -s sh install.sh
+      - run: shellcheck scripts/*.sh tests/installer/*.sh
       - run: sh tests/installer/run.sh
+
+  release-dry-run:
+    name: release dry run (x86_64-unknown-linux-musl)
+    # The Linux leg of release.yml without publishing, so the release-only
+    # paths (musl build, packaging, the smoke test of the archive and of
+    # install.sh with it) are exercised before anything is tagged.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
+        with:
+          toolchain: stable
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Install musl toolchain
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Package twice; the archives must be identical
+        run: |
+          set -euo pipefail
+          first=$(sh scripts/package-release.sh x86_64-unknown-linux-musl dist)
+          second=$(sh scripts/package-release.sh x86_64-unknown-linux-musl dist-again)
+          cmp "$first" "$second"
+      - name: Smoke-test the archive and install.sh with it
+        run: |
+          set -euo pipefail
+          version=$(sh scripts/check-tag-version.sh)
+          # The build above saw GITHUB_SHA, so the binary must report it.
+          EXPECTED_GIT_COMMIT="$GITHUB_SHA" \
+            sh scripts/smoke-test-release.sh "$version" x86_64-unknown-linux-musl dist
 
   package-check:
     name: package-check

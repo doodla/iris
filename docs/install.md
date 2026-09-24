@@ -27,10 +27,10 @@ HTTPS requests (installer download, and every provider API call `iris` itself ma
 
 ## Status: no release has been published yet
 
-As of this writing, `doodla/iris` has **no published release**, so the installer paths below
-describe the intended, tested behavior — verified with 96 offline test cases against local
-fixtures (`sh tests/installer/run.sh`) and by `shellcheck -s sh install.sh`, not against a real
-GitHub release. **What works today** is building from a checkout:
+`doodla/iris` has **no published release** yet, so the installer paths below describe intended
+behavior that is tested offline — against local fixtures and against locally built release
+archives (see [Testing the installer without a real release](#testing-the-installer-without-a-real-release))
+— not against a real GitHub release. **What works today** is building from a checkout:
 
 ```console
 $ git clone https://github.com/doodla/iris && cd iris
@@ -38,8 +38,7 @@ $ cargo install --locked --path .
 ```
 
 This needs a Rust toolchain (`rustup` is the easiest way to get one); the minimum supported Rust
-version is 1.89. Verified for this documentation: `cargo build --locked --release` succeeds
-against the committed `Cargo.lock` and produces a working `iris --version`.
+version is 1.89. `--locked` builds exactly the dependency versions in the committed `Cargo.lock`.
 
 ## Once a release exists: the one-command installer
 
@@ -206,39 +205,33 @@ $ IRIS_GIT_COMMIT=$(git rev-parse HEAD) cargo install --locked --path .
 
 ## Testing the installer without a real release
 
-Iris's own test suite (`tests/installer/run.sh`, `make-fixtures.sh`, `server.py`) builds fake
-release archives and `SHA256SUMS` files, serves them from `127.0.0.1` only, and drives
-`install.sh` against them with `env -i` (a clean environment: no ambient proxies or credentials),
-using `uname`/`sysctl` shims to simulate Linux and macOS platform detection. Run it yourself:
+The installer's own test suite (`tests/installer/run.sh`, with `make-fixtures.sh` and
+`server.py`) builds fake release archives and `SHA256SUMS` files, serves them from `127.0.0.1`
+only, and drives `install.sh` against them with `env -i` (a clean environment: no ambient proxies
+or credentials), using `uname`/`sysctl` shims to simulate Linux and macOS platform detection:
 
 ```console
 $ sh tests/installer/run.sh
 ```
 
-Real output from this repository, captured for this documentation (96 cases, all offline, no
-network beyond `127.0.0.1`):
+It covers platform detection (including unsupported systems and Rosetta), version selection
+(`latest`, pinned, pre-release, invalid), network failures (HTTP errors, dropped, truncated, and
+refused connections, a `TERM` mid-download), checksum failures, archive validation (path
+traversal, links and special files, unexpected entries, a binary that does not run), install
+directories, `curl` versus `wget` and `sha256sum` versus `shasum`, never reading stdin, `PATH`
+hints, and upgrades that keep the old `iris` when anything fails. It prints one line per case and
+exits non-zero if any case fails. `INSTALLER_SHELL='bash --posix'` (or `dash`) runs the installer
+under another shell.
 
-```
-ok   wget: server error 500
-ok   wget: connection dropped without a response (retries are bounded)
-ok   wget: archive download cut off halfway: old iris kept
-ok   wget: connection refused
-ok   wget: checksum mismatch, old iris kept
-ok   shasum instead of sha256sum
-ok   shasum: checksum mismatch, old iris kept
-ok   piped: cat install.sh | sh -s -- --version v0.1.0 --dir DIR
-ok   piped with defaults: cat install.sh | sh
-ok   stdin with data is never read (the fake iris fails if it can read stdin)
-ok   PATH hint for bash on Linux
-ok   PATH hint for bash on macOS
-ok   upgrade replaces the old iris by rename, not in place
-ok   upgrade from v0.1.0 to latest in two runs
-ok   chmod fails after staging: staged file removed, old iris kept
-ok   mv fails after staging: staged file removed, old iris kept
-...
-96 passed, 0 failed
-```
+CI also runs the release path itself on every change: it builds the real
+`x86_64-unknown-linux-musl` binary, packages it twice (the two archives must be byte-identical),
+and runs `scripts/smoke-test-release.sh`, which runs the packaged binary and then installs the
+archive with `install.sh` from a local server. The release workflow runs the same smoke test on
+every target before publishing. To replay the Linux run locally (it needs the musl target:
+`rustup target add x86_64-unknown-linux-musl`, plus your distribution's `musl-tools`):
 
-This is what "the installer is tested offline" actually means for this project: real checksum
-mismatches, real truncated downloads, real permission failures — all against a local HTTP server,
-never a live GitHub release.
+```console
+$ cargo build --release --locked --target x86_64-unknown-linux-musl
+$ sh scripts/package-release.sh x86_64-unknown-linux-musl dist
+$ sh scripts/smoke-test-release.sh "$(sh scripts/check-tag-version.sh)" x86_64-unknown-linux-musl dist
+```

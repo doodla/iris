@@ -53,6 +53,10 @@ machine-readable contract for agents.
   without `docs/` and still installs only the binary.
 - CI (formatting, Clippy, offline tests on Linux and macOS, a pinned MSRV check, dependency
   license/advisory scanning) and a tag-triggered release workflow producing checksummed archives.
+  CI also runs the release path on every change: it builds the Linux musl binary, checks that
+  packaging it twice gives byte-identical archives, and smoke-tests the archive and `install.sh`
+  with it. The release workflow publishes only after format, Clippy, and tests pass again on the
+  tagged commit and every target's archive passes the same smoke test.
 - `AGENTS.md`/`CLAUDE.md` durable agent instructions, and this project's documentation set under
   `docs/`.
 
