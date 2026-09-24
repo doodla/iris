@@ -1,0 +1,235 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: >-
+          Build and smoke-test every target without publishing. This is the
+          only thing workflow_dispatch ever does: the publish job below only
+          runs for an actual `push` of a `v*` tag, regardless of this input.
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: verify
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - id: check
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "push" ]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            version=$(sh scripts/check-tag-version.sh "$tag")
+          else
+            tag=""
+            version=$(sh scripts/check-tag-version.sh)
+            echo "::notice::workflow_dispatch dry run, no tag pushed; using Cargo.toml version $version"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # C-07's three v1 targets, each on its native runner (see
+          # evidence/T-08 and decisions.md D-09/D-10 for why: musl for
+          # portable static Linux binaries, native macOS runners for the two
+          # Apple targets).
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-24.04
+          - target: x86_64-apple-darwin
+            os: macos-15-intel
+          - target: aarch64-apple-darwin
+            os: macos-15
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@63fed3e2fecf6f7b51dc6f043341b79ef82a9ae7 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install musl toolchain
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+
+      - name: cargo build --release
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Package release archive
+        run: sh scripts/package-release.sh ${{ matrix.target }} dist
+
+      - name: Smoke test — packaged binary only
+        run: |
+          set -euo pipefail
+          version="${{ needs.verify.outputs.version }}"
+          target="${{ matrix.target }}"
+          archive="dist/iris-v${version}-${target}.tar.gz"
+          extract_dir=$(mktemp -d)
+          tar -xzf "$archive" -C "$extract_dir"
+          bin="$extract_dir/iris-v${version}-${target}/iris"
+          test -x "$bin" || { echo "::error::extracted binary missing or not executable: $bin"; exit 1; }
+
+          out=$("$bin" --version)
+          echo "iris --version: $out"
+          case "$out" in
+            *"$version"*) ;;
+            *) echo "::error::--version output '$out' does not contain '$version'"; exit 1 ;;
+          esac
+
+          "$bin" --json version
+          "$bin" --json models list
+          "$bin" schema
+          rm -rf "$extract_dir"
+
+      - name: Smoke test — install.sh against the packaged archive
+        run: |
+          set -euo pipefail
+          if [ ! -f install.sh ]; then
+            echo "::warning::install.sh not present yet (owned by a separate task); skipping the install.sh smoke test leg."
+            exit 0
+          fi
+
+          version="${{ needs.verify.outputs.version }}"
+          target="${{ matrix.target }}"
+          tag="v${version}"
+          archive_name="iris-v${version}-${target}.tar.gz"
+
+          sha256_of() {
+            if command -v sha256sum >/dev/null 2>&1; then
+              sha256sum "$1"
+            else
+              shasum -a 256 "$1"
+            fi
+          }
+
+          # Serve just this leg's archive under the same URL shape C-07
+          # documents for IRIS_INSTALL_BASE_URL: <base>/download/<tag>/<asset>.
+          # We pass --version explicitly, so the /latest redirect (exercised
+          # by tests/installer/run.sh instead) isn't needed here.
+          #
+          # Both temp dirs and server_pid are created/set (even if empty)
+          # before the trap is installed: with `set -u`, the cleanup
+          # function must never see an unset variable, or it aborts without
+          # cleaning up anything. cleanup() also captures $? as its first
+          # action and re-exits with it explicitly: otherwise the `kill`/
+          # `wait` calls below it would overwrite the script's real exit
+          # status with 143 (SIGTERM) on a *successful* run, failing the
+          # step even though the smoke test passed (found by local testing;
+          # see evidence/T-08).
+          serve_root=$(mktemp -d)
+          install_dir=$(mktemp -d)
+          server_pid=""
+          cleanup() {
+            status=$?
+            # Every command below is guarded with `|| true`: under `set -e`,
+            # `wait` returning the killed server's 128+SIGTERM status would
+            # otherwise trip errexit *inside the trap*, so it would abort
+            # before reaching `exit "$status"` and this step would report
+            # the server's kill signal (143) as its own result instead of
+            # the smoke test's real outcome (found by local testing; see
+            # evidence/T-08).
+            if [ -n "$server_pid" ]; then
+              kill "$server_pid" 2>/dev/null || true
+              wait "$server_pid" 2>/dev/null || true
+            fi
+            rm -rf "$serve_root" "$install_dir" || true
+            exit "$status"
+          }
+          trap cleanup EXIT INT TERM
+
+          mkdir -p "$serve_root/download/$tag"
+          cp "dist/$archive_name" "$serve_root/download/$tag/$archive_name"
+          (cd "$serve_root/download/$tag" && sha256_of "$archive_name") > "$serve_root/download/$tag/SHA256SUMS"
+
+          python3 -m http.server 0 --bind 127.0.0.1 --directory "$serve_root" \
+            > "$serve_root/../server.log" 2>&1 &
+          server_pid=$!
+
+          # http.server with port 0 logs the bound port to stderr on
+          # startup; poll for it rather than guessing a fixed free port.
+          port=""
+          for _ in $(seq 1 50); do
+            port=$(sed -n 's/.*Serving HTTP on 127\.0\.0\.1 port \([0-9]\+\).*/\1/p' "$serve_root/../server.log" | head -n1)
+            [ -n "$port" ] && break
+            sleep 0.1
+          done
+          if [ -z "$port" ]; then
+            echo "::error::local smoke-test HTTP server never reported its port"
+            cat "$serve_root/../server.log" || true
+            exit 1
+          fi
+
+          IRIS_INSTALL_BASE_URL="http://127.0.0.1:${port}/download" \
+            sh install.sh --version "$tag" --dir "$install_dir" < /dev/null
+
+          installed_out=$("$install_dir/iris" --version)
+          echo "installed iris --version: $installed_out"
+          case "$installed_out" in
+            *"$version"*) ;;
+            *) echo "::error::installed --version output '$installed_out' does not contain '$version'"; exit 1 ;;
+          esac
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  publish:
+    name: publish
+    needs: [verify, build]
+    # Only an actual tag push publishes. workflow_dispatch (any input value)
+    # and pull_request never reach here.
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+
+      - name: Build SHA256SUMS
+        run: |
+          set -euo pipefail
+          cd dist
+          ls -l
+          sha256sum -- *.tar.gz > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="${{ needs.verify.outputs.tag }}"
+          args=(dist/*.tar.gz dist/SHA256SUMS install.sh --title "$tag" --generate-notes)
+          case "$tag" in
+            *-*) args+=(--prerelease) ;;
+          esac
+          gh release create "$tag" "${args[@]}"
