@@ -22,6 +22,18 @@ $ iris --json schema                                 # the same schema wrapped a
 A test in the repository asserts the committed file equals freshly regenerated output, so it can
 never go stale relative to a release.
 
+The schema encodes the contract, not only the shapes of the types:
+
+- every key that is always present is `required`; keys that may be `null` allow `null` rather
+  than being optional;
+- `ok: true` requires a non-null `result` and a null `error`, and `ok: false` the reverse;
+- a successful envelope's `result` must have its `command`'s result type (the plan for a
+  generation command's `--dry-run`, the help result for `command: null`);
+- an error's `category` must be the one its `code` maps to (table below).
+
+Warning codes are deliberately not enumerated: the set is additive (see
+[Warning codes](#warning-codes)).
+
 ### Schema versioning policy
 
 `schema_version` (currently `1`) is an integer **major** version of the whole `--json` contract —

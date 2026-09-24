@@ -168,3 +168,119 @@ fn the_contract_check_rejects_malformed_envelopes() {
     });
     assert!(rejects(bad));
 }
+
+/// The schema on its own (no helper checks) encodes the documented contract: every
+/// always-present key is required, `ok` decides which of `result`/`error` is null,
+/// `result` has its command's type, and an error's category matches its code.
+#[test]
+fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
+    let validator = jsonschema::validator_for(committed_schema()).expect("valid schema");
+    let valid = |v: &Value| validator.is_valid(v);
+    let error_body = serde_json::json!({
+        "code": "invalid_argument", "category": "validation", "message": "m", "retryable": false,
+        "retry_after_seconds": null, "hint": null, "provider": null, "provider_status": null,
+        "provider_code": null, "provider_request_id": null, "job_id": null, "remote_operation_id": null,
+        "job_status": null, "details": null
+    });
+    let image = serde_json::json!({
+        "provider": "openai", "model": "m", "operation": "image.generate", "status": "succeeded",
+        "created_at": "t", "completed_at": "t", "provider_request_id": null, "artifacts": [],
+        "text": null, "usage": null, "cost_estimate": null
+    });
+    let plan = serde_json::json!({
+        "dry_run": true, "provider": "openai", "model": "m", "operation": "image.generate",
+        "async_job": false, "options": {}, "inputs": [], "outputs": [], "credential_present": false,
+        "cost_estimate": null
+    });
+    let envelope = |ok: bool, command: Value, result: Value, error: Value| {
+        serde_json::json!({
+            "schema_version": 1, "ok": ok, "command": command, "result": result, "error": error, "warnings": []
+        })
+    };
+
+    // Accepted: the shapes Iris prints.
+    let ok_image = envelope(true, "image.generate".into(), image.clone(), Value::Null);
+    assert!(valid(&ok_image));
+    assert!(valid(&envelope(true, "image.edit".into(), plan.clone(), Value::Null)), "a dry-run plan");
+    assert!(valid(&envelope(true, Value::Null, serde_json::json!({"help": "..."}), Value::Null)));
+    assert!(valid(&envelope(false, "jobs.list".into(), Value::Null, error_body.clone())));
+    assert!(valid(&envelope(false, Value::Null, Value::Null, error_body.clone())));
+
+    // Missing keys: envelope, result, and error keys are all required.
+    assert!(!valid(&serde_json::json!({"schema_version": 1, "ok": true, "warnings": []})));
+    for key in ["command", "result", "error", "warnings"] {
+        let mut v = ok_image.clone();
+        v.as_object_mut().unwrap().remove(key);
+        assert!(!valid(&v), "envelope without {key}");
+    }
+    for key in ["text", "usage", "cost_estimate", "provider_request_id"] {
+        let mut result = image.clone();
+        result.as_object_mut().unwrap().remove(key);
+        assert!(
+            !valid(&envelope(true, "image.generate".into(), result, Value::Null)),
+            "result without {key}"
+        );
+    }
+    for key in ["retryable", "hint", "provider", "provider_status", "job_id", "details"] {
+        let mut error = error_body.clone();
+        error.as_object_mut().unwrap().remove(key);
+        assert!(!valid(&envelope(false, Value::Null, Value::Null, error)), "error without {key}");
+    }
+
+    // ok decides which of result/error is null.
+    assert!(!valid(&envelope(true, "image.generate".into(), image.clone(), error_body.clone())));
+    assert!(!valid(&envelope(true, "image.generate".into(), Value::Null, Value::Null)));
+    assert!(!valid(&envelope(false, "image.generate".into(), image.clone(), error_body.clone())));
+    assert!(!valid(&envelope(false, "image.generate".into(), Value::Null, Value::Null)));
+    assert!(!valid(&envelope(
+        true,
+        "jobs.list".into(),
+        serde_json::json!({"help": "x"}),
+        error_body.clone()
+    )));
+
+    // The result must be of the command's type.
+    let deleted = serde_json::json!({"deleted": [], "remote_effect": "none", "note": ""});
+    assert!(valid(&envelope(true, "jobs.delete".into(), deleted.clone(), Value::Null)));
+    assert!(!valid(&envelope(true, "jobs.list".into(), deleted, Value::Null)));
+    assert!(!valid(&envelope(true, "jobs.list".into(), serde_json::json!({"help": "x"}), Value::Null)));
+    assert!(!valid(&envelope(true, "jobs.status".into(), plan.clone(), Value::Null)), "no plan for jobs");
+    assert!(!valid(&envelope(true, "image.generate".into(), serde_json::json!({"jobs": []}), Value::Null)));
+    assert!(
+        !valid(&envelope(true, Value::Null, serde_json::json!({"jobs": []}), Value::Null)),
+        "null is help"
+    );
+
+    // An error's category follows its code.
+    let mut mismatched = error_body.clone();
+    mismatched["code"] = "usage_error".into();
+    mismatched["category"] = "quota".into();
+    assert!(!valid(&envelope(false, Value::Null, Value::Null, mismatched)));
+    let mut matched = error_body;
+    matched["code"] = "quota_exceeded".into();
+    matched["category"] = "quota".into();
+    assert!(valid(&envelope(false, Value::Null, Value::Null, matched)));
+}
+
+/// Every command has a result mapping, and every mapped type is in `$defs`.
+#[test]
+fn every_command_maps_to_result_types_in_the_schema() {
+    use iris::output::CommandName;
+    let schema = committed_schema();
+    let commands = schema["$defs"]["CommandName"]["enum"].as_array().cloned().unwrap_or_else(|| {
+        schema["$defs"]["CommandName"]["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|v| v["enum"].as_array().cloned().unwrap_or_else(|| vec![v["const"].clone()]))
+            .collect()
+    });
+    assert_eq!(commands.len(), CommandName::ALL.len());
+    for command in CommandName::ALL {
+        let name = serde_json::to_value(command).unwrap();
+        assert!(commands.contains(&name), "{name}");
+        for def in command.result_types() {
+            assert!(schema["$defs"].get(&def).is_some(), "{name}: no $defs/{def}");
+        }
+    }
+}

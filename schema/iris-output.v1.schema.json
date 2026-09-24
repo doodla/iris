@@ -30,7 +30,8 @@
         "credential_env",
         "credential_present",
         "requirements",
-        "account_access"
+        "account_access",
+        "checked_at"
       ],
       "type": "object"
     },
@@ -98,7 +99,10 @@
         "path",
         "media_type",
         "bytes",
-        "sha256"
+        "sha256",
+        "width",
+        "height",
+        "duration_seconds"
       ],
       "type": "object"
     },
@@ -334,6 +338,597 @@
       "type": "string"
     },
     "ErrorBody": {
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "usage_error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "usage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "invalid_argument"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "validation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "unsupported_operation"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "validation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "unsupported_option"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "validation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "unknown_model"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "validation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "unknown_provider"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "validation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "input_file_invalid"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "validation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "config_invalid"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "config"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "output_exists"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "conflict"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "job_not_found"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "not_found"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "missing_credentials"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "auth"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "authentication_failed"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "auth"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "permission_denied"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "access"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "quota_exceeded"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "quota"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "rate_limited"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "rate_limit"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "content_blocked"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "content"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "provider_error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "provider"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "provider_bad_response"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "provider"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "remote_job_failed"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "provider"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "network_error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "network"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "request_timeout"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "timeout"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "download_failed"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "artifact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "artifact_expired"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "artifact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "invalid_media"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "artifact"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "state_invalid"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "io"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "io_error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "io"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "internal_error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "internal"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "wait_timeout"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "pending"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "job_not_ready"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "pending"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "submission_uncertain"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "uncertain"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "interrupted"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "interrupted"
+              }
+            }
+          }
+        }
+      ],
       "description": "The error object of a failed command.",
       "properties": {
         "category": {
@@ -431,7 +1026,18 @@
       "required": [
         "code",
         "category",
-        "message"
+        "message",
+        "retryable",
+        "retry_after_seconds",
+        "hint",
+        "provider",
+        "provider_status",
+        "provider_code",
+        "provider_request_id",
+        "job_id",
+        "remote_operation_id",
+        "job_status",
+        "details"
       ],
       "type": "object"
     },
@@ -578,7 +1184,11 @@
         "status",
         "created_at",
         "completed_at",
-        "artifacts"
+        "provider_request_id",
+        "artifacts",
+        "text",
+        "usage",
+        "cost_estimate"
       ],
       "type": "object"
     },
@@ -641,9 +1251,11 @@
         "input_media_types",
         "max_input_bytes",
         "mask",
+        "mask_requirements",
         "first_frame",
         "last_frame",
-        "max_reference_images"
+        "max_reference_images",
+        "max_request_bytes"
       ],
       "type": "object"
     },
@@ -726,7 +1338,10 @@
       },
       "required": [
         "index",
-        "download_state"
+        "media_type",
+        "download_state",
+        "artifact",
+        "last_error"
       ],
       "type": "object"
     },
@@ -891,14 +1506,22 @@
       },
       "required": [
         "job_id",
+        "remote_operation_id",
         "provider",
         "model",
         "operation",
         "status",
         "created_at",
+        "submitted_at",
         "updated_at",
+        "completed_at",
+        "last_checked_at",
+        "remote_expires_at",
         "outputs",
         "artifacts",
+        "error",
+        "usage",
+        "cost_estimate",
         "request"
       ],
       "type": "object"
@@ -923,6 +1546,9 @@
           ]
         }
       },
+      "required": [
+        "max_prompt_chars"
+      ],
       "type": "object"
     },
     "MaskRequirementsView": {
@@ -1198,6 +1824,12 @@
       "required": [
         "name",
         "type",
+        "values",
+        "min",
+        "max",
+        "syntax",
+        "default",
+        "flag",
         "operations",
         "description"
       ],
@@ -1308,7 +1940,8 @@
         "options",
         "inputs",
         "outputs",
-        "credential_present"
+        "credential_present",
+        "cost_estimate"
       ],
       "type": "object"
     },
@@ -1496,7 +2129,8 @@
       "required": [
         "key",
         "value",
-        "source"
+        "source",
+        "env_var"
       ],
       "type": "object"
     },
@@ -1531,6 +2165,12 @@
           ]
         }
       },
+      "required": [
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "provider_usage"
+      ],
       "type": "object"
     },
     "VersionResult": {
@@ -1561,7 +2201,8 @@
         "name",
         "version",
         "schema_version",
-        "target"
+        "target",
+        "git_commit"
       ],
       "type": "object"
     },
@@ -1584,6 +2225,479 @@
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "allOf": [
+    {
+      "else": {
+        "properties": {
+          "error": {
+            "not": {
+              "type": "null"
+            }
+          },
+          "result": {
+            "type": "null"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok"
+        ]
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "type": "null"
+          },
+          "result": {
+            "not": {
+              "type": "null"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "type": "null"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/HelpResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "image.generate"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ImageResult"
+              },
+              {
+                "$ref": "#/$defs/PlanResult"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "image.edit"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/ImageResult"
+              },
+              {
+                "$ref": "#/$defs/PlanResult"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "video.generate"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/JobResult"
+              },
+              {
+                "$ref": "#/$defs/PlanResult"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "jobs.list"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/JobListResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "jobs.status"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/JobResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "jobs.wait"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/JobResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "jobs.download"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/JobResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "jobs.delete"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/JobDeleteResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "models.list"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/ModelListResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "models.show"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/ModelShowResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "providers.list"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/ProviderListResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "config.show"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/ConfigShowResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "config.path"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/ConfigPathResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "doctor"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/DoctorResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "schema"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/SchemaResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "completions"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/CompletionsResult"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "command": {
+            "const": "version"
+          },
+          "ok": {
+            "const": true
+          }
+        },
+        "required": [
+          "ok",
+          "command"
+        ]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "$ref": "#/$defs/VersionResult"
+          }
+        }
+      }
+    }
+  ],
   "description": "The single JSON document printed on stdout in `--json` mode.",
   "properties": {
     "command": {
@@ -1634,6 +2748,9 @@
   "required": [
     "schema_version",
     "ok",
+    "command",
+    "result",
+    "error",
     "warnings"
   ],
   "title": "Envelope",

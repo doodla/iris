@@ -176,6 +176,10 @@ machine-readable contract for agents.
   `compression` only with jpeg/webp), each with an id and the options and inputs involved. A
   request breaking one fails with `invalid_argument` and the id in `details.constraint`
   (additive fields).
+- The published JSON Schema now matches the documented contract: every always-present key is
+  `required` (nullable where it may be `null`), `ok` decides which of `result`/`error` is null,
+  `result` is tied to `command`, and an error's `category` to its `code`. Outputs are unchanged;
+  the schema only rejects documents Iris never prints.
 
 ### Known limitations
 

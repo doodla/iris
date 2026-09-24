@@ -13,7 +13,7 @@ use super::results::*;
 pub const SCHEMA_VERSION: u32 = 1;
 
 /// Command identifiers used in the envelope's `command` field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 pub enum CommandName {
     #[serde(rename = "image.generate")]
     ImageGenerate,
@@ -49,6 +49,57 @@ pub enum CommandName {
     Completions,
     #[serde(rename = "version")]
     Version,
+}
+
+impl CommandName {
+    /// Every command, in the order of the command tree.
+    pub const ALL: &'static [CommandName] = &[
+        CommandName::ImageGenerate,
+        CommandName::ImageEdit,
+        CommandName::VideoGenerate,
+        CommandName::JobsList,
+        CommandName::JobsStatus,
+        CommandName::JobsWait,
+        CommandName::JobsDownload,
+        CommandName::JobsDelete,
+        CommandName::ModelsList,
+        CommandName::ModelsShow,
+        CommandName::ProvidersList,
+        CommandName::ConfigShow,
+        CommandName::ConfigPath,
+        CommandName::Doctor,
+        CommandName::Schema,
+        CommandName::Completions,
+        CommandName::Version,
+    ];
+
+    /// Schema names (`$defs`) of the results a successful envelope of this command
+    /// carries. (`--help` results have `command: null`.)
+    pub fn result_types(self) -> Vec<String> {
+        fn name<T: JsonSchema>() -> String {
+            T::schema_name().into_owned()
+        }
+        match self {
+            CommandName::ImageGenerate | CommandName::ImageEdit => {
+                vec![name::<ImageResult>(), name::<PlanResult>()]
+            }
+            CommandName::VideoGenerate => vec![name::<JobResult>(), name::<PlanResult>()],
+            CommandName::JobsStatus | CommandName::JobsWait | CommandName::JobsDownload => {
+                vec![name::<JobResult>()]
+            }
+            CommandName::JobsList => vec![name::<JobListResult>()],
+            CommandName::JobsDelete => vec![name::<JobDeleteResult>()],
+            CommandName::ModelsList => vec![name::<ModelListResult>()],
+            CommandName::ModelsShow => vec![name::<ModelShowResult>()],
+            CommandName::ProvidersList => vec![name::<ProviderListResult>()],
+            CommandName::ConfigShow => vec![name::<ConfigShowResult>()],
+            CommandName::ConfigPath => vec![name::<ConfigPathResult>()],
+            CommandName::Doctor => vec![name::<DoctorResult>()],
+            CommandName::Schema => vec![name::<SchemaResult>()],
+            CommandName::Completions => vec![name::<CompletionsResult>()],
+            CommandName::Version => vec![name::<VersionResult>()],
+        }
+    }
 }
 
 /// Every possible `result` payload. Serialized untagged; the envelope's `command`
@@ -173,7 +224,59 @@ impl Envelope {
 }
 
 /// The published JSON Schema for the envelope, including every result type in `$defs`.
+///
+/// It is derived from the serialized types for the *serialize* contract, so every
+/// field that is always written is `required` (and nullable when it is an
+/// `Option`); output types never skip a field. A deterministic transform then adds
+/// what the types cannot express (see [`add_contract_rules`]).
 pub fn schema() -> serde_json::Value {
-    let schema = schemars::schema_for!(Envelope);
-    serde_json::to_value(schema).expect("schema serializes")
+    let generator = schemars::generate::SchemaSettings::default().for_serialize().into_generator();
+    let schema = generator.into_root_schema_for::<Envelope>();
+    let mut value = serde_json::to_value(schema).expect("schema serializes");
+    add_contract_rules(&mut value);
+    value
+}
+
+/// Rules of the documented contract beyond the shapes of the types:
+///
+/// * `ok: true` ⇔ `result` is not null and `error` is null (`ok: false` ⇔ the
+///   reverse);
+/// * a successful envelope's `result` has its command's type
+///   ([`CommandName::result_types`]), and one with `command: null` is `--help`;
+/// * an error's `category` is the one of its `code`.
+fn add_contract_rules(schema: &mut serde_json::Value) {
+    use serde_json::json;
+    let def = |name: &str| json!({ "$ref": format!("#/$defs/{name}") });
+    let success_with = |command: serde_json::Value| json!({ "properties": { "ok": { "const": true }, "command": command }, "required": ["ok", "command"] });
+    let mut rules = vec![json!({
+        "if": { "properties": { "ok": { "const": true } }, "required": ["ok"] },
+        "then": { "properties": { "result": { "not": { "type": "null" } }, "error": { "type": "null" } } },
+        "else": { "properties": { "result": { "type": "null" }, "error": { "not": { "type": "null" } } } }
+    })];
+    rules.push(json!({
+        "if": success_with(json!({ "type": "null" })),
+        "then": { "properties": { "result": def(&HelpResult::schema_name()) } }
+    }));
+    for command in CommandName::ALL {
+        let name = serde_json::to_value(command).expect("command names serialize");
+        let types: Vec<serde_json::Value> = command.result_types().iter().map(|t| def(t)).collect();
+        let result = if types.len() == 1 { types[0].clone() } else { json!({ "anyOf": types }) };
+        rules.push(json!({
+            "if": success_with(json!({ "const": name })),
+            "then": { "properties": { "result": result } }
+        }));
+    }
+    schema["allOf"] = serde_json::Value::Array(rules);
+
+    let categories: Vec<serde_json::Value> = ErrorCode::ALL
+        .iter()
+        .map(|code| {
+            json!({
+                "if": { "properties": { "code": { "const": code.as_str() } }, "required": ["code"] },
+                "then": { "properties": { "category": { "const": code.category() } } }
+            })
+        })
+        .collect();
+    let name = ErrorBody::schema_name();
+    schema["$defs"][name.as_ref()]["allOf"] = serde_json::Value::Array(categories);
 }
