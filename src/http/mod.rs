@@ -46,11 +46,20 @@ pub struct HttpSettings {
     pub connect_timeout: Duration,
     /// Backoff schedule used by [`HttpClient::execute`] and [`download()`].
     pub retry: RetryPolicy,
+    /// Honor the system proxy configuration (`HTTPS_PROXY`, `ALL_PROXY`, `NO_PROXY`,
+    /// …). Default `true`. Tests against 127.0.0.1 mock servers set `false`:
+    /// loopback is not exempt from a configured proxy unless `NO_PROXY` covers it, so
+    /// mock traffic (including fake credential headers) would otherwise go to the proxy.
+    pub system_proxy: bool,
 }
 
 impl Default for HttpSettings {
     fn default() -> Self {
-        HttpSettings { connect_timeout: Timeouts::default().connect, retry: RetryPolicy::default() }
+        HttpSettings {
+            connect_timeout: Timeouts::default().connect,
+            retry: RetryPolicy::default(),
+            system_proxy: true,
+        }
     }
 }
 
@@ -59,6 +68,10 @@ impl Default for HttpSettings {
 pub struct HttpClient {
     pub(crate) inner: reqwest::Client,
     pub(crate) retry: RetryPolicy,
+    /// True only for clients built by [`HttpClient::new`], whose redirect policy is
+    /// known to be `none`. [`HttpClient::execute`] and [`download()`] refuse to run
+    /// on any other client (see [`HttpClient::from_reqwest`]).
+    manual_redirects: bool,
 }
 
 impl HttpClient {
@@ -68,26 +81,55 @@ impl HttpClient {
     ///   credentials never follow a cross-origin hop;
     /// * connect timeout from `settings`;
     /// * `User-Agent: iris/<version>`;
-    /// * system proxy configuration (reqwest default: `HTTPS_PROXY`, `NO_PROXY`, …);
+    /// * system proxy configuration (reqwest default: `HTTPS_PROXY`, `NO_PROXY`, …)
+    ///   unless [`HttpSettings::system_proxy`] is `false`;
     /// * no default headers, in particular no credentials.
     pub fn new(settings: &HttpSettings) -> Result<Self, IrisError> {
-        let inner = reqwest::Client::builder()
+        let mut builder = reqwest::Client::builder()
             .redirect(reqwest::redirect::Policy::none())
             .connect_timeout(settings.connect_timeout)
-            .user_agent(USER_AGENT)
-            .build()
-            .map_err(|e| {
-                IrisError::internal(format!(
-                    "could not initialize the HTTP client: {}",
-                    retry::describe_reqwest_error(e)
-                ))
-            })?;
-        Ok(HttpClient { inner, retry: settings.retry.clone() })
+            .user_agent(USER_AGENT);
+        if !settings.system_proxy {
+            builder = builder.no_proxy();
+        }
+        let inner = builder.build().map_err(|e| {
+            IrisError::internal(format!(
+                "could not initialize the HTTP client: {}",
+                retry::describe_reqwest_error(e)
+            ))
+        })?;
+        Ok(HttpClient { inner, retry: settings.retry.clone(), manual_redirects: true })
     }
 
-    /// Wrap an existing reqwest client, using the default [`RetryPolicy`].
+    /// Wrap an existing reqwest client, using the default [`RetryPolicy`], for direct
+    /// use through [`HttpClient::reqwest`].
+    ///
+    /// Iris cannot inspect a foreign client's redirect policy, and reqwest's default
+    /// policy follows redirects itself while keeping custom credential headers such
+    /// as `x-goog-api-key` on cross-origin hops (and skipping the https-only and
+    /// 5-hop rules). [`HttpClient::execute`] and [`download()`] therefore refuse to
+    /// run on a client built here and fail with `internal_error` before sending
+    /// anything. Use [`HttpClient::new`] for every client that talks to a provider.
     pub fn from_reqwest(inner: reqwest::Client) -> Self {
-        HttpClient { inner, retry: RetryPolicy::default() }
+        HttpClient { inner, retry: RetryPolicy::default(), manual_redirects: false }
+    }
+
+    /// Whether this client was built by [`HttpClient::new`] (redirects are never
+    /// followed automatically), which [`HttpClient::execute`] and [`download()`]
+    /// require.
+    pub fn follows_redirects_manually(&self) -> bool {
+        self.manual_redirects
+    }
+
+    /// `internal_error` unless this client was built by [`HttpClient::new`].
+    pub(crate) fn require_manual_redirects(&self) -> Result<(), IrisError> {
+        if self.manual_redirects {
+            return Ok(());
+        }
+        Err(IrisError::internal(
+            "this HTTP client was not built by HttpClient::new, so its redirect policy is unknown; \
+             refusing to send a request whose credentials could follow a redirect to another origin",
+        ))
     }
 
     /// Replace the backoff schedule (tests use millisecond delays).

@@ -3,13 +3,13 @@
 //! Redirects are followed here, by hand, because reqwest's automatic redirects would
 //! forward custom credential headers such as `x-goog-api-key` to other hosts.
 
-use std::path::Path;
+use std::io::SeekFrom;
 use std::time::{Duration, Instant};
 
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_TYPE, LOCATION};
 use sha2::{Digest, Sha256};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use url::Url;
 
 use super::retry::{
@@ -32,10 +32,17 @@ const SNIPPET_READ_LIMIT: usize = 16 * 1024;
 pub struct DownloadRequest<'a> {
     /// Artifact URL as reported by the provider.
     pub url: &'a str,
-    /// File that receives the bytes. Created if missing and truncated at the start
-    /// of every attempt, so a retried download never appends to a partial file.
-    /// Normally the caller's temp file (`.<name>.iris-part-*`).
-    pub dest: &'a Path,
+    /// Open, writable file that receives the bytes: normally the caller's temp file
+    /// (`.<name>.iris-part-*`, created with `O_EXCL`), e.g.
+    /// `PartFile::file_mut()` / `NamedTempFile::as_file()`.
+    ///
+    /// The download writes only through this handle, never by path, so a path that
+    /// is replaced by a symlink or deleted meanwhile cannot redirect the bytes
+    /// (C-04: temp files are never reached through a symlinked path). The file is
+    /// emptied (`set_len(0)`, rewound) at the start of every attempt, so a retried
+    /// download never appends to a partial body, and it is left empty on failure.
+    /// The handle's position is shared: afterwards it is at the end of the data.
+    pub dest: &'a std::fs::File,
     /// The provider's configured base URL. Its origin is the only origin that ever
     /// receives `auth`; if its scheme is `http` (local mock servers), `http` hops
     /// are allowed, otherwise every hop must be `https`.
@@ -90,6 +97,9 @@ pub enum DownloadError {
     Transport(TransportError),
     /// Writing `dest` failed.
     Io { message: String },
+    /// A local programming or setup error, never retried: the client was not built
+    /// by [`HttpClient::new`] (its redirect policy is unknown).
+    Internal { message: String },
 }
 
 impl DownloadError {
@@ -97,7 +107,8 @@ impl DownloadError {
     /// 403/404/410 → `artifact_expired`; 401 → `authentication_failed`;
     /// 429 → `rate_limited`; other statuses, policy refusals and transport failures →
     /// `download_failed` (retryable unless the failure is permanent);
-    /// error documents served as media → `invalid_media`; file errors → `io_error`.
+    /// error documents served as media → `invalid_media`; file errors → `io_error`;
+    /// [`DownloadError::Internal`] → `internal_error`.
     pub fn into_iris(self) -> IrisError {
         match self {
             DownloadError::Status { status, body_snippet, retry_after, attempts, url } => {
@@ -175,6 +186,7 @@ impl DownloadError {
                 err
             }
             DownloadError::Io { message } => IrisError::new(ErrorCode::IoError, message),
+            DownloadError::Internal { message } => IrisError::internal(message),
         }
     }
 }
@@ -192,7 +204,9 @@ impl std::fmt::Display for DownloadError {
             DownloadError::InvalidMedia { content_type, url, .. } => {
                 write!(f, "'{content_type}' error document from {url}")
             }
-            DownloadError::Refused { message } | DownloadError::Io { message } => f.write_str(message),
+            DownloadError::Refused { message }
+            | DownloadError::Io { message }
+            | DownloadError::Internal { message } => f.write_str(message),
             DownloadError::Transport(t) => write!(f, "{t}"),
         }
     }
@@ -230,28 +244,36 @@ enum AttemptError {
 /// counting bytes as they arrive. See [`DownloadRequest`] for the credential and
 /// redirect rules. Dropping the future aborts the download (the file may then hold
 /// a partial body; callers discard their temp file).
+///
+/// Fails with [`DownloadError::Internal`] before sending anything if `client` was
+/// not built by [`HttpClient::new`]: only that client is known not to follow
+/// redirects by itself (see [`HttpClient::from_reqwest`]).
 pub async fn download(client: &HttpClient, req: &DownloadRequest<'_>) -> Result<Downloaded, DownloadError> {
+    client.require_manual_redirects().map_err(|e| DownloadError::Internal { message: e.message.clone() })?;
     let start = Url::parse(req.url)
         .map_err(|_| DownloadError::Refused { message: "the artifact URL is not a valid URL".to_string() })?;
+    // A second handle to the caller's open file: every write, truncation, and seek
+    // goes to the file the caller created, whatever happens to its path.
+    let mut file = req.dest.try_clone().map(tokio::fs::File::from_std).map_err(dest_io_error)?;
     let class = RetryClass::Download;
     let mut schedule = client.retry.schedule();
     let mut attempt: u32 = 0;
     loop {
         attempt += 1;
-        let result = attempt_once(client, req, &start, attempt).await;
+        let result = attempt_once(client, req, &start, attempt, &mut file).await;
         let (error, delay) = match result {
             Ok(mut done) => {
                 done.attempts = attempt;
                 return Ok(done);
             }
-            Err(AttemptError::Final(error)) => return Err(fail(req.dest, error).await),
+            Err(AttemptError::Final(error)) => return Err(fail(&mut file, error).await),
             Err(AttemptError::Retryable { error, delay }) => (error, delay),
         };
         if attempt >= class.max_attempts() {
-            return Err(fail(req.dest, error).await);
+            return Err(fail(&mut file, error).await);
         }
         let delay = match delay {
-            Some(d) if d > client.retry.max_retry_after => return Err(fail(req.dest, error).await),
+            Some(d) if d > client.retry.max_retry_after => return Err(fail(&mut file, error).await),
             Some(d) => d,
             None => full_jitter(schedule.next().unwrap_or(client.retry.cap).min(client.retry.cap)),
         };
@@ -260,34 +282,37 @@ pub async fn download(client: &HttpClient, req: &DownloadRequest<'_>) -> Result<
     }
 }
 
+fn dest_io_error(e: std::io::Error) -> DownloadError {
+    DownloadError::Io { message: format!("cannot write the downloaded file: {e}") }
+}
+
+/// Empty `file` and rewind it, through the handle.
+async fn empty(file: &mut tokio::fs::File) -> std::io::Result<()> {
+    file.set_len(0).await?;
+    file.seek(SeekFrom::Start(0)).await?;
+    Ok(())
+}
+
 /// Leave `dest` empty after a failed download (best effort) and return the error.
-async fn fail(dest: &Path, error: DownloadError) -> DownloadError {
-    if let Ok(file) = tokio::fs::OpenOptions::new().write(true).open(dest).await {
-        let _ = file.set_len(0).await;
-    }
+async fn fail(file: &mut tokio::fs::File, error: DownloadError) -> DownloadError {
+    let _ = file.flush().await;
+    let _ = empty(file).await;
     error
 }
 
-/// One attempt: (re)create `dest` empty, then fetch into it.
+/// One attempt: empty the file, then fetch into it.
 async fn attempt_once(
     client: &HttpClient,
     req: &DownloadRequest<'_>,
     start: &Url,
     attempt: u32,
+    file: &mut tokio::fs::File,
 ) -> Result<Downloaded, AttemptError> {
-    let io_error = |e: std::io::Error| {
-        AttemptError::Final(DownloadError::Io { message: format!("{}: {e}", req.dest.display()) })
-    };
-    let mut file = tokio::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(req.dest)
-        .await
-        .map_err(io_error)?;
-    let result = fetch_into(client, req, start, attempt, &mut file).await;
+    let io_error = |e: std::io::Error| AttemptError::Final(dest_io_error(e));
+    empty(file).await.map_err(io_error)?;
+    let result = fetch_into(client, req, start, attempt, file).await;
     // tokio's File completes queued writes on a blocking thread. Flushing waits for
-    // them, so no write of this attempt can land after a retry truncates the file
+    // them, so no write of this attempt can land after a retry empties the file
     // or after a failure empties it.
     let flushed = file.flush().await;
     let done = result?;
@@ -324,9 +349,7 @@ async fn fetch_into(
             url,
         )
     };
-    let io_error = |e: std::io::Error| {
-        AttemptError::Final(DownloadError::Io { message: format!("{}: {e}", req.dest.display()) })
-    };
+    let io_error = |e: std::io::Error| AttemptError::Final(dest_io_error(e));
 
     let mut url = start.clone();
     let mut redirects: u32 = 0;
@@ -535,5 +558,9 @@ mod tests {
         assert_eq!(status(400).into_iris().retryable, Some(false));
         let e = DownloadError::Refused { message: "no".into() }.into_iris();
         assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(false)));
+        assert_eq!(
+            DownloadError::Internal { message: "bug".into() }.into_iris().code,
+            ErrorCode::InternalError
+        );
     }
 }

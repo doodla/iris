@@ -3,8 +3,8 @@
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use iris::domain::ProviderId;
@@ -17,6 +17,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// Millisecond backoff so tests are fast; Retry-After handling keeps the 60s cap.
+/// No system proxy: mock traffic to 127.0.0.1 must never leave the machine.
 fn client() -> HttpClient {
     HttpClient::new(&HttpSettings {
         connect_timeout: Duration::from_secs(2),
@@ -26,6 +27,7 @@ fn client() -> HttpClient {
             cap: Duration::from_millis(20),
             max_retry_after: Duration::from_secs(60),
         },
+        system_proxy: false,
     })
     .unwrap()
 }
@@ -335,6 +337,67 @@ async fn a_build_error_is_returned_without_sending() {
         .unwrap_err();
     assert!(!err.is_ambiguous(), "{err:?}");
     assert_eq!(err.into_iris().details.get("charge_possible"), Some(&json!(false)));
+}
+
+#[tokio::test]
+async fn redirects_go_to_the_classifier_and_requests_carry_the_iris_user_agent() {
+    let first = MockServer::start().await;
+    let second = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(
+            ResponseTemplate::new(302)
+                .insert_header("location", format!("{}/v1/images/generations", second.uri())),
+        )
+        .mount(&first)
+        .await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).mount(&second).await;
+    let url = format!("{}/v1/images/generations", first.uri());
+    let seen = Mutex::new(Vec::new());
+    let err = expect_error(
+        client()
+            .execute(
+                &call(RetryClass::IdempotentRead),
+                |c| Ok(c.post(&url).header("x-goog-api-key", "test-gemini-key-000")),
+                |r| {
+                    seen.lock().unwrap().push(r.status.as_u16());
+                    classify(r)
+                },
+            )
+            .await,
+    );
+    assert_eq!(*seen.lock().unwrap(), vec![302], "the 3xx is handed to the classifier");
+    assert_eq!(err.provider_status, Some(302));
+    assert_eq!(requests(&second).await, 0, "the executor must never follow a redirect");
+    let received = first.received_requests().await.unwrap();
+    assert_eq!(received.len(), 1);
+    let ua = received[0].headers.get("user-agent").and_then(|v| v.to_str().ok());
+    assert_eq!(ua, Some(format!("iris/{}", env!("CARGO_PKG_VERSION")).as_str()));
+}
+
+#[tokio::test]
+async fn a_client_not_built_by_iris_is_refused_before_building_or_sending() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST")).respond_with(ResponseTemplate::new(200)).mount(&server).await;
+    // reqwest's default redirect policy would follow redirects and keep custom
+    // credential headers on cross-origin hops.
+    let foreign = HttpClient::from_reqwest(reqwest::Client::builder().no_proxy().build().unwrap());
+    assert!(!foreign.follows_redirects_manually());
+    assert!(client().follows_redirects_manually());
+    let url = format!("{}/v1/images/generations", server.uri());
+    let builds = AtomicUsize::new(0);
+    let err = foreign
+        .execute(
+            &call(RetryClass::PaidSubmit),
+            |c| {
+                builds.fetch_add(1, Ordering::SeqCst);
+                Ok(c.post(&url))
+            },
+            classify,
+        )
+        .await;
+    assert_eq!(expect_error(err).code, ErrorCode::InternalError);
+    assert_eq!(builds.load(Ordering::SeqCst), 0);
+    assert_eq!(requests(&server).await, 0);
 }
 
 fn closed_port_url() -> String {

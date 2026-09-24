@@ -485,6 +485,11 @@ impl HttpClient {
     ///   [`RetryPolicy::max_retry_after`]; a longer requested delay stops with
     ///   `rate_limited` carrying `retry_after`. `x-should-retry: false` stops retries.
     /// * Returns the first 2xx response (with its attempt count), or an [`HttpError`].
+    /// * Redirects are never followed: a 3xx response goes to `classify` like any
+    ///   other non-2xx response.
+    /// * Fails with `internal_error`, before building or sending anything, on a
+    ///   client that was not built by [`HttpClient::new`] (see
+    ///   [`HttpClient::from_reqwest`]).
     pub async fn execute<B, C>(
         &self,
         call: &Call,
@@ -495,6 +500,7 @@ impl HttpClient {
         B: FnMut(&reqwest::Client) -> Result<reqwest::RequestBuilder, IrisError>,
         C: FnMut(&HttpResponse) -> Verdict,
     {
+        self.require_manual_redirects().map_err(HttpError::Error)?;
         let max_attempts = call.class.max_attempts();
         let mut schedule = self.retry.schedule();
         let mut attempt: u32 = 0;

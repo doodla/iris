@@ -52,6 +52,7 @@ fn client() -> HttpClient {
             cap: Duration::from_millis(20),
             max_retry_after: Duration::from_secs(60),
         },
+        system_proxy: false,
     })
     .unwrap()
 }
@@ -127,7 +128,7 @@ async fn debug_logs_carry_request_metadata_but_never_secrets_bodies_or_signed_va
         .mount(&storage)
         .await;
     let dir = tempfile::tempdir().unwrap();
-    let dest = dir.path().join("part");
+    let dest = std::fs::File::create(dir.path().join("part")).unwrap();
     let base = Url::parse(&files.uri()).unwrap();
     let gemini_auth = AuthHeader::new("x-goog-api-key", "", &Secret::new(FAKE_GEMINI)).unwrap();
     let artifact = format!("{}/v1beta/files/abc:download?alt=media&token=TOKENVALUE", files.uri());

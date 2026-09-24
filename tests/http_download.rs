@@ -21,6 +21,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FAKE_KEY: &str = "test-gemini-key-000";
 
+/// No system proxy: mock traffic (and the fake credential) stays on 127.0.0.1.
 fn client() -> HttpClient {
     HttpClient::new(&HttpSettings {
         connect_timeout: Duration::from_secs(2),
@@ -30,6 +31,7 @@ fn client() -> HttpClient {
             cap: Duration::from_millis(20),
             max_retry_after: Duration::from_secs(60),
         },
+        system_proxy: false,
     })
     .unwrap()
 }
@@ -49,11 +51,25 @@ fn sha256_hex(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
+/// Download into `dest`, opened (not truncated) the way the artifacts layer hands
+/// over its temp file: an open read/write handle.
 async fn fetch(url: &str, base: &Url, dest: &Path, idle: Duration) -> Result<Downloaded, DownloadError> {
+    let file =
+        std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(dest).unwrap();
+    fetch_into(&client(), url, base, &file, idle).await
+}
+
+async fn fetch_into(
+    client: &HttpClient,
+    url: &str,
+    base: &Url,
+    dest: &std::fs::File,
+    idle: Duration,
+) -> Result<Downloaded, DownloadError> {
     let auth = auth();
     let req =
         DownloadRequest { url, dest, base_url: base, auth: Some(&auth), idle_timeout: idle, provider: None };
-    download(&client(), &req).await
+    download(client, &req).await
 }
 
 fn has_key(req: &wiremock::Request) -> bool {
@@ -317,6 +333,41 @@ async fn retry_after_beyond_the_cap_stops_immediately() {
     assert_eq!((e.code, e.retry_after), (ErrorCode::RateLimited, Some(Duration::from_secs(600))));
 }
 
+#[tokio::test]
+async fn a_client_not_built_by_iris_is_refused_before_any_request() {
+    // The regression scenario: the API origin redirects to a storage origin. A client
+    // with reqwest's default redirect policy would follow it itself and forward
+    // x-goog-api-key there, bypassing the credential, https-only, and hop rules.
+    let api = MockServer::start().await;
+    let storage = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(302).insert_header("location", format!("{}/signed/abc.mp4", storage.uri())),
+        )
+        .mount(&api)
+        .await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(media(100), "video/mp4"))
+        .mount(&storage)
+        .await;
+    let foreign = HttpClient::from_reqwest(reqwest::Client::builder().no_proxy().build().unwrap());
+    let dir = tempfile::tempdir().unwrap();
+    let file = std::fs::File::create(dir.path().join("p")).unwrap();
+    let err = fetch_into(
+        &foreign,
+        &format!("{}/v1beta/files/abc:download?alt=media", api.uri()),
+        &base_of(&api),
+        &file,
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(err, DownloadError::Internal { .. }), "{err:?}");
+    assert_eq!(api.received_requests().await.unwrap().len(), 0);
+    assert_eq!(storage.received_requests().await.unwrap().len(), 0, "the credential never reaches storage");
+    assert_eq!(err.into_iris().code, ErrorCode::InternalError);
+}
+
 fn base_of(server: &MockServer) -> Url {
     Url::parse(&server.uri()).unwrap()
 }
@@ -417,4 +468,61 @@ async fn persistent_interruptions_fail_as_download_failed_and_leave_the_file_emp
     assert_eq!(std::fs::metadata(&dest).unwrap().len(), 0);
     let e = err.into_iris();
     assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(true)));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn writes_go_through_the_open_handle_even_if_the_path_becomes_a_symlink() {
+    // The first attempt is interrupted, so the download empties and rewrites the file.
+    let body = media(1000);
+    let (base, connections) = raw_server(vec![
+        Script { bytes: response(1000, &body[..400]), stall: None },
+        Script { bytes: response(1000, &body), stall: None },
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let part = tempfile::Builder::new().prefix(".out.mp4.iris-part-").tempfile_in(dir.path()).unwrap();
+    let victim = dir.path().join("victim.txt");
+    std::fs::write(&victim, b"must not be truncated or overwritten").unwrap();
+    // Keep another name for the temp file's inode, then replace its path with a
+    // symlink to the victim (what an attacker with write access to the directory
+    // could do between attempts).
+    let kept = dir.path().join("kept");
+    std::fs::hard_link(part.path(), &kept).unwrap();
+    std::fs::remove_file(part.path()).unwrap();
+    std::os::unix::fs::symlink(&victim, part.path()).unwrap();
+
+    let base_url = Url::parse(&base).unwrap();
+    let done =
+        fetch_into(&client(), &format!("{base}/x.mp4"), &base_url, part.as_file(), Duration::from_secs(5))
+            .await
+            .unwrap();
+    assert_eq!(done.attempts, 2);
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
+    assert_eq!(std::fs::read(&victim).unwrap(), b"must not be truncated or overwritten");
+    assert_eq!(std::fs::read(&kept).unwrap(), body, "the bytes land in the file the caller created");
+}
+
+#[tokio::test]
+async fn a_deleted_temp_path_is_not_recreated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(media(500), "video/mp4"))
+        .mount(&server)
+        .await;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".out.mp4.iris-part-1");
+    let file = std::fs::OpenOptions::new().read(true).write(true).create_new(true).open(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let done = fetch_into(
+        &client(),
+        &format!("{}/x.mp4", server.uri()),
+        &base_of(&server),
+        &file,
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap();
+    assert_eq!(done.bytes, 500);
+    assert!(!path.exists(), "the download writes through the handle and never creates a file by path");
+    assert_eq!(file.metadata().unwrap().len(), 500);
 }
