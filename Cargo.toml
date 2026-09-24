@@ -2,7 +2,7 @@
 name = "iris"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Generate and edit images and generate videos through OpenAI and Google Gemini/Veo from one agent-friendly CLI"
 license = "MIT"
 repository = "https://github.com/doodla/iris"
@@ -29,25 +29,39 @@ path = "src/lib.rs"
 
 [dependencies]
 async-trait = "0.1.92"
+backon = "1.6.0"
 base64 = "0.23.1"
 bytes = "1.12.1"
 clap = { version = "4.6.7", features = ["derive", "wrap_help"] }
 clap_complete = "4.6.11"
+directories = "6.0.0"
 fastrand = "2.5.0"
 futures-util = "0.3.34"
+hex = "0.4.3"
+humantime = "2.4.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
+infer = { version = "0.22.0", default-features = false, features = ["std"] }
 jiff = { version = "0.2.37", features = ["serde"] }
 reqwest = { version = "0.13.5", default-features = false, features = ["default-tls", "http2", "system-proxy", "json", "multipart", "stream"] }
 schemars = "1.2.2"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
 thiserror = "2.0.21"
 tokio = { version = "1.53.1", features = ["rt", "macros", "time", "signal", "fs", "io-util"] }
+toml = "1.1.6"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", default-features = false, features = ["env-filter", "fmt", "std"] }
+ulid = "3.0.0"
 url = "2.5.8"
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
+jsonschema = { version = "0.57.0", default-features = false }
 predicates = "3.1.4"
-tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
+wiremock = "0.6.5"
 
 [profile.release]
 codegen-units = 1

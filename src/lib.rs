@@ -6,10 +6,15 @@
 
 #![forbid(unsafe_code)]
 
+pub mod app;
+pub mod artifacts;
 pub mod catalog;
+pub mod cli;
+pub mod config;
 pub mod domain;
 pub mod error;
 pub mod http;
+pub mod jobs;
 pub mod output;
 pub mod providers;
 pub mod redact;
