@@ -329,12 +329,20 @@ install_binary() {
 
 # Prints the line to add to the user's shell startup file if needed.
 print_path_hint() {
+  case $install_dir in
+    *:*)
+      warn "$install_dir contains ':', so it cannot be added to PATH; run $dest by its full path, or reinstall with another --dir"
+      return 0
+      ;;
+  esac
   case ":${PATH:-}:" in
     *":$install_dir:"* | *":$install_dir/:"*)
+      # command -v spells the path as PATH does, so allow for the trailing slash.
       found=$(command -v iris 2>/dev/null) || found=
-      if [ -n "$found" ] && [ "$found" != "$dest" ]; then
-        warn "$found comes earlier on your PATH, so 'iris' runs that copy instead"
-      fi
+      case $found in
+        "" | "$dest" | "$install_dir//iris") ;;
+        *) warn "$found comes earlier on your PATH, so 'iris' runs that copy instead" ;;
+      esac
       return 0
       ;;
   esac
@@ -351,6 +359,15 @@ print_path_hint() {
       path_line="fish_add_path \"$shown_dir\""
       ;;
     *) rc_file=.profile ;;
+  esac
+  # The line puts the directory between double quotes, where " $ ` and \ are
+  # special and a newline ends the line. Never print a line that would run
+  # something else when pasted into a startup file.
+  case ${shown_dir#\$HOME} in
+    *\"* | *\$* | *\`* | *\\* | *"$NL"*)
+      say "$install_dir is not on your PATH. Add it to PATH in ~/$rc_file, then open a new shell. (Its name needs shell escaping, so no line is shown.)"
+      return 0
+      ;;
   esac
   say "$install_dir is not on your PATH. Add this line to ~/$rc_file, then open a new shell:"
   printf '\n    %s\n\n' "$path_line"

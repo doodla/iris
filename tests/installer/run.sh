@@ -701,6 +701,15 @@ path_cases() {
   expect_no_err "comes earlier"
   end
 
+  begin "no PATH hint or warning when PATH lists the directory with a trailing slash"
+  FRONT_PATH=$BIN/
+  run ok/good
+  expect_status 0
+  expect_installed "$BIN/iris" 0.2.0 "$LINUX"
+  expect_no_out "not on your PATH"
+  expect_no_err "comes earlier"
+  end
+
   begin "warning when another iris comes earlier on PATH"
   mkdir -p "$C/other"
   printf '#!/bin/sh\necho other\n' >"$C/other/iris"
@@ -709,6 +718,30 @@ path_cases() {
   run ok/good
   expect_status 0
   expect_err "$C/other/iris comes earlier on your PATH"
+  end
+}
+
+# A directory name with a character that is special inside double quotes must
+# not produce a paste-ready line (it could run a command from ~/.bashrc).
+# shellcheck disable=SC2016 # the names are meant literally
+unsafe_dir_cases() {
+  for unsafe in 'q"uote' 'dollar$(id)' 'back`id`tick' 'back\slash'; do
+    begin "no paste-ready PATH line for a directory named $unsafe"
+    run ok/good --dir "$C/$unsafe"
+    expect_status 0
+    expect_installed "$C/$unsafe/iris" 0.2.0 "$LINUX"
+    expect_out "$C/$unsafe is not on your PATH"
+    expect_out "no line is shown"
+    expect_no_out "export PATH="
+    end
+  done
+
+  begin "a directory name with ':' cannot go on PATH: say so"
+  run ok/good --dir "$C/a:b"
+  expect_status 0
+  expect_installed "$C/a:b/iris" 0.2.0 "$LINUX"
+  expect_err "$C/a:b contains ':', so it cannot be added to PATH"
+  expect_no_out "export PATH="
   end
 }
 
@@ -753,6 +786,7 @@ verification_cases
 tool_cases
 stdin_cases
 path_cases
+unsafe_dir_cases
 upgrade_cases
 
 printf '\n%s passed, %s failed\n' "$PASSED" "$FAILED"
