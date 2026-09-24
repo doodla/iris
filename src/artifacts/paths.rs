@@ -9,8 +9,12 @@
 //!   `<stem>-<i>.<ext>`. Its extension must agree with `--format` and with what
 //!   the model can produce; without `--format` it selects the format.
 //! * [`preflight`] refuses existing files before any paid request unless
-//!   `--overwrite`.
+//!   `--overwrite`; [`preflight_dirs`] makes sure the output directories exist (or
+//!   can be created) and are writable, so a paid result is never lost because it
+//!   cannot be saved.
 
+use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 
 use crate::domain::Warning;
@@ -213,6 +217,86 @@ pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
         }
     }
     Ok(())
+}
+
+/// Check the directories of planned output paths before any paid request (SPEC §3
+/// local validation; C-02: paid output is never discarded, `-d` is created if
+/// missing). For each distinct parent directory:
+///
+/// * the nearest existing ancestor must be a directory; a regular file (or a
+///   broken symbolic link) in the way is `invalid_argument` (exit 2);
+/// * with `create` (every real run; pass `false` for `--dry-run`, which must not
+///   touch the filesystem) the directory is created if missing and proven
+///   writable by creating and removing a `.iris-preflight.iris-part-*` temp file.
+///   Failures are `io_error` naming the directory.
+///
+/// Nothing is sent before this passes, so an unusable directory costs nothing.
+pub fn preflight_dirs(paths: &[PathBuf], create: bool) -> Result<(), IrisError> {
+    let mut checked: Vec<&Path> = Vec::new();
+    for path in paths {
+        let dir = path
+            .parent()
+            .filter(|d| !d.as_os_str().is_empty())
+            .ok_or_else(|| IrisError::internal(format!("output path {} has no directory", path.display())))?;
+        if checked.contains(&dir) {
+            continue;
+        }
+        checked.push(dir);
+        check_ancestors(dir)?;
+        if create {
+            fs::create_dir_all(dir).map_err(|e| {
+                dir_error(format_args!("cannot create output directory {}", dir.display()), dir, &e)
+            })?;
+            tempfile::Builder::new()
+                .prefix(".iris-preflight.iris-part-")
+                .rand_bytes(8)
+                .tempfile_in(dir)
+                .map_err(|e| {
+                    dir_error(format_args!("output directory {} is not writable", dir.display()), dir, &e)
+                })?;
+        }
+    }
+    Ok(())
+}
+
+/// The nearest existing ancestor of `dir` (itself included) must be a directory.
+fn check_ancestors(dir: &Path) -> Result<(), IrisError> {
+    for ancestor in dir.ancestors().filter(|a| !a.as_os_str().is_empty()) {
+        let blocked = |what: &str| {
+            IrisError::invalid(format!(
+                "output directory {} cannot be used: {} is {what}",
+                dir.display(),
+                ancestor.display()
+            ))
+            .with_detail("path", ancestor.to_string_lossy().into_owned())
+            .with_hint(DIR_HINT)
+        };
+        match fs::metadata(ancestor) {
+            Ok(meta) if meta.is_dir() => return Ok(()),
+            Ok(_) => return Err(blocked("not a directory")),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => {
+                if fs::symlink_metadata(ancestor).is_ok() {
+                    return Err(blocked("a broken symbolic link"));
+                }
+            }
+            // A path component further up is a file; the loop reaches it next.
+            Err(e) if e.kind() == io::ErrorKind::NotADirectory => {}
+            Err(e) => {
+                return Err(dir_error(
+                    format_args!("cannot check output directory {}", dir.display()),
+                    dir,
+                    &e,
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+const DIR_HINT: &str = "choose a writable directory with -d/--out-dir, or another -o/--output path";
+
+fn dir_error(context: std::fmt::Arguments<'_>, dir: &Path, e: &io::Error) -> IrisError {
+    IrisError::io(context, e).with_detail("path", dir.to_string_lossy().into_owned()).with_hint(DIR_HINT)
 }
 
 /// The `output_exists` error for `path`.

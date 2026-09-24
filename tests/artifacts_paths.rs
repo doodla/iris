@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use iris::artifacts::paths::{self, Naming, PathRequest};
-use iris::artifacts::{adjust_extension, plan_outputs, preflight};
+use iris::artifacts::{adjust_extension, plan_outputs, preflight, preflight_dirs};
 use iris::error::ErrorCode;
 
 const IMAGE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp"];
@@ -194,6 +194,83 @@ fn preflight_refuses_existing_files_unless_overwrite() {
         assert_eq!(preflight(&[link], false).unwrap_err().code, ErrorCode::OutputExists);
     }
     assert_eq!(std::fs::read(&existing).unwrap(), b"old");
+}
+
+/// Entries of `dir`, asserting no preflight or part files were left behind.
+fn entries(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(dir)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert!(!names.iter().any(|n| n.contains(".iris-part-")), "temp files left behind: {names:?}");
+    names
+}
+
+#[test]
+fn preflight_dirs_creates_missing_directories_and_proves_them_writable() {
+    let dir = tempfile::tempdir().unwrap();
+    let deep = dir.path().join("renders").join("today");
+    let paths = vec![deep.join("a-1.png"), deep.join("a-2.png"), dir.path().join("b.png")];
+    preflight_dirs(&paths, true).unwrap();
+    assert!(deep.is_dir(), "-d is created if missing");
+    assert!(entries(&deep).is_empty());
+    assert_eq!(entries(dir.path()), vec!["renders"]);
+
+    // --dry-run checks without creating anything.
+    let planned = dir.path().join("later").join("x.png");
+    preflight_dirs(std::slice::from_ref(&planned), false).unwrap();
+    assert!(!dir.path().join("later").exists());
+}
+
+#[test]
+fn preflight_dirs_rejects_a_file_in_the_way_before_anything_is_sent() {
+    let dir = tempfile::tempdir().unwrap();
+    let blocker = dir.path().join("out");
+    std::fs::write(&blocker, b"a file, not a directory").unwrap();
+    for path in [blocker.join("cat.png"), blocker.join("sub").join("deeper").join("cat.png")] {
+        for create in [true, false] {
+            let err = preflight_dirs(std::slice::from_ref(&path), create).unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidArgument, "{path:?}");
+            assert_eq!(err.exit_code(), 2);
+            assert!(err.message.contains("not a directory"), "{}", err.message);
+            assert_eq!(err.details["path"], blocker.to_str().unwrap());
+        }
+    }
+    assert_eq!(std::fs::read(&blocker).unwrap(), b"a file, not a directory");
+
+    #[cfg(unix)]
+    {
+        let link = dir.path().join("gone");
+        std::os::unix::fs::symlink(dir.path().join("nowhere"), &link).unwrap();
+        let err = preflight_dirs(&[link.join("cat.png")], true).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidArgument);
+        assert!(err.message.contains("broken symbolic link"), "{}", err.message);
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn preflight_dirs_reports_uncreatable_and_unwritable_directories() {
+    // procfs refuses new entries even for root, so this works in any sandbox.
+    if !Path::new("/proc/self").exists() {
+        return;
+    }
+    let uncreatable = PathBuf::from("/proc/iris-preflight-test/cat.png");
+    let err = preflight_dirs(std::slice::from_ref(&uncreatable), true).unwrap_err();
+    assert_eq!(err.code, ErrorCode::IoError);
+    assert!(
+        err.message.contains("cannot create output directory /proc/iris-preflight-test"),
+        "{}",
+        err.message
+    );
+    assert!(err.hint.as_deref().unwrap().contains("-d/--out-dir"));
+
+    let unwritable = PathBuf::from("/proc/cat.png");
+    let err = preflight_dirs(std::slice::from_ref(&unwritable), true).unwrap_err();
+    assert_eq!(err.code, ErrorCode::IoError);
+    assert!(err.message.contains("output directory /proc is not writable"), "{}", err.message);
+    assert_eq!(err.details["path"], "/proc");
 }
 
 #[test]

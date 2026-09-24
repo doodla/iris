@@ -2,7 +2,8 @@
 //! "Downloads", "Artifact validation", "Filenames and paths").
 //!
 //! * [`paths`] — plan absolute output paths (default names, `-o` rules,
-//!   extension/format consistency) and the `output_exists` preflight.
+//!   extension/format consistency), the `output_exists` preflight, and the
+//!   output-directory preflight.
 //! * [`media`] — sniff media types from magic bytes, decode images, validate
 //!   ISO-BMFF video structure, inspect PNG alpha/dimensions.
 //! * [`read_input_image`] — validate local input images against a model's
@@ -28,4 +29,6 @@ pub use finalize::{
 };
 pub use input::read_input_image;
 pub use media::{ImageDetails, IsoBmffInfo, MediaInfo};
-pub use paths::{Naming, PathRequest, PlannedOutputs, adjust_extension, plan_outputs, preflight};
+pub use paths::{
+    Naming, PathRequest, PlannedOutputs, adjust_extension, plan_outputs, preflight, preflight_dirs,
+};
