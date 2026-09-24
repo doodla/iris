@@ -142,7 +142,7 @@ jobs:
             exit 1
           fi
           status=0
-          for required in Cargo.toml src/main.rs LICENSE README.md; do
+          for required in Cargo.toml build.rs src/main.rs LICENSE README.md; do
             if ! grep -qxF "$required" package-list.txt; then
               echo "::error::expected file missing from package: $required"
               status=1
@@ -155,8 +155,9 @@ jobs:
               # the git commit the package was built from) whenever
               # `cargo package` runs against a clean git checkout without
               # --allow-dirty, verified locally; it is not
-              # one of our own source files but is expected here.
-              src/*|schema/*|Cargo.*|README.md|LICENSE|CHANGELOG.md|.cargo_vcs_info.json)
+              # one of our own source files but is expected here. Keep this
+              # list in step with `package.include` in Cargo.toml.
+              src/*|schema/*|build.rs|Cargo.*|README.md|LICENSE|CHANGELOG.md|.cargo_vcs_info.json)
                 ;;
               *)
                 echo "::error::unexpected file in package: $f"
