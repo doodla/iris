@@ -108,8 +108,7 @@ jobs:
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: shellcheck
-      # install.sh and tests/installer/run.sh are owned and written by a
-      # separate task; referenced here by path only.
+      # Offline installer tests: fixtures served from 127.0.0.1 only.
       - run: shellcheck -s sh install.sh
       - run: sh tests/installer/run.sh
 
