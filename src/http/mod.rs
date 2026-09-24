@@ -29,7 +29,10 @@ use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
 
-pub use download::{DownloadError, DownloadRequest, Downloaded, MAX_REDIRECTS, download, hop_allowed};
+pub use download::{
+    DownloadError, DownloadRequest, Downloaded, MAX_DOWNLOAD_BYTES, MAX_REDIRECTS, download,
+    download_limited, hop_allowed,
+};
 pub(crate) use retry::PROVIDER_TEXT_MAX;
 pub use retry::{
     Call, HttpError, HttpResponse, RetryClass, RetryPolicy, TransportError, TransportKind, Verdict,

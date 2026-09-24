@@ -237,7 +237,11 @@ Order of decision for each output, under the job's download lock:
    re-downloadable; see [Retention and expiry](#retention-and-expiry)); 401 →
    `authentication_failed`; 429, or any status whose `Retry-After` exceeds the automatic-wait
    limit, → `rate_limited`; any other status, or a transport failure, → `download_failed`
-   (retryable unless the failure is permanent). Separately, a *successful* (2xx) response whose
+   (retryable unless the failure is permanent). A download is capped at 4 GiB (far above any
+   output a supported provider returns): a declared `Content-Length` over the cap is refused
+   before anything is written, and a transfer that grows past it is stopped; either is
+   `download_failed` with `retryable: false`, and the partial file is removed. Separately, a
+   *successful* (2xx) response whose
    `Content-Type` says it's an error document (`application/json`/`text/*`/`application/xml`) —
    an API error page mistakenly served as if it were media — or whose bytes' magic number doesn't
    match the declared media type, is rejected as `invalid_media` rather than saved.

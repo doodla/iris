@@ -122,6 +122,9 @@ machine-readable contract for agents.
 - Partial download files (`.<name>.iris-part-*`) that a killed process left for a target are
   removed before the next download of that target; docs/jobs.md lists what SIGKILL can leave.
 
+- Artifact downloads are capped at 4 GiB: a larger declared `Content-Length` or body is
+  `download_failed` (not retryable) and nothing partial is kept.
+
 ### Known limitations
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider

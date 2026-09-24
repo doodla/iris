@@ -11,7 +11,8 @@ use std::time::Duration;
 
 use iris::error::ErrorCode;
 use iris::http::{
-    AuthHeader, DownloadError, DownloadRequest, Downloaded, HttpClient, HttpSettings, RetryPolicy, download,
+    AuthHeader, DownloadError, DownloadRequest, Downloaded, HttpClient, HttpSettings, MAX_DOWNLOAD_BYTES,
+    RetryPolicy, download, download_limited,
 };
 use iris::secret::Secret;
 use sha2::{Digest, Sha256};
@@ -405,6 +406,7 @@ fn base_of(server: &MockServer) -> Url {
 
 /// Raw HTTP responses, one per connection: write `head`, then `body`, optionally
 /// stall (keeping the connection open), then close.
+#[derive(Clone)]
 struct Script {
     bytes: Vec<u8>,
     stall: Option<Duration>,
@@ -447,6 +449,67 @@ fn response(declared_len: usize, body: &[u8]) -> Vec<u8> {
     .into_bytes();
     v.extend_from_slice(body);
     v
+}
+
+/// `download_limited` into a fresh file under `dir`; returns the result and the file.
+async fn fetch_limited(url: &str, dir: &Path, limit: u64) -> (Result<Downloaded, DownloadError>, Vec<u8>) {
+    let dest = dir.join(".x.mp4.iris-part-1");
+    let file =
+        std::fs::OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&dest).unwrap();
+    let base = Url::parse(url).unwrap();
+    let auth = auth();
+    let req = DownloadRequest {
+        url,
+        dest: &file,
+        base_url: &base,
+        auth: Some(&auth),
+        idle_timeout: Duration::from_secs(5),
+        provider: None,
+    };
+    let result = download_limited(&client(), &req, limit).await;
+    (result, std::fs::read(&dest).unwrap())
+}
+
+#[tokio::test]
+async fn downloads_over_the_size_limit_are_refused_and_leave_nothing() {
+    assert_eq!(MAX_DOWNLOAD_BYTES, 4 * 1024 * 1024 * 1024, "the default cap is 4 GiB");
+    let body = media(10_000);
+    let dir = tempfile::tempdir().unwrap();
+
+    // A declared Content-Length over the limit is refused before any byte is written.
+    let (base, count) = raw_server(vec![Script { bytes: response(body.len(), &body), stall: None }; 5]);
+    let (result, written) = fetch_limited(&format!("{base}/x.mp4"), dir.path(), 4_000).await;
+    let err = result.unwrap_err();
+    let DownloadError::TooLarge { limit, declared, .. } = &err else { panic!("{err:?}") };
+    assert_eq!((*limit, *declared), (4_000, Some(10_000)));
+    assert!(written.is_empty(), "nothing is kept");
+    assert_eq!(count.load(Ordering::SeqCst), 1, "a too-large artifact is not retried");
+    let e = err.into_iris();
+    assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(false)));
+    assert_eq!(e.details["limit_bytes"], 4_000);
+    assert_eq!(e.details["declared_bytes"], 10_000);
+    assert!(e.message.contains("limit"), "{}", e.message);
+
+    // Without a Content-Length, the running count stops the transfer.
+    let mut unsized_response =
+        b"HTTP/1.1 200 OK\r\ncontent-type: video/mp4\r\nconnection: close\r\n\r\n".to_vec();
+    unsized_response.extend_from_slice(&body);
+    let (base, count) = raw_server(vec![Script { bytes: unsized_response.clone(), stall: None }; 5]);
+    let (result, written) = fetch_limited(&format!("{base}/x.mp4"), dir.path(), 4_000).await;
+    let err = result.unwrap_err();
+    assert!(matches!(err, DownloadError::TooLarge { limit: 4_000, declared: None, .. }), "{err:?}");
+    assert!(written.is_empty(), "the partial body is discarded");
+    assert_eq!(count.load(Ordering::SeqCst), 1);
+
+    // Exactly at the limit is fine, with or without a Content-Length.
+    let (base, _) = raw_server(vec![Script { bytes: response(body.len(), &body), stall: None }]);
+    let (result, written) = fetch_limited(&format!("{base}/x.mp4"), dir.path(), body.len() as u64).await;
+    assert_eq!(result.unwrap().bytes, body.len() as u64);
+    assert_eq!(written, body);
+    let (base, _) = raw_server(vec![Script { bytes: unsized_response, stall: None }]);
+    let (result, written) = fetch_limited(&format!("{base}/x.mp4"), dir.path(), body.len() as u64).await;
+    assert_eq!(result.unwrap().bytes, body.len() as u64);
+    assert_eq!(written, body);
 }
 
 #[tokio::test]

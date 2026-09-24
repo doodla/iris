@@ -27,6 +27,11 @@ pub const MAX_REDIRECTS: u32 = 5;
 /// Bytes of an error body read for diagnostics (the rest is discarded).
 const SNIPPET_READ_LIMIT: usize = 16 * 1024;
 
+/// Largest artifact [`download`] accepts: 4 GiB. Generous for any output a provider
+/// returns today (a Veo video is tens of megabytes), but bounded so a
+/// misbehaving host cannot fill the disk.
+pub const MAX_DOWNLOAD_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
 /// What to download and where.
 #[derive(Debug, Clone)]
 pub struct DownloadRequest<'a> {
@@ -114,6 +119,17 @@ pub enum DownloadError {
     },
     /// No usable response after the allowed attempts.
     Transport(TransportError),
+    /// The artifact is larger than the download limit: its declared
+    /// `Content-Length`, or the bytes actually received, exceeded `limit`. Not
+    /// retried; `dest` is left empty.
+    TooLarge {
+        /// The limit in bytes.
+        limit: u64,
+        /// The size the host declared, if it declared one over the limit.
+        declared: Option<u64>,
+        /// Redacted URL of the hop that served it.
+        url: String,
+    },
     /// Writing `dest` failed.
     Io {
         /// Display-safe description of the file error.
@@ -136,7 +152,8 @@ impl DownloadError {
     /// 429, or any status whose `Retry-After` exceeded the automatic-wait limit →
     /// `rate_limited` with `retry_after`; other statuses, policy refusals and
     /// transport failures → `download_failed` (retryable unless the failure is
-    /// permanent); error documents served as media → `invalid_media`; file errors →
+    /// permanent); an artifact over the size limit → `download_failed`, not
+    /// retryable; error documents served as media → `invalid_media`; file errors →
     /// `io_error`; [`DownloadError::Internal`] → `internal_error`.
     pub fn into_iris(self) -> IrisError {
         match self {
@@ -210,6 +227,29 @@ impl DownloadError {
             DownloadError::Refused { message } => {
                 IrisError::new(ErrorCode::DownloadFailed, message).with_retryable(Some(false))
             }
+            DownloadError::TooLarge { limit, declared, url } => {
+                let size = match declared {
+                    Some(n) => format!("declares {n} bytes"),
+                    None => format!("sent more than {limit} bytes"),
+                };
+                let mut err = IrisError::new(
+                    ErrorCode::DownloadFailed,
+                    format!(
+                        "the file host {size}, over Iris's {limit}-byte download limit; nothing was saved"
+                    ),
+                )
+                .with_retryable(Some(false))
+                .with_detail("limit_bytes", limit)
+                .with_detail("url", url)
+                .with_hint(
+                    "Iris caps a single download so a misbehaving host cannot fill the disk; no provider output \
+                     Iris supports is this large, so the host (or a proxy in between) is probably misbehaving",
+                );
+                if let Some(n) = declared {
+                    err = err.with_detail("declared_bytes", n);
+                }
+                err
+            }
             DownloadError::Transport(t) => {
                 let base = t.to_iris();
                 let mut err =
@@ -239,6 +279,7 @@ impl std::fmt::Display for DownloadError {
             DownloadError::InvalidMedia { content_type, url, .. } => {
                 write!(f, "'{content_type}' error document from {url}")
             }
+            DownloadError::TooLarge { limit, url, .. } => write!(f, "more than {limit} bytes from {url}"),
             DownloadError::Refused { message }
             | DownloadError::Io { message }
             | DownloadError::Internal { message } => f.write_str(message),
@@ -276,14 +317,27 @@ enum AttemptError {
 }
 
 /// Stream `req.url` into `req.dest` with the `Download` retry class, hashing and
-/// counting bytes as they arrive. See [`DownloadRequest`] for the credential and
-/// redirect rules. Dropping the future aborts the download (the file may then hold
-/// a partial body; callers discard their temp file).
+/// counting bytes as they arrive, up to [`MAX_DOWNLOAD_BYTES`]. See
+/// [`DownloadRequest`] for the credential and redirect rules. Dropping the future
+/// aborts the download (the file may then hold a partial body; callers discard
+/// their temp file).
 ///
 /// Fails with [`DownloadError::Internal`] before sending anything if `client` was
 /// not built by [`HttpClient::new`]: only that client is known not to follow
 /// redirects by itself (see [`HttpClient::from_reqwest`]).
 pub async fn download(client: &HttpClient, req: &DownloadRequest<'_>) -> Result<Downloaded, DownloadError> {
+    download_limited(client, req, MAX_DOWNLOAD_BYTES).await
+}
+
+/// [`download`] with another size limit: a declared `Content-Length` over
+/// `max_bytes` is refused before any byte is written, and the transfer stops as
+/// soon as the received bytes would exceed it ([`DownloadError::TooLarge`], never
+/// retried, `dest` left empty).
+pub async fn download_limited(
+    client: &HttpClient,
+    req: &DownloadRequest<'_>,
+    max_bytes: u64,
+) -> Result<Downloaded, DownloadError> {
     client.require_manual_redirects().map_err(|e| DownloadError::Internal { message: e.message.clone() })?;
     let start = Url::parse(req.url)
         .map_err(|_| DownloadError::Refused { message: "the artifact URL is not a valid URL".to_string() })?;
@@ -295,7 +349,7 @@ pub async fn download(client: &HttpClient, req: &DownloadRequest<'_>) -> Result<
     let mut attempt: u32 = 0;
     loop {
         attempt += 1;
-        let result = attempt_once(client, req, &start, attempt, &mut file).await;
+        let result = attempt_once(client, req, &start, attempt, max_bytes, &mut file).await;
         let (error, delay) = match result {
             Ok(mut done) => {
                 done.attempts = attempt;
@@ -357,11 +411,12 @@ async fn attempt_once(
     req: &DownloadRequest<'_>,
     start: &Url,
     attempt: u32,
+    max_bytes: u64,
     file: &mut tokio::fs::File,
 ) -> Result<Downloaded, AttemptError> {
     let io_error = |e: std::io::Error| AttemptError::Final(dest_io_error(e));
     empty(file).await.map_err(io_error)?;
-    let result = fetch_into(client, req, start, attempt, file).await;
+    let result = fetch_into(client, req, start, attempt, max_bytes, file).await;
     // tokio's File completes queued writes on a blocking thread. Flushing waits for
     // them, so no write of this attempt can land after a retry empties the file
     // or after a failure empties it.
@@ -377,6 +432,7 @@ async fn fetch_into(
     req: &DownloadRequest<'_>,
     start: &Url,
     attempt: u32,
+    max_bytes: u64,
     file: &mut tokio::fs::File,
 ) -> Result<Downloaded, AttemptError> {
     let transport = |f: Failure, url: &Url| TransportError {
@@ -511,6 +567,13 @@ async fn fetch_into(
             }));
         }
 
+        if let Some(declared) = response.content_length().filter(|n| *n > max_bytes) {
+            return Err(AttemptError::Final(DownloadError::TooLarge {
+                limit: max_bytes,
+                declared: Some(declared),
+                url: shown,
+            }));
+        }
         let mut hasher = Sha256::new();
         let mut bytes: u64 = 0;
         let mut stream = response.bytes_stream();
@@ -528,6 +591,13 @@ async fn fetch_into(
                     return Err(retryable(DownloadError::Transport(transport(failure, &url))));
                 }
                 Ok(Some(Ok(chunk))) => {
+                    if bytes.saturating_add(chunk.len() as u64) > max_bytes {
+                        return Err(AttemptError::Final(DownloadError::TooLarge {
+                            limit: max_bytes,
+                            declared: None,
+                            url: shown,
+                        }));
+                    }
                     hasher.update(&chunk);
                     bytes += chunk.len() as u64;
                     file.write_all(&chunk).await.map_err(io_error)?;
