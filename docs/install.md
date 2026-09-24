@@ -176,6 +176,27 @@ $ rm ~/Library/Application\ Support/iris/config.toml   # config, separately
 *local job records* — it is not a substitute for deleting the state directory, and neither of
 these ever cancels or deletes anything on a provider.
 
+## Verifying what you installed
+
+`iris --json version` reports the version, the target triple, and `git_commit`, the commit the
+binary was built from:
+
+```console
+$ iris --json version
+{"command":"version","error":null,"ok":true,"result":{"git_commit":"<40 hex digits>","name":"iris","schema_version":1,"target":"x86_64-unknown-linux-musl","version":"0.1.0"},"schema_version":1,"warnings":[]}
+```
+
+`git_commit` is fixed at build time: it is the value of `IRIS_GIT_COMMIT`, or else of
+`GITHUB_SHA` (which GitHub Actions sets to the commit it checked out), lowercased, when that value
+is 7 to 40 hexadecimal digits; otherwise it is `null`. Release archives are built by the release
+workflow from the tagged commit, so for them it is the commit the release tag points to — compare
+it with `git rev-parse vX.Y.Z^{commit}` in a clone. A binary you build yourself reports `null`
+unless you name the commit:
+
+```console
+$ IRIS_GIT_COMMIT=$(git rev-parse HEAD) cargo install --locked --path .
+```
+
 ## Testing the installer without a real release
 
 Iris's own test suite (`tests/installer/run.sh`, `make-fixtures.sh`, `server.py`) builds fake

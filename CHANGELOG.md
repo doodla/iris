@@ -39,6 +39,10 @@ machine-readable contract for agents.
   credential/access diagnostics (presence only — values are never printed). See
   [docs/configuration.md](docs/configuration.md).
 - **`iris completions`** for bash, zsh, fish, and elvish, and **`iris version`**.
+- `iris --json version` reports `git_commit`, the commit the binary was built from: set at build
+  time from `IRIS_GIT_COMMIT`, or else `GITHUB_SHA`, when the value is 7 to 40 hex digits
+  (release builds always set it), and `null` for any other build. See
+  [docs/install.md](docs/install.md#verifying-what-you-installed).
 - **Cost estimates** (pre-call where supportable, post-call from reported usage otherwise),
   always explicitly labeled as estimates, never an invoice.
 - A one-command installer (`install.sh`) for Linux x86_64 and macOS x86_64/ARM64, with checksum

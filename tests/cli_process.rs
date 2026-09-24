@@ -196,6 +196,28 @@ fn version_includes_the_target_triple() {
     assert_eq!(human.stdout, format!("iris {} ({target}; JSON schema v1)\n", env!("CARGO_PKG_VERSION")));
 }
 
+/// `version.git_commit` is the commit named at build time: the first of
+/// `IRIS_GIT_COMMIT` and `GITHUB_SHA` that is set and non-empty, lowercased,
+/// when it is 7 to 40 hex digits, and null otherwise (including a plain local
+/// build, where neither is set). This test is compiled in the same cargo run as
+/// the binary, so it sees the same variables; the rule is restated here rather
+/// than read back from build.rs.
+#[test]
+fn version_reports_the_git_commit_named_at_build_time() {
+    let named = [option_env!("IRIS_GIT_COMMIT"), option_env!("GITHUB_SHA")]
+        .into_iter()
+        .flatten()
+        .find(|value| !value.is_empty());
+    let expected = named
+        .filter(|value| (7..=40).contains(&value.len()) && value.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(|value| Value::from(value.to_ascii_lowercase()))
+        .unwrap_or(Value::Null);
+    let sandbox = Sandbox::new();
+    let out = run(iris(&sandbox).args(["version", "--json"]));
+    assert_eq!(out.code, 0);
+    assert_eq!(out.json()["result"]["git_commit"], expected, "built with {named:?}");
+}
+
 #[test]
 fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
     let sandbox = Sandbox::new();
