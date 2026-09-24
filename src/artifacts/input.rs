@@ -72,17 +72,17 @@ pub fn read_input_image(path: &Path, role: InputRole, spec: &InputSpec) -> Resul
     if !media::is_image(media_type) || !media::accepts(media_types, media_type) {
         return Err(invalid(format!("{label} {shown} is {media_type}; this model accepts {accepted}")));
     }
-    media::validate_bytes(&bytes, &[])
-        .map_err(|e| invalid(format!("{label} {shown} is corrupt or truncated: {}", e.message)))?;
+    let corrupt = |e: IrisError| invalid(format!("{label} {shown} is corrupt or truncated: {}", e.message));
     if mask.is_some_and(|m| m.requires_alpha) {
-        let details = media::inspect_image(&bytes)
-            .map_err(|e| invalid(format!("{label} {shown} cannot be decoded: {}", e.message)))?;
-        if !details.has_alpha {
+        // Decoding the mask both validates it and tells whether it has an alpha channel.
+        if !media::inspect_image(&bytes).map_err(corrupt)?.has_alpha {
             return Err(invalid(format!(
                 "{label} {shown} has no alpha channel; this model edits the areas where the mask is fully \
                  transparent, so the mask needs transparency (a PNG with an alpha channel)"
             )));
         }
+    } else {
+        media::validate_bytes(&bytes, &[]).map_err(corrupt)?;
     }
 
     Ok(InputImage {
@@ -139,18 +139,11 @@ fn check_same_size(mask: &InputImage, first: &InputImage) -> Result<(), IrisErro
         IrisError::new(ErrorCode::InputFileInvalid, message)
             .with_detail("path", image.path.display().to_string())
     };
-    let dims = |image: &InputImage| media::inspect_image(&image.bytes).map(|d| (d.width, d.height));
-    let (mw, mh) = dims(mask).map_err(|e| {
-        invalid(
-            mask,
-            format!("cannot read the dimensions of mask image {}: {}", mask.path.display(), e.message),
-        )
+    let (mw, mh) = dimensions(&mask.bytes).map_err(|e| {
+        invalid(mask, format!("cannot read the dimensions of mask image {}: {e}", mask.path.display()))
     })?;
-    let (fw, fh) = dims(first).map_err(|e| {
-        invalid(
-            first,
-            format!("cannot read the dimensions of input image {}: {}", first.path.display(), e.message),
-        )
+    let (fw, fh) = dimensions(&first.bytes).map_err(|e| {
+        invalid(first, format!("cannot read the dimensions of input image {}: {e}", first.path.display()))
     })?;
     if (mw, mh) != (fw, fh) {
         return Err(invalid(
@@ -164,6 +157,16 @@ fn check_same_size(mask: &InputImage, first: &InputImage) -> Result<(), IrisErro
         ));
     }
     Ok(())
+}
+
+/// Pixel dimensions from the image header (inputs were fully validated when read,
+/// so decoding them again is not needed).
+fn dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .map_err(|e| e.to_string())?
+        .into_dimensions()
+        .map_err(|e| e.to_string())
 }
 
 fn too_large(
