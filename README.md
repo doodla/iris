@@ -207,7 +207,9 @@ omitted, Iris uses the catalog's default for the resolved provider and operation
 Iris doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
 known model's capabilities (sent to the provider as given, validated as that known model, and
 flagged with an `unverified_model_capabilities` warning) rather than refusing outright. Iris makes
-no cost estimate for such a model, since the known model's prices may not apply. Any option
+no cost estimate for such a model, since the known model's prices may not apply, and the id must
+use characters the provider's API accepts in a model id (for Gemini and Veo: letters, digits, `.`,
+`_`, and `-`), checked before anything is sent. Any option
 a model accepts but has no typed flag for is reachable through `-O key=value` (repeatable);
 `iris models show <model>` lists every option, typed or `-O`-only.
 

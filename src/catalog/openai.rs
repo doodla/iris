@@ -20,8 +20,8 @@ use crate::error::IrisError;
 
 use super::options::OptionValue;
 use super::types::{
-    EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec, PriceRule,
-    ValidationInput,
+    EstimateInput, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
+    OutputSpec, PriceRule, ValidationInput,
 };
 
 /// Official pricing page the rates below come from.
@@ -50,6 +50,16 @@ pub const SIZE_MAX_RATIO: u64 = 3;
 pub const SIZE_MIN_PIXELS: u64 = 655_360;
 /// Largest allowed total pixel count.
 pub const SIZE_MAX_PIXELS: u64 = 8_294_400;
+
+/// Model ids the OpenAI adapter can send for a model Iris does not know: the id
+/// travels in the JSON body (and percent-encoded in the metadata URL), so the
+/// OpenAI id alphabet plus the separators of fine-tuned and snapshot ids is allowed.
+pub const MODEL_ID_SYNTAX: ModelIdSyntax = ModelIdSyntax {
+    max_len: 200,
+    punctuation: "-._/:@",
+    alphanumeric_start: false,
+    description: "letters, digits, '-', '.', '_', '/', ':', and '@' only, at most 200 characters",
+};
 
 const BOTH: &[Operation] = &[Operation::ImageGenerate, Operation::ImageEdit];
 

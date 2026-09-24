@@ -159,6 +159,10 @@ machine-readable contract for agents.
 - A model resolved with `--capabilities-from` no longer gets a cost estimate computed from the
   template model's prices: `cost_estimate` is `null` (in plans, results, and job records) with a
   `cost_estimate_unavailable` warning saying the template's prices are not assumed.
+- An unknown model id given with `--capabilities-from` is checked against the id syntax of the
+  template's provider (declared in the catalog; for Gemini and Veo the rule the adapter applies
+  before sending), so `--dry-run` rejects ids such as `a:b` that the real run would refuse, and a
+  rejected Veo id no longer leaves a failed job record.
 
 ### Known limitations
 

@@ -245,3 +245,75 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
     assert_eq!(files_in(&sb.work()), ["a.png", "mask.png"], "nothing was written");
     assert!(!sb.jobs_dir().exists(), "no job record");
 }
+
+// ----- local validation parity: a dry run rejects what the real run would -------------------------
+
+/// Unknown ids given with `--capabilities-from` must satisfy the id syntax of the
+/// template's provider, the rule its adapter applies before sending. A dry run and
+/// a real run reject the same ids before anything is sent (and before any job record
+/// exists); an accepted id reaches the provider exactly as given.
+#[test]
+fn borrowed_model_ids_are_checked_as_the_adapter_checks_them() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let image = png(8, 8);
+    let gemini_ok = ["gemini-9.9-flash-image", "Gem_1.x-image"];
+    for id in gemini_ok {
+        api.on(
+            "POST",
+            &gemini_generate_path(id),
+            gemini_parts(serde_json::json!([inline_part("image/png", &image)])),
+        );
+    }
+    let veo_ok = "veo-4.0_new-preview";
+    api.on(
+        "POST",
+        &veo_submit_path(veo_ok),
+        json_response(200, serde_json::json!({ "name": format!("models/{veo_ok}/operations/e2eids") })),
+    );
+    let openai_ok = "ft:gpt-image-2:org:custom@v2";
+    api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_ids"));
+
+    let run = |args: &[&str], dry: bool| {
+        let mut iris = sb.iris();
+        iris.openai(&api).gemini(&api).args(args).args(["-d", "out", "--json"]);
+        if dry {
+            iris.arg("--dry-run");
+        }
+        iris.run()
+    };
+    let image_args = |id: &'static str, template: &'static str| {
+        ["image", "generate", "a fox", "-m", id, "--capabilities-from", template]
+    };
+
+    for id in gemini_ok {
+        run(&image_args(id, "nano-banana"), true).ok();
+        run(&image_args(id, "nano-banana"), false).ok();
+        assert_eq!(api.count("POST", &gemini_generate_path(id)), 1, "{id} reached the provider as given");
+    }
+    let video = ["video", "generate", "waves", "-m", veo_ok, "--capabilities-from", "veo-lite", "--detach"];
+    run(&video, true).ok();
+    run(&video, false).ok();
+    assert_eq!(api.count("POST", &veo_submit_path(veo_ok)), 1);
+    let v = run(&image_args(openai_ok, "gpt-image-2"), false).ok();
+    assert_eq!(v["result"]["model"], openai_ok);
+    assert_eq!(body_json(&api.hits("POST", OPENAI_GENERATIONS)[0])["model"], openai_ok);
+    let sent = api.total();
+
+    let long = "a".repeat(129);
+    for id in ["gemini:9", "bad/../id", "-lead", ".hidden", "a%2Fb", long.as_str()] {
+        let model = format!("--model={id}");
+        for dry in [true, false] {
+            let args = ["image", "generate", "a fox", &model, "--capabilities-from", "nano-banana"];
+            let v = run(&args, dry).err(2, "invalid_argument");
+            assert!(v["error"]["provider_status"].is_null(), "{id}: {v}");
+            let args = ["video", "generate", "waves", &model, "--capabilities-from", "veo", "--detach"];
+            run(&args, dry).err(2, "invalid_argument");
+        }
+    }
+    assert_eq!(api.total(), sent, "rejected ids never reach a provider");
+    let records = std::fs::read_dir(sb.jobs_dir())
+        .unwrap()
+        .filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().ends_with(".json"));
+    assert_eq!(records.count(), 1, "only the accepted Veo id left a job record");
+}

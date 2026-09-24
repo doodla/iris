@@ -34,6 +34,15 @@ pub fn default_model(provider: ProviderId, op: Operation) -> Option<&'static Mod
     all().find(|m| m.provider == provider && m.default_for.contains(&op))
 }
 
+/// The syntax of model ids `provider`'s adapter can send (checked for unknown ids
+/// given with `--capabilities-from`; every catalog id satisfies it).
+pub fn model_id_syntax(provider: ProviderId) -> ModelIdSyntax {
+    match provider {
+        ProviderId::OpenAi => openai::MODEL_ID_SYNTAX,
+        ProviderId::Gemini => gemini::MODEL_ID_SYNTAX,
+    }
+}
+
 /// Providers that implement an operation with at least one model.
 pub fn providers_for(op: Operation) -> Vec<ProviderId> {
     let mut out: Vec<ProviderId> = all().filter(|m| m.supports(op)).map(|m| m.provider).collect();
@@ -139,11 +148,15 @@ pub fn resolve_in(
             spec.id, spec.provider
         )));
     }
-    if model.is_empty()
-        || model.len() > 200
-        || !model.chars().all(|c| c.is_ascii_alphanumeric() || "-._/:@".contains(c))
-    {
-        return Err(IrisError::invalid(format!("model id '{model}' contains unsupported characters")));
+    let syntax = model_id_syntax(spec.provider);
+    if !syntax.accepts(model) {
+        return Err(IrisError::invalid(format!(
+            "model id '{}' is not valid for provider {}: use {}",
+            crate::redact::truncate(&crate::redact::scrub(model), 80),
+            spec.provider,
+            syntax.description
+        ))
+        .with_hint("check the --model value; nothing was sent"));
     }
     Ok(ResolvedModel { id: model.to_string(), spec, source: CapabilitySource::Borrowed { from: spec.id } })
 }
@@ -151,6 +164,42 @@ pub fn resolve_in(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_catalog_id_and_alias_satisfies_its_providers_model_id_syntax() {
+        for m in all() {
+            let syntax = model_id_syntax(m.provider);
+            for id in std::iter::once(m.id).chain(m.aliases.iter().copied()) {
+                assert!(syntax.accepts(id), "{id}");
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_ids_follow_the_syntax_of_the_templates_provider() {
+        let gemini = ["gemini-9.9-flash-image", "veo_4.0-x", "A1", &"a".repeat(128)];
+        for id in gemini {
+            assert!(resolve(id, Some("nano-banana"), None).is_ok(), "{id}");
+            assert!(resolve(id, Some("veo"), None).is_ok(), "{id}");
+        }
+        for id in ["a:b", "bad/../id", "-lead", ".hidden", "a b", "a?b", "a%2Fb", "é", "", &"a".repeat(129)]
+        {
+            for template in ["nano-banana", "veo"] {
+                let err = resolve(id, Some(template), None).unwrap_err();
+                assert_eq!(err.code, ErrorCode::InvalidArgument, "{id} {template}");
+            }
+        }
+        for id in ["ft:gpt-image-2:org:custom:1", "org/model@v2", "-x"] {
+            assert!(resolve(id, Some("gpt-image-2"), None).is_ok(), "{id}");
+        }
+        for id in ["a b", "a?b", "", &"a".repeat(201)] {
+            assert_eq!(
+                resolve(id, Some("gpt-image-2"), None).unwrap_err().code,
+                ErrorCode::InvalidArgument,
+                "{id}"
+            );
+        }
+    }
 
     #[test]
     fn snapshot_aliases_are_sent_as_given_and_nicknames_are_canonicalized() {

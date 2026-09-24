@@ -10,7 +10,8 @@ use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
 
 use super::CATALOG_AS_OF;
 use super::types::{
-    EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec, PriceRule,
+    EstimateInput, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
+    OutputSpec, PriceRule,
 };
 
 /// Pricing page all Gemini image prices were taken from.
@@ -22,6 +23,16 @@ pub const DOCS_URL: &str = "https://ai.google.dev/gemini-api/docs/image-generati
 /// base64 reference images). The provider documents "20MB" for inline data; Iris
 /// reads that conservatively as 20,000,000 bytes.
 pub const MAX_REQUEST_BYTES: usize = 20_000_000;
+
+/// Model ids the Gemini adapter (images and Veo) can send: the id is a URL path
+/// segment (`models/{id}:generateContent`), so only characters that cannot change
+/// the endpoint are accepted, the same rule the adapter enforces before sending.
+pub const MODEL_ID_SYNTAX: ModelIdSyntax = ModelIdSyntax {
+    max_len: 128,
+    punctuation: "._-",
+    alphanumeric_start: true,
+    description: "letters, digits, '.', '_', and '-' only, starting with a letter or digit, at most 128 characters",
+};
 
 const BOTH: &[Operation] = &[Operation::ImageGenerate, Operation::ImageEdit];
 

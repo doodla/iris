@@ -47,6 +47,30 @@ impl InputSpec {
     };
 }
 
+/// The syntax of model ids a provider's adapter can send, so that an unknown id
+/// (`--capabilities-from`) is rejected locally, before a dry run or a real run
+/// accepts it, whenever the adapter would refuse it.
+#[derive(Debug, Clone, Copy)]
+pub struct ModelIdSyntax {
+    /// Longest accepted id, in bytes.
+    pub max_len: usize,
+    /// Characters accepted besides ASCII letters and digits.
+    pub punctuation: &'static str,
+    /// Whether the first character must be an ASCII letter or digit.
+    pub alphanumeric_start: bool,
+    /// The rule in words, for error messages.
+    pub description: &'static str,
+}
+
+impl ModelIdSyntax {
+    pub fn accepts(&self, id: &str) -> bool {
+        !id.is_empty()
+            && id.len() <= self.max_len
+            && (!self.alphanumeric_start || id.as_bytes()[0].is_ascii_alphanumeric())
+            && id.chars().all(|c| c.is_ascii_alphanumeric() || self.punctuation.contains(c))
+    }
+}
+
 /// Declared output capabilities.
 #[derive(Debug, Clone, Copy)]
 pub struct OutputSpec {
