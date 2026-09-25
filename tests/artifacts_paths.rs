@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use iris::artifacts::paths::{self, Naming, PathRequest};
-use iris::artifacts::{adjust_extension, plan_outputs, preflight, preflight_dirs};
+use iris::artifacts::{adjust_extension, plan_outputs, preflight, preflight_dirs, preflight_other_types};
 use iris::error::ErrorCode;
 
 const IMAGE_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp"];
@@ -326,6 +326,56 @@ fn preflight_refuses_existing_files_unless_overwrite() {
         assert_eq!(preflight(&[link], false).unwrap_err().code, ErrorCode::OutputExists);
     }
     assert_eq!(std::fs::read(&existing).unwrap(), b"old");
+}
+
+/// When the provider chooses the image type, each planned path may be saved under
+/// the extension of another declared type: without `--overwrite`, a file under any
+/// of those names is `output_exists` naming it (for every one of several outputs),
+/// while the named extension's own variants (`.JPG`, `.jpeg`) are the path itself.
+#[test]
+fn preflight_refuses_a_file_under_another_extension_the_provider_may_choose() {
+    let dir = tempfile::tempdir().unwrap();
+    let types = &["image/jpeg", "image/png"];
+    let plan = |output: &str, count: u32| {
+        let output = dir.path().join(output);
+        let req = PathRequest {
+            naming: Naming::Image,
+            count,
+            output: Some(&output),
+            dir: dir.path(),
+            format: None,
+            media_types: types,
+        };
+        plan_outputs(&req).unwrap().paths
+    };
+    std::fs::write(dir.path().join("photo.png"), b"earlier").unwrap();
+    std::fs::write(dir.path().join("p-2.jpg"), b"earlier").unwrap();
+
+    for (output, count, existing) in [
+        ("photo.jpg", 1, "photo.png"),
+        ("photo.JPEG", 1, "photo.png"),
+        ("photo", 1, "photo.png"),
+        ("p.png", 3, "p-2.jpg"),
+    ] {
+        let paths = plan(output, count);
+        preflight(&paths, false).unwrap();
+        let err = preflight_other_types(&paths, types, false).unwrap_err();
+        assert_eq!(err.code, ErrorCode::OutputExists, "{output}");
+        assert_eq!(err.exit_code(), 2);
+        let existing = dir.path().join(existing);
+        assert_eq!(err.details["path"], existing.to_str().unwrap(), "{output}");
+        assert!(err.message.contains(existing.to_str().unwrap()), "{}", err.message);
+        let hint = err.hint.as_deref().unwrap();
+        assert!(hint.contains("never replaces") && hint.contains("output_renamed"), "{hint}");
+        // With --overwrite the run goes ahead; the file is never replaced when saving.
+        preflight_other_types(&paths, types, true).unwrap();
+    }
+    for (output, count) in [("photo.png", 1), ("other.jpg", 1), ("p.jpg", 1), ("q.png", 3)] {
+        preflight_other_types(&plan(output, count), types, false).unwrap();
+    }
+    // A model with one output type has no other name to check.
+    preflight_other_types(&plan("photo.jpg", 1), &["image/jpeg"], false).unwrap();
+    assert_eq!(std::fs::read(dir.path().join("photo.png")).unwrap(), b"earlier");
 }
 
 /// Entries of `dir`, asserting no preflight or part files were left behind.

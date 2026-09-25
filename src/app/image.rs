@@ -120,25 +120,43 @@ async fn run_checked(
         opts = catalog::validate_request(spec, op, &raw, counts, &ctx.catalog.models())?;
     }
     warnings.extend(plan.warnings.iter().cloned());
+    // Without a format option the provider chooses the type, so the image may be
+    // saved under another extension than planned.
+    let provider_chooses_type = !spec.options_for(op).any(|o| o.name == "format") && media_types.len() > 1;
     if let Some(output) = output_path
-        && !spec.options_for(op).any(|o| o.name == "format")
-        && media_types.len() > 1
+        && provider_chooses_type
     {
+        let instead = match plan.paths.as_slice() {
+            [one] => {
+                let others: Vec<String> = media_types
+                    .iter()
+                    .filter_map(|t| match artifacts::adjust_extension(one, t) {
+                        (other, Some(_)) => Some(other.display().to_string()),
+                        (_, None) => None,
+                    })
+                    .collect();
+                format!("{} may be saved as {} instead", one.display(), others.join(" or "))
+            }
+            _ => format!(
+                "each path planned from {} may be saved with the extension of another of those types",
+                output.display()
+            ),
+        };
         warnings.push(Warning::new(
             WarningCode::OutputExtensionMayChange,
             format!(
-                "{} takes no output format: the provider chooses the image type ({}), so the image may be \
-                 saved with another extension than {} (reported with output_extension_adjusted)",
+                "{} takes no output format: the provider chooses the image type ({}), so {instead} (reported \
+                 with output_extension_adjusted); without --overwrite, a file already there stops the run \
+                 (output_exists)",
                 resolved.id,
                 media_types.join(", "),
-                match plan.paths.as_slice() {
-                    [one] => one.display().to_string(),
-                    _ => format!("the paths planned from {}", output.display()),
-                }
             ),
         ));
     }
     artifacts::preflight(&plan.paths, common.overwrite)?;
+    if provider_chooses_type {
+        artifacts::preflight_other_types(&plan.paths, media_types, common.overwrite)?;
+    }
     // Check the output directories without creating them (a dry run stops after
     // this): a real run creates them only once the credential is known to be present.
     artifacts::preflight_dirs(&plan.paths, false)?;

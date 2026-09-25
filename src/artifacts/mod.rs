@@ -38,4 +38,5 @@ pub use input::{check_request_inputs, read_input_image};
 pub use media::{ImageDetails, IsoBmffInfo, MediaInfo};
 pub use paths::{
     Naming, PathRequest, PlannedOutputs, adjust_extension, plan_outputs, preflight, preflight_dirs,
+    preflight_other_types,
 };

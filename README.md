@@ -268,8 +268,11 @@ fox.jpg` requests JPEG). Gemini image models take none: the provider chooses the
 returned JPEG), so the extension only names the file. The plan warns about it up front
 (`output_extension_may_change`, in dry runs too), and if another type comes back Iris keeps the
 stem and saves under the right extension (`-o fox.png` becomes `fox.jpg`, with
-`output_extension_adjusted`). `--overwrite` covers only the path you named: an existing file under
-the adjusted name is never replaced (the image goes to `<stem>.<n>.<ext>`, `output_renamed`).
+`output_extension_adjusted`). Without `--overwrite`, `output_exists` covers every name the image
+may be saved under: `-o fox.png` is refused, naming the file, while `fox.jpg` exists (and `-o
+fox.jpg` while `fox.png` does), so a rerun never pays for an image it would save next to one
+already there. `--overwrite` covers only the path you named: an existing file under the adjusted
+name is never replaced (the image goes to `<stem>.<n>.<ext>`, `output_renamed`).
 
 ## Agent usage (JSON mode)
 

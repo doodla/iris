@@ -337,6 +337,7 @@ async fn an_extension_the_model_cannot_be_asked_for_is_flagged_at_plan_time() {
     assert!(flagged[0].message.contains("fake-gemini-image"), "{}", flagged[0].message);
     assert!(flagged[0].message.contains("image/png, image/jpeg"), "{}", flagged[0].message);
     assert!(flagged[0].message.contains(f.sandbox.path("g.png").to_str().unwrap()), "{}", flagged[0].message);
+    assert!(flagged[0].message.contains(f.sandbox.path("g.jpg").to_str().unwrap()), "{}", flagged[0].message);
 
     f.gemini.images().push(Ok(image_output(vec![jpeg(8, 8)])));
     let (r, warnings) =

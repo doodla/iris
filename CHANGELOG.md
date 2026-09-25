@@ -37,11 +37,12 @@ machine-readable contract for agents.
   a directory that cannot be created or written) is `invalid_argument` (exit 2) with
   `details.path`, in a dry run too, which creates no directory and leaves nothing behind (it
   creates and removes one check file); `-o -` and the names of standard streams are refused, since
-  Iris writes files and prints their paths. When the provider chooses the image
-  type, `-o` gets an `output_extension_may_change` warning. A dry-run plan shows a name the real run
-  generates as its pattern (`iris-<ulid>.png`, `<job_id>.mp4`), says whether the real run would
-  detach (`detach`), and, for a video run that waits, the wait limit and poll interval it would use
-  and where each came from (`wait`).
+  Iris writes files and prints their paths. When the provider chooses the image type, `-o` gets an
+  `output_extension_may_change` warning, and without `--overwrite` a file under any extension the
+  provider may return is `output_exists` too, so a rerun does not pay again. A dry-run plan shows a
+  name the real run generates as its pattern (`iris-<ulid>.png`, `<job_id>.mp4`), says whether the
+  real run would detach (`detach`), and, for a video run that waits, the wait limit and poll
+  interval it would use and where each came from (`wait`).
 - **Cost estimates**, always labeled as estimates: before the call where supportable, from the
   reported usage afterwards. Without one, `cost_estimate_unavailable` says why and which options
   to pass for one (on OpenAI, `--quality` and `--size`, naming only those that are `auto`).

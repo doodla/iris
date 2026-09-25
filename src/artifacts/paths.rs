@@ -336,6 +336,48 @@ pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
     Ok(())
 }
 
+/// Check the other names planned paths may be saved under when the provider
+/// chooses the content's type among `media_types` (a model without a `format`
+/// option): each path with the extension of another of those types, as
+/// [`adjust_extension`] would give it. Without `overwrite`, an existing entry at any
+/// of them is `output_exists` naming it, as for the path itself, so a run that may
+/// save next to an earlier image under another extension is refused before it
+/// pays again. With `overwrite` nothing is checked: the run goes ahead, and an
+/// existing file under an adjusted name is never replaced (the output goes to
+/// `<stem>.<n>.<ext>` with `output_renamed`).
+pub fn preflight_other_types(
+    paths: &[PathBuf],
+    media_types: &[&str],
+    overwrite: bool,
+) -> Result<(), IrisError> {
+    if overwrite {
+        return Ok(());
+    }
+    for path in paths {
+        for media_type in media_types {
+            let (other, adjusted) = adjust_extension(path, media_type);
+            if adjusted.is_some() && fs::symlink_metadata(&other).is_ok() {
+                return Err(IrisError::new(
+                    ErrorCode::OutputExists,
+                    format!(
+                        "output file {} already exists, and the provider chooses the image type: {} is saved \
+                         there if it comes back as {media_type}",
+                        other.display(),
+                        path.display()
+                    ),
+                )
+                .with_detail("path", other.to_string_lossy().into_owned())
+                .with_hint(
+                    "move the existing file away, or choose another -o/--output or -d/--out-dir; --overwrite lets \
+                     the run go ahead but never replaces a file under another extension than the one named (such \
+                     an image is saved under a numbered name, output_renamed)",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Check the directories of planned output paths before any paid request (this
 /// runs as local validation before any network call; paid output is never
 /// discarded, `-d` is created if missing). For each distinct parent directory:

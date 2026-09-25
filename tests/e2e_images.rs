@@ -654,6 +654,64 @@ fn a_gemini_output_extension_is_flagged_as_the_providers_choice() {
     assert!(codes.contains(&"output_extension_adjusted".to_string()), "{v}");
 }
 
+/// When the provider chooses the image type, a rerun that could save next to an
+/// earlier image under another extension is refused before it pays again:
+/// `-o g.png` after the provider answered JPEG (saved as `g.jpg`) is `output_exists`
+/// naming `g.jpg`, in a dry run too. With `--overwrite` the run goes ahead, and a
+/// different file under the adjusted name is kept (the image goes to `g.1.jpg`,
+/// `output_renamed`). A model that takes a format has no other name to check.
+#[test]
+fn a_file_under_an_extension_the_provider_may_choose_stops_a_rerun() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let image = jpeg(16, 16);
+    let part = serde_json::json!([inline_part("image/jpeg", &image)]);
+    api.on("POST", &gemini_generate_path(GEMINI_IMAGE_MODEL), gemini_parts(part));
+    let gemini = |extra: &[&str]| {
+        let mut iris = sb.iris();
+        iris.gemini(&api).args([
+            "image",
+            "generate",
+            "-m",
+            GEMINI_IMAGE_MODEL,
+            PROMPT,
+            "-o",
+            "g.png",
+            "--json",
+        ]);
+        iris.args(extra).run()
+    };
+    let v = gemini(&[]).ok();
+    let saved = sb.work().join("g.jpg");
+    assert_eq!(v["result"]["artifacts"][0]["path"], saved.to_str().unwrap());
+    assert_eq!(api.total(), 1);
+
+    for extra in [&["--dry-run"][..], &[]] {
+        let v = gemini(extra).err(2, "output_exists");
+        assert_eq!(v["error"]["details"]["path"], saved.to_str().unwrap(), "{v}");
+        assert!(v["error"]["provider_status"].is_null(), "{v}");
+    }
+    assert_eq!(api.total(), 1, "nothing was sent again");
+
+    // Another image under the adjusted name is never replaced.
+    let other = jpeg(8, 8);
+    std::fs::write(&saved, &other).unwrap();
+    let v = gemini(&["--overwrite"]).ok();
+    assert_eq!(api.total(), 2);
+    assert_eq!(v["result"]["artifacts"][0]["path"], sb.work().join("g.1.jpg").to_str().unwrap(), "{v}");
+    assert!(warning_codes(&v).contains(&"output_renamed".to_string()), "{v}");
+    assert_eq!(std::fs::read(&saved).unwrap(), other, "the other image is kept");
+
+    // OpenAI takes the format the extension names: g.jpg is no obstacle to g.png.
+    let v = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "-o", "g.png", "--dry-run", "--json"])
+        .run()
+        .ok();
+    assert_eq!(v["result"]["outputs"][0], sb.work().join("g.png").to_str().unwrap());
+}
+
 /// The bare `nano-banana` nickname is refused everywhere a model is named, with a
 /// hint at the names Iris does register, before anything is sent.
 #[test]

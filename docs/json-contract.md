@@ -620,17 +620,22 @@ request before running again"; agents that need to distinguish them check `error
 `null` means nothing was sent, a non-null value means the provider rejected it outright.
 
 Output locations are checked the same way before anything is sent: an existing file is
-`output_exists` (unless `--overwrite`), and a location that cannot be used as given (a file where a
-directory should be, no permission, a read-only file system, a directory that cannot be created) is
-`invalid_argument` with `details.path` naming the offending path. Iris writes media only to files
-and prints their paths, so these are `invalid_argument` too, with a hint saying so: `-o -` (standard
-output; `./-` names a file called `-`), an `-o` naming a standard stream or file descriptor
-(`/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/…`, `/proc/…/fd/…`) whatever it currently
-points to, and an `-o` naming an existing device, pipe, or socket (e.g. `/dev/null`); the last two
-carry `details.path`. A real run creates the output directory and proves it writable before the
-paid request; `--dry-run` refuses the same locations, creating no directory and leaving nothing
-behind (see [`plan`](#plan-any-generation-command-run-with---dry-run)). Other I/O failures there
-(e.g. a full disk) stay `io_error` (exit 1).
+`output_exists` (unless `--overwrite`), with `details.path` naming it. For a model that takes no
+output format (the provider chooses the image type), that includes a file at each planned path
+with the extension of another type the model may return (`outputs.media_types` in `models show`):
+`-o g.png` is `output_exists` naming `g.jpg` when that exists, since a JPEG answer would be saved
+there. With `--overwrite` the run goes ahead, but such a file is never replaced: an image of its
+type is saved as `<stem>.<n>.<ext>` with `output_renamed`. A location that cannot be used as given
+(a file where a directory should be, no permission, a read-only file system, a directory that
+cannot be created) is `invalid_argument` with `details.path` naming the offending path. Iris writes
+media only to files and prints their paths, so these are `invalid_argument` too, with a hint saying
+so: `-o -` (standard output; `./-` names a file called `-`), an `-o` naming a standard stream or
+file descriptor (`/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/…`, `/proc/…/fd/…`) whatever
+it currently points to, and an `-o` naming an existing device, pipe, or socket (e.g. `/dev/null`);
+the last two carry `details.path`. A real run creates the output directory and proves it writable
+before the paid request; `--dry-run` refuses the same locations, creating no directory and leaving
+nothing behind (see [`plan`](#plan-any-generation-command-run-with---dry-run)). Other I/O failures
+there (e.g. a full disk) stay `io_error` (exit 1).
 
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint
@@ -722,7 +727,7 @@ the code's registry); the `message` says what happened in the case at hand:
 | `status_refresh_failed` | the job's remote status could not be refreshed; the last known status is shown |
 | `output_item_unusable` | a returned item is not a usable image and was skipped; every usable image was kept |
 | `output_saved_elsewhere` | paid output was saved in the state directory instead of where it was requested: an image that could not be written there (also listed in `artifacts`), or the content of a returned item that is not a usable image, kept as received (`.bin`, not an artifact) |
-| `output_extension_may_change` | (plan time, dry run and real run) the model has no `format` option, so the provider chooses the image type: the `-o` extension may be replaced by the returned type's (then reported with `output_extension_adjusted`) |
+| `output_extension_may_change` | (plan time, dry run and real run) the model has no `format` option, so the provider chooses the image type: the `-o` extension may be replaced by the returned type's (then reported with `output_extension_adjusted`); the message names the other paths, where a file already there is `output_exists` without `--overwrite` |
 
 Paid image output is judged by its bytes, never by the provider's label, and one bad item never
 costs the others: a valid image of another type than requested or labeled (or with no label) is
