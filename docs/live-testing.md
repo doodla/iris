@@ -83,9 +83,41 @@ says so with an `output_extension_adjusted` warning.
 Every run was done by hand through a release build, following the steps above. Costs are Iris's
 usage-based estimates, not invoices.
 
-### 2026-09-25, commit 9aa820d
+### 2026-09-25, commits e387959 and a8e7884: everything not yet verified live
 
-Run against the code at commit 9aa820d, after the final review fixes. The paid image steps were
+Every model, input kind and option that the earlier runs had not exercised, run by hand through
+release builds of e387959 (the same code as 7209b39) and, for the last video, a8e7884. Four
+requests were refused or failed without being charged; three of them led to fixes.
+
+| Area | Request | Result | Estimated cost |
+|---|---|---|---|
+| OpenAI edit | `--mask` (transparent upper-right quadrant), 1024x1024, low | 1024×1024 PNG | $0.0142 |
+| OpenAI count | `-n 2`, 1024x1024, low | two 1024×1024 PNGs | $0.0119 |
+| OpenAI options | `gpt-image-2.5-flare`, `--format webp`, `-O background=transparent -O compression=60 -O moderation=low` | 1024×1024 WebP with alpha | $0.0059 |
+| OpenAI model | `gpt-image-2`, 1536x1024, low | 1536×1024 PNG | $0.0048 |
+| Gemini models | `gemini-3.1-flash-lite-image` 1K; `gemini-3-pro-image` 4K 16:9 | 1408×768 JPEG; 5504×3072 JPEG | $0.2769 |
+| Gemini options | `gemini-3.1-flash-image` 2K with `-O thinking_level=high` | 2816×1536 JPEG | $0.1047 |
+| Gemini references | edit with three input images, 1K | 848×1264 JPEG | $0.0689 |
+| Veo frames | Lite, 8 s, 1080p, `--image` + `--last-frame`, `-O person_generation=allow_adult`, waited in one command | 1920×1080 MP4, 8.0 s, in 73 s | $0.64 |
+| Veo references | Fast, 8 s, 4k, `--ref` (the `ASSET` wire format), `--detach`; a 3-minute `jobs wait` ended with exit 4 and the job still running, a second `jobs wait` downloaded it | 3840×2160 MP4, 8.0 s | $2.40 |
+| Veo models | Standard, 4 s, 720p, 9:16, `--negative-prompt`; Fast, 4 s, 720p, `--negative-prompt` | 720×1280 and 1280×720 MP4s, 4.0 s | $2.00 |
+| Veo people | Lite, 6 s, 720p, `-O person_generation=allow_all` | 1280×720 MP4, 6.0 s (the first attempt failed at the provider with INTERNAL and was not charged) | $0.30 |
+
+Findings, fixed in a8e7884 and 345125e:
+
+- Veo 3.1 Lite refuses `negativePrompt` ("isn't supported by this model"), so Lite no longer
+  declares a negative prompt.
+- Veo 3.1 Fast refuses a negative prompt next to a reference image ("not supported in your use
+  case"), although it accepts one for text-to-video. Iris now refuses that combination before
+  sending, on Fast and Standard.
+- A job that failed at the provider with INTERNAL succeeded when resubmitted. Its hint now says
+  so, instead of pointing at the prompt.
+
+Estimated spend: about $5.83. No key values were found in any saved output, log, or job record.
+
+### 2026-09-25, commit 7209b39
+
+Run against the code at commit 7209b39, after the final review fixes. The paid image steps were
 repeated; the Veo steps reused the job from the first run instead of submitting a second video.
 
 | Step | Model and settings | Result | Estimated cost |
@@ -102,12 +134,12 @@ repeated; the Veo steps reused the job from the first run instead of submitting 
 A record written by the first build was also read unchanged by this one. Estimated spend: about
 $0.11. No key values were found in any saved output, log, or job record.
 
-### 2026-09-25, commit e284248
+### 2026-09-25, commit 4e9d568
 
 An intermediate re-run between review rounds, with the same steps and results as the run above
 (estimated spend about $0.11).
 
-### 2026-09-24, commit 9978fe9
+### 2026-09-24, commit 0aff663
 
 The first full run, including the only Veo submission.
 
@@ -127,6 +159,5 @@ Estimated spend: about $0.31. No key values were found in any saved output, log,
 
 Observed facts that the offline tests cannot show: Gemini returned JPEG for every call, Veo honored
 the 4-second duration (so the charge matches the estimate), and the Veo file download was served
-directly by the API host with no redirect. Not verified live: a Veo submission with the final code
-(only one submission is allowed by the live-test budget; the submit path is covered by the offline
-tests, and its request body is unchanged since the first run), and anything on macOS.
+directly by the API host with no redirect. Not verified live: reference images on Veo 3.1
+Standard, OpenAI qualities above `low`, and anything on macOS.
