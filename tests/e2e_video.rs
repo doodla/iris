@@ -823,8 +823,9 @@ fn an_uncertain_veo_submission_is_recorded_and_never_resubmitted() {
     }
 }
 
-/// `jobs status --help` and `jobs wait --help` state the exit codes the tests here
-/// check (status: 0 for a job in any state; wait: 4 `wait_timeout` while the job runs,
+/// `jobs status --help`, `jobs wait --help`, and `jobs download --help` state the exit
+/// codes the tests here check (status: 0 for a job in any state; wait: 4 `wait_timeout`
+/// while the job runs; download: 4 `job_not_ready` while it runs; wait and download:
 /// the recorded error's code once it ended without success), and `video generate
 /// --help` says that resuming needs the same state directory, which holds: another
 /// state directory has no record of the job.
@@ -855,6 +856,14 @@ fn job_help_states_the_exit_codes_and_the_state_directory_rule() {
         "any process that uses the same state directory",
     ] {
         assert!(wait.contains(needle), "{needle:?} in {wait}");
+    }
+    let download = help(&["jobs", "download"]);
+    for needle in [
+        "Exit status: 0 once the job's outputs are saved",
+        "4 (job_not_ready) while it is still running",
+        "exits with the code of its recorded error",
+    ] {
+        assert!(download.contains(needle), "{needle:?} in {download}");
     }
     // Where a later command saves: its -o or -d, else what the job recorded.
     for command in [["jobs", "wait"], ["jobs", "download"]] {

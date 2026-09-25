@@ -49,8 +49,8 @@ Examples:
   iris models list --operation video.generate
   iris doctor
 
-Exit codes: 0 success, 1 runtime or provider failure, 2 invalid request: fix it before retrying \
-(error.provider_status null means nothing was sent; otherwise the provider rejected it), 3 \
+Exit codes: 0 success, 1 runtime or provider failure, 2 invalid or conflicting request: fix it before \
+retrying (error.provider_status null means nothing was sent; otherwise the provider rejected it), 3 \
 credentials/access/quota, 4 job not finished yet (it continues remotely), 5 outcome uncertain (do \
 not resubmit blindly), 130 interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP).
 
@@ -546,10 +546,12 @@ pub struct VideoGenerateArgs {
     /// Submit, record the job, print its id, and return without waiting
     #[arg(long, conflicts_with_all = ["timeout", "poll_interval"], help_heading = "Waiting")]
     pub detach: bool,
-    /// Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it
+    /// Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it;
+    /// default: IRIS_WAIT_TIMEOUT, config video.wait_timeout, or 10m
     #[arg(long, value_name = "DURATION", help_heading = "Waiting")]
     pub timeout: Option<String>,
-    /// Time between status checks (at least 2s)
+    /// Time between status checks (at least 2s); default: IRIS_POLL_INTERVAL, config
+    /// video.poll_interval, or 10s
     #[arg(long, value_name = "DURATION", help_heading = "Waiting")]
     pub poll_interval: Option<String>,
     #[command(flatten)]
@@ -616,7 +618,14 @@ pub enum JobsCommand {
              download is safe: an intact file already at the target is reported as already_downloaded, and an \
              intact earlier download is copied locally. With --overwrite, every output is fetched from the \
              provider again and replaces the saved file atomically.\n\n",
-            job_target_rule!()
+            job_target_rule!(),
+            "\n\nExit status: 0 once the job's outputs are saved. A job whose record still reads running is \
+             checked once first (a free status call): 4 (job_not_ready) while it is still running, or when the \
+             check failed for a transient reason; a check that fails for any other reason exits with that \
+             error's code (e.g. 3 missing_credentials). A job that ended without success exits with the code of \
+             its recorded error, such as 1 (remote_job_failed, content_blocked, artifact_expired) or 5 \
+             (submission_uncertain). Other errors keep their own codes (e.g. 1 download_failed, 2 output_exists, \
+             130 interrupted)."
         ),
         after_help = "Examples:\n  iris jobs download job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs download \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json",
@@ -668,10 +677,12 @@ pub struct JobsWaitArgs {
     /// Job id
     #[arg(value_name = "JOB_ID")]
     pub job_id: String,
-    /// Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it
+    /// Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it;
+    /// default: IRIS_WAIT_TIMEOUT, config video.wait_timeout, or 10m
     #[arg(long, value_name = "DURATION")]
     pub timeout: Option<String>,
-    /// Time between status checks (at least 2s)
+    /// Time between status checks (at least 2s); default: IRIS_POLL_INTERVAL, config
+    /// video.poll_interval, or 10s
     #[arg(long, value_name = "DURATION")]
     pub poll_interval: Option<String>,
     /// Only wait; do not download the outputs

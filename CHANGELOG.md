@@ -107,9 +107,11 @@ machine-readable contract for agents.
   job that is active or whose outputs were not downloaded while the provider still keeps them.
 - The recorded error of an ended job is shown with `retryable: false`: retrying means a new,
   billed request. `next_steps` and hints repeat `--config` when one was given.
-- `jobs status --help` and `jobs wait --help` state their exit codes: `jobs status` exits 0 for a
-  job in any state (branch on `result.job.status`), `jobs wait` 4 while the job runs on and the
-  recorded error's code once it ended without success.
+- `jobs status --help`, `jobs wait --help`, and `jobs download --help` state their exit codes:
+  `jobs status` exits 0 for a job in any state (branch on `result.job.status`); `jobs wait` 4
+  while the job runs on and `jobs download` 4 (`job_not_ready`) while it is still running, and
+  each of them the recorded error's code once the job ended without success. The `--timeout` and
+  `--poll-interval` help names each default.
 - Ctrl-C (SIGINT), SIGTERM and SIGHUP print one `interrupted` envelope and exit 130; during a Veo
   submission the first one is deferred until the operation id is recorded. Neither an interrupt
   nor a `--timeout` ever marks a remote job failed.

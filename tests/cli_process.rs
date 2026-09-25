@@ -268,8 +268,8 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
     let words = top.stdout.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
         words.contains(
-            "2 invalid request: fix it before retrying (error.provider_status null means nothing was sent; \
-             otherwise the provider rejected it)"
+            "2 invalid or conflicting request: fix it before retrying (error.provider_status null means \
+             nothing was sent; otherwise the provider rejected it)"
         ),
         "{}",
         top.stdout
