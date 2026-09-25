@@ -127,11 +127,11 @@ async fn run_checked(
         .provider(provider)?
         .image()
         .ok_or_else(|| IrisError::internal(format!("provider '{provider}' has no image adapter")))?;
-    let pre_estimate = request::estimate(spec, op, &opts, count);
+    let pre_estimate = request::estimate(&resolved, op, &opts, count);
 
     if common.dry_run {
         if pre_estimate.is_none() {
-            warnings.push(request::cost_unavailable(spec));
+            warnings.push(request::cost_unavailable(&resolved));
         }
         let inputs = images.iter().chain(mask.iter()).map(request::plan_input).collect();
         return Ok(GenerationOutcome::Planned(PlanResult {
@@ -242,15 +242,12 @@ async fn run_checked(
 
     // Prefer the provider-reported usage (covers every returned image); fall back to
     // the pre-call estimate for the number of images actually returned.
-    let from_usage = match (spec.estimate_usage, output.usage.as_ref()) {
-        (Some(estimate_usage), Some(usage)) => estimate_usage(spec, usage),
-        _ => None,
-    };
+    let from_usage = output.usage.as_ref().and_then(|usage| request::estimate_from_usage(&resolved, usage));
     let cost_estimate = from_usage.or_else(|| {
-        if returned == count { pre_estimate } else { request::estimate(spec, op, &opts, returned) }
+        if returned == count { pre_estimate } else { request::estimate(&resolved, op, &opts, returned) }
     });
     if cost_estimate.is_none() {
-        warnings.push(request::cost_unavailable(spec));
+        warnings.push(request::cost_unavailable(&resolved));
     }
     Ok(GenerationOutcome::Completed(ImageResult {
         provider,

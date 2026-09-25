@@ -125,9 +125,9 @@ async fn generate(
         .provider(provider)?
         .video()
         .ok_or_else(|| IrisError::internal(format!("provider '{provider}' has no video adapter")))?;
-    let estimate = request::estimate(spec, op, &opts, count);
+    let estimate = request::estimate(&resolved, op, &opts, count);
     if estimate.is_none() {
-        warnings.push(request::cost_unavailable(spec));
+        warnings.push(request::cost_unavailable(&resolved));
     }
     let store_prompts = ctx.settings.store_prompts.value;
 
