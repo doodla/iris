@@ -432,17 +432,17 @@ fn blank_environment_variables_count_as_unset() {
 }
 
 #[test]
-fn tilde_is_expanded_in_every_layer_and_relative_paths_use_the_current_directory() {
+fn tilde_is_expanded_in_every_layer_and_relative_flag_paths_use_the_current_directory() {
     let fx = Fixture::new();
     fx.write_default_config("output_dir = \"~/Pictures/iris\"\nstate_dir = \"~\"\n");
     let s = load(&fx.env()).unwrap();
     assert_eq!(s.output_dir.value, fx.home.join("Pictures/iris"));
     assert_eq!(s.state_dir.value, fx.home);
 
-    let env = fx.env().with_var("IRIS_OUTPUT_DIR", "~/env-out").with_var("IRIS_STATE_DIR", "rel-state");
+    let env = fx.env().with_var("IRIS_OUTPUT_DIR", "~/env-out").with_var("IRIS_STATE_DIR", "~");
     let s = load(&env).unwrap();
     assert_eq!(s.output_dir.value, fx.home.join("env-out"));
-    assert_eq!(s.state_dir.value, fx.cwd.join("rel-state"));
+    assert_eq!(s.state_dir.value, fx.home);
 
     let cli = CliOverrides { out_dir: Some(PathBuf::from("~/flag-out")), ..Default::default() };
     assert_eq!(Settings::load(&cli, &env).unwrap().output_dir.value, fx.home.join("flag-out"));
@@ -712,4 +712,24 @@ fn plain_http_base_urls_must_be_loopback_and_are_warned_about_once() {
     assert_eq!(warnings[0].code, WARNING_NON_DEFAULT_BASE_URL);
     assert!(warnings[0].message.contains("GEMINI_API_KEY is sent to that host over unencrypted HTTP"));
     assert_eq!(Some(warnings[0].clone()), s.base_url_warning(ProviderId::Gemini));
+}
+
+/// Path variables follow the config file's rule: absolute, or `~/`. A relative one
+/// would resolve against each command's working directory (a state directory that
+/// moves with it loses its jobs), so it is `config_invalid` naming the variable.
+#[test]
+fn relative_path_variables_are_rejected_naming_the_variable() {
+    let fx = Fixture::new();
+    for var in ["IRIS_STATE_DIR", "IRIS_OUTPUT_DIR", "IRIS_CONFIG"] {
+        for value in ["relstate", "./here", "../up/config.toml", "~other/x"] {
+            let e = load(&fx.env().with_var(var, value)).unwrap_err();
+            assert_eq!(e.code, ErrorCode::ConfigInvalid, "{var}={value}");
+            assert_eq!(e.details.get("env_var").and_then(|v| v.as_str()), Some(var), "{var}={value}");
+            assert!(e.message.contains(var), "{}", e.message);
+            assert!(e.message.contains("must be an absolute path or start with ~/"), "{}", e.message);
+        }
+    }
+    // Flags keep resolving against the current directory.
+    let cli = CliOverrides { out_dir: Some(PathBuf::from("rel-out")), ..Default::default() };
+    assert_eq!(Settings::load(&cli, &fx.env()).unwrap().output_dir.value, fx.cwd.join("rel-out"));
 }

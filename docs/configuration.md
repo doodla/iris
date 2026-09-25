@@ -163,7 +163,11 @@ Passing `--provider` together with a `--model` that belongs to a *different* pro
 `invalid_argument`, caught before anything is sent.
 
 An environment variable's value is validated exactly like a config-file value — a bad one is
-`config_invalid` naming the variable, not silently ignored.
+`config_invalid` naming the variable, not silently ignored. That includes paths: `IRIS_CONFIG`,
+`IRIS_OUTPUT_DIR`, and `IRIS_STATE_DIR` must be absolute or start with `~/`, like `output_dir` and
+`state_dir` in the config file, because a relative one would follow each command's working
+directory (a state directory that moves loses its jobs). Relative paths given as flags
+(`--config`, `-d`/`--out-dir`, `-o`, input files) resolve against the current directory.
 
 Real `config show` output, with `HOME=/home/you`, both keys set, and
 `IRIS_STATE_DIR=/home/you/iris-state`, `IRIS_OPENAI_BASE_URL=http://127.0.0.1:8080/v1`, and

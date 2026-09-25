@@ -13,9 +13,10 @@
 //! * Every value present in any layer is validated, even if a higher layer
 //!   overrides it: a bad environment value is `config_invalid` naming the variable;
 //!   a bad flag value is `invalid_argument` naming the flag.
-//! * `~` is expanded in paths from every layer. Relative paths from flags and
-//!   variables resolve against the current directory; paths in the config file must
-//!   be absolute (or start with `~`).
+//! * `~` is expanded in paths from every layer. Relative paths from flags resolve
+//!   against the current directory; paths in environment variables and in the
+//!   config file must be absolute (or start with `~/`), so where jobs and outputs
+//!   live never depends on the directory a command happens to run in.
 //! * Credentials come only from `OPENAI_API_KEY` / `GEMINI_API_KEY` and are held as
 //!   [`Secret`]s; nothing here ever formats their values.
 //! * Per-provider settings (`[providers.<id>]`, `IRIS_<PROVIDER>_BASE_URL`) are
@@ -673,8 +674,19 @@ fn env_parsed<T>(
     env_value(env, var)?.map(|v| parse(v).map_err(|m| env_error(var, m))).transpose()
 }
 
+/// A path variable: absolute after `~` expansion, like a path in the config file.
+/// A relative one would resolve against whatever directory each command runs in
+/// (a state directory that moves loses its jobs), so it is `config_invalid`.
 fn env_path(env: &EnvSnapshot, var: &str) -> Result<Option<PathBuf>, IrisError> {
-    env_value(env, var)?.map(|v| absolute(Path::new(v), env).map_err(|m| env_error(var, m))).transpose()
+    env_value(env, var)?
+        .map(|v| {
+            let p = expand_tilde(Path::new(v), env.home()).map_err(|m| env_error(var, m))?;
+            if !p.is_absolute() {
+                return Err(env_error(var, format!("'{v}' must be an absolute path or start with ~/")));
+            }
+            Ok(p)
+        })
+        .transpose()
 }
 
 fn flag_path(p: &Path, flag: &str, env: &EnvSnapshot) -> Result<PathBuf, IrisError> {
