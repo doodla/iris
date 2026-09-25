@@ -510,9 +510,10 @@ of its cheapest single-output request and their estimate, or `null`):
 ```
 
 A command line that does not parse (an unknown flag or subcommand, a missing or malformed value) is
-`usage_error` (exit 2, category `usage`), with the parser's full text in `details.usage`. When the
-parser finds a flag, subcommand, or value similar to the one given, the hint names it; otherwise it
-is `run the command with --help for usage`:
+`usage_error` (exit 2, category `usage`), with the parser's full text in `details.usage` and what
+to type instead in `details.suggestions` (as for `unknown_model`; empty when there is nothing to
+suggest). When the parser finds a flag, subcommand, or value similar to the one given, the hint and
+the suggestions name it; otherwise the hint is `run the command with --help for usage`:
 
 ```console
 $ iris image generate "a fox" -m nano-banana-2 --aspect_ratio 16:9 --json
@@ -520,8 +521,19 @@ $ iris image generate "a fox" -m nano-banana-2 --aspect_ratio 16:9 --json
 ```json
 {"code":"usage_error","category":"usage","message":"unexpected argument '--aspect_ratio' found",
  "hint":"did you mean --aspect-ratio? run the command with --help for usage",
- "details":{"usage":"error: unexpected argument '--aspect_ratio' found\n\n  tip: a similar argument exists: '--aspect-ratio'\n\n..."},
+ "details":{"suggestions":["--aspect-ratio"],
+            "usage":"error: unexpected argument '--aspect_ratio' found\n\n  tip: a similar argument exists: '--aspect-ratio'\n\n..."},
  "...":"other Error fields omitted for brevity"}
+```
+
+A generation command given `--<name>` where `<name>` (with `-` as `_`) is a model option that has
+no flag of its own, only `-O` (`--background`, `--thinking-level`, `--person-generation`), gets
+the `-O` form instead, in human output too, with the models that take the option when the `-m`
+model does not (or none was given):
+
+```json
+"hint":"did you mean -O background=VALUE? background is a model option without a flag of its own; gemini-3.1-flash-image does not take it; the models that do: gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2; run the command with --help for usage",
+"details":{"suggestions":["-O background=VALUE"],"usage":"..."}
 ```
 
 `provider` names the provider an error concerns: the one that answered, or, for an error while

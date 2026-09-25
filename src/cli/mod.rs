@@ -139,7 +139,7 @@ pub async fn run_with(args: Vec<OsString>, mut io: Io, deps: Deps) -> i32 {
         Output { json: render::json_requested(&args), stdout: io.stdout.clone(), stderr: io.stderr.clone() };
     let cli = match Cli::try_parse_from(render::clap_args(&args)) {
         Ok(cli) => cli,
-        Err(err) => return out.clap_error(err, &args),
+        Err(err) => return out.clap_error(err, &args, &deps.catalog),
     };
     let command = cli.command.name();
     let mut warnings = Vec::new();

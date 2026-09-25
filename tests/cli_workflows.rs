@@ -315,7 +315,38 @@ async fn clap_usage_errors_become_json_envelopes() {
             "{args:?}"
         );
         assert!(v["error"]["details"]["usage"].as_str().unwrap().contains(&format!("'{similar}'")), "{v}");
+        assert_eq!(v["error"]["details"]["suggestions"], serde_json::json!([similar]), "{args:?}");
     }
+    let run = f.run(&["--json", "image", "generate", "-m", "fake-image-1", "x", "--bogus"]).await;
+    assert_eq!(run.json()["error"]["details"]["suggestions"], serde_json::json!([]));
+
+    // A model option without a flag of its own, given as a flag, gets the -O form,
+    // naming the models that take it unless the -m model does.
+    let o_form = "did you mean -O background=VALUE? background is a model option without a flag of its own";
+    for (model, takers) in [
+        (&["-m", "fake-image-1"][..], ""),
+        (
+            &["-m", "fake-gemini-image"],
+            "; fake-gemini-image does not take it; the models that do: fake-image-1",
+        ),
+        (&[], "; the models that take it: fake-image-1"),
+    ] {
+        let run = f
+            .run(&[&["image", "generate", "x", "--background", "opaque", "--json"][..], model].concat())
+            .await;
+        assert_eq!(run.error_code(), "usage_error", "{model:?}");
+        let v = run.json();
+        assert_eq!(
+            v["error"]["hint"],
+            format!("{o_form}{takers}; run the command with --help for usage"),
+            "{model:?}"
+        );
+        assert_eq!(v["error"]["details"]["suggestions"], serde_json::json!(["-O background=VALUE"]));
+    }
+    // Only for an option of the command's operation.
+    let run =
+        f.run(&["video", "generate", "-m", "fake-video-1", "x", "--background", "opaque", "--json"]).await;
+    assert_eq!(run.json()["error"]["hint"], "run the command with --help for usage");
 
     let run = f.run(&["nonsense", "--json"]).await;
     assert_eq!(run.code, 2);

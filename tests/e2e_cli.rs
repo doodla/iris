@@ -1121,6 +1121,44 @@ fn a_near_miss_sent_with_capabilities_from_is_named_in_the_warning() {
     assert!(!message.contains("did you mean"), "{message}");
 }
 
+/// A model option without a flag of its own, typed as a flag, is a usage error
+/// whose hint and `details.suggestions` give the `-O` form (in human output too),
+/// naming the models that take it when the `-m` model does not.
+#[test]
+fn a_model_option_typed_as_a_flag_points_at_the_o_form() {
+    let sb = Sandbox::new();
+    for (args, name, rest) in [
+        (
+            &["image", "generate", "x", "-m", "nano-banana-2", "--background", "transparent"][..],
+            "background",
+            "; gemini-3.1-flash-image does not take it; the models that do: gpt-image-2.5-sunburst, \
+             gpt-image-2.5-flare, gpt-image-2",
+        ),
+        (
+            &["image", "edit", "x", "-i", "a.png", "-m", "nano-banana-2", "--thinking-level", "high"],
+            "thinking_level",
+            "",
+        ),
+        (&["video", "generate", "x", "-m", "veo", "--person-generation=allow_all"], "person_generation", ""),
+    ] {
+        let v = sb.iris().args(args).arg("--json").run().err(2, "usage_error");
+        let form = format!("-O {name}=VALUE");
+        assert_eq!(
+            v["error"]["hint"],
+            format!(
+                "did you mean {form}? {name} is a model option without a flag of its own{rest}; run the command \
+                 with --help for usage"
+            ),
+            "{args:?}"
+        );
+        assert_eq!(v["error"]["details"]["suggestions"], json!([form]));
+    }
+    let human =
+        sb.iris().args(["image", "generate", "x", "-m", "gpt-image-2", "--background", "opaque"]).run();
+    assert_eq!(human.code, 2);
+    assert!(human.stderr.contains("hint: did you mean -O background=VALUE?"), "{}", human.stderr);
+}
+
 /// An option or input the model does not take is refused with the catalog models
 /// that do take it (`details.supported_by`, named by the hint with `-m`), and an
 /// enum value the option does not allow with the values it does (`details.allowed`);

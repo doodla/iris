@@ -8,8 +8,9 @@ use std::sync::{Arc, Mutex};
 
 use clap::error::{ContextKind, ContextValue, ErrorKind};
 
+use crate::app::catalog::Catalog;
 use crate::app::info;
-use crate::domain::Warning;
+use crate::domain::{Operation, Warning};
 use crate::error::IrisError;
 use crate::output::results::HelpResult;
 use crate::output::{CommandName, Envelope, ErrorBody, ResultPayload, SCHEMA_VERSION, human};
@@ -123,6 +124,70 @@ fn clap_suggestions(err: &clap::Error) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// For an unknown `--<name>` given to a generation command, where `<name>` (with
+/// `-` as `_`) is an option that catalog models declare for the command's operation
+/// without a flag of its own (`--background`, `--thinking-level`,
+/// `--person-generation`): the form to use instead, `-O <name>=VALUE`, and a hint
+/// with it that names the models taking the option unless the `-m` model does.
+fn option_without_flag(err: &clap::Error, args: &[OsString], catalog: &Catalog) -> Option<(String, String)> {
+    if err.kind() != ErrorKind::UnknownArgument {
+        return None;
+    }
+    let Some(ContextValue::String(arg)) = err.get(ContextKind::InvalidArg) else { return None };
+    let name = arg.strip_prefix("--")?.split('=').next()?.replace('-', "_");
+    let op = match guess_command(args)? {
+        CommandName::ImageGenerate => Operation::ImageGenerate,
+        CommandName::ImageEdit => Operation::ImageEdit,
+        CommandName::VideoGenerate => Operation::VideoGenerate,
+        _ => return None,
+    };
+    let takers: Vec<&str> = catalog
+        .models()
+        .into_iter()
+        .filter(|m| m.options_for(op).any(|o| o.name == name && o.flag.is_none()))
+        .map(|m| m.id)
+        .collect();
+    if takers.is_empty() {
+        return None;
+    }
+    let form = format!("-O {name}=VALUE");
+    let mut hint = format!("did you mean {form}? {name} is a model option without a flag of its own");
+    match model_arg(args).and_then(|m| catalog.find(m)) {
+        Some(model) if takers.contains(&model.id) => {}
+        Some(model) => hint.push_str(&format!(
+            "; {} does not take it; the models that do: {}",
+            model.id,
+            takers.join(", ")
+        )),
+        None => hint.push_str(&format!("; the models that take it: {}", takers.join(", "))),
+    }
+    hint.push_str("; run the command with --help for usage");
+    Some((form, hint))
+}
+
+/// The `-m/--model` value in argv (`-m X`, `-mX`, `--model X`, `--model=X`), if any.
+fn model_arg(args: &[OsString]) -> Option<&str> {
+    let mut iter = args.iter().skip(1).filter_map(|a| a.to_str());
+    while let Some(arg) = iter.next() {
+        if arg == "--" {
+            break;
+        }
+        if arg == "-m" || arg == "--model" {
+            return iter.next();
+        }
+        if let Some(value) = arg.strip_prefix("--model=") {
+            return Some(value);
+        }
+        if let Some(value) = arg.strip_prefix("-m")
+            && !value.is_empty()
+            && !arg.starts_with("--")
+        {
+            return Some(value);
+        }
+    }
+    None
+}
+
 /// Best-effort command name from argv, for envelopes of errors raised before or
 /// during parsing (`None` when no known command is recognizable).
 pub fn guess_command(args: &[OsString]) -> Option<CommandName> {
@@ -211,7 +276,12 @@ impl Output {
     /// Handle a clap parse outcome that is not a successful parse: help, version,
     /// or a usage error (exit 2). A help result's envelope has `command: null`
     /// (the help text is not the named command's result).
-    pub fn clap_error(&self, err: clap::Error, args: &[OsString]) -> i32 {
+    ///
+    /// A usage error's hint names what clap found similar to a mistyped flag,
+    /// subcommand, or value, or, for an unknown `--<name>` that is a model option
+    /// without a flag of its own, the `-O <name>=VALUE` form ([`option_without_flag`]);
+    /// `details.suggestions` holds them.
+    pub fn clap_error(&self, err: clap::Error, args: &[OsString], catalog: &Catalog) -> i32 {
         let text = err.render().to_string();
         let command = guess_command(args);
         match err.kind() {
@@ -247,22 +317,32 @@ impl Output {
                 }
             }
             _ => {
+                let option = option_without_flag(&err, args, catalog);
                 if self.json {
-                    let hint = match clap_suggestions(&err).as_slice() {
-                        [] => "run the command with --help for usage".to_string(),
-                        similar => {
-                            format!(
-                                "did you mean {}? run the command with --help for usage",
-                                similar.join(" or ")
-                            )
+                    let (suggestions, hint) = match option {
+                        Some((form, hint)) => (vec![form], hint),
+                        None => {
+                            let similar = clap_suggestions(&err);
+                            let hint = match similar.as_slice() {
+                                [] => "run the command with --help for usage".to_string(),
+                                similar => format!(
+                                    "did you mean {}? run the command with --help for usage",
+                                    similar.join(" or ")
+                                ),
+                            };
+                            (similar, hint)
                         }
                     };
                     let error = IrisError::usage(clap_message(&text))
                         .with_hint(hint)
-                        .with_detail("usage", text.trim_end().to_string());
+                        .with_detail("usage", text.trim_end().to_string())
+                        .with_detail("suggestions", suggestions);
                     self.failure(command, &error, Vec::new())
                 } else {
                     write(&self.stderr, &text);
+                    if let Some((_, hint)) = option {
+                        write(&self.stderr, &format!("hint: {hint}\n"));
+                    }
                     crate::error::exit::USAGE
                 }
             }

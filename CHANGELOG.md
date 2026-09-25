@@ -118,7 +118,8 @@ machine-readable contract for agents.
   asks "did you mean -m …?". An option or input the model does not take names the models that do
   (`details.supported_by`), and a value outside an option's listed values lists them
   (`details.allowed`). A mistyped flag, subcommand, or value close to a real one is a `usage_error`
-  whose hint asks "did you mean …?".
+  whose hint asks "did you mean …?" (`details.suggestions`), and a model option typed as a flag
+  (`--background`) points at its `-O` form.
 - `iris models list`/`show`: a one-line summary of what each model is for, the estimate of its
   cheapest single-output request (`lowest_estimate`, computed by the model's own estimator),
   declared operations, options (typed defaults, `max_chars`), machine-readable `constraints`,
