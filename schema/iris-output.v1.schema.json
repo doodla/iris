@@ -344,26 +344,6 @@
       ],
       "type": "string"
     },
-    "EffectiveDefault": {
-      "description": "The model a generation command uses when neither `--provider` nor `--model` is\ngiven, honoring the configuration (`image.provider`, the configured default\nmodels).",
-      "properties": {
-        "model": {
-          "type": "string"
-        },
-        "operation": {
-          "$ref": "#/$defs/Operation"
-        },
-        "provider": {
-          "$ref": "#/$defs/ProviderId"
-        }
-      },
-      "required": [
-        "operation",
-        "provider",
-        "model"
-      ],
-      "type": "object"
-    },
     "ErrorBody": {
       "allOf": [
         {
@@ -371,6 +351,25 @@
             "properties": {
               "code": {
                 "const": "usage_error"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "usage"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
+                "const": "model_required"
               }
             },
             "required": [
@@ -1098,6 +1097,7 @@
         {
           "enum": [
             "usage_error",
+            "model_required",
             "invalid_argument",
             "unsupported_operation",
             "unsupported_option",
@@ -1177,6 +1177,10 @@
         "model": {
           "type": "string"
         },
+        "model_source": {
+          "$ref": "#/$defs/ModelSource",
+          "description": "Where `model` came from: `flag` (`-m/--model`) or `config` (`image.model`)."
+        },
         "operation": {
           "$ref": "#/$defs/Operation"
         },
@@ -1214,6 +1218,7 @@
       "required": [
         "provider",
         "model",
+        "model_source",
         "operation",
         "status",
         "created_at",
@@ -1485,6 +1490,17 @@
         "model": {
           "type": "string"
         },
+        "model_source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ModelSource"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Where `model` came from: `flag` (`-m/--model`) or `config` (`video.model`);\n`null` when the job record does not say."
+        },
         "operation": {
           "$ref": "#/$defs/Operation"
         },
@@ -1543,6 +1559,7 @@
         "remote_operation_id",
         "provider",
         "model",
+        "model_source",
         "operation",
         "status",
         "created_at",
@@ -1643,13 +1660,6 @@
           },
           "type": "array"
         },
-        "default_for": {
-          "description": "Operations for which this model is its provider's default (see\n`models.list`): used when its provider is selected without `--model`.",
-          "items": {
-            "$ref": "#/$defs/Operation"
-          },
-          "type": "array"
-        },
         "display_name": {
           "type": "string"
         },
@@ -1700,7 +1710,6 @@
         "aliases",
         "lifecycle",
         "operations",
-        "default_for",
         "inputs",
         "options",
         "constraints",
@@ -1717,13 +1726,6 @@
     "ModelListResult": {
       "description": "`models.list`.",
       "properties": {
-        "effective_defaults": {
-          "description": "One entry per operation that has a usable default, in operation order,\nindependent of the list's filters. An operation missing here has none: a\ncommand for it needs `--provider` or `--model`.",
-          "items": {
-            "$ref": "#/$defs/EffectiveDefault"
-          },
-          "type": "array"
-        },
         "models": {
           "items": {
             "$ref": "#/$defs/ModelSummary"
@@ -1732,8 +1734,7 @@
         }
       },
       "required": [
-        "models",
-        "effective_defaults"
+        "models"
       ],
       "type": "object"
     },
@@ -1748,19 +1749,27 @@
       ],
       "type": "object"
     },
+    "ModelSource": {
+      "description": "Where a generation command's model came from. Iris never chooses a model\nitself.",
+      "oneOf": [
+        {
+          "const": "flag",
+          "description": "`-m/--model`.",
+          "type": "string"
+        },
+        {
+          "const": "config",
+          "description": "The config file: `image.model` for the image operations, `video.model` for\nvideo.",
+          "type": "string"
+        }
+      ]
+    },
     "ModelSummary": {
       "description": "Summary row of `models.list`.",
       "properties": {
         "aliases": {
           "items": {
             "type": "string"
-          },
-          "type": "array"
-        },
-        "default_for": {
-          "description": "Operations for which this model is its provider's default: the model used when\nits provider is selected without `--model` (the configured\n`providers.<provider>.image_model`/`video_model`, else the catalog default).\nSeveral providers each have one; `effective_defaults` says which is used when\nno provider is selected either.",
-          "items": {
-            "$ref": "#/$defs/Operation"
           },
           "type": "array"
         },
@@ -1789,8 +1798,7 @@
         "display_name",
         "aliases",
         "lifecycle",
-        "operations",
-        "default_for"
+        "operations"
       ],
       "type": "object"
     },
@@ -1988,6 +1996,10 @@
         "model": {
           "type": "string"
         },
+        "model_source": {
+          "$ref": "#/$defs/ModelSource",
+          "description": "Where `model` came from: `flag` (`-m/--model`) or `config` (`image.model` or\n`video.model`)."
+        },
         "operation": {
           "$ref": "#/$defs/Operation"
         },
@@ -2009,6 +2021,7 @@
         "dry_run",
         "provider",
         "model",
+        "model_source",
         "operation",
         "async_job",
         "options",

@@ -38,7 +38,7 @@ use super::JobId;
 use crate::artifacts::RecordedFile;
 use crate::catalog::{InputCounts, ModelSpec, OptionKind, ResolvedOptions};
 use crate::domain::{
-    Artifact, CostEstimate, DownloadState, JobStatus, Operation, ProviderId, Usage, Warning,
+    Artifact, CostEstimate, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage, Warning,
 };
 use crate::error::{ErrorCode, IrisError};
 use crate::output::ErrorBody;
@@ -354,6 +354,8 @@ pub struct NewJob {
     pub provider: ProviderId,
     /// Model id sent to the provider.
     pub model: String,
+    /// Where the model came from (`-m/--model` or the config file).
+    pub model_source: ModelSource,
     /// Must be a provider-native async operation (`video.generate`).
     pub operation: Operation,
     /// Non-secret request metadata; build it with [`request_metadata`].
@@ -368,6 +370,7 @@ impl fmt::Debug for NewJob {
         f.debug_struct("NewJob")
             .field("provider", &self.provider)
             .field("model", &self.model)
+            .field("model_source", &self.model_source)
             .field("operation", &self.operation)
             .field("request", &KeysOnly(&self.request))
             .field("prompt", &self.prompt)
@@ -400,6 +403,7 @@ const RECORD_FIELDS: &[&str] = &[
     "job_id",
     "provider",
     "model",
+    "model_source",
     "operation",
     "status",
     "created_at",
@@ -434,6 +438,8 @@ pub struct JobRecord {
     job_id: JobId,
     provider: ProviderId,
     model: String,
+    /// Where the model came from; `null` in a record that does not say.
+    model_source: Option<ModelSource>,
     operation: Operation,
     status: JobStatus,
     created_at: Timestamp,
@@ -466,6 +472,7 @@ impl fmt::Debug for JobRecord {
             .field("job_id", &self.job_id)
             .field("provider", &self.provider)
             .field("model", &self.model)
+            .field("model_source", &self.model_source)
             .field("operation", &self.operation)
             .field("status", &self.status)
             .field("created_at", &self.created_at)
@@ -509,6 +516,7 @@ impl JobRecord {
             job_id,
             provider: new.provider,
             model: new.model,
+            model_source: Some(new.model_source),
             operation: new.operation,
             status: JobStatus::Submitting,
             created_at: now,
@@ -545,6 +553,9 @@ impl JobRecord {
     }
     pub fn model(&self) -> &str {
         &self.model
+    }
+    pub fn model_source(&self) -> Option<ModelSource> {
+        self.model_source
     }
     pub fn operation(&self) -> Operation {
         self.operation
@@ -1005,6 +1016,7 @@ impl JobRecord {
             remote_operation_id: self.remote_operation_id.clone(),
             provider: self.provider,
             model: self.model.clone(),
+            model_source: self.model_source,
             operation: self.operation,
             status: self.status,
             created_at: self.created_at.to_string(),
@@ -1181,6 +1193,7 @@ mod tests {
         let new = NewJob {
             provider: ProviderId::Gemini,
             model: "m".into(),
+            model_source: ModelSource::Flag,
             operation: Operation::VideoGenerate,
             request: Map::new(),
             prompt: PromptRecord::new("p", false),

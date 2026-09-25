@@ -31,7 +31,7 @@ pub(crate) struct FileConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ImageSection {
-    pub provider: Option<String>,
+    pub model: Option<String>,
 }
 
 /// Durations are strings (`"10m"`) or integer seconds; validated during resolution
@@ -39,6 +39,7 @@ pub(crate) struct ImageSection {
 #[derive(Debug, Default, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct VideoSection {
+    pub model: Option<String>,
     pub wait_timeout: Option<toml::Value>,
     pub poll_interval: Option<toml::Value>,
 }
@@ -53,8 +54,6 @@ pub(crate) struct JobsSection {
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProviderSection {
     pub base_url: Option<String>,
-    pub image_model: Option<String>,
-    pub video_model: Option<String>,
     pub request_timeout: Option<toml::Value>,
     pub submit_timeout: Option<toml::Value>,
 }
@@ -258,8 +257,9 @@ mod tests {
 output_dir = "~/Pictures/iris"
 state_dir = "/custom/state"
 [image]
-provider = "openai"
+model = "gpt-image-2.5-flare"
 [video]
+model = "veo-3.1-lite-generate-preview"
 wait_timeout = "10m"
 poll_interval = 15
 [jobs]
@@ -292,7 +292,7 @@ base_url = "https://generativelanguage.googleapis.com"
         ] {
             assert!(is_credential_like(k), "{k}");
         }
-        for k in ["base_url", "image_model", "provider", "keyboard", "store_prompts", "tokens_per_minute"] {
+        for k in ["base_url", "model", "keyboard", "store_prompts", "tokens_per_minute"] {
             assert!(!is_credential_like(k), "{k}");
         }
     }

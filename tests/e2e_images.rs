@@ -49,14 +49,26 @@ fn openai_generate_saves_the_image_and_sends_the_documented_request() {
     let out = sb
         .iris()
         .openai(&api)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "-o", "fox.png"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "-o",
+            "fox.png",
+        ])
         .arg("--json")
         .run();
     let v = out.ok();
     assert_eq!(v["command"], "image.generate");
     let r = &v["result"];
     assert_eq!(r["provider"], "openai");
-    assert_eq!(r["model"], OPENAI_DEFAULT_MODEL);
+    assert_eq!(r["model"], OPENAI_IMAGE_MODEL);
     assert_eq!(r["operation"], "image.generate");
     assert_eq!(r["status"], "succeeded");
     assert_eq!(r["provider_request_id"], "req_e2e_gen_1");
@@ -84,7 +96,7 @@ fn openai_generate_saves_the_image_and_sends_the_documented_request() {
     assert_eq!(
         body_json(req),
         json!({
-            "model": OPENAI_DEFAULT_MODEL,
+            "model": OPENAI_IMAGE_MODEL,
             "prompt": PROMPT,
             "size": "1024x1024",
             "quality": "low",
@@ -110,7 +122,19 @@ fn openai_generate_in_human_mode_prints_saved_paths() {
     let out = sb
         .iris()
         .openai(&api)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "-d", "pics"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "-d",
+            "pics",
+        ])
         .run();
     let stdout = out.human();
     let saved = stdout.strip_prefix("Saved ").and_then(|s| s.strip_suffix('\n')).expect(stdout);
@@ -145,6 +169,8 @@ fn openai_edit_sends_every_input_image_and_the_mask_as_data_urls() {
         .args([
             "image",
             "edit",
+            "-m",
+            OPENAI_IMAGE_MODEL,
             "add a tiny hat",
             "-i",
             "a.png",
@@ -170,7 +196,7 @@ fn openai_edit_sends_every_input_image_and_the_mask_as_data_urls() {
     assert_eq!(
         body_json(&reqs[0]),
         json!({
-            "model": OPENAI_DEFAULT_MODEL,
+            "model": OPENAI_IMAGE_MODEL,
             "prompt": "add a tiny hat",
             "images": [
                 { "image_url": data_url("image/png", &a) },
@@ -197,6 +223,8 @@ fn openai_edit_with_a_mask_of_other_dimensions_is_rejected_before_any_request() 
         .args([
             "image",
             "edit",
+            "-m",
+            OPENAI_IMAGE_MODEL,
             "add a tiny hat",
             "-i",
             "a.png",
@@ -221,7 +249,7 @@ fn gemini_generate_keeps_the_final_image_and_ignores_thought_parts() {
     let sb = Sandbox::new();
     let api = MockApi::start();
     let (draft, fin) = (png_colored(16, 16, [1, 2, 3]), png(48, 27));
-    let route = gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL);
+    let route = gemini_generate_path(GEMINI_IMAGE_MODEL);
     let mut draft_part = inline_part("image/png", &draft);
     draft_part["thought"] = json!(true);
     api.on(
@@ -238,13 +266,13 @@ fn gemini_generate_keeps_the_final_image_and_ignores_thought_parts() {
     let v = sb
         .iris()
         .gemini(&api)
-        .args(["image", "generate", prompt, "--provider", "gemini", "--aspect-ratio", "16:9"])
+        .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, prompt, "--aspect-ratio", "16:9"])
         .args(["--resolution", "1K", "--json"])
         .run()
         .ok();
     let r = &v["result"];
     assert_eq!(r["provider"], "gemini");
-    assert_eq!(r["model"], GEMINI_DEFAULT_IMAGE_MODEL);
+    assert_eq!(r["model"], GEMINI_IMAGE_MODEL);
     assert_eq!(artifacts(&v).len(), 1, "the thought image is not an output: {v}");
     let art = &artifacts(&v)[0];
     assert_artifact(art, Path::new(art["path"].as_str().unwrap()), &fin, "image/png", (48, 27));
@@ -283,13 +311,23 @@ fn gemini_edit_sends_reference_images_inline_in_order() {
     sb.write("a.png", &a);
     sb.write("b.jpg", &b);
     let out_img = jpeg(64, 64);
-    let route = gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL);
+    let route = gemini_generate_path(GEMINI_IMAGE_MODEL);
     api.on("POST", &route, gemini_parts(json!([inline_part("image/jpeg", &out_img)])));
 
     let v = sb
         .iris()
         .gemini(&api)
-        .args(["image", "edit", "put the two together", "--provider", "gemini", "-i", "a.png", "-i", "b.jpg"])
+        .args([
+            "image",
+            "edit",
+            "-m",
+            GEMINI_IMAGE_MODEL,
+            "put the two together",
+            "-i",
+            "a.png",
+            "-i",
+            "b.jpg",
+        ])
         .args(["-o", "combined", "--json"])
         .run()
         .ok();
@@ -322,7 +360,7 @@ fn gemini_edit_sends_reference_images_inline_in_order() {
 
 #[test]
 fn gemini_blocks_are_content_blocked_and_save_nothing() {
-    let route = gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL);
+    let route = gemini_generate_path(GEMINI_IMAGE_MODEL);
     let blocked_prompt = json_response(200, json!({ "promptFeedback": { "blockReason": "SAFETY" } }));
     let blocked_output = json_response(
         200,
@@ -335,7 +373,7 @@ fn gemini_blocks_are_content_blocked_and_save_nothing() {
         let v = sb
             .iris()
             .gemini(&api)
-            .args(["image", "generate", "something", "--provider", "gemini", "--json"])
+            .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, "something", "--json"])
             .run()
             .err(1, "content_blocked");
         assert_eq!(v["error"]["category"], "content");
@@ -355,7 +393,7 @@ fn a_gemini_answer_without_an_image_reports_its_charged_usage() {
     let api = MockApi::start();
     api.on(
         "POST",
-        &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL),
+        &gemini_generate_path(GEMINI_IMAGE_MODEL),
         json_response(
             200,
             json!({
@@ -369,7 +407,7 @@ fn a_gemini_answer_without_an_image_reports_its_charged_usage() {
     let v = sb
         .iris()
         .gemini(&api)
-        .args(["image", "generate", "something", "--provider", "gemini", "--json"])
+        .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, "something", "--json"])
         .run()
         .err(1, "provider_error");
     let e = &v["error"];
@@ -463,11 +501,11 @@ fn a_paid_answer_without_a_usable_image_keeps_its_content_and_says_where() {
         let api = MockApi::start();
         api.on(
             "POST",
-            &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL),
+            &gemini_generate_path(GEMINI_IMAGE_MODEL),
             gemini_parts(json!([inline_part("image/png", content)])),
         );
         let mut iris = sb.iris();
-        iris.gemini(&api).args(["image", "generate", PROMPT, "--provider", "gemini", "-o", "fox.png"]);
+        iris.gemini(&api).args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, PROMPT, "-o", "fox.png"]);
         if json_mode {
             iris.arg("--json");
         }
@@ -542,7 +580,17 @@ fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory(
     let child = sb
         .iris()
         .openai(&api)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+        ])
         .args(["-o", "out/pic.png", "--json"])
         .spawn();
     // The request is in flight, so preflight created out/: put a file in its place.
@@ -576,15 +624,15 @@ fn a_gemini_output_extension_is_flagged_as_the_providers_choice() {
     let api = MockApi::start();
     let image = jpeg(16, 16);
     let part = serde_json::json!([inline_part("image/jpeg", &image)]);
-    api.on("POST", &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL), gemini_parts(part));
+    api.on("POST", &gemini_generate_path(GEMINI_IMAGE_MODEL), gemini_parts(part));
     let run = |dry: bool| {
         let mut iris = sb.iris();
         iris.gemini(&api).args([
             "image",
             "generate",
+            "-m",
+            GEMINI_IMAGE_MODEL,
             PROMPT,
-            "--provider",
-            "gemini",
             "-o",
             "g.png",
             "--json",
@@ -630,7 +678,18 @@ fn a_missing_key_creates_no_output_directory() {
     for extra in [["-d", "newdir"], ["-o", "deep/er/x.png"]] {
         let out = sb
             .iris()
-            .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+            .args([
+                "image",
+                "generate",
+                "-m",
+                OPENAI_IMAGE_MODEL,
+                PROMPT,
+                "--size",
+                "1024x1024",
+                "--quality",
+                "low",
+                "--json",
+            ])
             .args(extra)
             .run();
         let v = out.err(3, "missing_credentials");
@@ -639,7 +698,10 @@ fn a_missing_key_creates_no_output_directory() {
     assert!(files_in(&sb.work()).is_empty(), "{:?}", files_in(&sb.work()));
 
     // A dry run needs no key and creates nothing either.
-    let out = sb.iris().args(["image", "generate", PROMPT, "-d", "planned", "--dry-run", "--json"]).run();
+    let out = sb
+        .iris()
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "-d", "planned", "--dry-run", "--json"])
+        .run();
     out.ok();
     assert!(files_in(&sb.work()).is_empty(), "{:?}", files_in(&sb.work()));
 }
@@ -654,7 +716,17 @@ fn openai_run(answer: impl wiremock::Respond + 'static, extra: &[&str]) -> (Sand
     let out = sb
         .iris()
         .openai(&api)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+        ])
         .args(extra)
         .arg("--json")
         .run();
@@ -665,11 +737,11 @@ fn openai_run(answer: impl wiremock::Respond + 'static, extra: &[&str]) -> (Sand
 fn gemini_run(answer: impl wiremock::Respond + 'static, extra: &[&str]) -> (Sandbox, MockApi, Out) {
     let sb = Sandbox::new();
     let api = MockApi::start();
-    api.on("POST", &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL), answer);
+    api.on("POST", &gemini_generate_path(GEMINI_IMAGE_MODEL), answer);
     let out = sb
         .iris()
         .gemini(&api)
-        .args(["image", "generate", PROMPT, "--provider", "gemini"])
+        .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, PROMPT])
         .args(extra)
         .arg("--json")
         .run();
@@ -854,7 +926,18 @@ fn a_response_slower_than_the_configured_timeout_is_submission_uncertain() {
     let out = sb
         .iris()
         .openai(&api)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "--json",
+        ])
         .arg("--config")
         .arg(&config)
         .run();
@@ -869,7 +952,7 @@ fn a_response_slower_than_the_configured_timeout_is_submission_uncertain() {
     // The same through the Gemini adapter.
     let sb = Sandbox::new();
     let api = MockApi::start();
-    let route = gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL);
+    let route = gemini_generate_path(GEMINI_IMAGE_MODEL);
     api.on(
         "POST",
         &route,
@@ -880,7 +963,7 @@ fn a_response_slower_than_the_configured_timeout_is_submission_uncertain() {
     let out = sb
         .iris()
         .gemini(&api)
-        .args(["image", "generate", PROMPT, "--provider", "gemini", "--json", "--config"])
+        .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, PROMPT, "--json", "--config"])
         .arg(&config)
         .run();
     let v = assert_uncertain(&out);
@@ -950,7 +1033,18 @@ fn a_connection_dropped_after_sending_is_submission_uncertain_not_a_timeout() {
         .iris()
         .env("IRIS_OPENAI_BASE_URL", format!("{origin}/v1"))
         .env("OPENAI_API_KEY", OPENAI_KEY)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "--json",
+        ])
         .run();
     let v = assert_uncertain(&out);
     assert_eq!(v["error"]["provider"], "openai");
@@ -966,7 +1060,7 @@ fn a_connection_dropped_after_sending_is_submission_uncertain_not_a_timeout() {
         .iris()
         .env("IRIS_GEMINI_BASE_URL", &origin)
         .env("GEMINI_API_KEY", GEMINI_KEY)
-        .args(["image", "generate", PROMPT, "--provider", "gemini", "--json"])
+        .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, PROMPT, "--json"])
         .run();
     let v = assert_uncertain(&out);
     assert_eq!(v["error"]["provider"], "gemini");
@@ -986,7 +1080,18 @@ fn ctrl_c_during_a_paid_image_call_exits_130_and_is_not_retryable() {
     let child = sb
         .iris()
         .openai(&api)
-        .args(["image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "--json",
+        ])
         .spawn();
     // The request was received, so the Ctrl-C handler is installed and the call is in flight.
     api.wait_for("POST", OPENAI_GENERATIONS, 1, std::time::Duration::from_secs(30));
@@ -1014,7 +1119,19 @@ fn verbose_image_runs_never_reveal_the_key_or_signed_urls() {
         .iris()
         .openai(&api)
         .env("GEMINI_API_KEY", GEMINI_KEY)
-        .args(["-vv", "image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .args([
+            "-vv",
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "--json",
+        ])
         .run();
     out.ok();
     assert!(out.stderr.contains("http response"), "-vv logs request metadata: {}", out.stderr);
@@ -1039,7 +1156,19 @@ fn verbose_image_runs_never_reveal_the_key_or_signed_urls() {
     let out = sb
         .iris()
         .openai(&api)
-        .args(["-vv", "image", "generate", PROMPT, "--size", "1024x1024", "--quality", "low", "--json"])
+        .args([
+            "-vv",
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+            "--json",
+        ])
         .run();
     // Exit 2 here is a request the provider refused outright (sent, rejected, not
     // charged), not a local validation failure: `provider_status` tells them apart.

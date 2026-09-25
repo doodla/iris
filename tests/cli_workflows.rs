@@ -55,7 +55,18 @@ fn paths_of(v: &Value) -> Vec<String> {
 async fn image_generate_json_prints_exactly_one_envelope_and_progress_on_stderr() {
     let f = Fixture::new();
     let out = f.sandbox.path("fox.png");
-    let run = f.run(&["image", "generate", "a watercolor fox", "-o", out.to_str().unwrap(), "--json"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "a watercolor fox",
+            "-o",
+            out.to_str().unwrap(),
+            "--json",
+        ])
+        .await;
     assert_eq!(run.code, 0, "{run:?}");
     let v = run.json();
     assert_eq!(v["schema_version"], 1);
@@ -74,7 +85,21 @@ async fn image_generate_json_prints_exactly_one_envelope_and_progress_on_stderr(
 async fn human_output_lists_saved_paths_on_stdout_and_quiet_silences_progress() {
     let f = Fixture::new();
     f.openai.images().push(Ok(image_output(vec![png(4, 4), png(4, 4)])));
-    let run = f.run(&["image", "generate", "a fox", "--count", "2", "--quality", "low", "-d", "pics"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "a fox",
+            "--count",
+            "2",
+            "--quality",
+            "low",
+            "-d",
+            "pics",
+        ])
+        .await;
     assert_eq!(run.code, 0, "{run:?}");
     let lines: Vec<&str> = run.stdout.lines().collect();
     assert_eq!(lines.len(), 2, "{}", run.stdout);
@@ -85,7 +110,7 @@ async fn human_output_lists_saved_paths_on_stdout_and_quiet_silences_progress() 
     }
     assert!(run.stderr.contains("Estimated cost: ~$0.0200"), "{}", run.stderr);
 
-    let quiet = f.run(&["-q", "image", "generate", "a fox"]).await;
+    let quiet = f.run(&["-q", "image", "generate", "-m", "fake-image-1", "a fox"]).await;
     assert_eq!(quiet.code, 0);
     assert!(!quiet.stderr.contains("Requesting"), "{}", quiet.stderr);
 }
@@ -93,7 +118,7 @@ async fn human_output_lists_saved_paths_on_stdout_and_quiet_silences_progress() 
 #[tokio::test]
 async fn prompt_sources_are_exclusive_and_validated() {
     let f = Fixture::new();
-    let run = f.run(&["image", "generate", "--json"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "--json"]).await;
     assert_eq!(run.code, 2);
     let v = run.json();
     assert_eq!(v["error"]["code"], "usage_error");
@@ -101,70 +126,118 @@ async fn prompt_sources_are_exclusive_and_validated() {
 
     let file = f.sandbox.path("prompt.txt");
     std::fs::write(&file, "a fox from a file\n\n").unwrap();
-    let run = f.run(&["image", "generate", "inline", "-f", file.to_str().unwrap(), "--json"]).await;
+    let run = f
+        .run(&["image", "generate", "-m", "fake-image-1", "inline", "-f", file.to_str().unwrap(), "--json"])
+        .await;
     assert_eq!(run.error_code(), "usage_error");
 
-    let run = f.run(&["image", "generate", "-f", file.to_str().unwrap(), "--json"]).await;
+    let run =
+        f.run(&["image", "generate", "-m", "fake-image-1", "-f", file.to_str().unwrap(), "--json"]).await;
     assert_eq!(run.code, 0, "{run:?}");
     let req = f.openai.images().last_request.lock().unwrap().clone().unwrap();
     assert_eq!(req.prompt, "a fox from a file", "trailing newlines trimmed");
 
     let bad = f.sandbox.path("bad.txt");
     std::fs::write(&bad, [0xff, 0xfe, 0x00]).unwrap();
-    let run = f.run(&["image", "generate", "-f", bad.to_str().unwrap(), "--json"]).await;
+    let run =
+        f.run(&["image", "generate", "-m", "fake-image-1", "-f", bad.to_str().unwrap(), "--json"]).await;
     assert_eq!(run.error_code(), "invalid_argument");
 
-    let run =
-        f.run(&["image", "generate", "-f", f.sandbox.path("missing.txt").to_str().unwrap(), "--json"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "-f",
+            f.sandbox.path("missing.txt").to_str().unwrap(),
+            "--json",
+        ])
+        .await;
     assert_eq!(run.error_code(), "input_file_invalid");
 
     let mut setup = f.setup();
     setup.stdin = b"from stdin \n".to_vec();
-    let run = run_cli(setup, &["image", "generate", "--prompt-stdin", "--json"]).await;
+    let run = run_cli(setup, &["image", "generate", "-m", "fake-image-1", "--prompt-stdin", "--json"]).await;
     assert_eq!(run.code, 0, "{run:?}");
     assert_eq!(f.openai.images().last_request.lock().unwrap().clone().unwrap().prompt, "from stdin");
 
     let mut setup = f.setup();
     setup.stdin_is_tty = true;
-    let run = run_cli(setup, &["image", "generate", "--prompt-stdin", "--json"]).await;
+    let run = run_cli(setup, &["image", "generate", "-m", "fake-image-1", "--prompt-stdin", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error");
 
-    let run = f.run(&["image", "generate", "   ", "--json"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "   ", "--json"]).await;
     assert_eq!(run.error_code(), "invalid_argument");
 }
 
 #[tokio::test]
 async fn option_flags_map_to_catalog_options_and_are_rejected_when_undeclared() {
     let f = Fixture::new();
-    let run = f.run(&["image", "generate", "x", "--aspect-ratio", "16:9", "--json"]).await;
+    let run =
+        f.run(&["image", "generate", "-m", "fake-image-1", "x", "--aspect-ratio", "16:9", "--json"]).await;
     assert_eq!(run.code, 2);
     let v = run.json();
     assert_eq!(v["error"]["code"], "unsupported_option");
     assert!(v["error"]["message"].as_str().unwrap().contains("--aspect-ratio"), "{v}");
     // Video-only flags do not exist on image commands (and vice versa).
-    let run = f.run(&["image", "generate", "x", "--duration", "4", "--json"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "x", "--duration", "4", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error");
-    let run = f.run(&["video", "generate", "x", "--quality", "low", "--json"]).await;
+    let run = f.run(&["video", "generate", "-m", "fake-video-1", "x", "--quality", "low", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error");
 
-    let run = f.run(&["image", "generate", "x", "-O", "nope=1", "--json"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "x", "-O", "nope=1", "--json"]).await;
     assert_eq!(run.error_code(), "unsupported_option");
-    let run = f.run(&["image", "generate", "x", "-O", "nope", "--json"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "x", "-O", "nope", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error", "= is required");
-    let run = f.run(&["image", "generate", "x", "--quality", "low", "-O", "quality=high", "--json"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "x",
+            "--quality",
+            "low",
+            "-O",
+            "quality=high",
+            "--json",
+        ])
+        .await;
     assert_eq!(run.error_code(), "usage_error", "typed flag and -O for one option");
     let run = f
-        .run(&["image", "generate", "x", "-O", "background=opaque", "-O", "background=auto", "--json"])
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "x",
+            "-O",
+            "background=opaque",
+            "-O",
+            "background=auto",
+            "--json",
+        ])
         .await;
     assert_eq!(run.error_code(), "invalid_argument", "duplicate -O");
-    let run = f.run(&["image", "generate", "x", "--quality", "ultra", "--json"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "x", "--quality", "ultra", "--json"]).await;
     assert_eq!(run.error_code(), "invalid_argument");
-    let run = f.run(&["image", "generate", "x", "--provider", "acme", "--json"]).await;
-    assert_eq!(run.error_code(), "unknown_provider");
     assert_eq!(f.image_calls(), 0, "nothing was sent");
 
-    let run =
-        f.run(&["image", "generate", "x", "--size", "64x32", "-O", "background=transparent", "--json"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "x",
+            "--size",
+            "64x32",
+            "-O",
+            "background=transparent",
+            "--json",
+        ])
+        .await;
     assert_eq!(run.code, 0, "{run:?}");
     let req = f.openai.images().last_request.lock().unwrap().clone().unwrap();
     let opts: Vec<(String, String)> = req.options.iter().map(|(k, v)| (k.clone(), v.to_string())).collect();
@@ -180,20 +253,23 @@ async fn option_flags_map_to_catalog_options_and_are_rejected_when_undeclared() 
 async fn output_to_standard_output_is_refused_with_a_hint() {
     let f = Fixture::new();
     for extra in [&["--dry-run"][..], &[]] {
-        let args = [&["image", "generate", "x", "-o", "-", "--json"][..], extra].concat();
+        let args =
+            [&["image", "generate", "-m", "fake-image-1", "x", "-o", "-", "--json"][..], extra].concat();
         let run = f.run(&args).await;
         assert_eq!(run.code, 2, "{run:?}");
         let v = run.json();
         assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
         assert!(v["error"]["hint"].as_str().unwrap().contains("prints their paths"), "{v}");
     }
-    let run = f.run(&["video", "generate", "x", "-o", "-", "--dry-run", "--json"]).await;
+    let run =
+        f.run(&["video", "generate", "-m", "fake-video-1", "x", "-o", "-", "--dry-run", "--json"]).await;
     assert_eq!(run.error_code(), "invalid_argument");
     assert_eq!(f.image_calls(), 0);
     assert!(!f.sandbox.work().join("-").exists());
 
     // `./-` is the usual way to name a file called `-`, and names one here too.
-    let run = f.run(&["image", "generate", "x", "-o", "./-", "--dry-run", "--json"]).await;
+    let run =
+        f.run(&["image", "generate", "-m", "fake-image-1", "x", "-o", "./-", "--dry-run", "--json"]).await;
     assert_eq!(run.code, 0, "{run:?}");
     assert_eq!(run.json()["result"]["outputs"][0], f.sandbox.path("-.png").to_str().unwrap());
 }
@@ -201,14 +277,15 @@ async fn output_to_standard_output_is_refused_with_a_hint() {
 #[tokio::test]
 async fn clap_usage_errors_become_json_envelopes() {
     let f = Fixture::new();
-    let run = f.run(&["image", "generate", "x", "-o", "a.png", "-d", "dir", "--json"]).await;
+    let run =
+        f.run(&["image", "generate", "-m", "fake-image-1", "x", "-o", "a.png", "-d", "dir", "--json"]).await;
     assert_eq!(run.code, 2);
     let v = run.json();
     assert_eq!(v["command"], "image.generate");
     assert_eq!(v["error"]["code"], "usage_error");
     assert_eq!(v["error"]["category"], "usage");
 
-    let run = f.run(&["--json", "image", "generate", "x", "--bogus"]).await;
+    let run = f.run(&["--json", "image", "generate", "-m", "fake-image-1", "x", "--bogus"]).await;
     assert_eq!(run.error_code(), "usage_error");
 
     let run = f.run(&["nonsense", "--json"]).await;
@@ -216,16 +293,18 @@ async fn clap_usage_errors_become_json_envelopes() {
     let v = run.json();
     assert!(v["command"].is_null());
 
-    let run = f.run(&["image", "edit", "x", "--json"]).await;
+    let run = f.run(&["image", "edit", "-m", "fake-image-1", "x", "--json"]).await;
     assert_eq!(run.error_code(), "usage_error", "edit requires --image");
     let message = run.json()["error"]["message"].as_str().unwrap().to_string();
     assert!(message.contains("--image <PATH>"), "the message names the missing argument: {message}");
 
-    let run = f.run(&["video", "generate", "x", "--detach", "--timeout", "5m", "--json"]).await;
+    let run = f
+        .run(&["video", "generate", "-m", "fake-video-1", "x", "--detach", "--timeout", "5m", "--json"])
+        .await;
     assert_eq!(run.error_code(), "usage_error");
 
     // Without --json, clap's own message goes to stderr with exit 2.
-    let run = f.run(&["image", "generate", "--bogus"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "--bogus"]).await;
     assert_eq!(run.code, 2);
     assert!(run.stdout.is_empty());
     assert!(run.stderr.contains("--bogus"), "{}", run.stderr);
@@ -284,7 +363,8 @@ async fn help_and_version_have_json_forms() {
 #[tokio::test]
 async fn video_detach_prints_the_job_id_and_follow_up_commands() {
     let f = Fixture::new();
-    let run = f.run(&["video", "generate", "waves", "--duration", "4", "--detach"]).await;
+    let run =
+        f.run(&["video", "generate", "-m", "fake-video-1", "waves", "--duration", "4", "--detach"]).await;
     assert_eq!(run.code, 0, "{run:?}");
     let first = run.stdout.lines().next().unwrap();
     assert!(first.starts_with("Submitted job job_") && first.contains("running"), "{}", run.stdout);
@@ -293,7 +373,7 @@ async fn video_detach_prints_the_job_id_and_follow_up_commands() {
     assert!(run.stdout.contains(&format!("Next: iris jobs wait {id}")));
     assert!(run.stderr.contains("preview model"), "{}", run.stderr);
 
-    let run = f.run(&["video", "generate", "waves", "--detach", "--json"]).await;
+    let run = f.run(&["video", "generate", "-m", "fake-video-1", "waves", "--detach", "--json"]).await;
     let v = run.json();
     assert_eq!(v["command"], "video.generate");
     assert_eq!(v["result"]["job"]["status"], "running");
@@ -317,7 +397,11 @@ async fn video_generate_waits_and_saves_through_the_cli() {
     f.gemini.videos().push_poll(Ok(remote_success(&format!("{}/v1beta/files/vid:download", server.uri()))));
     let env = f.sandbox.env().with_var("IRIS_GEMINI_BASE_URL", &server.uri());
     let setup = CliSetup::new(env, vec![f.gemini.clone()]);
-    let run = run_cli(setup, &["video", "generate", "boat", "-o", "boat.mp4", "--poll-interval", "2s"]).await;
+    let run = run_cli(
+        setup,
+        &["video", "generate", "-m", "fake-video-1", "boat", "-o", "boat.mp4", "--poll-interval", "2s"],
+    )
+    .await;
     assert_eq!(run.code, 0, "{run:?}");
     assert_eq!(run.stdout, format!("Saved {}\n", f.sandbox.path("boat.mp4").display()));
     assert!(run.stderr.contains("succeeded"), "{}", run.stderr);
@@ -326,28 +410,43 @@ async fn video_generate_waits_and_saves_through_the_cli() {
 #[tokio::test]
 async fn dry_run_plans_show_the_effective_options_including_defaults() {
     let f = Fixture::new();
-    let run = f.run(&["video", "generate", "waves", "--duration", "4", "--dry-run", "--json"]).await;
+    let run = f
+        .run(&["video", "generate", "-m", "fake-video-1", "waves", "--duration", "4", "--dry-run", "--json"])
+        .await;
     let v = run.json();
     assert_eq!(v["result"]["options"]["duration"], "4");
     assert_eq!(v["result"]["options"]["resolution"], "720p", "{v}");
-    let run = f.run(&["video", "generate", "waves", "--dry-run"]).await;
+    let run = f.run(&["video", "generate", "-m", "fake-video-1", "waves", "--dry-run"]).await;
     assert!(run.stdout.contains("duration=8") && run.stdout.contains("resolution=720p"), "{}", run.stdout);
 }
 
 #[tokio::test]
 async fn wait_limits_exit_4_and_bad_durations_are_invalid_arguments() {
     let f = Fixture::new();
-    let run =
-        f.run(&["video", "generate", "slow", "--timeout", "1", "--poll-interval", "2s", "--json"]).await;
+    let run = f
+        .run(&[
+            "video",
+            "generate",
+            "-m",
+            "fake-video-1",
+            "slow",
+            "--timeout",
+            "1",
+            "--poll-interval",
+            "2s",
+            "--json",
+        ])
+        .await;
     assert_eq!(run.code, 4, "{run:?}");
     let v = run.json();
     assert_eq!(v["error"]["code"], "wait_timeout");
     assert_eq!(v["error"]["job_status"], "running");
     assert!(v["error"]["job_id"].as_str().unwrap().starts_with("job_"));
 
-    let run = f.run(&["video", "generate", "x", "--poll-interval", "1s", "--json"]).await;
+    let run =
+        f.run(&["video", "generate", "-m", "fake-video-1", "x", "--poll-interval", "1s", "--json"]).await;
     assert_eq!(run.error_code(), "invalid_argument");
-    let run = f.run(&["video", "generate", "x", "--timeout", "soon", "--json"]).await;
+    let run = f.run(&["video", "generate", "-m", "fake-video-1", "x", "--timeout", "soon", "--json"]).await;
     assert_eq!(run.code, 2);
     let v = run.json();
     assert_eq!(v["error"]["code"], "invalid_argument");
@@ -358,7 +457,7 @@ async fn wait_limits_exit_4_and_bad_durations_are_invalid_arguments() {
 #[tokio::test]
 async fn jobs_commands_list_show_and_delete_local_records() {
     let f = Fixture::new();
-    let v = f.run(&["video", "generate", "x", "--detach", "--json"]).await.json();
+    let v = f.run(&["video", "generate", "-m", "fake-video-1", "x", "--detach", "--json"]).await.json();
     let id = v["result"]["job"]["job_id"].as_str().unwrap().to_string();
 
     let run = f.run(&["jobs", "list"]).await;
@@ -532,7 +631,8 @@ async fn invalid_configuration_is_config_invalid_but_doctor_still_reports() {
 #[tokio::test]
 async fn doctor_check_ids_are_unique_and_access_means_visible_to_the_key() {
     let f = Fixture::new();
-    // Gemini has two default models in the fake catalog (image and video): one check each.
+    // One check per catalog model of a provider whose key is set: the fake catalog has
+    // one OpenAI model and two Gemini models (image and video).
     let run = f.run(&["doctor", "--check-access", "--json"]).await;
     assert_eq!(run.code, 0);
     let v = run.json();
@@ -589,35 +689,6 @@ async fn doctor_check_ids_are_unique_and_access_means_visible_to_the_key() {
 }
 
 #[tokio::test]
-async fn doctor_reports_a_configured_default_model_the_catalog_does_not_know() {
-    let f = Fixture::new();
-    // The configuration accepts a built-in id, but this run's catalog (the fake one)
-    // does not know it: every command without --model would fail on it, so doctor
-    // names it in an error check instead of silently checking another model.
-    let config = f.sandbox.path("iris.toml");
-    std::fs::write(&config, "[providers.openai]\nimage_model = \"gpt-image-2\"\n").unwrap();
-    let run = f.run(&["doctor", "--config", config.to_str().unwrap(), "--check-access", "--json"]).await;
-    assert_eq!(run.code, 0, "{run:?}");
-    let v = run.json();
-    assert_eq!(v["result"]["healthy"], false, "{v}");
-    let checks = v["result"]["checks"].as_array().unwrap();
-    let access: Vec<&Value> =
-        checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")).collect();
-    let ids: Vec<&str> = access.iter().map(|c| c["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["access.openai", "access.gemini.fake-gemini-image", "access.gemini.fake-video-1"]);
-    assert_eq!(access[0]["status"], "error");
-    let message = access[0]["message"].as_str().unwrap();
-    assert!(message.contains("'gpt-image-2' (providers.openai.image_model) is not known"), "{message}");
-    assert_eq!(message.matches("gpt-image-2").count(), 1, "named once for generate and edit: {message}");
-    assert_eq!(f.openai.access_calls.load(Ordering::SeqCst), 0, "no other openai model was checked instead");
-    assert_eq!(f.gemini.access_calls.load(Ordering::SeqCst), 2);
-
-    // The commands fail on the same setting.
-    let run = f.run(&["--config", config.to_str().unwrap(), "image", "generate", "x", "--json"]).await;
-    assert_eq!(run.error_code(), "unknown_model");
-}
-
-#[tokio::test]
 async fn schema_and_completions_are_printed_raw_without_json() {
     let f = Fixture::new();
     let run = f.run(&["schema"]).await;
@@ -646,7 +717,19 @@ async fn dry_run_plans_through_the_cli_need_no_credentials() {
     let setup = CliSetup::new(f.sandbox.env_without_keys(), vec![f.openai.clone(), f.gemini.clone()]);
     let run = run_cli(
         setup,
-        &["image", "generate", "x", "--quality", "low", "-o", "p.webp", "--dry-run", "--json"],
+        &[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "x",
+            "--quality",
+            "low",
+            "-o",
+            "p.webp",
+            "--dry-run",
+            "--json",
+        ],
     )
     .await;
     assert_eq!(run.code, 0, "{run:?}");
@@ -659,11 +742,11 @@ async fn dry_run_plans_through_the_cli_need_no_credentials() {
     assert_eq!(plan["outputs"][0], f.sandbox.path("p.webp").to_str().unwrap());
     assert_eq!(f.image_calls(), 0);
 
-    let run = f.run(&["image", "generate", "x", "--dry-run"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-image-1", "x", "--dry-run"]).await;
     assert!(run.stdout.starts_with("Dry run: nothing was sent"), "{}", run.stdout);
 
     let setup = CliSetup::new(f.sandbox.env_without_keys(), vec![f.openai.clone()]);
-    let run = run_cli(setup, &["image", "generate", "x", "--json"]).await;
+    let run = run_cli(setup, &["image", "generate", "-m", "fake-image-1", "x", "--json"]).await;
     assert_eq!(run.code, 3);
     assert_eq!(run.error_code(), "missing_credentials");
 }
@@ -682,7 +765,10 @@ async fn borrowed_capabilities_come_without_the_templates_prices() {
     };
 
     // The template would estimate this request ($0.01 with an explicit quality).
-    let template = f.run(&["image", "generate", "x", "--quality", "low", "--dry-run", "--json"]).await.json();
+    let template = f
+        .run(&["image", "generate", "-m", "fake-image-1", "x", "--quality", "low", "--dry-run", "--json"])
+        .await
+        .json();
     assert!(template["result"]["cost_estimate"]["amount"].is_number(), "{template}");
 
     let args = [
@@ -760,22 +846,30 @@ async fn input_rules_fail_dry_runs_and_come_before_the_credential_check() {
 
     let cases: [(&[&str], &str, &str); 5] = [
         (
-            &["image", "edit", "-i", "a.png", "--mask", "mask.jpg", "x"],
+            &["image", "edit", "-m", "fake-image-1", "-i", "a.png", "--mask", "mask.jpg", "x"],
             "input_file_invalid",
             "accepts image/png",
         ),
         (
-            &["image", "edit", "-i", "a.png", "--mask", "opaque.png", "x"],
+            &["image", "edit", "-m", "fake-image-1", "-i", "a.png", "--mask", "opaque.png", "x"],
             "input_file_invalid",
             "no alpha channel",
         ),
-        (&["image", "edit", "-i", "a.png", "--mask", "small.png", "x"], "input_file_invalid", "4x4"),
         (
-            &["image", "edit", "--provider", "gemini", "-i", "noise.png", "x"],
+            &["image", "edit", "-m", "fake-image-1", "-i", "a.png", "--mask", "small.png", "x"],
+            "input_file_invalid",
+            "4x4",
+        ),
+        (
+            &["image", "edit", "-m", "fake-gemini-image", "-i", "noise.png", "x"],
             "invalid_argument",
             "at most 100000 bytes",
         ),
-        (&["video", "generate", "x", "--image", "noise.png"], "invalid_argument", "at most 100000 bytes"),
+        (
+            &["video", "generate", "-m", "fake-video-1", "x", "--image", "noise.png"],
+            "invalid_argument",
+            "at most 100000 bytes",
+        ),
     ];
     for (args, code, needle) in cases {
         for (keys, dry_run) in [(true, true), (false, true), (false, false)] {
@@ -797,7 +891,21 @@ async fn input_rules_fail_dry_runs_and_come_before_the_credential_check() {
     assert!(!f.sandbox.state().join("jobs").exists() || files_in(&f.sandbox.state().join("jobs")).is_empty());
 
     // Within the rules, the same inputs pass.
-    let run = f.run(&["image", "edit", "-i", "a.png", "--mask", "a.png", "x", "--dry-run", "--json"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "edit",
+            "-m",
+            "fake-image-1",
+            "-i",
+            "a.png",
+            "--mask",
+            "a.png",
+            "x",
+            "--dry-run",
+            "--json",
+        ])
+        .await;
     assert_eq!(run.code, 0, "{}", run.stdout);
 }
 
@@ -809,7 +917,7 @@ async fn a_format_contradicting_the_output_extension_names_the_flag_given() {
         [(&["-O", "format=jpeg"][..], "-O format=jpeg"), (&["--format", "jpeg"], "--format jpeg")]
     {
         for dry_run in [true, false] {
-            let mut argv = vec!["image", "generate", "x", "-o", "a.png", "--json"];
+            let mut argv = vec!["image", "generate", "-m", "fake-image-1", "x", "-o", "a.png", "--json"];
             argv.extend_from_slice(args);
             if dry_run {
                 argv.push("--dry-run");
@@ -825,7 +933,19 @@ async fn a_format_contradicting_the_output_extension_names_the_flag_given() {
     }
     let run = run_cli(
         setup(),
-        &["image", "generate", "x", "-o", "a.jpg", "-O", "format=jpeg", "--dry-run", "--json"],
+        &[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "x",
+            "-o",
+            "a.jpg",
+            "-O",
+            "format=jpeg",
+            "--dry-run",
+            "--json",
+        ],
     )
     .await;
     assert_eq!(run.code, 0, "{}", run.stdout);
@@ -835,18 +955,27 @@ async fn a_format_contradicting_the_output_extension_names_the_flag_given() {
 #[tokio::test]
 async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() {
     let f = Fixture::new();
-    let v = f.run(&["image", "generate", "x", "-o", "../up/./x.png", "--dry-run", "--json"]).await.json();
+    let v = f
+        .run(&["image", "generate", "-m", "fake-image-1", "x", "-o", "../up/./x.png", "--dry-run", "--json"])
+        .await
+        .json();
     let parent = f.sandbox.work().parent().unwrap().to_path_buf();
     assert_eq!(v["result"]["outputs"][0], parent.join("up").join("x.png").to_str().unwrap(), "{v}");
 
     // Default image names carry a fresh id per plan (indicative); video plans show a placeholder.
-    let v = f.run(&["image", "generate", "x", "-d", "a/../out", "--dry-run", "--json"]).await.json();
+    let v = f
+        .run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "a/../out", "--dry-run", "--json"])
+        .await
+        .json();
     let planned = v["result"]["outputs"][0].as_str().unwrap().to_string();
     assert!(planned.starts_with(f.sandbox.path("out").join("iris-").to_str().unwrap()), "{planned}");
-    let v = f.run(&["video", "generate", "x", "--dry-run", "--json"]).await.json();
+    let v = f.run(&["video", "generate", "-m", "fake-video-1", "x", "--dry-run", "--json"]).await.json();
     assert_eq!(v["result"]["outputs"][0], f.sandbox.path("<job_id>.mp4").to_str().unwrap(), "{v}");
     // The placeholder path of a video plan is normalized like every other planned path.
-    let v = f.run(&["video", "generate", "x", "-d", "a/../out", "--dry-run", "--json"]).await.json();
+    let v = f
+        .run(&["video", "generate", "-m", "fake-video-1", "x", "-d", "a/../out", "--dry-run", "--json"])
+        .await
+        .json();
     let expected = f.sandbox.path("out").join("<job_id>.mp4");
     assert_eq!(v["result"]["outputs"][0], expected.to_str().unwrap(), "{v}");
 }
@@ -857,11 +986,11 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
     let afile = f.sandbox.path("afile");
     std::fs::write(&afile, b"not a directory").unwrap();
     for args in [
-        &["image", "generate", "x", "-d", "afile/sub", "--json"][..],
-        &["image", "generate", "x", "-o", "afile/x.png", "--json"],
-        &["image", "generate", "x", "-o", "afile/x.png", "--dry-run", "--json"],
-        &["video", "generate", "x", "-d", "afile/sub", "--json"],
-        &["video", "generate", "x", "-o", "afile/x.mp4", "--detach", "--json"],
+        &["image", "generate", "-m", "fake-image-1", "x", "-d", "afile/sub", "--json"][..],
+        &["image", "generate", "-m", "fake-image-1", "x", "-o", "afile/x.png", "--json"],
+        &["image", "generate", "-m", "fake-image-1", "x", "-o", "afile/x.png", "--dry-run", "--json"],
+        &["video", "generate", "-m", "fake-video-1", "x", "-d", "afile/sub", "--json"],
+        &["video", "generate", "-m", "fake-video-1", "x", "-o", "afile/x.mp4", "--detach", "--json"],
     ] {
         let run = f.run(args).await;
         assert_eq!(run.code, 2, "{args:?}: {}", run.stdout);
@@ -874,7 +1003,10 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
 
     // A directory that cannot be created (Linux refuses new entries in /proc).
     if cfg!(target_os = "linux") {
-        let v = f.run(&["image", "generate", "x", "-d", "/proc/iris-nope/sub", "--json"]).await.json();
+        let v = f
+            .run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "/proc/iris-nope/sub", "--json"])
+            .await
+            .json();
         assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
         assert_eq!(v["error"]["details"]["path"], "/proc/iris-nope/sub");
     }
@@ -885,7 +1017,10 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
     std::fs::create_dir(&locked).unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
     if std::fs::create_dir(locked.join("probe")).is_err() {
-        let v = f.run(&["image", "generate", "x", "-d", "locked/sub", "--json"]).await.json();
+        let v = f
+            .run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "locked/sub", "--json"])
+            .await
+            .json();
         assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
         assert_eq!(v["error"]["details"]["path"], locked.join("sub").to_str().unwrap());
     }
@@ -911,7 +1046,7 @@ async fn human_text_says_where_model_text_is_and_completion_only_for_reported_ou
         output
     };
     f.gemini.images().push(Ok(text_output()));
-    let run = f.run(&["image", "generate", "x", "--provider", "gemini"]).await;
+    let run = f.run(&["image", "generate", "-m", "fake-gemini-image", "x"]).await;
     assert_eq!(run.code, 0, "{run:?}");
     assert!(
         run.stderr.contains("warning[provider_text_output]: the model also returned text"),
@@ -921,7 +1056,7 @@ async fn human_text_says_where_model_text_is_and_completion_only_for_reported_ou
     assert!(!run.stderr.contains("`text` field"), "{}", run.stderr);
     assert!(run.stderr.contains("Model text: a short caption"), "{}", run.stderr);
     f.gemini.images().push(Ok(text_output()));
-    let v = f.run(&["image", "generate", "x", "--provider", "gemini", "--json"]).await.json();
+    let v = f.run(&["image", "generate", "-m", "fake-gemini-image", "x", "--json"]).await.json();
     assert_eq!(v["result"]["text"], "a short caption");
     assert!(v["warnings"][0]["message"].as_str().unwrap().contains("`text` field"), "{v}");
 
@@ -930,14 +1065,14 @@ async fn human_text_says_where_model_text_is_and_completion_only_for_reported_ou
         iris::error::ErrorCode::SubmissionUncertain,
         "no answer",
     )));
-    let v = f.run(&["video", "generate", "boat", "--json"]).await.json();
+    let v = f.run(&["video", "generate", "-m", "fake-video-1", "boat", "--json"]).await.json();
     let id = v["error"]["job_id"].as_str().unwrap().to_string();
     let run = f.run(&["jobs", "status", &id, "--no-refresh"]).await;
     assert!(run.stdout.contains(" submission_unknown\n"), "{}", run.stdout);
     assert!(!run.stdout.contains("completed:"), "{}", run.stdout);
 
     // A running job has none either; a succeeded one does.
-    let v = f.run(&["video", "generate", "boat", "--detach", "--json"]).await.json();
+    let v = f.run(&["video", "generate", "-m", "fake-video-1", "boat", "--detach", "--json"]).await.json();
     let id = v["result"]["job"]["job_id"].as_str().unwrap().to_string();
     f.gemini.videos().push_poll(Ok(iris::providers::RemoteStatus::Running { progress: None }));
     let run = f.run(&["jobs", "status", &id]).await;
@@ -956,7 +1091,9 @@ async fn human_text_says_where_model_text_is_and_completion_only_for_reported_ou
 async fn human_errors_still_list_images_saved_before_the_failure() {
     let f = Fixture::new();
     f.openai.images().push(Ok(image_output(vec![png(4, 4), b"not an image".to_vec()])));
-    let run = f.run(&["image", "generate", "two foxes", "--count", "2", "-o", "fox.png"]).await;
+    let run = f
+        .run(&["image", "generate", "-m", "fake-image-1", "two foxes", "--count", "2", "-o", "fox.png"])
+        .await;
     assert_ne!(run.code, 0, "{run:?}");
     let first = f.sandbox.path("fox-1.png");
     assert!(first.is_file());
@@ -965,7 +1102,20 @@ async fn human_errors_still_list_images_saved_before_the_failure() {
 
     // The same failure in JSON mode lists them in details.saved.
     f.openai.images().push(Ok(image_output(vec![png(4, 4), b"not an image".to_vec()])));
-    let run = f.run(&["image", "generate", "two foxes", "--count", "2", "-d", "more", "--json"]).await;
+    let run = f
+        .run(&[
+            "image",
+            "generate",
+            "-m",
+            "fake-image-1",
+            "two foxes",
+            "--count",
+            "2",
+            "-d",
+            "more",
+            "--json",
+        ])
+        .await;
     let v = run.json();
     assert_eq!(v["error"]["details"]["saved"].as_array().unwrap().len(), 1, "{v}");
 }

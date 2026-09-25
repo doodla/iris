@@ -127,7 +127,6 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     aliases: &["fake-img"],
     lifecycle: Lifecycle::Ga,
     operations: IMAGE_OPS,
-    default_for: IMAGE_OPS,
     inputs: InputSpec {
         max_input_images: 2,
         input_media_types: &["image/png", "image/jpeg", "image/webp"],
@@ -192,7 +191,6 @@ pub static FAKE_GEMINI_IMAGE: ModelSpec = ModelSpec {
     aliases: &[],
     lifecycle: Lifecycle::Ga,
     operations: IMAGE_OPS,
-    default_for: IMAGE_OPS,
     inputs: InputSpec {
         max_input_images: 3,
         input_media_types: &["image/png", "image/jpeg"],
@@ -283,7 +281,6 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
     aliases: &["fake-vid"],
     lifecycle: Lifecycle::Preview,
     operations: VIDEO_OPS,
-    default_for: VIDEO_OPS,
     inputs: InputSpec {
         max_input_images: 0,
         input_media_types: &["image/png", "image/jpeg"],

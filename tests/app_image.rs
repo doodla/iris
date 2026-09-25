@@ -10,17 +10,23 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use iris::app::image::{self, ImageArgs};
-use iris::app::{GenerationArgs, GenerationOutcome, Interrupt};
-use iris::catalog::{OptionSource, OptionValue, RawOption};
-use iris::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
+use iris::app::{AppContext, Catalog, GenerationArgs, GenerationOutcome, Interrupt, Progress};
+use iris::catalog::{ModelSpec, OptionSource, OptionValue, RawOption};
+use iris::config::{Resolved, SettingSource};
+use iris::domain::{ModelSource, Operation, ProviderId, Usage, Warning, WarningCode};
 use iris::error::{ErrorCode, IrisError};
 use iris::output::results::{ImageResult, PlanResult};
 use iris::providers::{GeneratedImage, ImageFailure, ImageOutput, UnusableOutput};
 use support::*;
 
+/// A request for the OpenAI-like fake model (`-m fake-image-1`).
 fn args(prompt: &str) -> ImageArgs {
     ImageArgs {
-        common: GenerationArgs { prompt: prompt.to_string(), ..GenerationArgs::default() },
+        common: GenerationArgs {
+            prompt: prompt.to_string(),
+            model: Some("fake-image-1".into()),
+            ..GenerationArgs::default()
+        },
         ..ImageArgs::default()
     }
 }
@@ -193,7 +199,7 @@ async fn unsupported_and_invalid_options_fail_locally_with_the_flag_named() {
     let input = f.sandbox.path("in.png");
     std::fs::write(&input, png(4, 4)).unwrap();
     let mut a = args("x");
-    a.common.provider = Some(ProviderId::Gemini);
+    a.common.model = Some("fake-gemini-image".into());
     a.images = vec![input.clone()];
     a.mask = Some(input);
     let (r, _) = f.run(Operation::ImageEdit, a).await;
@@ -280,7 +286,7 @@ async fn output_extension_selects_the_format_and_a_different_returned_type_is_ke
 
     // A model without `format` returns JPEG for photo.png: saved as photo.jpg.
     let mut a = args("x");
-    a.common.provider = Some(ProviderId::Gemini);
+    a.common.model = Some("fake-gemini-image".into());
     a.common.output = Some(f.sandbox.path("gem.png"));
     f.gemini.images().push(Ok(image_output(vec![jpeg(8, 8)])));
     let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
@@ -306,9 +312,9 @@ async fn output_extension_selects_the_format_and_a_different_returned_type_is_ke
 #[tokio::test]
 async fn an_extension_the_model_cannot_be_asked_for_is_flagged_at_plan_time() {
     let f = Fixture::new();
-    let request = |provider: ProviderId, output: Option<&str>, dry_run: bool| {
+    let request = |model: &str, output: Option<&str>, dry_run: bool| {
         let mut a = args("x");
-        a.common.provider = Some(provider);
+        a.common.model = Some(model.into());
         a.common.output = output.map(|o| f.sandbox.path(o));
         a.common.dry_run = dry_run;
         a
@@ -318,7 +324,7 @@ async fn an_extension_the_model_cannot_be_asked_for_is_flagged_at_plan_time() {
     };
 
     let (r, warnings) =
-        f.run(Operation::ImageGenerate, request(ProviderId::Gemini, Some("g.png"), true)).await;
+        f.run(Operation::ImageGenerate, request("fake-gemini-image", Some("g.png"), true)).await;
     let plan = planned(r.unwrap());
     assert_eq!(plan.outputs, [f.sandbox.path("g.png").to_str().unwrap()]);
     let flagged = may_change(&warnings);
@@ -329,20 +335,19 @@ async fn an_extension_the_model_cannot_be_asked_for_is_flagged_at_plan_time() {
 
     f.gemini.images().push(Ok(image_output(vec![jpeg(8, 8)])));
     let (r, warnings) =
-        f.run(Operation::ImageGenerate, request(ProviderId::Gemini, Some("g.png"), false)).await;
+        f.run(Operation::ImageGenerate, request("fake-gemini-image", Some("g.png"), false)).await;
     let res = completed(r.unwrap());
     assert_eq!(res.artifacts[0].path, f.sandbox.path("g.jpg").to_str().unwrap());
     assert_eq!(may_change(&warnings).len(), 1, "{warnings:?}");
     assert!(has_warning(&warnings, "output_extension_adjusted"));
 
     // Without an extension the plan picks one, which may change too.
-    let (_, warnings) = f.run(Operation::ImageGenerate, request(ProviderId::Gemini, Some("g2"), true)).await;
+    let (_, warnings) = f.run(Operation::ImageGenerate, request("fake-gemini-image", Some("g2"), true)).await;
     assert_eq!(may_change(&warnings).len(), 1, "{warnings:?}");
     // No -o, or a model that takes the format from the extension: nothing to flag.
-    let (_, warnings) = f.run(Operation::ImageGenerate, request(ProviderId::Gemini, None, true)).await;
+    let (_, warnings) = f.run(Operation::ImageGenerate, request("fake-gemini-image", None, true)).await;
     assert!(may_change(&warnings).is_empty(), "{warnings:?}");
-    let (_, warnings) =
-        f.run(Operation::ImageGenerate, request(ProviderId::OpenAi, Some("o.png"), true)).await;
+    let (_, warnings) = f.run(Operation::ImageGenerate, request("fake-image-1", Some("o.png"), true)).await;
     assert!(may_change(&warnings).is_empty(), "{warnings:?}");
 }
 
@@ -698,12 +703,7 @@ async fn prompt_limits_and_model_resolution_errors() {
     assert_eq!(err_code(r), ErrorCode::UnknownModel);
 
     let mut a = args("x");
-    a.common.model = Some("fake-image-1".into());
-    a.common.provider = Some(ProviderId::Gemini);
-    let (r, _) = f.run(Operation::ImageGenerate, a).await;
-    assert_eq!(err_code(r), ErrorCode::InvalidArgument);
-
-    let mut a = args("x");
+    a.common.model = None;
     a.common.capabilities_from = Some("fake-image-1".into());
     let (r, _) = f.run(Operation::ImageGenerate, a).await;
     assert_eq!(err_code(r), ErrorCode::UsageError);
@@ -730,19 +730,91 @@ async fn unknown_models_can_borrow_declared_capabilities_with_a_warning() {
     assert_eq!(req.model, "fake-image-2-preview", "the unknown id is what gets sent");
 }
 
+/// Iris never picks a model: without `-m` the config file's `image.model` is used
+/// (reported as `model_source: config`), `-m` wins over it, and with neither the
+/// command fails with `model_required` before anything is sent.
 #[tokio::test]
-async fn provider_defaults_follow_the_configured_image_provider() {
+async fn the_model_comes_from_the_flag_or_the_config_file_and_is_otherwise_required() {
     let f = Fixture::new();
-    let env = f.sandbox.env().with_var("IRIS_IMAGE_PROVIDER", "gemini");
-    let ctx = context(settings(&env), vec![f.openai.clone(), f.gemini.clone()]);
+    let without_model = || {
+        let mut a = args("x");
+        a.common.model = None;
+        a
+    };
+    for op in [Operation::ImageGenerate, Operation::ImageEdit] {
+        for dry_run in [false, true] {
+            let mut a = without_model();
+            a.common.dry_run = dry_run;
+            let (r, _) = f.run(op, a).await;
+            let e = r.unwrap_err();
+            assert_eq!(e.code, ErrorCode::ModelRequired, "{op} dry_run={dry_run}");
+            assert_eq!(e.exit_code(), 2);
+            assert_eq!(e.provider_status, None);
+            assert_eq!(e.details["operation"], op.as_str());
+            assert_eq!(e.details["config_key"], "image.model");
+            // The config file is the default one, so the suggested command does not name it.
+            let config_file = f.sandbox.home().join(".config/iris/config.toml");
+            let hint = format!(
+                "run `iris models list --operation {op}` and pass -m <MODEL>, or set model under [image] in {}",
+                config_file.display()
+            );
+            assert_eq!(e.hint.as_deref(), Some(hint.as_str()));
+            let candidates: Vec<&str> = e.details["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["model"].as_str().unwrap())
+                .collect();
+            assert_eq!(candidates, ["fake-image-1", "fake-gemini-image"], "image models, in catalog order");
+        }
+    }
+    assert_eq!(f.calls(), 0, "nothing was sent");
+
+    let mut configured = settings(&f.sandbox.env());
+    configured.image_model =
+        Resolved { value: Some("fake-gemini-image".into()), source: SettingSource::File };
+    let ctx = context(configured, vec![f.openai.clone(), f.gemini.clone()]);
     let mut w = Vec::new();
+    let res = completed(image::run(&ctx, Operation::ImageGenerate, without_model(), &mut w).await.unwrap());
+    assert_eq!((res.provider, res.model.as_str()), (ProviderId::Gemini, "fake-gemini-image"));
+    assert_eq!(res.model_source, ModelSource::Config);
+    let mut a = without_model();
+    a.common.dry_run = true;
+    let plan = planned(image::run(&ctx, Operation::ImageGenerate, a, &mut w).await.unwrap());
+    assert_eq!((plan.model.as_str(), plan.model_source), ("fake-gemini-image", ModelSource::Config));
+    // -m wins over the config file.
     let res = completed(image::run(&ctx, Operation::ImageGenerate, args("x"), &mut w).await.unwrap());
-    assert_eq!(res.provider, ProviderId::Gemini);
-    // --model's provider beats IRIS_IMAGE_PROVIDER.
+    assert_eq!((res.provider, res.model.as_str()), (ProviderId::OpenAi, "fake-image-1"));
+    assert_eq!(res.model_source, ModelSource::Flag);
+}
+
+/// A configured `image.model` that does not implement the operation being run is
+/// `unsupported_operation` naming the key, before anything is sent.
+#[tokio::test]
+async fn a_configured_model_without_the_operation_names_the_config_key() {
+    static GENERATE_ONLY: ModelSpec = ModelSpec {
+        id: "fake-generate-only",
+        aliases: &[],
+        operations: &[Operation::ImageGenerate],
+        ..FAKE_IMAGE_MODEL
+    };
+    let f = Fixture::new();
+    let mut configured = settings(&f.sandbox.env());
+    configured.image_model =
+        Resolved { value: Some("fake-generate-only".into()), source: SettingSource::File };
+    let mut deps = deps(vec![f.openai.clone()], Interrupt::manual());
+    deps.catalog = Catalog::with_models(vec![&GENERATE_ONLY]);
+    let ctx = AppContext::new(configured, deps, Progress::silent());
+    let input = f.sandbox.path("in.png");
+    std::fs::write(&input, png(4, 4)).unwrap();
     let mut a = args("x");
-    a.common.model = Some("fake-img".into());
-    let res = completed(image::run(&ctx, Operation::ImageGenerate, a, &mut w).await.unwrap());
-    assert_eq!(res.provider, ProviderId::OpenAi);
+    a.common.model = None;
+    a.images = vec![input];
+    let e = image::run(&ctx, Operation::ImageEdit, a, &mut Vec::new()).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::UnsupportedOperation);
+    assert_eq!(e.details["config_key"], "image.model");
+    assert!(e.message.contains("image.model") && e.message.contains("fake-generate-only"), "{}", e.message);
+    assert_eq!(f.calls(), 0);
 }
 
 #[tokio::test]

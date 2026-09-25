@@ -69,16 +69,6 @@ fn models_ids_display_names_lifecycle_and_operations_are_declared() {
         assert_eq!(m.limits.max_prompt_chars, Some(32_000));
         assert!(m.validate.is_some() && m.estimate.is_some(), "{}", m.id);
     }
-    assert_eq!(model("gpt-image-2.5-sunburst").default_for, [Operation::ImageGenerate, Operation::ImageEdit]);
-    assert!(model("gpt-image-2.5-flare").default_for.is_empty());
-    assert!(model("gpt-image-2").default_for.is_empty());
-}
-
-#[test]
-fn sunburst_is_the_default_for_generate_and_edit_and_there_is_no_openai_video_model() {
-    assert_eq!(catalog::default_model(ProviderId::OpenAi, Operation::ImageGenerate).unwrap().id, IDS[0]);
-    assert_eq!(catalog::default_model(ProviderId::OpenAi, Operation::ImageEdit).unwrap().id, IDS[0]);
-    assert!(catalog::default_model(ProviderId::OpenAi, Operation::VideoGenerate).is_none());
 }
 
 #[test]
@@ -90,14 +80,14 @@ fn dated_snapshots_are_aliases_of_their_base_model_and_retired_models_are_unknow
     ] {
         assert_eq!(model(base).aliases, [alias]);
         assert_eq!(catalog::find(alias).unwrap().id, base);
-        let resolved = catalog::resolve(alias, None, Some(ProviderId::OpenAi)).unwrap();
+        let resolved = catalog::resolve(alias, None).unwrap();
         assert_eq!(resolved.spec.id, base);
     }
     for retired in
         ["gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3", "dall-e-2"]
     {
         assert!(catalog::find(retired).is_none(), "{retired} must not be registered (deprecated or removed)");
-        let err = catalog::resolve(retired, None, None).unwrap_err();
+        let err = catalog::resolve(retired, None).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnknownModel);
     }
 }

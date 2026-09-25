@@ -60,7 +60,7 @@ The edges that are not obvious from the module names, and why they exist:
   error body, on `artifacts` for the recorded state of a downloaded file, on `catalog` to persist
   resolved options (free-text options as a hash), and on `http::Timeouts` to size how long a
   record may stay `submitting`.
-- `config` depends on `catalog` (a configured default model must be a known model), on
+- `config` depends on `catalog` (a configured model must be a known model), on
   `output::results` (the `config show` and `config path` results), and on `http` (the HTTP client
   settings and per-provider timeouts it resolves).
 - `output` depends on `providers` and `catalog` only for types that appear in results
@@ -85,17 +85,17 @@ Two invariants the layering protects:
 
 | module | responsibility |
 |---|---|
-| `domain` | Shared plain types used everywhere: `ProviderId` (also each provider's fixed identity: id, credential variable, default base URL, base URL variable), `Operation`, job/download status enums, `Artifact`, `Usage`, `CostEstimate`, `Warning` and the `WarningCode` registry every warning is built from. |
+| `domain` | Shared plain types used everywhere: `ProviderId` (also each provider's fixed identity: id, credential variable, default base URL, base URL variable), `Operation`, `ModelSource` (whether `-m` or the config file named a command's model), job/download status enums, `Artifact`, `Usage`, `CostEstimate`, `Warning` and the `WarningCode` registry every warning is built from. |
 | `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the exit-code mapping (see [json-contract.md](json-contract.md)). |
 | `secret` | The `Secret` newtype: `Debug`/`Display` print `***`, and it is never `Serialize`. Credentials are held as `Secret` from the moment they are read from the environment. |
 | `redact` | `redact_url` (strips userinfo, replaces query values with `REDACTED` except an allowlist), `scrub` (removes any configured credential value from text), `truncate`. Every error message, provider message, log line, and persisted `last_error` passes through these before it can reach stdout, stderr, or disk. |
-| `catalog` | The static model catalog: every model Iris knows, its declared operations, inputs, options (typed, with defaults and allowed values/ranges), outputs, pricing, and access notes. `catalog::default_model` centralizes model defaults per (provider, operation). Per-provider declarations live in `catalog/{openai,gemini,veo}.rs`. |
+| `catalog` | The static model catalog: every model Iris knows, its declared operations, inputs, options (typed, with defaults and allowed values/ranges), outputs, pricing, and access notes. Per-provider declarations live in `catalog/{openai,gemini,veo}.rs`. |
 | `providers` | The `ImageProvider` and `VideoProvider` traits, `ProviderContext`, and `Registry::builtin()`. Per-provider wire types and HTTP calls are private to `providers/{openai,gemini}/`. |
 | `http` | Shared HTTP client construction, the retry executor (operation-aware retry classes; see [Where invariants live](#where-invariants-live)), streaming downloads with the credential-origin rule, and error classification helpers. |
 | `jobs` | Persisted job records (`JobRecord`, versioned, v1) and `JobStore` (`<state_dir>/jobs/`: atomic writes, per-job locks, listing without locking, local deletion). Only `video.generate` creates records; synchronous image calls never do. |
 | `artifacts` | Output path planning and filename rules (`paths`), media sniffing/validation (`media`: magic bytes, image decode, ISO-BMFF structure for video), local input-image validation (`input`), atomic, no-clobber (or `--overwrite`) finalization through `.<name>.iris-part-*` temp files (`finalize`, `download`), and the `<state_dir>/unsaved/` fallback for paid images that cannot be saved where requested and for returned content that is not a valid image, kept as received (`fallback`). |
 | `config` | Config file (TOML), environment variables, precedence resolution (flag > env > file > default), and platform-appropriate paths. Per-provider settings are resolved for every `ProviderId`. |
-| `app` | Application workflows, one submodule per area: `image`, `video`, `jobs`, `models` (models list/show *and* providers list), `info` (version, config show/path), `doctor`. Three submodules are not command handlers: `app::catalog` is the `Catalog` type (model lookup/resolution/defaults), `app::context` the `AppContext` every workflow receives, and `app::request` the steps shared by the generation commands (provider and model resolution, prompt and option checks, cost estimates, dry-run plan pieces). No clap types, no printing — it takes typed arguments and an `AppContext`, reports progress through a `Progress` trait, collects warnings, and returns result DTOs or an `IrisError`. |
+| `app` | Application workflows, one submodule per area: `image`, `video`, `jobs`, `models` (models list/show *and* providers list), `info` (version, config show/path), `doctor`. Three submodules are not command handlers: `app::catalog` is the `Catalog` type (model lookup and resolution), `app::context` the `AppContext` every workflow receives, and `app::request` the steps shared by the generation commands (model resolution, prompt and option checks, cost estimates, dry-run plan pieces). No clap types, no printing — it takes typed arguments and an `AppContext`, reports progress through a `Progress` trait, collects warnings, and returns result DTOs or an `IrisError`. |
 | `output` | The JSON envelope and result DTOs (`serde` + `schemars`, so the published schema is generated from the same types that are serialized) and human-text rendering. |
 | `cli` | clap argument definitions, prompt-source resolution (inline/file/stdin), dispatch to `app`, and presentation (JSON envelope or human text). `cli::run` is the process entry point. |
 

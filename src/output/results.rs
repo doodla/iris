@@ -5,7 +5,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{Lifecycle, OptionValue};
-use crate::domain::{Artifact, CostEstimate, DownloadState, JobStatus, Operation, ProviderId, Usage};
+use crate::domain::{
+    Artifact, CostEstimate, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage,
+};
 use crate::providers::AccountAccess;
 
 use super::envelope::ErrorBody;
@@ -15,6 +17,8 @@ use super::envelope::ErrorBody;
 pub struct ImageResult {
     pub provider: ProviderId,
     pub model: String,
+    /// Where `model` came from: `flag` (`-m/--model`) or `config` (`image.model`).
+    pub model_source: ModelSource,
     pub operation: Operation,
     /// Always `succeeded` (failures are errors).
     pub status: JobStatus,
@@ -45,6 +49,9 @@ pub struct JobView {
     pub remote_operation_id: Option<String>,
     pub provider: ProviderId,
     pub model: String,
+    /// Where `model` came from: `flag` (`-m/--model`) or `config` (`video.model`);
+    /// `null` when the job record does not say.
+    pub model_source: Option<ModelSource>,
     pub operation: Operation,
     pub status: JobStatus,
     pub created_at: String,
@@ -98,32 +105,12 @@ pub struct ModelSummary {
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
-    /// Operations for which this model is its provider's default: the model used when
-    /// its provider is selected without `--model` (the configured
-    /// `providers.<provider>.image_model`/`video_model`, else the catalog default).
-    /// Several providers each have one; `effective_defaults` says which is used when
-    /// no provider is selected either.
-    pub default_for: Vec<Operation>,
-}
-
-/// The model a generation command uses when neither `--provider` nor `--model` is
-/// given, honoring the configuration (`image.provider`, the configured default
-/// models).
-#[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct EffectiveDefault {
-    pub operation: Operation,
-    pub provider: ProviderId,
-    pub model: String,
 }
 
 /// `models.list`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ModelListResult {
     pub models: Vec<ModelSummary>,
-    /// One entry per operation that has a usable default, in operation order,
-    /// independent of the list's filters. An operation missing here has none: a
-    /// command for it needs `--provider` or `--model`.
-    pub effective_defaults: Vec<EffectiveDefault>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -234,9 +221,6 @@ pub struct ModelCapabilities {
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
-    /// Operations for which this model is its provider's default (see
-    /// `models.list`): used when its provider is selected without `--model`.
-    pub default_for: Vec<Operation>,
     pub inputs: InputsView,
     pub options: Vec<OptionView>,
     /// Rules relating several options or inputs (empty when there are none).
@@ -382,6 +366,9 @@ pub struct PlanResult {
     pub dry_run: bool,
     pub provider: ProviderId,
     pub model: String,
+    /// Where `model` came from: `flag` (`-m/--model`) or `config` (`image.model` or
+    /// `video.model`).
+    pub model_source: ModelSource,
     pub operation: Operation,
     /// True if the real command would create a provider-native async job.
     pub async_job: bool,

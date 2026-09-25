@@ -115,13 +115,12 @@ fn the_three_veo_31_preview_models_are_declared() {
 }
 
 #[test]
-fn fast_is_the_video_default_and_shut_down_ids_are_unknown() {
-    assert_eq!(catalog::default_model(ProviderId::Gemini, Operation::VideoGenerate).unwrap().id, FAST);
+fn gemini_alone_has_video_models_and_shut_down_ids_are_unknown() {
     assert_eq!(catalog::providers_for(Operation::VideoGenerate), [ProviderId::Gemini]);
     for gone in
         ["veo-2.0-generate-001", "veo-3.0-generate-001", "veo-3.0-fast-generate-001", "veo-3.1-generate-001"]
     {
-        assert_eq!(catalog::resolve(gone, None, None).unwrap_err().code, ErrorCode::UnknownModel, "{gone}");
+        assert_eq!(catalog::resolve(gone, None).unwrap_err().code, ErrorCode::UnknownModel, "{gone}");
     }
 }
 

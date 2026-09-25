@@ -12,7 +12,7 @@ the entry says so and names the reading Iris chose.
 ## Contents
 
 - [Provider APIs](#provider-apis)
-- [Models: defaults and exclusions](#models-defaults-and-exclusions)
+- [Models](#models)
 - [Paid requests: retries and uncertain outcomes](#paid-requests-retries-and-uncertain-outcomes)
 - [Jobs: persistence, locking, and atomic writes](#jobs-persistence-locking-and-atomic-writes)
 - [Downloads and trust](#downloads-and-trust)
@@ -163,17 +163,43 @@ combination was not tried, and the provider documents no support for it.
 [python-genai `models.py`](https://github.com/googleapis/python-genai/blob/7672ff6a08b92d45f6718e1195845b818705bad6/google/genai/models.py) ·
 [js-genai converters](https://github.com/googleapis/js-genai/blob/4d7e80b03dda3b9104649cb69bd8471f52f0c207/src/converters/_models_converters.ts)
 
-## Models: defaults and exclusions
+## Models
+
+### No default model
+
+**Decision.** Iris never chooses a model for the caller. A generation command uses `-m`/`--model`,
+or the model the config file names for its operation (`[image] model`, `[video] model`), and
+reports which of the two it used (`model_source`: `flag` or `config`). With neither, it fails with
+`model_required` before anything is sent, and the error lists the catalog models that support the
+operation. There is no built-in default model, no default provider, and no environment variable
+that names a model; the generation commands take no `--provider`, because the provider is the
+model's.
+
+**Why.** Iris is primarily for agents, and an agent needs to know what it buys. A default hides
+the model and its price: Google's models differ several-fold in price (Veo 3.1 Lite costs $0.05
+a second at 720p and Veo 3.1 $0.40; Nano Banana 2 Lite costs $0.0336 for a 1K image and Nano
+Banana Pro $0.134), and a command that names no model spends money on a model the caller never
+chose. A default also makes general-looking flags depend on an unseen model: whether
+`--quality`, `--aspect-ratio`, or `--mask` is accepted, and what it costs, would follow a choice
+the command line does not show. And a default silently changes what scripts buy when the catalog
+changes: the catalog follows models that providers retire on published dates, so a script that
+relied on the default would start buying another model at another price without any change to
+its command line. A model named once in the config file keeps command lines short where that is
+wanted, and every result still says where its model came from.
+
+**Sources.** [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing) ·
+[OpenAI deprecations](https://developers.openai.com/api/docs/deprecations) ·
+[Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations)
 
 ### Built-in models
 
 **Decision.** The catalog registers, per provider:
 
-| provider | default (generate, edit, or video) | also offered | not registered |
-|---|---|---|---|
-| OpenAI | `gpt-image-2.5-sunburst` | `gpt-image-2.5-flare`, `gpt-image-2` (dated snapshots as aliases) | `gpt-image-1`, `gpt-image-1.5`, `gpt-image-1-mini`, `chatgpt-image-latest`, `dall-e-2`, `dall-e-3` |
-| Gemini images | `gemini-3.1-flash-image` (Nano Banana 2) | `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite), `gemini-3-pro-image` (Nano Banana Pro) | `gemini-2.5-flash-image`, every Imagen model, the `*-preview` image ids |
-| Veo | `veo-3.1-fast-generate-preview` | `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview` | `veo-2.0-*`, `veo-3.0-*`, the Vertex AI / Gemini Enterprise GA ids, Gemini Omni |
+| provider | registered | not registered |
+|---|---|---|
+| OpenAI | `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2` (dated snapshots as aliases) | `gpt-image-1`, `gpt-image-1.5`, `gpt-image-1-mini`, `chatgpt-image-latest`, `dall-e-2`, `dall-e-3` |
+| Gemini images | `gemini-3.1-flash-image` (Nano Banana 2), `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite), `gemini-3-pro-image` (Nano Banana Pro) | `gemini-2.5-flash-image`, every Imagen model, the `*-preview` image ids |
+| Veo | `veo-3.1-fast-generate-preview`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview` | `veo-2.0-*`, `veo-3.0-*`, the Vertex AI / Gemini Enterprise GA ids, Gemini Omni |
 
 **Why.** OpenAI recommends `gpt-image-2.5-sunburst` for API use; Flare is the documented faster
 model at the same token rates. `gpt-image-1` shuts down on 2026-10-23, `gpt-image-1.5`,
@@ -185,13 +211,13 @@ projects that already used it since 2026-09-18 and is listed with an earliest sh
 shutdown date); Imagen shut down on 2026-08-17 and the preview image ids on 2026-06-25. On the
 Gemini API only the three Veo 3.1 preview models remain; Veo 2.0 and 3.0 shut down on
 2026-06-30, and the GA Veo 3.1 ids exist only on Google Cloud's enterprise platform, which uses
-other authentication and endpoints. Veo 3.1 Fast is the default because it is documented to
-support every video option Iris offers, including 4k and reference images, for a quarter of the
-standard model's per-second price at 720p and less than it at every resolution. Reference images
-on Fast, which the official cookbook lists only for Veo 3.1, were confirmed by a live 4k request
-on 2026-09-25. Gemini Omni Flash is a video model on the Interactions API and is out of scope for this
-version. Model defaults live in the catalog (`default_for`), and a provider's default can be
-overridden in the config file.
+other authentication and endpoints. The three trade price against options: Veo 3.1 and Veo 3.1
+Fast are documented to support every video option Iris offers, including 4k and reference images,
+with Fast at a quarter of Veo 3.1's per-second price at 720p and less than it at every resolution,
+while Veo 3.1 Lite costs least and offers neither 4k nor reference images. Reference images on
+Fast, which the official cookbook lists only for Veo 3.1, were confirmed by a live 4k request on
+2026-09-25. Gemini Omni Flash is a video model on the Interactions API and is out of scope for
+this version.
 
 A model id Iris does not know is refused unless `--capabilities-from <known model>` says which
 known model's capabilities it has; such a request is validated as that model but gets no cost
@@ -201,7 +227,8 @@ Aliases are dated snapshots or unambiguous nicknames (`nano-banana-2`, `nano-ban
 `veo-fast`). The bare `nano-banana` is deliberately none: Google's "Nano Banana" is
 `gemini-2.5-flash-image`, which Iris does not register, so accepting it for Nano Banana 2 would
 silently run a differently branded model. `--model nano-banana` is `unknown_model` with a hint
-naming `nano-banana-2` and `nano-banana-pro`.
+naming `nano-banana-2` and `nano-banana-pro`, and `model = "nano-banana"` in the config file is
+`config_invalid` with the same hint.
 
 **Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
 [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations) ·

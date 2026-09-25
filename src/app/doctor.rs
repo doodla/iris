@@ -9,13 +9,12 @@
 use std::path::Path;
 
 use crate::config::{EnvSnapshot, Settings};
-use crate::domain::{Operation, ProviderId, Warning};
+use crate::domain::{ProviderId, Warning};
 use crate::error::IrisError;
 use crate::output::results::{CheckStatus, DoctorCheck, DoctorResult};
 use crate::providers::AccountAccess;
 
 use super::context::AppContext;
-use super::request;
 
 /// Inputs of `doctor`.
 #[derive(Debug, Clone, Default)]
@@ -48,7 +47,7 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
         }
         (_, Some(s)) => checks.push(ok(
             "config",
-            format!("no config file at {}; built-in defaults apply", s.config_file.value.display()),
+            format!("no config file at {} (it is optional)", s.config_file.value.display()),
         )),
         (DoctorTarget::Invalid { error, .. }, None) => {
             let hint = error.hint.as_deref().map(|h| format!(" ({h})")).unwrap_or_default();
@@ -130,13 +129,11 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
     DoctorResult { healthy, checks }
 }
 
-/// One check per default model (`access.<provider>.<model>`): the model a command
-/// uses without `--model` ([`request::effective_default`], the same resolution as
-/// `default_for` and the generation commands), each model checked once. One check
-/// per provider (`access.<provider>`) when its models could not be checked, or when
-/// a configured default is not in the catalog. A model the metadata read finds is
-/// only *visible to the key*: billing tier, credit, and organization verification
-/// are not part of that read.
+/// One check per catalog model of each provider whose key is set
+/// (`access.<provider>.<model>`), in catalog order. One check per provider
+/// (`access.<provider>`) when its models could not be checked. A model the metadata
+/// read finds is only *visible to the key*: billing tier, credit, and organization
+/// verification are not part of that read.
 async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
     for provider in ProviderId::ALL {
         let id = format!("access.{provider}");
@@ -148,25 +145,8 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
             ));
             continue;
         }
-        let mut models: Vec<&str> = Vec::new();
-        let mut unknown: Vec<String> = Vec::new();
-        for op in Operation::ALL {
-            match request::effective_default(ctx, *provider, *op) {
-                Ok(Some(m)) if !models.contains(&m.id) => models.push(m.id),
-                Ok(_) => {}
-                Err(e) if !unknown.contains(&e.message) => unknown.push(e.message.clone()),
-                Err(_) => {}
-            }
-        }
-        if !unknown.is_empty() {
-            checks.push(check(&id, CheckStatus::Error, format!("not checked: {}", unknown.join("; "))));
-        }
-        if models.is_empty() {
-            if unknown.is_empty() {
-                checks.push(check(&id, CheckStatus::Warning, "not checked: no default model".to_string()));
-            }
-            continue;
-        }
+        let models: Vec<&str> =
+            ctx.catalog.models().into_iter().filter(|m| m.provider == *provider).map(|m| m.id).collect();
         let (adapter, pctx) =
             match ctx.provider(*provider).and_then(|a| Ok((a, ctx.provider_context(*provider)?))) {
                 Ok(pair) => pair,

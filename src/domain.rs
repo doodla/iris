@@ -124,6 +124,15 @@ impl Operation {
     pub fn is_async_job(self) -> bool {
         matches!(self, Operation::VideoGenerate)
     }
+
+    /// The config file key that names the model for this operation when `-m/--model`
+    /// is not given: `image.model` for the image operations, `video.model` for video.
+    pub fn model_config_key(self) -> &'static str {
+        match self {
+            Operation::ImageGenerate | Operation::ImageEdit => "image.model",
+            Operation::VideoGenerate => "video.model",
+        }
+    }
 }
 
 impl fmt::Display for Operation {
@@ -144,6 +153,18 @@ impl FromStr for Operation {
             )),
         }
     }
+}
+
+/// Where a generation command's model came from. Iris never chooses a model
+/// itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ModelSource {
+    /// `-m/--model`.
+    Flag,
+    /// The config file: `image.model` for the image operations, `video.model` for
+    /// video.
+    Config,
 }
 
 /// Normalized status of a persisted provider-native job.

@@ -7,7 +7,7 @@ about where they differ, and it makes provider-native asynchronous jobs (Google 
 submit, disconnect, and resume from another process without losing the job.
 
 ```console
-$ iris image generate "a watercolor fox in a misty forest" -o fox.png --size 1024x1024 --quality low
+$ iris image generate -m gpt-image-2.5-sunburst "a watercolor fox in a misty forest" -o fox.png --size 1024x1024 --quality low
 Requesting 1 image from openai (gpt-image-2.5-sunburst); this is a paid request
 Saved /home/you/fox.png
 Estimated cost: ~$0.0060 USD (estimate from reported usage (gpt-image-2.5-sunburst): 14 text input tokens × $5.00/1M + 0 image input tokens × $8.00/1M + 196 output tokens × $30.00/1M; cached-input discounts not reported)
@@ -108,7 +108,7 @@ always absolute, never `~`:
 
 ```console
 $ iris doctor
-[ok]      config: no config file at /home/you/.config/iris/config.toml; built-in defaults apply
+[ok]      config: no config file at /home/you/.config/iris/config.toml (it is optional)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
 [ok]      state_dir: state directory /home/you/.local/state/iris does not exist yet; it will be created on first use
@@ -119,13 +119,10 @@ $ iris doctor
 Healthy.
 ```
 
-`iris doctor --check-access` additionally makes one free, unbilled metadata call per **default
-model** to see whether each one is visible to your key, not just that a key is present. A default
-model is the model a command uses without `--model`: `providers.<provider>.image_model` /
-`video_model` from your config file when set, else the built-in default (openai image, gemini
-image, gemini video — three calls with no config file; `iris models list` shows them under
-`DEFAULT FOR`). That read does not check billing tier, prepaid credit, or OpenAI organization
-verification, so a paid request can still be refused.
+`iris doctor --check-access` additionally makes one free, unbilled metadata call for every model
+of each provider whose key is set (the models `iris models list` shows), to see whether each one
+is visible to your key, not just that a key is present. That read does not check billing tier,
+prepaid credit, or OpenAI organization verification, so a paid request can still be refused.
 
 `iris doctor` exits 0 whenever its checks ran, even when it finds problems: scripts should read
 `healthy` (`result.healthy` with `--json`) or look for `[error]` lines, not the exit code.
@@ -135,9 +132,11 @@ Gemini image and Veo models have **no free tier**: the key's project needs a pai
 standard keys from September 2026 (no exact day given). Run `iris models show <model>` for a
 model's exact, current access notes rather than assuming these generalize.
 
-Non-secret settings (default models, output directory, timeouts, a config file) follow
+Non-secret settings (output directory, timeouts, a config file) follow
 `flag > environment variable > config file > built-in default`; see
-[docs/configuration.md](docs/configuration.md).
+[docs/configuration.md](docs/configuration.md). Iris has no default model: every generation
+command names one with `-m`, or uses the one the config file names (see
+[Prompts, models, and output files](#prompts-models-and-output-files)).
 
 ## First success
 
@@ -145,7 +144,7 @@ A small, low-quality image (output from a local mock server standing in for the 
 a real key the cost line reflects the usage OpenAI reports for your request):
 
 ```console
-$ iris image generate "a red bicycle leaning against a brick wall" -o bike.png --size 1024x1024 --quality low
+$ iris image generate -m gpt-image-2.5-sunburst "a red bicycle leaning against a brick wall" -o bike.png --size 1024x1024 --quality low
 Requesting 1 image from openai (gpt-image-2.5-sunburst); this is a paid request
 Saved /home/you/bike.png
 Estimated cost: ~$0.0060 USD (estimate from reported usage (gpt-image-2.5-sunburst): 14 text input tokens × $5.00/1M + 0 image input tokens × $8.00/1M + 196 output tokens × $30.00/1M; cached-input discounts not reported)
@@ -156,40 +155,40 @@ With an explicit size and quality the plan carries a pre-call estimate (with `au
 it is `null` and a `cost_estimate_unavailable` warning says so):
 
 ```console
-$ iris image generate "a red bicycle" --size 1024x1024 --quality low --dry-run --json
-{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-01m3at0b4p5p26d7c3c6jftqz7.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
+$ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-01m3at0b4p5p26d7c3c6jftqz7.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
 ```
 
 ## More examples
 
-Generate with Gemini's "Nano Banana" instead of OpenAI:
+Generate with Google's Nano Banana 2 instead of OpenAI's GPT Image (the provider is the model's):
 
 ```console
-$ iris image generate "a watercolor fox" --provider gemini -o fox-gemini.jpg
+$ iris image generate -m nano-banana-2 "a watercolor fox" -o fox-gemini.jpg
 ```
 
-Edit an image with a reference and a mask (OpenAI only supports masks):
+Edit an image with a reference and a mask (only the OpenAI models take a mask):
 
 ```console
-$ iris image edit -i room.png --mask window-mask.png "add a large window" -o room-window.png
-$ iris image edit -i a.png -i b.png "combine these into one poster" --provider gemini
+$ iris image edit -m gpt-image-2.5-sunburst -i room.png --mask window-mask.png "add a large window" -o room-window.png --size 1024x1024 --quality low
+$ iris image edit -m nano-banana-2 -i a.png -i b.png "combine these into one poster"
 ```
 
 Generate a video and wait for it (the default: wait, then save):
 
 ```console
-$ iris video generate "waves crashing at dusk, slow motion" --duration 4 -o waves.mp4
+$ iris video generate -m veo-lite "waves crashing at dusk, slow motion" --duration 4 -o waves.mp4
 ```
 
 Submit and come back later — from any process, even after the terminal closed (output from a
 local mock server standing in for the Gemini API):
 
 ```console
-$ iris video generate "a paper boat drifting on a pond" --duration 4 --detach
-Submitting job job_01m3a59a5syx5aex0a0qv8qc3x to gemini (veo-3.1-fast-generate-preview); this is a paid request
+$ iris video generate -m veo-lite "a paper boat drifting on a pond" --duration 4 --detach
+Submitting job job_01m3a59a5syx5aex0a0qv8qc3x to gemini (veo-3.1-lite-generate-preview); this is a paid request
 Job job_01m3a59a5syx5aex0a0qv8qc3x accepted by gemini
-warning[preview_model]: veo-3.1-fast-generate-preview is a preview model; its behavior, limits, and availability may change
-Submitted job job_01m3a59a5syx5aex0a0qv8qc3x: running (gemini veo-3.1-fast-generate-preview)
+warning[preview_model]: veo-3.1-lite-generate-preview is a preview model; its behavior, limits, and availability may change
+Submitted job job_01m3a59a5syx5aex0a0qv8qc3x: running (gemini veo-3.1-lite-generate-preview)
 Next: iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x
 Next: iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x
 
@@ -214,13 +213,18 @@ $ echo $?
 ## Prompts, models, and output files
 
 A prompt comes from exactly one of three mutually exclusive sources — Iris rejects two at once
-with a clear `usage_error`: inline text (`iris image generate "a fox" ...`), a UTF-8 file
-(`-f/--prompt-file PATH`, trailing whitespace trimmed), or standard input (`--prompt-stdin`, which
-must not be a terminal).
+with a clear `usage_error`: inline text (`iris image generate -m <MODEL> "a fox" ...`), a UTF-8
+file (`-f/--prompt-file PATH`, trailing whitespace trimmed), or standard input (`--prompt-stdin`,
+which must not be a terminal).
 
-`--model` picks a specific model id or alias (`iris models list` shows every one Iris knows); when
-omitted, Iris uses the catalog's default for the resolved provider and operation. For a model
-Iris doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
+Every generation command names its model. `-m`/`--model` takes a model id or alias (`iris models
+list` shows every one Iris knows); without it, the command uses the model the config file names
+for its kind (`[image] model`, `[video] model`). Iris never picks one for you: with neither, the
+command fails with `model_required` (exit 2) before anything is sent, and the error lists the
+models that support the command (see
+[docs/configuration.md](docs/configuration.md#choosing-the-model)). The provider is the model's;
+results say which of the two named it (`model_source`: `flag` or `config`). For a model Iris
+doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
 known model's capabilities (sent to the provider as given, validated as that known model, and
 flagged with an `unverified_model_capabilities` warning) rather than refusing outright. Iris makes
 no cost estimate for such a model, since the known model's prices may not apply, and the id must
@@ -317,26 +321,28 @@ Generated from `iris models list` / `iris models show` against Iris's built-in c
 
 ```console
 $ iris models list
-MODEL                          PROVIDER  LIFECYCLE  OPERATIONS                  DEFAULT FOR                 ALIASES
-gpt-image-2.5-sunburst         openai    ga         image.generate, image.edit  image.generate, image.edit  gpt-image-2.5-sunburst-2026-09-08
-gpt-image-2.5-flare            openai    ga         image.generate, image.edit  -                           gpt-image-2.5-flare-2026-09-08
-gpt-image-2                    openai    ga         image.generate, image.edit  -                           gpt-image-2-2026-04-21
-gemini-3.1-flash-image         gemini    ga         image.generate, image.edit  image.generate, image.edit  nano-banana-2
-gemini-3.1-flash-lite-image    gemini    ga         image.generate, image.edit  -                           nano-banana-2-lite
-gemini-3-pro-image             gemini    ga         image.generate, image.edit  -                           nano-banana-pro
-veo-3.1-fast-generate-preview  gemini    preview    video.generate              video.generate              veo-fast
-veo-3.1-generate-preview       gemini    preview    video.generate              -                           veo
-veo-3.1-lite-generate-preview  gemini    preview    video.generate              -                           veo-lite
-
-Used without --provider or --model:
-OPERATION       PROVIDER  MODEL
-image.generate  openai    gpt-image-2.5-sunburst
-image.edit      openai    gpt-image-2.5-sunburst
-video.generate  gemini    veo-3.1-fast-generate-preview
+MODEL                          PROVIDER  LIFECYCLE  OPERATIONS                  ALIASES
+gpt-image-2.5-sunburst         openai    ga         image.generate, image.edit  gpt-image-2.5-sunburst-2026-09-08
+gpt-image-2.5-flare            openai    ga         image.generate, image.edit  gpt-image-2.5-flare-2026-09-08
+gpt-image-2                    openai    ga         image.generate, image.edit  gpt-image-2-2026-04-21
+gemini-3.1-flash-image         gemini    ga         image.generate, image.edit  nano-banana-2
+gemini-3.1-flash-lite-image    gemini    ga         image.generate, image.edit  nano-banana-2-lite
+gemini-3-pro-image             gemini    ga         image.generate, image.edit  nano-banana-pro
+veo-3.1-fast-generate-preview  gemini    preview    video.generate              veo-fast
+veo-3.1-generate-preview       gemini    preview    video.generate              veo
+veo-3.1-lite-generate-preview  gemini    preview    video.generate              veo-lite
 ```
 
-`DEFAULT FOR` is each provider's default; the last table is what a command with neither
-`--provider` nor `--model` uses (it follows `image.provider` and the configured default models).
+Choose a model by what it accepts and what it costs (`iris models show <model>` lists both), then
+pass its id or alias with `-m`, or name it once in the config file so commands without `-m` use it:
+
+```toml
+[image]
+model = "gpt-image-2.5-sunburst"
+
+[video]
+model = "veo-lite"  # alias of veo-3.1-lite-generate-preview; config show shows the id
+```
 
 `iris models show <model>` prints one model's full contract: every accepted option (with its
 typed flag or `-O key=value` form), input/output limits, published prices, and documented access

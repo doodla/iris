@@ -51,7 +51,11 @@ async fn a_signal_before_the_request_is_sent_stops_without_sending_it() {
         });
         let ctx = AppContext::new(settings(&sandbox.env()), deps(vec![gemini.clone()], interrupt), progress);
         let args = VideoArgs {
-            common: GenerationArgs { prompt: "x".into(), ..GenerationArgs::default() },
+            common: GenerationArgs {
+                prompt: "x".into(),
+                model: Some("fake-video-1".into()),
+                ..GenerationArgs::default()
+            },
             ..VideoArgs::default()
         };
         let mut w = Vec::new();

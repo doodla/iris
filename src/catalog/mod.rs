@@ -1,7 +1,7 @@
 //! The model catalog: every model Iris knows, with declared capabilities.
 //!
-//! Model defaults are centralized here (`default_model`). Provider modules
-//! (`openai`, `gemini`, `veo`) contribute their static declarations.
+//! Provider modules (`openai`, `gemini`, `veo`) contribute their static
+//! declarations.
 
 pub mod gemini;
 pub mod openai;
@@ -44,24 +44,10 @@ pub fn find_in(
     models.into_iter().find(|m| m.id == id_or_alias || m.aliases.contains(&id_or_alias))
 }
 
-/// The provider's default model for an operation, if the provider supports it.
-pub fn default_model(provider: ProviderId, op: Operation) -> Option<&'static ModelSpec> {
-    default_model_in(all(), provider, op)
-}
-
-/// [`default_model`] over an explicit model list. The built-in catalog declares at
-/// most one default per provider and operation (a test checks it).
-pub fn default_model_in(
-    models: impl IntoIterator<Item = &'static ModelSpec>,
-    provider: ProviderId,
-    op: Operation,
-) -> Option<&'static ModelSpec> {
-    models.into_iter().find(|m| m.provider == provider && m.default_for.contains(&op))
-}
-
 /// What to use instead of `name` when it is a name Iris deliberately gives no model
 /// (such as a nickname of a model Iris does not register), if it is one. Matched
-/// case-insensitively; shown as the hint of the `unknown_model` error.
+/// case-insensitively; shown as the hint of the `unknown_model` error, and of the
+/// `config_invalid` error for a configured model.
 pub fn declined_name_hint(name: &str) -> Option<&'static str> {
     gemini::DECLINED_NAMES
         .iter()
@@ -78,18 +64,9 @@ pub fn model_id_syntax(provider: ProviderId) -> ModelIdSyntax {
     }
 }
 
-/// Providers that implement an operation with at least one model.
+/// Providers that implement an operation with at least one model, sorted.
 pub fn providers_for(op: Operation) -> Vec<ProviderId> {
-    providers_for_in(all(), op)
-}
-
-/// [`providers_for`] over an explicit model list, sorted.
-pub fn providers_for_in(
-    models: impl IntoIterator<Item = &'static ModelSpec>,
-    op: Operation,
-) -> Vec<ProviderId> {
-    let mut out: Vec<ProviderId> =
-        models.into_iter().filter(|m| m.supports(op)).map(|m| m.provider).collect();
+    let mut out: Vec<ProviderId> = all().filter(|m| m.supports(op)).map(|m| m.provider).collect();
     out.sort();
     out.dedup();
     out
@@ -124,19 +101,15 @@ fn is_snapshot_of(base: &str, candidate: &str) -> bool {
         && [1, 2, 3, 4, 6, 7, 9, 10].iter().all(|&i| b[i].is_ascii_digit())
 }
 
-/// Resolve `--model` / `--capabilities-from` / `--provider` into a model.
+/// Resolve `--model` / `--capabilities-from` into a model.
 ///
-/// * Known id or alias → catalog spec. If `provider` is given and differs → `invalid_argument`.
+/// * Known id or alias → catalog spec.
 /// * Unknown id without `capabilities_from` → `unknown_model` (lists known models).
 /// * Unknown id with `capabilities_from` naming a known model → that model's spec,
 ///   sending the unknown id (caller emits warning `unverified_model_capabilities`).
-pub fn resolve(
-    model: &str,
-    capabilities_from: Option<&str>,
-    provider: Option<ProviderId>,
-) -> Result<ResolvedModel, IrisError> {
+pub fn resolve(model: &str, capabilities_from: Option<&str>) -> Result<ResolvedModel, IrisError> {
     let models: Vec<&'static ModelSpec> = all().collect();
-    resolve_in(&models, model, capabilities_from, provider)
+    resolve_in(&models, model, capabilities_from)
 }
 
 /// [`resolve`] over an explicit model list (the app's injectable catalog uses this so
@@ -145,21 +118,12 @@ pub fn resolve_in(
     models: &[&'static ModelSpec],
     model: &str,
     capabilities_from: Option<&str>,
-    provider: Option<ProviderId>,
 ) -> Result<ResolvedModel, IrisError> {
     let find = |id: &str| find_in(models.iter().copied(), id);
     if let Some(spec) = find(model) {
         if capabilities_from.is_some() {
             return Err(IrisError::usage(format!(
                 "--capabilities-from is only for models Iris does not know; '{model}' is a known model"
-            )));
-        }
-        if let Some(p) = provider
-            && p != spec.provider
-        {
-            return Err(IrisError::invalid(format!(
-                "model '{}' belongs to provider '{}', not '{p}'",
-                spec.id, spec.provider
             )));
         }
         // A dated snapshot alias (`<id>-YYYY-MM-DD`) pins that snapshot, so send it as given;
@@ -188,14 +152,6 @@ pub fn resolve_in(
         )
         .with_hint(declined_name_hint(template).unwrap_or("run `iris models list`")));
     };
-    if let Some(p) = provider
-        && p != spec.provider
-    {
-        return Err(IrisError::invalid(format!(
-            "--capabilities-from model '{}' belongs to provider '{}', not '{p}'",
-            spec.id, spec.provider
-        )));
-    }
     let syntax = model_id_syntax(spec.provider);
     if !syntax.accepts(model) {
         return Err(IrisError::invalid(format!(
@@ -215,11 +171,11 @@ mod tests {
 
     use super::*;
 
-    /// Lookups return the first match, so a name declared twice, or a second default
-    /// for one provider and operation, would be shadowed silently: the whole catalog
-    /// must be unambiguous. Every declared option default must also be a valid value.
+    /// Lookups return the first match, so a name declared twice would be shadowed
+    /// silently: the whole catalog must be unambiguous. Every declared option default
+    /// must also be a valid value.
     #[test]
-    fn names_are_unique_and_each_provider_has_at_most_one_default_per_operation() {
+    fn names_are_unique_and_option_defaults_are_valid() {
         let mut names: BTreeMap<String, &str> = BTreeMap::new();
         for m in all() {
             for name in std::iter::once(m.id).chain(m.aliases.iter().copied()) {
@@ -228,23 +184,11 @@ mod tests {
                     panic!("'{name}' names both {other} and {}", m.id);
                 }
             }
-            for op in m.default_for {
-                assert!(m.supports(*op), "{} is the default for {op}, which it does not support", m.id);
-            }
             // `models show` publishes each default typed by its option's kind.
             for o in m.options {
                 if let Some(d) = o.default {
                     assert!(OptionValue::parse(&o.kind, d).is_ok(), "{}.{}: default {d:?}", m.id, o.name);
                 }
-            }
-        }
-        for &provider in ProviderId::ALL {
-            for &op in Operation::ALL {
-                let defaults: Vec<&str> = all()
-                    .filter(|m| m.provider == provider && m.default_for.contains(&op))
-                    .map(|m| m.id)
-                    .collect();
-                assert!(defaults.len() <= 1, "{provider} has several defaults for {op}: {defaults:?}");
             }
         }
     }
@@ -263,22 +207,22 @@ mod tests {
     fn unknown_ids_follow_the_syntax_of_the_templates_provider() {
         let gemini = ["gemini-9.9-flash-image", "veo_4.0-x", "A1", &"a".repeat(128)];
         for id in gemini {
-            assert!(resolve(id, Some("nano-banana-2"), None).is_ok(), "{id}");
-            assert!(resolve(id, Some("veo"), None).is_ok(), "{id}");
+            assert!(resolve(id, Some("nano-banana-2")).is_ok(), "{id}");
+            assert!(resolve(id, Some("veo")).is_ok(), "{id}");
         }
         for id in ["a:b", "bad/../id", "-lead", ".hidden", "a b", "a?b", "a%2Fb", "é", "", &"a".repeat(129)]
         {
             for template in ["nano-banana-2", "veo"] {
-                let err = resolve(id, Some(template), None).unwrap_err();
+                let err = resolve(id, Some(template)).unwrap_err();
                 assert_eq!(err.code, ErrorCode::InvalidArgument, "{id} {template}");
             }
         }
         for id in ["ft:gpt-image-2:org:custom:1", "org/model@v2", "-x"] {
-            assert!(resolve(id, Some("gpt-image-2"), None).is_ok(), "{id}");
+            assert!(resolve(id, Some("gpt-image-2")).is_ok(), "{id}");
         }
         for id in ["a b", "a?b", "", &"a".repeat(201)] {
             assert_eq!(
-                resolve(id, Some("gpt-image-2"), None).unwrap_err().code,
+                resolve(id, Some("gpt-image-2")).unwrap_err().code,
                 ErrorCode::InvalidArgument,
                 "{id}"
             );
@@ -289,7 +233,7 @@ mod tests {
     fn snapshot_aliases_are_sent_as_given_and_nicknames_are_canonicalized() {
         for m in all() {
             for alias in m.aliases {
-                let resolved = resolve(alias, None, None).unwrap();
+                let resolved = resolve(alias, None).unwrap();
                 assert_eq!(resolved.spec.id, m.id);
                 if is_snapshot_of(m.id, alias) {
                     assert_eq!(resolved.id, *alias, "snapshot {alias} must be pinned");

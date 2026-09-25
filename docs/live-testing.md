@@ -48,12 +48,12 @@ quality produces `cost_estimate_unavailable`, so always pass explicit values.
 
 ```console
 # 1–2: generation
-$ iris --json image generate "a red paper kite over a hill" --size 1024x1024 --quality low -o openai.png
-$ iris --json image generate "a red paper kite over a hill" --provider gemini --resolution 512 --aspect-ratio 1:1 -o gemini.jpg
+$ iris --json image generate "a red paper kite over a hill" -m gpt-image-2.5-sunburst --size 1024x1024 --quality low -o openai.png
+$ iris --json image generate "a red paper kite over a hill" -m gemini-3.1-flash-image --resolution 512 --aspect-ratio 1:1 -o gemini.jpg
 
 # 3: edits reusing those images
-$ iris --json image edit "add a small yellow sun" -i openai.png --size 1024x1024 --quality low -o openai-edit.png
-$ iris --json image edit "add a small yellow sun" --provider gemini -i gemini.jpg --resolution 512 -o gemini-edit.jpg
+$ iris --json image edit "add a small yellow sun" -m gpt-image-2.5-sunburst -i openai.png --size 1024x1024 --quality low -o openai-edit.png
+$ iris --json image edit "add a small yellow sun" -m gemini-3.1-flash-image -i gemini.jpg --resolution 512 -o gemini-edit.jpg
 
 # 4: the one Veo submission, returning immediately
 $ iris --json video generate "a slow aerial shot over a calm lake at sunrise" -m veo-lite --duration 4 --resolution 720p --aspect-ratio 16:9 --detach

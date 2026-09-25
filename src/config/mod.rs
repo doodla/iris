@@ -24,10 +24,10 @@
 //!   variable names, and default base URL come from [`ProviderId`], so nothing here
 //!   lists providers by name.
 //!
-//! Besides the foundation modules, `config` uses `catalog` (a configured default
-//! model "must be a known model"), `output::results` (the `config show` and
-//! `config path` results), and `http` (the client settings and timeouts it
-//! resolves); see the layering in docs/architecture.md.
+//! Besides the foundation modules, `config` uses `catalog` (a configured model must
+//! be a known model), `output::results` (the `config show` and `config path`
+//! results), and `http` (the client settings and timeouts it resolves); see the
+//! layering in docs/architecture.md.
 
 #![warn(missing_docs)]
 
@@ -42,8 +42,8 @@ use std::time::Duration;
 use url::Url;
 
 pub use env::{
-    ENV_CONFIG, ENV_IMAGE_PROVIDER, ENV_LOG, ENV_OUTPUT_DIR, ENV_POLL_INTERVAL, ENV_STATE_DIR,
-    ENV_STORE_PROMPTS, ENV_WAIT_TIMEOUT, EnvSnapshot, SETTING_VARS,
+    ENV_CONFIG, ENV_LOG, ENV_OUTPUT_DIR, ENV_POLL_INTERVAL, ENV_STATE_DIR, ENV_STORE_PROMPTS,
+    ENV_WAIT_TIMEOUT, EnvSnapshot, SETTING_VARS,
 };
 pub use paths::{Platform, PlatformPaths, expand_tilde, platform_paths};
 
@@ -56,8 +56,6 @@ use crate::output::results::{ConfigPathResult, ConfigShowResult, CredentialView,
 use crate::redact;
 use crate::secret::Secret;
 
-/// Default image provider (`image.provider`) when no layer sets one.
-pub const DEFAULT_IMAGE_PROVIDER: ProviderId = ProviderId::OpenAi;
 /// Default caller wait limit for video jobs.
 pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 /// Default poll interval for video jobs.
@@ -87,8 +85,6 @@ pub struct CliOverrides {
     pub config_path: Option<PathBuf>,
     /// `-d, --out-dir <DIR>`.
     pub out_dir: Option<PathBuf>,
-    /// `--provider <P>` (default image provider for this invocation).
-    pub provider: Option<ProviderId>,
     /// `--timeout <DURATION>` (caller wait limit).
     pub wait_timeout: Option<Duration>,
     /// `--poll-interval <DURATION>`.
@@ -104,10 +100,6 @@ pub struct ProviderSettings {
     pub provider: ProviderId,
     /// API base URL. Credentials are sent only to this origin.
     pub base_url: Resolved<Url>,
-    /// Default image model (canonical catalog id); `--model` is applied by the app.
-    pub image_model: Resolved<Option<String>>,
-    /// Default video model (canonical catalog id); `None` if the provider has none.
-    pub video_model: Resolved<Option<String>>,
     /// Timeout of one synchronous generation request (before the upload allowance,
     /// [`crate::http::upload_allowance`]).
     pub request_timeout: Resolved<Duration>,
@@ -131,8 +123,13 @@ pub struct Settings {
     pub output_dir: Resolved<PathBuf>,
     /// Absolute state directory (jobs live in `<state_dir>/jobs`).
     pub state_dir: Resolved<PathBuf>,
-    /// Default image provider (before `--model` inference, which the app applies).
-    pub image_provider: Resolved<ProviderId>,
+    /// The model of `image generate` and `image edit` without `-m/--model`
+    /// (`image.model`, config file only), as the id `-m` would send; `None` when the
+    /// file names none. See [`Settings::model`].
+    pub image_model: Resolved<Option<String>>,
+    /// The model of `video generate` without `-m/--model` (`video.model`, config file
+    /// only), like `image_model`.
+    pub video_model: Resolved<Option<String>>,
     /// Caller wait limit for video jobs (`video.wait_timeout`).
     pub wait_timeout: Resolved<Duration>,
     /// Poll interval for video jobs (`video.poll_interval`, at least 2s).
@@ -183,15 +180,22 @@ impl Settings {
             || defaults.as_ref().map(|d| d.state_dir.clone()).map_err(Clone::clone),
         )?;
 
-        let image_provider = layered(
-            cli.provider,
-            env_parsed(env, ENV_IMAGE_PROVIDER, parse_image_provider)?,
-            cfg.image
-                .provider
+        let image_ops = [Operation::ImageGenerate, Operation::ImageEdit];
+        let image_model = layered(
+            None,
+            None,
+            cfg.image.model.as_deref().map(|v| file_model(path, v, &image_ops).map(Some)).transpose()?,
+            || Ok(None),
+        )?;
+        let video_model = layered(
+            None,
+            None,
+            cfg.video
+                .model
                 .as_deref()
-                .map(|v| parse_image_provider(v).map_err(|m| file::key_error(path, "image.provider", m)))
+                .map(|v| file_model(path, v, &[Operation::VideoGenerate]).map(Some))
                 .transpose()?,
-            || Ok(DEFAULT_IMAGE_PROVIDER),
+            || Ok(None),
         )?;
 
         let wait_timeout = layered(
@@ -244,7 +248,8 @@ impl Settings {
             config_file_exists,
             output_dir,
             state_dir,
-            image_provider,
+            image_model,
+            video_model,
             wait_timeout,
             poll_interval,
             store_prompts,
@@ -252,6 +257,15 @@ impl Settings {
             providers,
             credentials: env.credentials().clone(),
         })
+    }
+
+    /// The configured model for `op`: `image.model` for the image operations,
+    /// `video.model` for video ([`Operation::model_config_key`]).
+    pub fn model(&self, op: Operation) -> &Resolved<Option<String>> {
+        match op {
+            Operation::ImageGenerate | Operation::ImageEdit => &self.image_model,
+            Operation::VideoGenerate => &self.video_model,
+        }
     }
 
     /// Settings of one provider.
@@ -340,10 +354,16 @@ impl Settings {
             row("output_dir", path(&self.output_dir.value), &self.output_dir.source, Some(ENV_OUTPUT_DIR)),
             row("state_dir", path(&self.state_dir.value), &self.state_dir.source, Some(ENV_STATE_DIR)),
             row(
-                "image.provider",
-                serde_json::Value::String(self.image_provider.value.as_str().to_string()),
-                &self.image_provider.source,
-                Some(ENV_IMAGE_PROVIDER),
+                Operation::ImageGenerate.model_config_key(),
+                opt(&self.image_model.value),
+                &self.image_model.source,
+                None,
+            ),
+            row(
+                Operation::VideoGenerate.model_config_key(),
+                opt(&self.video_model.value),
+                &self.video_model.source,
+                None,
             ),
             row(
                 "video.wait_timeout",
@@ -373,21 +393,6 @@ impl Settings {
                 &p.base_url.source,
                 Some(p.provider.base_url_env()),
             ));
-            rows.push(row(
-                &format!("{prefix}.image_model"),
-                opt(&p.image_model.value),
-                &p.image_model.source,
-                None,
-            ));
-            // A video model row only for providers the catalog has a video model for.
-            if video_providers.contains(&p.provider) || p.video_model.value.is_some() {
-                rows.push(row(
-                    &format!("{prefix}.video_model"),
-                    opt(&p.video_model.value),
-                    &p.video_model.source,
-                    None,
-                ));
-            }
             rows.push(row(
                 &format!("{prefix}.request_timeout"),
                 dur(p.request_timeout.value),
@@ -565,30 +570,6 @@ fn provider_settings(
             .transpose()?,
         || Ok(default_base_url(provider)),
     )?;
-    let image_ops = [Operation::ImageGenerate, Operation::ImageEdit];
-    let image_model = layered(
-        None,
-        None,
-        section
-            .image_model
-            .as_deref()
-            .map(|v| file_model(path, &key("image_model"), provider, v, &image_ops, "image").map(Some))
-            .transpose()?,
-        || Ok(catalog::default_model(provider, Operation::ImageGenerate).map(|m| m.id.to_string())),
-    )?;
-    let video_model = layered(
-        None,
-        None,
-        section
-            .video_model
-            .as_deref()
-            .map(|v| {
-                file_model(path, &key("video_model"), provider, v, &[Operation::VideoGenerate], "video")
-                    .map(Some)
-            })
-            .transpose()?,
-        || Ok(catalog::default_model(provider, Operation::VideoGenerate).map(|m| m.id.to_string())),
-    )?;
     let request_timeout = layered(
         None,
         None,
@@ -619,7 +600,7 @@ fn provider_settings(
             .transpose()?,
         || Ok(DEFAULT_SUBMIT_TIMEOUT),
     )?;
-    Ok(ProviderSettings { provider, base_url, image_model, video_model, request_timeout, submit_timeout })
+    Ok(ProviderSettings { provider, base_url, request_timeout, submit_timeout })
 }
 
 /// Pick the highest layer that is present.
@@ -732,32 +713,36 @@ fn file_duration(
     parsed.and_then(check).map_err(|m| file::key_error(file, key, m))
 }
 
-fn file_model(
-    file: &Path,
-    key: &str,
-    provider: ProviderId,
-    value: &str,
-    ops: &[Operation],
-    kind: &str,
-) -> Result<String, IrisError> {
-    let spec = catalog::find(value.trim()).ok_or_else(|| {
-        file::key_error(file, key, format!("unknown model '{value}' (run `iris models list`)"))
-    })?;
-    if spec.provider != provider {
+/// A model named in the config file for the operations `ops` (`image.model` for
+/// the image operations, `video.model` for video): a catalog id or alias, matched
+/// exactly as `-m/--model` is, of a model that implements at least one of them.
+/// Returns the id `-m` would send for it: the canonical id for a nickname, a dated
+/// snapshot as given. A name Iris deliberately gives no model gets the hint `-m`
+/// gives it.
+fn file_model(file: &Path, value: &str, ops: &[Operation]) -> Result<String, IrisError> {
+    let key = ops[0].model_config_key();
+    let listed: Vec<String> = ops.iter().map(|op| format!("`iris models list --operation {op}`")).collect();
+    let hint = format!("set {key} to a model listed by {}", listed.join(" or "));
+    let Ok(resolved) = catalog::resolve(value, None) else {
+        let hint = catalog::declined_name_hint(value).map_or(hint, str::to_string);
+        return Err(file::key_error(file, key, format!("unknown model '{value}'")).with_hint(hint));
+    };
+    if !ops.iter().any(|op| resolved.spec.supports(*op)) {
+        let supported: Vec<&str> = resolved.spec.operations.iter().map(|op| op.as_str()).collect();
+        let wanted: Vec<&str> = ops.iter().map(|op| op.as_str()).collect();
         return Err(file::key_error(
             file,
             key,
-            format!("model '{}' belongs to provider '{}', not '{provider}'", spec.id, spec.provider),
-        ));
+            format!(
+                "model '{}' does not support {} (supports: {})",
+                resolved.spec.id,
+                wanted.join(" or "),
+                supported.join(", ")
+            ),
+        )
+        .with_hint(hint));
     }
-    if !ops.iter().any(|op| spec.supports(*op)) {
-        return Err(file::key_error(file, key, format!("model '{}' is not a {kind} model", spec.id)));
-    }
-    Ok(spec.id.to_string())
-}
-
-fn parse_image_provider(text: &str) -> Result<ProviderId, String> {
-    text.trim().parse()
+    Ok(resolved.id)
 }
 
 fn parse_log_filter(text: &str) -> Result<String, String> {

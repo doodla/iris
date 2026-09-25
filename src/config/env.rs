@@ -17,8 +17,6 @@ pub const ENV_CONFIG: &str = "IRIS_CONFIG";
 pub const ENV_OUTPUT_DIR: &str = "IRIS_OUTPUT_DIR";
 /// `IRIS_STATE_DIR`: job state directory.
 pub const ENV_STATE_DIR: &str = "IRIS_STATE_DIR";
-/// `IRIS_IMAGE_PROVIDER`: default image provider.
-pub const ENV_IMAGE_PROVIDER: &str = "IRIS_IMAGE_PROVIDER";
 /// `IRIS_WAIT_TIMEOUT`: caller wait limit for video jobs.
 pub const ENV_WAIT_TIMEOUT: &str = "IRIS_WAIT_TIMEOUT";
 /// `IRIS_POLL_INTERVAL`: poll interval for video jobs.
@@ -34,7 +32,6 @@ pub const SETTING_VARS: &[&str] = &[
     ENV_CONFIG,
     ENV_OUTPUT_DIR,
     ENV_STATE_DIR,
-    ENV_IMAGE_PROVIDER,
     ENV_WAIT_TIMEOUT,
     ENV_POLL_INTERVAL,
     ENV_STORE_PROMPTS,

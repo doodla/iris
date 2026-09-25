@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use crate::domain::{Artifact, CostEstimate, JobStatus, Warning, WarningCode};
+use crate::domain::{Artifact, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode};
 use crate::providers::AccountAccess;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
@@ -164,6 +164,16 @@ fn job(command: Option<CommandName>, res: &JobResult, r: &mut Rendered) {
     }
 }
 
+/// A model with where it came from when that was the config file:
+/// `gemini-3.1-flash-image (config image.model)`. A model named with `-m/--model`
+/// needs no annotation.
+fn model_with_source(model: &str, source: Option<ModelSource>, op: Operation) -> String {
+    match source {
+        Some(ModelSource::Config) => format!("{model} (config {})", op.model_config_key()),
+        Some(ModelSource::Flag) | None => model.to_string(),
+    }
+}
+
 fn job_block(j: &JobView) -> String {
     let mut out = format!("{}\n", j.job_id);
     let mut field = |label: &str, value: &str| {
@@ -171,7 +181,7 @@ fn job_block(j: &JobView) -> String {
     };
     field("status", j.status.as_str());
     field("provider", j.provider.as_str());
-    field("model", &j.model);
+    field("model", &model_with_source(&j.model, j.model_source, j.operation));
     field("created", &j.created_at);
     if let Some(t) = &j.submitted_at {
         field("submitted", t);
@@ -301,22 +311,11 @@ fn model_list(res: &ModelListResult) -> String {
                 m.provider.as_str().to_string(),
                 lifecycle(&m.lifecycle),
                 ops(&m.operations),
-                ops(&m.default_for),
                 if m.aliases.is_empty() { "-".to_string() } else { join(&m.aliases) },
             ]
         })
         .collect();
-    let mut out = table(&["MODEL", "PROVIDER", "LIFECYCLE", "OPERATIONS", "DEFAULT FOR", "ALIASES"], &rows);
-    if !res.effective_defaults.is_empty() {
-        let rows: Vec<Vec<String>> = res
-            .effective_defaults
-            .iter()
-            .map(|d| vec![ops(&[d.operation]), d.provider.as_str().to_string(), d.model.clone()])
-            .collect();
-        out.push_str("\nUsed without --provider or --model:\n");
-        out.push_str(&table(&["OPERATION", "PROVIDER", "MODEL"], &rows));
-    }
-    out
+    table(&["MODEL", "PROVIDER", "LIFECYCLE", "OPERATIONS", "ALIASES"], &rows)
 }
 
 fn model_show(m: &ModelCapabilities) -> String {
@@ -329,7 +328,6 @@ fn model_show(m: &ModelCapabilities) -> String {
         field("aliases", join(&m.aliases));
     }
     field("operations", ops(&m.operations));
-    field("default for", ops(&m.default_for));
     let i = &m.inputs;
     if i.max_input_images > 0 || i.first_frame || i.last_frame || i.max_reference_images > 0 {
         field(
@@ -462,7 +460,7 @@ fn config_show(res: &ConfigShowResult) -> String {
     let mut out = format!(
         "config file: {} ({})\n",
         res.config_file,
-        if res.config_file_exists { "loaded" } else { "not found; defaults apply" }
+        if res.config_file_exists { "loaded" } else { "not found" }
     );
     let rows: Vec<Vec<String>> = res
         .settings
@@ -501,7 +499,7 @@ fn plan(res: &PlanResult) -> String {
     };
     field("operation", res.operation.as_str().to_string());
     field("provider", res.provider.as_str().to_string());
-    field("model", res.model.clone());
+    field("model", model_with_source(&res.model, Some(res.model_source), res.operation));
     field("async job", yes_no(res.async_job).to_string());
     let options: Vec<String> = res.options.iter().map(|(k, v)| format!("{k}={}", value_text(v))).collect();
     // Explicit values plus declared defaults (the values the request runs with).

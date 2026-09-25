@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::sync::Arc;
 use std::time::Duration;
 
-use iris::domain::{JobStatus, Operation, ProviderId};
+use iris::domain::{JobStatus, ModelSource, Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::http::Timeouts;
 use iris::jobs::{
@@ -20,6 +20,7 @@ fn new_job() -> NewJob {
     NewJob {
         provider: ProviderId::Gemini,
         model: "veo-test".into(),
+        model_source: ModelSource::Flag,
         operation: Operation::VideoGenerate,
         request: Map::new(),
         prompt: PromptRecord::new("a lighthouse at dusk", false),

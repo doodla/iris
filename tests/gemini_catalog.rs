@@ -112,15 +112,11 @@ fn account_notes_state_only_the_documented_key_and_billing_rules() {
 }
 
 #[test]
-fn flash_is_the_gemini_default_for_generate_and_edit() {
-    assert_eq!(catalog::default_model(ProviderId::Gemini, Operation::ImageGenerate).unwrap().id, FLASH);
-    assert_eq!(catalog::default_model(ProviderId::Gemini, Operation::ImageEdit).unwrap().id, FLASH);
-    let resolved = catalog::resolve("nano-banana-pro", None, Some(ProviderId::Gemini)).unwrap();
-    assert_eq!(resolved.id, PRO);
-    let err = catalog::resolve("nano-banana-2", None, Some(ProviderId::OpenAi)).unwrap_err();
-    assert_eq!(err.code, ErrorCode::InvalidArgument);
+fn nicknames_resolve_and_shut_down_ids_are_unknown() {
+    assert_eq!(catalog::resolve("nano-banana-2", None).unwrap().id, FLASH);
+    assert_eq!(catalog::resolve("nano-banana-pro", None).unwrap().id, PRO);
     for gone in ["gemini-2.5-flash-image", "gemini-3-pro-image-preview", "imagen-4.0-generate-001"] {
-        assert_eq!(catalog::resolve(gone, None, None).unwrap_err().code, ErrorCode::UnknownModel, "{gone}");
+        assert_eq!(catalog::resolve(gone, None).unwrap_err().code, ErrorCode::UnknownModel, "{gone}");
     }
 }
 
@@ -140,14 +136,14 @@ fn the_bare_nano_banana_nickname_names_no_model() {
         );
     };
     for name in ["nano-banana", "Nano-Banana"] {
-        let err = catalog::resolve(name, None, None).unwrap_err();
+        let err = catalog::resolve(name, None).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnknownModel, "{name}");
         names_the_alternatives(err.hint.as_deref());
     }
-    let err = catalog::resolve("gemini-9-image", Some("nano-banana"), None).unwrap_err();
+    let err = catalog::resolve("gemini-9-image", Some("nano-banana")).unwrap_err();
     assert_eq!(err.code, ErrorCode::UnknownModel);
     names_the_alternatives(err.hint.as_deref());
-    let err = catalog::resolve("banana", None, None).unwrap_err();
+    let err = catalog::resolve("banana", None).unwrap_err();
     assert!(err.hint.as_deref().unwrap().starts_with("known models: "), "{:?}", err.hint);
 }
 

@@ -41,10 +41,11 @@ TOML. Location, in order: `--config <PATH>` > `IRIS_CONFIG` > the platform defau
 | Linux | `$XDG_CONFIG_HOME/iris/config.toml`, else `~/.config/iris/config.toml` |
 | macOS | `~/Library/Application Support/iris/config.toml` |
 
-A missing *default* file is fine (built-in defaults apply). A file named explicitly by `--config`
-or `IRIS_CONFIG` that does not exist is `config_invalid` — you asked for it, so Iris tells you it
-isn't there rather than silently falling back. `iris config path` prints the real, absolute
-locations (output on Linux with `HOME=/home/you` and no `XDG_*` or `IRIS_*` variables set):
+A missing *default* file is fine: settings then come from flags, the environment, and the built-in
+defaults, and no model is configured. A file named explicitly by `--config` or `IRIS_CONFIG` that
+does not exist is `config_invalid` — you asked for it, so Iris tells you it isn't there rather
+than silently falling back. `iris config path` prints the real, absolute locations (output on
+Linux with `HOME=/home/you` and no `XDG_*` or `IRIS_*` variables set):
 
 ```console
 $ iris config path
@@ -60,9 +61,10 @@ output_dir = "~/Pictures/iris"        # ~ expanded
 state_dir = "/custom/state"           # optional
 
 [image]
-provider = "openai"                   # default provider for image commands
+model = "gpt-image-2.5-sunburst"      # image generate/edit without -m; a catalog image model
 
 [video]
+model = "veo-3.1-lite-generate-preview"   # video generate without -m; a catalog video model
 wait_timeout = "10m"
 poll_interval = "10s"
 
@@ -71,27 +73,25 @@ store_prompts = false                 # see docs/jobs.md — off by default
 
 [providers.openai]
 base_url = "https://api.openai.com/v1"
-image_model = "gpt-image-2.5-sunburst"   # must be a known model id/alias, or config_invalid
 request_timeout = "300s"
 
 [providers.gemini]
 base_url = "https://generativelanguage.googleapis.com"   # origin; Iris appends /v1 or /v1beta
-image_model = "gemini-3.1-flash-image"
-video_model = "veo-3.1-fast-generate-preview"
 request_timeout = "300s"
 submit_timeout = "60s"
 ```
 
-There is one `[providers.<id>]` table per provider (`openai`, `gemini`), with the same keys;
-`video_model` and `submit_timeout` apply only to a provider with video models (`gemini`), and
-setting them for another is `config_invalid`. See [Timeouts](#timeouts) for what
-`request_timeout` and `submit_timeout` cover. **Unknown keys are rejected**, not ignored — a typo
-is caught immediately rather than silently doing nothing (a relative `--config` path resolves
-against the current directory, `/home/you` here):
+`[image] model` and `[video] model` are the only settings that name a model; see
+[Choosing the model](#choosing-the-model). There is one `[providers.<id>]` table per provider
+(`openai`, `gemini`), with the same keys; `submit_timeout` applies only to a provider with video
+models (`gemini`), and setting it for another is `config_invalid`. See [Timeouts](#timeouts) for
+what `request_timeout` and `submit_timeout` cover. **Unknown keys are rejected**, not ignored — a
+typo is caught immediately rather than silently doing nothing (a relative `--config` path
+resolves against the current directory, `/home/you` here):
 
 ```console
 $ iris --config bad.toml config show
-error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`, `submit_timeout`
+error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `request_timeout`, `submit_timeout`
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 $ echo $?
 2
@@ -111,14 +111,22 @@ error[config_invalid]: config file /home/you/bad2.toml: `providers.openai.api_ke
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 ```
 
-An unknown model in `image_model`/`video_model` is also caught at config-load time, before any
-command tries to use it:
+A model in `image.model` or `video.model` that the catalog does not know, or that is of the other
+kind, is also caught at config-load time, before any command tries to use it:
 
 ```console
 $ iris --config bad3.toml config show
-error[config_invalid]: config file /home/you/bad3.toml: `providers.openai.image_model`: unknown model 'not-a-real-model' (run `iris models list`)
-  hint: fix the config file, or point --config / IRIS_CONFIG at another file
+error[config_invalid]: config file /home/you/bad3.toml: `image.model`: unknown model 'not-a-real-model'
+  hint: set image.model to a model listed by `iris models list --operation image.generate` or `iris models list --operation image.edit`
+$ iris --config bad4.toml config show
+error[config_invalid]: config file /home/you/bad4.toml: `video.model`: model 'gemini-3.1-flash-image' does not support video.generate (supports: image.generate, image.edit)
+  hint: set video.model to a model listed by `iris models list --operation video.generate`
 ```
+
+`iris models list` and `iris models show` (without `--check-access`) never read the config file,
+so while the file is invalid you can still list the models these hints name and inspect each one's
+options and prices. A name Iris deliberately gives no model, such as `nano-banana`, gets the same
+hint as with `-m` (see [decisions.md](decisions.md#built-in-models)).
 
 `iris doctor` still runs the checks that do not need a valid configuration when the config file
 itself is invalid, so an invalid file doesn't hide unrelated problems like a missing credential.
@@ -127,7 +135,7 @@ complete output):
 
 ```console
 $ iris --config bad.toml doctor
-[error]   config: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`, `submit_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
+[error]   config: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `request_timeout`, `submit_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
 Problems found (see [error] lines).
@@ -141,26 +149,15 @@ $ echo $?
 |---|---|---|---|
 | output directory | `IRIS_OUTPUT_DIR` | `-d`/`--out-dir` | current directory |
 | state directory | `IRIS_STATE_DIR` | — | platform default |
-| image provider | `IRIS_IMAGE_PROVIDER` | `--provider` | `openai` |
+| image model (`image generate`, `image edit`) | — (config file `image.model` only) | `-m`/`--model` | none: `model_required` |
+| video model (`video generate`) | — (config file `video.model` only) | `-m`/`--model` | none: `model_required` |
 | video wait timeout | `IRIS_WAIT_TIMEOUT` | `--timeout` | `10m` |
 | video poll interval | `IRIS_POLL_INTERVAL` | `--poll-interval` | `10s` |
 | store prompts in job records | `IRIS_STORE_PROMPTS` | — | `false` |
 | OpenAI base URL | `IRIS_OPENAI_BASE_URL` | — | `https://api.openai.com/v1` |
 | Gemini base URL | `IRIS_GEMINI_BASE_URL` | — | `https://generativelanguage.googleapis.com` |
-| OpenAI default image model | — (config file only) | `--model` | catalog default |
-| Gemini default image model | — (config file only) | `--model` | catalog default |
-| Gemini default video model | — (config file only) | `--model` | catalog default |
 | config file path | `IRIS_CONFIG` | `--config` | platform default |
 | log filter | `IRIS_LOG` | `-v` (repeatable) | `warn` |
-
-Provider/model resolution for generation, in order: provider = `--provider` > the provider implied
-by `--model` (from the catalog) > `IRIS_IMAGE_PROVIDER` > config `image.provider` > `openai`.
-Video has no provider setting: without `--provider` or `--model` it uses the provider whose catalog
-declares a default video model, which today is `gemini`, the only video provider. Model =
-`--model` > config `providers.<provider>.<kind>_model` > the catalog's default for that
-(provider, operation).
-Passing `--provider` together with a `--model` that belongs to a *different* provider is
-`invalid_argument`, caught before anything is sent.
 
 An environment variable's value is validated exactly like a config-file value — a bad one is
 `config_invalid` naming the variable, not silently ignored. That includes paths: `IRIS_CONFIG`,
@@ -185,21 +182,19 @@ Real `config show` output, with `HOME=/home/you`, both keys set, and
 
 ```console
 $ iris config show
-config file: /home/you/.config/iris/config.toml (not found; defaults apply)
+config file: /home/you/.config/iris/config.toml (not found)
 SETTING                           VALUE                               SOURCE
 config_file                       /home/you/.config/iris/config.toml  default
 output_dir                        /home/you                           default
 state_dir                         /home/you/iris-state                env IRIS_STATE_DIR
-image.provider                    openai                              default
+image.model                       (none)                              default
+video.model                       (none)                              default
 video.wait_timeout                10m                                 default
 video.poll_interval               10s                                 default
 jobs.store_prompts                false                               default
 providers.openai.base_url         http://127.0.0.1:8080/v1            env IRIS_OPENAI_BASE_URL
-providers.openai.image_model      gpt-image-2.5-sunburst              default
 providers.openai.request_timeout  5m                                  default
 providers.gemini.base_url         http://127.0.0.1:8080/              env IRIS_GEMINI_BASE_URL
-providers.gemini.image_model      gemini-3.1-flash-image              default
-providers.gemini.video_model      veo-3.1-fast-generate-preview       default
 providers.gemini.request_timeout  5m                                  default
 providers.gemini.submit_timeout   1m                                  default
 log                               warn                                default
@@ -207,6 +202,62 @@ credentials (presence only):
   OPENAI_API_KEY: set
   GEMINI_API_KEY: set
 ```
+
+## Choosing the model
+
+Iris never chooses a model for you. A generation command uses, in order:
+
+1. `-m`/`--model`: a catalog id or alias (`iris models list` shows them), or an id the catalog does
+   not know together with `--capabilities-from <KNOWN_MODEL>`;
+2. the config file: `[image] model` for `image generate` and `image edit`, `[video] model` for
+   `video generate`;
+3. nothing: the command fails with `model_required` (exit 2) before anything is sent, and a
+   `--dry-run` fails the same way.
+
+The provider is the model's provider: the generation commands have no `--provider` flag (`models
+list` and `jobs list` have one, as a filter). No environment variable names a model.
+
+```console
+$ iris image generate "a fox"
+error[model_required]: image.generate needs a model: pass -m/--model, or set model in the [image] table of the config file
+  hint: run `iris models list --operation image.generate` and pass -m <MODEL>, or set model under [image] in /home/you/.config/iris/config.toml
+$ echo $?
+2
+```
+
+With `--json`, the error's `details` hold the `operation`, the `config_key` (`image.model` or
+`video.model`), the resolved `config_file`, and the `candidates`: one `{model, provider,
+display_name, aliases}` object per catalog model that supports the operation, in catalog order
+(see [json-contract.md](json-contract.md#error-object)).
+
+A configured model must be a catalog id or alias of its table's kind (`image.model` an image
+model, `video.model` a video model); anything else is `config_invalid` naming the key when the
+config loads (see [Config file](#config-file)). It is stored as the id `-m` would send: the
+canonical id for a nickname such as `nano-banana-2`, a dated snapshot as written; `config show`
+shows it. `--capabilities-from` has no config equivalent. If `image.model` does not support the
+operation being run, that command fails with `unsupported_operation`, naming the key in its
+message and in `details.config_key`.
+
+`-m` always wins over the config file. Every result says which of the two chose the model:
+`model_source` is `flag` or `config` in the dry-run plan, the image result, and the job (see
+[json-contract.md](json-contract.md)). Human output names the key when the config file chose it
+(output with `[image] model = "nano-banana-2"` and no key set):
+
+```console
+$ iris image generate "a fox" --dry-run
+Dry run: nothing was sent and nothing was charged.
+  operation:  image.generate
+  provider:   gemini
+  model:      gemini-3.1-flash-image (config image.model)
+  async job:  no
+  options:    count=1 resolution=1K thinking_level=minimal
+  output:     /home/you/iris-01m3bwvc3g3y5b4zpybvy0gkr5.jpg
+  credential: GEMINI_API_KEY is NOT set (required for the real run)
+  cost:       ~$0.0670 USD (1 image × $0.067 (gemini-3.1-flash-image, 1K); input and thinking tokens not included)
+```
+
+The progress line of a real run names it the same way: `Requesting 1 image from gemini
+(gemini-3.1-flash-image, config image.model); this is a paid request`.
 
 ## Timeouts
 
@@ -261,7 +312,7 @@ provider. **Your credential is sent to whatever base URL is configured**, so:
 $ iris doctor
 warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:8080/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
 warning[non_default_base_url]: providers.gemini.base_url is http://127.0.0.1:8080/ (from IRIS_GEMINI_BASE_URL); GEMINI_API_KEY is sent to that host over unencrypted HTTP
-[ok]      config: no config file at /home/you/.config/iris/config.toml; built-in defaults apply
+[ok]      config: no config file at /home/you/.config/iris/config.toml (it is optional)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
 [ok]      state_dir: state directory /home/you/iris-state does not exist yet; it will be created on first use

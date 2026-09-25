@@ -25,6 +25,11 @@ machine-readable contract for agents.
   asynchronous job, with first-frame, last-frame and reference-image inputs where the model
   documents them. `--detach` submits and returns; `jobs status`/`wait`/`download` recover the job
   from any later process.
+- **Explicit models.** Every generation command names its model: `-m`/`--model`, or the model
+  the config file names (`[image] model`, `[video] model`); Iris never chooses one. Without
+  either, the command fails with `model_required` (exit 2) before anything is sent, listing the
+  models that support the operation. The provider is the model's, and results report
+  `model_source` (`flag` or `config`).
 - **Local validation before anything is sent.** Options, inputs and cross-option rules are declared
   per model in the catalog and checked identically by `--dry-run` and a real run (mask rules,
   inline request caps, model-id syntax for `--capabilities-from` models included). The API key is
@@ -87,9 +92,10 @@ machine-readable contract for agents.
   warning codes; tests check the documented tables and every help example against the code.
 - `iris models list`/`show`: declared operations, options (typed defaults, `max_chars`),
   machine-readable `constraints`, input requirements, output types, published prices with their
-  source and date, documented access requirements, and `effective_defaults` for commands without
-  `--model`. `--check-access` is a free check of whether a model is visible to your key.
-- `iris config show`/`path`, `iris doctor` (exits 0 whenever its checks ran; read `healthy`),
+  source and date, and documented access requirements. `--check-access` is a free check of
+  whether a model is visible to your key.
+- `iris config show`/`path`, `iris doctor` (exits 0 whenever its checks ran; read `healthy`;
+  `--check-access` checks every model of each provider whose key is set),
   `iris completions` (bash, zsh, fish, elvish) and `iris version` (`git_commit` is set by release
   and CI builds through `IRIS_GIT_COMMIT`).
 

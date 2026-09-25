@@ -12,10 +12,10 @@ use std::time::Duration;
 
 use iris::app::jobs::{self, ListFilter, Target, WaitArgs};
 use iris::app::video::{self, VideoArgs};
-use iris::app::{AppContext, Catalog, GenerationArgs, GenerationOutcome, Interrupt, Progress};
-use iris::catalog::{ModelSpec, OptionSource, RawOption};
+use iris::app::{GenerationArgs, GenerationOutcome, Interrupt};
+use iris::catalog::{OptionSource, RawOption};
 use iris::config::{CliOverrides, Resolved, SettingSource};
-use iris::domain::{DownloadState, JobStatus, Operation, ProviderId};
+use iris::domain::{DownloadState, JobStatus, ModelSource, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobStore};
 use iris::output::results::{JobResult, JobView};
@@ -26,9 +26,14 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const FILE_PATH: &str = "/v1beta/files/abc123:download";
 
+/// A request for the fake video model (`-m fake-video-1`).
 fn vargs(prompt: &str) -> VideoArgs {
     VideoArgs {
-        common: GenerationArgs { prompt: prompt.into(), ..GenerationArgs::default() },
+        common: GenerationArgs {
+            prompt: prompt.into(),
+            model: Some("fake-video-1".into()),
+            ..GenerationArgs::default()
+        },
         ..VideoArgs::default()
     }
 }
@@ -119,6 +124,7 @@ async fn detach_records_the_job_before_and_after_submission() {
     assert_eq!(job.status, JobStatus::Running);
     assert_eq!(job.remote_operation_id.as_deref(), Some("models/fake-video-1/operations/op0"));
     assert_eq!(job.model, "fake-video-1");
+    assert_eq!(job.model_source, Some(ModelSource::Flag));
     assert!(job.submitted_at.is_some());
     assert_eq!(
         res.next_steps,
@@ -130,6 +136,7 @@ async fn detach_records_the_job_before_and_after_submission() {
 
     let rec = record_json(&f.sandbox.state(), &job.job_id);
     assert_eq!(rec["status"], "running");
+    assert_eq!(rec["model_source"], "flag");
     assert_eq!(rec["prompt"]["chars"], 13);
     assert!(rec["prompt"]["text"].is_null(), "prompt text is not stored by default");
     assert!(
@@ -829,7 +836,7 @@ async fn video_validation_and_dry_run_happen_before_any_record_or_request() {
     a.common.output = Some(existing);
     assert_eq!(err_code(video::run(&ctx, a, &mut w).await), ErrorCode::OutputExists);
     let mut a = vargs("x");
-    a.common.provider = Some(ProviderId::OpenAi);
+    a.common.model = Some("fake-image-1".into());
     assert_eq!(err_code(video::run(&ctx, a, &mut w).await), ErrorCode::UnsupportedOperation);
     assert!(!f.sandbox.state().join("jobs").exists(), "no record was created");
     assert_eq!(f.submits(), 0);
@@ -1181,35 +1188,35 @@ async fn an_accepted_job_whose_record_vanished_exits_5_with_the_remote_id() {
     assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0);
 }
 
+/// Iris never picks a video model: without `-m` the config file's `video.model` is
+/// used and recorded as `model_source: config`; with neither, `model_required`
+/// comes before any record or request, in a dry run too.
 #[tokio::test]
-async fn the_default_video_provider_is_the_one_whose_catalog_model_is_the_video_default() {
-    // Nothing in the app names a video provider: without --provider or --model, a
-    // video command uses the provider whose catalog declares a default video model.
-    let sandbox = Sandbox::new();
-    let spec = |id: &'static str, provider: ProviderId, is_default: bool| -> &'static ModelSpec {
-        let default_for: &'static [Operation] = if is_default { FAKE_VIDEO_MODEL.default_for } else { &[] };
-        Box::leak(Box::new(ModelSpec { id, provider, aliases: &[], default_for, ..FAKE_VIDEO_MODEL }))
+async fn the_video_model_comes_from_the_flag_or_the_config_file_and_is_otherwise_required() {
+    let f = Fixture::new().await;
+    let without_model = |dry_run: bool| {
+        let mut a = detached("x");
+        a.common.model = None;
+        a.common.dry_run = dry_run;
+        a
     };
-    for (default_provider, other) in
-        [(ProviderId::OpenAi, ProviderId::Gemini), (ProviderId::Gemini, ProviderId::OpenAi)]
-    {
-        let with_video = |id: ProviderId| {
-            let base = if id == ProviderId::OpenAi { FakeProvider::openai() } else { FakeProvider::gemini() };
-            Arc::new(FakeProvider { video: Some(FakeVideo::default()), ..base })
-        };
-        let mut deps =
-            deps(vec![with_video(ProviderId::OpenAi), with_video(ProviderId::Gemini)], Interrupt::manual());
-        deps.catalog = Catalog::with_models(vec![
-            spec("fake-other-video", other, false),
-            spec("fake-default-video", default_provider, true),
-        ]);
-        let ctx = AppContext::new(settings(&sandbox.env()), deps, Progress::silent());
-        let mut a = vargs("x");
-        a.common.dry_run = true;
-        let plan = match video::run(&ctx, a, &mut Vec::new()).await.unwrap() {
-            GenerationOutcome::Planned(p) => p,
-            GenerationOutcome::Completed(_) => panic!("expected a plan"),
-        };
-        assert_eq!((plan.provider, plan.model.as_str()), (default_provider, "fake-default-video"));
+    for dry_run in [false, true] {
+        let e = video::run(&f.ctx(), without_model(dry_run), &mut Vec::new()).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::ModelRequired, "dry_run={dry_run}");
+        assert_eq!(e.provider_status, None);
+        assert_eq!(e.job_id, None);
+        assert_eq!(e.details["operation"], "video.generate");
+        assert_eq!(e.details["config_key"], "video.model");
+        assert_eq!(e.details["candidates"][0]["model"], "fake-video-1");
+        assert_eq!(e.details["candidates"].as_array().unwrap().len(), 1, "video models only");
     }
+    assert!(!f.sandbox.state().join("jobs").exists(), "no record was created");
+    assert_eq!(f.submits(), 0);
+
+    let mut configured = f.settings();
+    configured.video_model = Resolved { value: Some("fake-video-1".into()), source: SettingSource::File };
+    let ctx = context(configured, vec![f.gemini.clone()]);
+    let res = completed(video::run(&ctx, without_model(false), &mut Vec::new()).await.unwrap());
+    assert_eq!((res.job.model.as_str(), res.job.model_source), ("fake-video-1", Some(ModelSource::Config)));
+    assert_eq!(record_json(&f.sandbox.state(), &res.job.job_id)["model_source"], "config");
 }

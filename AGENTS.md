@@ -20,10 +20,12 @@ rules, not a description of the code; read `docs/architecture.md` and the source
 
 - Provider request/response types stay inside `src/providers/<provider>/`. The rest of
   the application sees only the shared traits and domain types.
-- Capabilities, defaults, and price tables are declared in the catalog, with the date
+- Capabilities, option defaults, and price tables are declared in the catalog, with the date
   and source they were checked against. Validate every option, input, and operation
   against the resolved model before any network call. Reject unsupported options
   explicitly; never drop, coerce, or silently remap them.
+- Iris never chooses a model for the caller: a generation command uses `--model` or the
+  model named in the config file, and reports which.
 - Keep synchronous generation and provider-native async jobs distinct. Never offer
   detach, resume, or cancellation for an operation the provider cannot recover.
 - Do not claim capabilities, access, cancellation, or recovery that a provider does not

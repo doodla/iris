@@ -6,7 +6,9 @@ use iris::catalog::{
     InputCounts, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OptionValue, OutputSpec,
     ResolvedOptions,
 };
-use iris::domain::{Artifact, DownloadState, JobStatus, Operation, ProviderId, Usage, Warning, WarningCode};
+use iris::domain::{
+    Artifact, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage, Warning, WarningCode,
+};
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobRecord, NewJob, OutputPlan, PollApplied, PromptRecord, request_metadata};
 use iris::providers::{RemoteArtifact, RemoteStatus, SubmittedOperation};
@@ -27,6 +29,7 @@ fn new_job() -> NewJob {
     NewJob {
         provider: ProviderId::Gemini,
         model: "veo-test".into(),
+        model_source: ModelSource::Flag,
         operation: Operation::VideoGenerate,
         request,
         prompt: PromptRecord::new("a cat surfing", false),
@@ -86,6 +89,7 @@ fn new_record_matches_the_v1_schema_shape() {
         "job_id",
         "provider",
         "model",
+        "model_source",
         "operation",
         "status",
         "created_at",
@@ -110,6 +114,7 @@ fn new_record_matches_the_v1_schema_shape() {
     assert_eq!(value["schema_version"], 1);
     assert_eq!(value["status"], "submitting");
     assert_eq!(value["provider"], "gemini");
+    assert_eq!(value["model_source"], "flag");
     assert_eq!(value["operation"], "video.generate");
     assert_eq!(value["created_at"], ts(0).to_string());
     assert!(value["created_at"].as_str().unwrap().ends_with('Z'));
@@ -660,6 +665,18 @@ fn unknown_fields_survive_a_round_trip() {
     assert_eq!(again["output_plan"]["future_plan_field"], json!([1, 2]));
 }
 
+/// A record that does not say where its model came from reads `model_source` as
+/// `null`, in the record and in its view, and a rewrite keeps it that way.
+#[test]
+fn a_record_without_a_model_source_reads_it_as_null() {
+    let mut value = serde_json::to_value(running_record()).unwrap();
+    value.as_object_mut().unwrap().remove("model_source");
+    let back: JobRecord = serde_json::from_value(value).unwrap();
+    assert_eq!(back.model_source(), None);
+    assert_eq!(back.to_view().model_source, None);
+    assert_eq!(serde_json::to_value(&back).unwrap()["model_source"], Value::Null);
+}
+
 #[test]
 fn views_show_the_category_of_the_code_they_show() {
     use iris::error::ErrorCategory;
@@ -731,7 +748,6 @@ static TEST_SPEC: ModelSpec = ModelSpec {
     aliases: &[],
     lifecycle: Lifecycle::Preview,
     operations: &[Operation::VideoGenerate],
-    default_for: &[],
     inputs: InputSpec::NONE,
     options: TEST_OPTIONS,
     outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },

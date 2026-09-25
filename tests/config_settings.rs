@@ -71,7 +71,7 @@ fn defaults_apply_when_nothing_is_configured_and_the_default_file_is_missing() {
     assert_eq!(s.output_dir.value, fx.cwd);
     assert_eq!(s.state_dir.value, fx.home.join(".local/state/iris"));
     assert_eq!(s.jobs_dir(), fx.home.join(".local/state/iris/jobs"));
-    assert_eq!(s.image_provider.value, ProviderId::OpenAi);
+    assert_eq!((s.image_model.value.as_deref(), s.video_model.value.as_deref()), (None, None), "no model");
     assert_eq!(s.wait_timeout.value, Duration::from_secs(600));
     assert_eq!(s.poll_interval.value, Duration::from_secs(10));
     assert!(!s.store_prompts.value);
@@ -84,19 +84,12 @@ fn defaults_apply_when_nothing_is_configured_and_the_default_file_is_missing() {
     assert_eq!(s.provider(ProviderId::Gemini).request_timeout.value, Duration::from_secs(300));
     assert_eq!(s.provider(ProviderId::Gemini).submit_timeout.value, Duration::from_secs(60));
     assert_eq!(s.provider(ProviderId::Gemini).submit_timeout.source, SettingSource::Default);
-    assert_eq!(
-        s.provider(ProviderId::OpenAi).image_model.value,
-        catalog::default_model(ProviderId::OpenAi, Operation::ImageGenerate).map(|m| m.id.to_string())
-    );
-    assert_eq!(
-        s.provider(ProviderId::Gemini).video_model.value,
-        catalog::default_model(ProviderId::Gemini, Operation::VideoGenerate).map(|m| m.id.to_string())
-    );
     assert_eq!(s.log_filter.value, "warn");
     for (key, source) in [
         ("output_dir", &s.output_dir.source),
         ("state_dir", &s.state_dir.source),
-        ("image.provider", &s.image_provider.source),
+        ("image.model", &s.image_model.source),
+        ("video.model", &s.video_model.source),
         ("wait_timeout", &s.wait_timeout.source),
         ("poll_interval", &s.poll_interval.source),
         ("store_prompts", &s.store_prompts.source),
@@ -126,9 +119,10 @@ output_dir = "/file/out"
 state_dir = "/file/state"
 
 [image]
-provider = "gemini"
+model = "nano-banana-2"
 
 [video]
+model = "veo-lite"
 wait_timeout = "20m"
 poll_interval = 30
 
@@ -148,7 +142,6 @@ fn full_env(fx: &Fixture) -> EnvSnapshot {
     fx.env()
         .with_var("IRIS_OUTPUT_DIR", "/env/out")
         .with_var("IRIS_STATE_DIR", "/env/state")
-        .with_var("IRIS_IMAGE_PROVIDER", "openai")
         .with_var("IRIS_WAIT_TIMEOUT", "30m")
         .with_var("IRIS_POLL_INTERVAL", "45s")
         .with_var("IRIS_STORE_PROMPTS", "false")
@@ -161,7 +154,6 @@ fn full_flags() -> CliOverrides {
     CliOverrides {
         config_path: None,
         out_dir: Some(PathBuf::from("/flag/out")),
-        provider: Some(ProviderId::Gemini),
         wait_timeout: Some(Duration::from_secs(5)),
         poll_interval: Some(Duration::from_secs(3)),
         verbose: 1,
@@ -176,7 +168,10 @@ fn file_values_override_defaults() {
     assert!(s.config_file_exists);
     assert_eq!(s.output_dir.value, Path::new("/file/out"));
     assert_eq!(s.state_dir.value, Path::new("/file/state"));
-    assert_eq!(s.image_provider.value, ProviderId::Gemini);
+    // Nicknames are stored as the canonical ids `-m` would send.
+    assert_eq!(s.image_model.value.as_deref(), Some("gemini-3.1-flash-image"));
+    assert_eq!(s.video_model.value.as_deref(), Some("veo-3.1-lite-generate-preview"));
+    assert_eq!(s.model(Operation::ImageEdit).value.as_deref(), Some("gemini-3.1-flash-image"));
     assert_eq!(s.wait_timeout.value, Duration::from_secs(1200));
     assert_eq!(s.poll_interval.value, Duration::from_secs(30));
     assert!(s.store_prompts.value);
@@ -188,7 +183,8 @@ fn file_values_override_defaults() {
     for source in [
         &s.output_dir.source,
         &s.state_dir.source,
-        &s.image_provider.source,
+        &s.image_model.source,
+        &s.video_model.source,
         &s.wait_timeout.source,
         &s.poll_interval.source,
         &s.store_prompts.source,
@@ -208,7 +204,6 @@ fn environment_overrides_the_file() {
     let s = load(&full_env(&fx)).unwrap();
     assert_eq!(s.output_dir.value, Path::new("/env/out"));
     assert_eq!(s.state_dir.value, Path::new("/env/state"));
-    assert_eq!(s.image_provider.value, ProviderId::OpenAi);
     assert_eq!(s.wait_timeout.value, Duration::from_secs(1800));
     assert_eq!(s.poll_interval.value, Duration::from_secs(45));
     assert!(!s.store_prompts.value);
@@ -218,7 +213,6 @@ fn environment_overrides_the_file() {
     for source in [
         &s.output_dir.source,
         &s.state_dir.source,
-        &s.image_provider.source,
         &s.wait_timeout.source,
         &s.poll_interval.source,
         &s.store_prompts.source,
@@ -230,6 +224,8 @@ fn environment_overrides_the_file() {
     }
     // Settings without an environment variable still come from the file.
     assert_eq!(s.provider(ProviderId::OpenAi).request_timeout.source, SettingSource::File);
+    assert_eq!(s.image_model.source, SettingSource::File);
+    assert_eq!(s.video_model.source, SettingSource::File);
 }
 
 #[test]
@@ -238,22 +234,19 @@ fn flags_override_the_environment_and_the_file() {
     fx.write_default_config(FULL_FILE);
     let s = Settings::load(&full_flags(), &full_env(&fx)).unwrap();
     assert_eq!(s.output_dir.value, Path::new("/flag/out"));
-    assert_eq!(s.image_provider.value, ProviderId::Gemini);
     assert_eq!(s.wait_timeout.value, Duration::from_secs(5));
     assert_eq!(s.poll_interval.value, Duration::from_secs(3));
     assert_eq!(s.log_filter.value, "warn,iris=debug");
-    for source in [
-        &s.output_dir.source,
-        &s.image_provider.source,
-        &s.wait_timeout.source,
-        &s.poll_interval.source,
-        &s.log_filter.source,
-    ] {
+    for source in
+        [&s.output_dir.source, &s.wait_timeout.source, &s.poll_interval.source, &s.log_filter.source]
+    {
         assert_eq!(*source, SettingSource::Flag);
     }
     // No flag exists for these; the environment still wins over the file.
     assert_eq!(s.state_dir.source, SettingSource::Env);
     assert_eq!(s.store_prompts.source, SettingSource::Env);
+    // `-m/--model` is not a setting: the configured models stay the file's.
+    assert_eq!(s.image_model.source, SettingSource::File);
     let s = Settings::load(&CliOverrides { verbose: 3, ..Default::default() }, &fx.env()).unwrap();
     assert_eq!(s.log_filter.value, "warn,iris=trace");
 }
@@ -261,8 +254,8 @@ fn flags_override_the_environment_and_the_file() {
 #[test]
 fn config_file_location_precedence_is_flag_then_env_then_default() {
     let fx = Fixture::new();
-    fx.write_default_config("[image]\nprovider = \"openai\"\n");
-    let from_env = fx.write("env.toml", "[image]\nprovider = \"gemini\"\n");
+    fx.write_default_config("[image]\nmodel = \"gpt-image-2\"\n");
+    let from_env = fx.write("env.toml", "[image]\nmodel = \"nano-banana-2\"\n");
     let from_flag = fx.write("flag.toml", "[jobs]\nstore_prompts = true\n");
 
     let env = fx.env().with_var("IRIS_CONFIG", from_env.to_str().unwrap());
@@ -271,14 +264,14 @@ fn config_file_location_precedence_is_flag_then_env_then_default() {
         (s.config_file.value.clone(), s.config_file.source.clone()),
         (from_env.clone(), SettingSource::Env)
     );
-    assert_eq!(s.image_provider.value, ProviderId::Gemini);
+    assert_eq!(s.image_model.value.as_deref(), Some("gemini-3.1-flash-image"));
 
     let cli = CliOverrides { config_path: Some(PathBuf::from("flag.toml")), ..Default::default() };
     let s = Settings::load(&cli, &env).unwrap();
     assert_eq!(s.config_file.value, from_flag, "relative --config resolves against the current directory");
     assert_eq!(s.config_file.source, SettingSource::Flag);
     assert!(s.store_prompts.value);
-    assert_eq!(s.image_provider.source, SettingSource::Default, "only the selected file is read");
+    assert_eq!(s.image_model.source, SettingSource::Default, "only the selected file is read");
 }
 
 #[test]
@@ -333,12 +326,11 @@ fn wrong_types_and_invalid_values_in_the_file_are_rejected_with_the_key() {
         ("[video]\nwait_timeout = \"forever\"\n", "video.wait_timeout"),
         ("[video]\nwait_timeout = 0\n", "video.wait_timeout"),
         ("[video]\npoll_interval = \"1s\"\n", "video.poll_interval"),
-        ("[image]\nprovider = \"seedance\"\n", "image.provider"),
         ("[providers.openai]\nbase_url = \"ftp://x\"\n", "providers.openai.base_url"),
         ("[providers.gemini]\nrequest_timeout = -5\n", "providers.gemini.request_timeout"),
         ("output_dir = \"relative/dir\"\n", "output_dir"),
-        ("[providers.gemini]\nimage_model = \"no-such-model\"\n", "providers.gemini.image_model"),
-        ("[providers.openai]\nvideo_model = \"no-such-model\"\n", "providers.openai.video_model"),
+        ("[image]\nmodel = \"no-such-model\"\n", "image.model"),
+        ("[video]\nmodel = \"no-such-model\"\n", "video.model"),
         ("[providers.gemini]\nsubmit_timeout = 0\n", "providers.gemini.submit_timeout"),
         ("[providers.gemini]\nsubmit_timeout = \"soon\"\n", "providers.gemini.submit_timeout"),
         // A provider without video models never submits a job: the key would do nothing.
@@ -385,7 +377,6 @@ fn bad_environment_values_are_config_invalid_naming_the_variable() {
         ("IRIS_POLL_INTERVAL", "1s"),
         ("IRIS_POLL_INTERVAL", "abc"),
         ("IRIS_STORE_PROMPTS", "maybe"),
-        ("IRIS_IMAGE_PROVIDER", "seedance"),
         ("IRIS_OPENAI_BASE_URL", "not a url"),
         ("IRIS_GEMINI_BASE_URL", "https://user:pw@example.com"),
         ("IRIS_GEMINI_BASE_URL", "https://example.com/?key=abc"),
@@ -510,16 +501,14 @@ fn describe_lists_every_setting_with_sources_and_never_secrets() {
             "config_file",
             "output_dir",
             "state_dir",
-            "image.provider",
+            "image.model",
+            "video.model",
             "video.wait_timeout",
             "video.poll_interval",
             "jobs.store_prompts",
             "providers.openai.base_url",
-            "providers.openai.image_model",
             "providers.openai.request_timeout",
             "providers.gemini.base_url",
-            "providers.gemini.image_model",
-            "providers.gemini.video_model",
             "providers.gemini.request_timeout",
             "providers.gemini.submit_timeout",
             "log",
@@ -531,8 +520,13 @@ fn describe_lists_every_setting_with_sources_and_never_secrets() {
     assert_eq!(find("state_dir").env_var.as_deref(), Some("IRIS_STATE_DIR"));
     assert_eq!(find("video.poll_interval").source, SettingSource::File);
     assert_eq!(find("video.poll_interval").value, serde_json::json!("20s"));
-    assert_eq!(find("image.provider").source, SettingSource::Default);
-    assert_eq!(find("providers.openai.image_model").env_var, None);
+    assert_eq!(
+        (find("image.model").value.clone(), find("image.model").source.clone()),
+        (serde_json::Value::Null, SettingSource::Default),
+        "no model unless the file names one"
+    );
+    assert_eq!(find("image.model").env_var, None, "no variable names a model");
+    assert_eq!(find("video.model").env_var, None);
     assert!(show.config_file_exists);
 
     let creds: Vec<(String, bool)> = show.credentials.iter().map(|c| (c.env.clone(), c.present)).collect();
@@ -574,41 +568,83 @@ fn credentials_come_only_from_the_two_variables() {
     assert_eq!(e.provider, Some(ProviderId::OpenAi));
 }
 
+/// `[image] model` takes any catalog image model and `[video] model` any video
+/// model, by id or alias, stored as the id `-m` would send; a model of the other
+/// kind, or one the catalog does not know, is `config_invalid` naming the key, with
+/// a hint that lists the models to choose from.
 #[test]
-fn catalog_models_are_accepted_as_file_defaults_and_cross_provider_models_rejected() {
-    // Meaningful once the model catalog is populated; vacuous for an empty catalog.
+fn configured_models_must_be_catalog_models_of_their_table() {
     let fx = Fixture::new();
     for spec in catalog::all() {
-        for (kind, ops) in [
-            ("image_model", &[Operation::ImageGenerate, Operation::ImageEdit][..]),
-            ("video_model", &[Operation::VideoGenerate][..]),
+        for (table, ops) in [
+            ("image", &[Operation::ImageGenerate, Operation::ImageEdit][..]),
+            ("video", &[Operation::VideoGenerate][..]),
         ] {
-            let supported = ops.iter().any(|op| spec.supports(*op));
-            let own = spec.provider;
-            let other = if own == ProviderId::OpenAi { ProviderId::Gemini } else { ProviderId::OpenAi };
-            let alias_or_id = spec.aliases.first().copied().unwrap_or(spec.id);
-            fx.write_default_config(&format!("[providers.{own}]\n{kind} = \"{alias_or_id}\"\n"));
-            match load(&fx.env()) {
-                Ok(s) if supported => {
-                    let got = if kind == "image_model" {
-                        &s.provider(own).image_model
-                    } else {
-                        &s.provider(own).video_model
-                    };
-                    assert_eq!(got.value.as_deref(), Some(spec.id), "aliases resolve to the canonical id");
-                    assert_eq!(got.source, SettingSource::File);
+            let key = format!("{table}.model");
+            for name in std::iter::once(spec.id).chain(spec.aliases.iter().copied()) {
+                fx.write_default_config(&format!("[{table}]\nmodel = \"{name}\"\n"));
+                match load(&fx.env()) {
+                    Ok(s) if ops.iter().any(|op| spec.supports(*op)) => {
+                        let got = s.model(ops[0]);
+                        assert_eq!(
+                            got.value.as_deref(),
+                            Some(catalog::resolve(name, None).unwrap().id.as_str())
+                        );
+                        assert_eq!(got.source, SettingSource::File);
+                    }
+                    Err(e) if !ops.iter().any(|op| spec.supports(*op)) => {
+                        assert_eq!(e.code, ErrorCode::ConfigInvalid);
+                        assert_eq!(e.details.get("key").and_then(|v| v.as_str()), Some(key.as_str()));
+                        assert!(e.message.contains("does not support"), "{}", e.message);
+                        assert!(e.hint.as_deref().unwrap().contains("iris models list --operation"), "{e:?}");
+                    }
+                    other => panic!("{name} as {key}: unexpected {other:?}"),
                 }
-                Err(e) if !supported => assert_eq!(e.code, ErrorCode::ConfigInvalid),
-                other => panic!("{} as {kind}: unexpected {other:?}", spec.id),
             }
-            fx.write_default_config(&format!("[providers.{other}]\n{kind} = \"{}\"\n", spec.id));
-            assert_eq!(
-                load(&fx.env()).unwrap_err().code,
-                ErrorCode::ConfigInvalid,
-                "{} under {other}",
-                spec.id
-            );
         }
+    }
+    fx.write_default_config("[image]\nmodel = \"gpt-image-3\"\n");
+    let e = load(&fx.env()).unwrap_err();
+    assert_eq!(e.details.get("key").and_then(|v| v.as_str()), Some("image.model"));
+    assert!(e.message.contains("unknown model 'gpt-image-3'"), "{}", e.message);
+    assert_eq!(
+        e.hint.as_deref(),
+        Some(
+            "set image.model to a model listed by `iris models list --operation image.generate` or `iris models \
+             list --operation image.edit`"
+        )
+    );
+    // Matched exactly, as `-m` is: surrounding spaces are part of the name.
+    fx.write_default_config("[image]\nmodel = \" nano-banana-2 \"\n");
+    let e = load(&fx.env()).unwrap_err();
+    let flag = catalog::resolve(" nano-banana-2 ", None).unwrap_err();
+    assert_eq!(flag.message, "unknown model ' nano-banana-2 '");
+    assert!(e.message.ends_with(&format!("`image.model`: {}", flag.message)), "{}", e.message);
+}
+
+/// No setting chooses a provider or a per-provider model: the keys are unknown, and
+/// the error lists the keys each table takes.
+#[test]
+fn provider_and_per_provider_model_keys_are_unknown() {
+    let fx = Fixture::new();
+    for (text, key, expected) in [
+        ("[image]\nprovider = \"gemini\"\n", "image.provider", "expected `model`"),
+        (
+            "[providers.openai]\nimage_model = \"gpt-image-2\"\n",
+            "providers.openai.image_model",
+            "expected one of `base_url`, `request_timeout`, `submit_timeout`",
+        ),
+        (
+            "[providers.gemini]\nvideo_model = \"veo-lite\"\n",
+            "providers.gemini.video_model",
+            "expected one of `base_url`, `request_timeout`, `submit_timeout`",
+        ),
+    ] {
+        fx.write_default_config(text);
+        let e = load(&fx.env()).unwrap_err();
+        assert_eq!(e.code, ErrorCode::ConfigInvalid, "{text}");
+        assert_eq!(e.details.get("key").and_then(|v| v.as_str()), Some(key), "{text}");
+        assert!(e.message.contains(&format!("`{key}`: unknown key; {expected}")), "{text}: {}", e.message);
     }
 }
 

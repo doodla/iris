@@ -169,7 +169,6 @@ enum Request {
 #[derive(Default)]
 struct Overrides {
     out_dir: Option<PathBuf>,
-    image_provider: Option<ProviderId>,
     wait_timeout: Option<Duration>,
     poll_interval: Option<Duration>,
 }
@@ -192,10 +191,22 @@ async fn execute(
     // Local parsing and validation that needs no settings (prompt sources, option
     // syntax, names, durations).
     let (request, overrides) = build_request(command, io)?;
+    // `models list`, and `models show` without `--check-access`, read only the catalog
+    // and the environment, never the settings, so they run even when the config file
+    // is invalid (the `config_invalid` hint about a configured model points at
+    // `models list`).
+    match &request {
+        Request::ModelsList { provider, operation } => {
+            return Ok(ResultPayload::ModelList(app::models::list(&deps.catalog, *provider, *operation)));
+        }
+        Request::ModelsShow { model, check_access: false } => {
+            return Ok(ResultPayload::ModelShow(app::models::show(&deps.catalog, &io.env, model, warnings)?));
+        }
+        _ => {}
+    }
     let cli_overrides = CliOverrides {
         config_path: global.config.clone(),
         out_dir: overrides.out_dir,
-        provider: overrides.image_provider,
         wait_timeout: overrides.wait_timeout,
         poll_interval: overrides.poll_interval,
         verbose: global.verbose,
@@ -254,16 +265,17 @@ async fn execute(
         Request::JobsDelete { job_ids, all, force } => {
             ResultPayload::JobDelete(app::jobs::delete(&ctx, &job_ids, all, force, warnings)?)
         }
-        Request::ModelsList { provider, operation } => {
-            ResultPayload::ModelList(app::models::list(&ctx, provider, operation))
-        }
-        Request::ModelsShow { model, check_access } => {
-            ResultPayload::ModelShow(app::models::show(&ctx, &model, check_access, warnings).await?)
+        Request::ModelsShow { model, check_access: true } => {
+            let mut shown = app::models::show(&ctx.catalog, &io.env, &model, warnings)?;
+            app::models::check_access(&ctx, &mut shown, warnings).await?;
+            ResultPayload::ModelShow(shown)
         }
         Request::ProvidersList => ResultPayload::ProviderList(app::models::providers(&ctx)),
         Request::ConfigShow => ResultPayload::ConfigShow(info::config_show(&ctx, warnings)),
         Request::ConfigPath => ResultPayload::ConfigPath(info::config_path(&ctx)),
-        Request::Doctor(_) => unreachable!("handled above"),
+        Request::ModelsList { .. } | Request::ModelsShow { check_access: false, .. } | Request::Doctor(_) => {
+            unreachable!("handled above")
+        }
     })
 }
 
@@ -286,13 +298,11 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
         Command::Image(ImageCommand::Generate(a)) => {
             let common =
                 generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
-            o.image_provider = common.provider;
             Request::Image(Operation::ImageGenerate, ImageArgs { common, images: Vec::new(), mask: None })
         }
         Command::Image(ImageCommand::Edit(a)) => {
             let common =
                 generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
-            o.image_provider = common.provider;
             let images = a.images.into_iter().map(|p| absolute(&io.env, p)).collect::<Result<_, _>>()?;
             let mask = a.mask.map(|p| absolute(&io.env, p)).transpose()?;
             Request::Image(Operation::ImageEdit, ImageArgs { common, images, mask })
@@ -370,8 +380,8 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
     Ok((request, o))
 }
 
-/// Shared generation arguments: prompt (read and checked), provider name, option
-/// syntax, output target.
+/// Shared generation arguments: prompt (read and checked), model, option syntax,
+/// output target.
 fn generation(
     prompt_args: &PromptArgs,
     model: &ModelArgs,
@@ -387,12 +397,10 @@ fn generation(
         prompt_stdin: prompt_args.prompt_stdin,
     };
     let prompt = prompt::read(&prompt_args, &mut *io.stdin, io.stdin_is_tty)?;
-    let provider = model.provider.as_deref().map(parse_provider).transpose()?;
     let options = raw_options(&flags)?;
     overrides.out_dir = output.out_dir.clone();
     Ok(GenerationArgs {
         prompt,
-        provider,
         model: model.model.clone(),
         capabilities_from: model.capabilities_from.clone(),
         options,

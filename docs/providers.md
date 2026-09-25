@@ -126,7 +126,6 @@ pub static MODELS: &[ModelSpec] = &[
         aliases: &[],                                 // e.g. dated-snapshot aliases
         lifecycle: Lifecycle::Preview,                 // ga | preview | deprecated, as documented
         operations: &[Operation::VideoGenerate],
-        default_for: &[],                              // set once this is the provider's default
         inputs: InputSpec { /* image counts, media types, sizes, mask rules, frames, references,
                                inline request cap */ },
         options: OPTIONS,                              // every accepted option, typed (see below)
@@ -146,7 +145,7 @@ Then:
 
 1. Give the provider its identity: a `Seedance` variant of the `ProviderId` enum
    (`src/domain.rs`), an entry in `ProviderId::ALL`, and a match arm in each of its identity
-   methods: `as_str` (`"seedance"`, its `--provider` value and config table name),
+   methods: `as_str` (`"seedance"`, its `--provider` filter value and config table name),
    `display_name`, `credential_env` (the one environment variable its key is read from, e.g.
    `SEEDANCE_API_KEY`), `default_base_url`, and `base_url_env` (`IRIS_SEEDANCE_BASE_URL`).
    `as_str` must equal the variant's serde name: the enum's `#[serde(rename_all = "snake_case")]`
@@ -252,17 +251,18 @@ The complete list, for a provider like the Seedance example.
   the arms; the `domain` unit tests check the `ALL` entry and that the names agree (step 3).
 - Adapter and catalog tests (step 5).
 
-**Derived from those, with no further edits:** parsing `--provider seedance` and
-`image.provider = "seedance"`; the `[providers.seedance]` config table with the same keys as the
-others (`base_url`, `image_model`, `video_model`, `request_timeout`, `submit_timeout`); the
-`IRIS_SEEDANCE_BASE_URL` override; its rows in `config show`; the `non_default_base_url` warning;
-`doctor`'s `credentials.seedance`, `base_url.seedance`, and `access.seedance.<model>` checks; the
-`providers list` entry; redaction of its key from every message; and the config file's refusal of
-credential-like keys, whose message lists every provider's variable. The offline test harness
-follows `ProviderId::ALL` as well: every `iris` process that `cargo test` starts has each
-provider's credential variable removed and its base URL pointed at a dead local port (`configure`
-in `tests/cli_process.rs`; `Iris::new` and `credential_vars` in `tests/support/process.rs`), so a
-developer's real key for the new provider never reaches the offline suite.
+**Derived from those, with no further edits:** parsing `--provider seedance` (the `models list`
+and `jobs list` filter); its models in `-m` and in `image.model` / `video.model`; the
+`[providers.seedance]` config table with the same keys as the others (`base_url`,
+`request_timeout`, `submit_timeout`); the `IRIS_SEEDANCE_BASE_URL` override; its rows in `config
+show`; the `non_default_base_url` warning; `doctor`'s `credentials.seedance`, `base_url.seedance`,
+and `access.seedance.<model>` checks; the `providers list` entry; redaction of its key from every
+message; and the config file's refusal of credential-like keys, whose message lists every
+provider's variable. The offline test harness follows `ProviderId::ALL` as well: every `iris`
+process that `cargo test` starts has each provider's credential variable removed and its base URL
+pointed at a dead local port (`configure` in `tests/cli_process.rs`; `Iris::new` and
+`credential_vars` in `tests/support/process.rs`), so a developer's real key for the new provider
+never reaches the offline suite.
 
 **Contract, help text, package metadata, documents, and test and verification tooling that name
 providers, updated by hand:**
@@ -275,15 +275,11 @@ providers, updated by hand:**
 - Help text in `src/cli/args.rs` that names the providers, their products, or their variables:
   `ABOUT` ("…with OpenAI and Google Gemini/Veo"), `LONG_ABOUT` (its first paragraph names each
   provider's image and video products, and "Credentials are read only from the OPENAI_API_KEY and
-  GEMINI_API_KEY environment variables"), `--provider`'s "Provider: openai or gemini", and the
-  `providers list` description (its credential and `IRIS_*_BASE_URL` variables). A test in
-  `tests/cli_process.rs` fails until the top-level help names the new credential variable.
+  GEMINI_API_KEY environment variables"), and the `providers list` description (its credential
+  and `IRIS_*_BASE_URL` variables). A test in `tests/cli_process.rs` fails until the top-level help
+  names the new credential variable.
 - Package metadata in `Cargo.toml`: `description` (names OpenAI and Google Gemini/Veo) and
   `keywords` (`openai`, `gemini`; crates.io allows at most five).
-- The default video provider. A video command without `--provider` or `--model` uses the provider
-  whose catalog declares a default video model (`default_for` containing `video.generate`). If a
-  second provider declares one, the first in `ProviderId` order wins; choose that order
-  deliberately, or add a `video.provider` setting as a documented configuration change.
 - Documentation: the README's setup section and support table,
   [configuration.md](configuration.md) (credential table, precedence table, full key set),
   [architecture.md](architecture.md)'s module table (it names `providers/{openai,gemini}/` and

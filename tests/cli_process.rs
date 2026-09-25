@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 
 use assert_cmd::Command;
 use iris::catalog::ModelSpec;
-use iris::domain::{JobStatus, Operation, ProviderId};
+use iris::domain::{JobStatus, ModelSource, Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord};
 use iris::providers::{RemoteStatus, SubmittedOperation};
@@ -37,7 +37,6 @@ const SCRUBBED: &[&str] = &[
     "IRIS_CONFIG",
     "IRIS_OUTPUT_DIR",
     "IRIS_STATE_DIR",
-    "IRIS_IMAGE_PROVIDER",
     "IRIS_WAIT_TIMEOUT",
     "IRIS_POLL_INTERVAL",
     "IRIS_STORE_PROMPTS",
@@ -132,6 +131,7 @@ fn new_job(sandbox: &Sandbox) -> NewJob {
     NewJob {
         provider: ProviderId::Gemini,
         model: "veo-test-model".into(),
+        model_source: ModelSource::Flag,
         operation: Operation::VideoGenerate,
         request: serde_json::Map::new(),
         prompt: PromptRecord::new("a lighthouse", false),
@@ -275,6 +275,21 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
     );
     // Exit 130 covers every signal Iris handles, as docs/json-contract.md says.
     assert!(words.contains("130 interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP)"), "{}", top.stdout);
+    // Iris never chooses a model, and each generation command's -m help names the config
+    // key that can stand in for -m.
+    assert!(words.contains("Iris never chooses a model for you"), "{}", top.stdout);
+    for (command, key) in [
+        (["image", "generate"], "image.model"),
+        (["image", "edit"], "image.model"),
+        (["video", "generate"], "video.model"),
+    ] {
+        let help = run(iris(&sandbox).args(command).arg("--help")).stdout;
+        let words = help.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            words.contains(&format!("required unless the config file sets {key}")),
+            "{command:?}:\n{help}"
+        );
+    }
     let leaves: &[&[&str]] = &[
         &["image", "generate"],
         &["image", "edit"],
@@ -521,6 +536,14 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
     assert_eq!(status("credentials.openai").as_deref(), Some("warning"));
     assert_eq!(status("base_url.gemini").as_deref(), Some("warning"));
     assert_eq!(status("state_dir").as_deref(), Some("ok"));
+    let config = checks.iter().find(|c| c["id"] == "config").unwrap();
+    assert_eq!(
+        config["message"],
+        format!(
+            "no config file at {} (it is optional)",
+            sandbox.home().join(".config/iris/config.toml").display()
+        )
+    );
     assert!(!out.stdout.contains("google-key-should-be-ignored"));
 
     // An explicitly requested config file that does not exist is config_invalid.
@@ -585,7 +608,7 @@ fn models_list_is_consistent_with_the_catalog() {
 /// A request breaking a published constraint names it in `details.constraint`.
 #[test]
 fn constraint_violations_name_the_published_constraint() {
-    let Some(video) = builtin_default(ProviderId::Gemini, Operation::VideoGenerate) else { return };
+    let video = builtin(VIDEO_MODEL);
     let Some(rules) = video.validate else { return };
     let sandbox = Sandbox::new();
     let v = run(iris(&sandbox).args(["models", "show", video.id, "--json"])).json();
@@ -602,6 +625,8 @@ fn constraint_violations_name_the_published_constraint() {
         "video",
         "generate",
         "x",
+        "-m",
+        VIDEO_MODEL,
         "--resolution",
         "1080p",
         "--duration",
@@ -809,12 +834,12 @@ fn typed_flags(op: Operation) -> &'static [(&'static str, &'static str)] {
     }
 }
 
-fn builtin_default(provider: ProviderId, op: Operation) -> Option<&'static ModelSpec> {
-    let spec = iris::catalog::default_model(provider, op);
-    if spec.is_none() {
-        eprintln!("skipped: the built-in catalog has no default {provider} model for {op} in this build");
-    }
-    spec
+/// The built-in models the generation tests name with `-m`.
+const IMAGE_MODEL: &str = "gpt-image-2.5-flare";
+const VIDEO_MODEL: &str = "veo-3.1-lite-generate-preview";
+
+fn builtin(id: &str) -> &'static ModelSpec {
+    iris::catalog::find(id).unwrap_or_else(|| panic!("{id} is not in the built-in catalog"))
 }
 
 /// A typed flag of `op`'s command that `spec` does not declare, if there is one.
@@ -871,11 +896,12 @@ fn assert_nothing_sent(out: &Out, code: &str, exit: i32) {
 
 #[test]
 fn image_generation_is_validated_locally_before_any_request() {
-    let Some(spec) = builtin_default(ProviderId::OpenAi, Operation::ImageGenerate) else { return };
+    let spec = builtin(IMAGE_MODEL);
     let sandbox = Sandbox::new();
     let op = Operation::ImageGenerate;
+    let generate = ["image", "generate", "-m", IMAGE_MODEL];
 
-    let out = run(iris(&sandbox).args(["image", "generate", "a fox", "--dry-run", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["a fox", "--dry-run", "--json"]));
     assert_eq!(out.code, 0, "{}", out.stdout);
     let v = out.json();
     assert_eq!(v["result"]["dry_run"], true);
@@ -884,31 +910,31 @@ fn image_generation_is_validated_locally_before_any_request() {
     assert!(v["result"]["outputs"][0].as_str().unwrap().starts_with(sandbox.work().to_str().unwrap()));
     assert!(files_in(&sandbox.work()).is_empty());
 
-    let out =
-        run(iris(&sandbox).args(["image", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["x", "-O", "definitely_not_an_option=1", "--json"]));
     assert_nothing_sent(&out, "unsupported_option", 2);
     if let Some(flag) = undeclared_flag(spec, op) {
-        let out = run(iris(&sandbox).args(["image", "generate", "x", flag, "1", "--json"]));
+        let out = run(iris(&sandbox).args(generate).args(["x", flag, "1", "--json"]));
         assert_nothing_sent(&out, "unsupported_option", 2);
         assert!(out.json()["error"]["message"].as_str().unwrap().contains(flag));
     }
     // A video-only flag is not an image flag at all.
-    let out = run(iris(&sandbox).args(["image", "generate", "x", "--duration", "4", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["x", "--duration", "4", "--json"]));
     assert_nothing_sent(&out, "usage_error", 2);
 
     std::fs::write(sandbox.path("taken.png"), b"existing").unwrap();
     let out = run(iris(&sandbox)
-        .args(["image", "generate", "x", "-o", "taken.png", "--json"])
+        .args(generate)
+        .args(["x", "-o", "taken.png", "--json"])
         .env("OPENAI_API_KEY", OPENAI_KEY));
     assert_nothing_sent(&out, "output_exists", 2);
     assert_eq!(std::fs::read(sandbox.path("taken.png")).unwrap(), b"existing");
 
-    let out = run(iris(&sandbox).args(["image", "generate", "x", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["x", "--json"]));
     assert_nothing_sent(&out, "missing_credentials", 3);
     assert!(out.json()["error"]["message"].as_str().unwrap().contains("OPENAI_API_KEY"));
 
     let out = run(iris(&sandbox)
-        .args(["image", "edit", "-i", "missing.png", "x", "--json"])
+        .args(["image", "edit", "-m", IMAGE_MODEL, "-i", "missing.png", "x", "--json"])
         .env("OPENAI_API_KEY", OPENAI_KEY));
     assert_nothing_sent(&out, "input_file_invalid", 2);
 }
@@ -925,7 +951,7 @@ fn output_to_dev_stdout_is_refused_even_when_stdout_is_a_file() {
         let mut cmd = std::process::Command::new(BIN);
         configure(&mut cmd, &sandbox);
         let status = cmd
-            .args(["image", "generate", "a fox", "-o", "/dev/stdout", "--json"])
+            .args(["image", "generate", "-m", IMAGE_MODEL, "a fox", "-o", "/dev/stdout", "--json"])
             .args(extra)
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&captured).unwrap())
@@ -947,11 +973,12 @@ fn output_to_dev_stdout_is_refused_even_when_stdout_is_a_file() {
 
 #[test]
 fn video_generation_is_validated_locally_before_any_record_or_request() {
-    let Some(spec) = builtin_default(ProviderId::Gemini, Operation::VideoGenerate) else { return };
+    let spec = builtin(VIDEO_MODEL);
     let sandbox = Sandbox::new();
     let op = Operation::VideoGenerate;
+    let generate = ["video", "generate", "-m", VIDEO_MODEL];
 
-    let out = run(iris(&sandbox).args(["video", "generate", "waves", "--dry-run", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["waves", "--dry-run", "--json"]));
     assert_eq!(out.code, 0, "{}", out.stdout);
     let v = out.json();
     assert_eq!(v["result"]["async_job"], true);
@@ -961,16 +988,15 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
             || spec.estimate.is_none()
     );
 
-    let out =
-        run(iris(&sandbox).args(["video", "generate", "x", "-O", "definitely_not_an_option=1", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["x", "-O", "definitely_not_an_option=1", "--json"]));
     assert_nothing_sent(&out, "unsupported_option", 2);
     if let Some(flag) = undeclared_flag(spec, op) {
-        let out = run(iris(&sandbox).args(["video", "generate", "x", flag, "1", "--json"]));
+        let out = run(iris(&sandbox).args(generate).args(["x", flag, "1", "--json"]));
         assert_nothing_sent(&out, "unsupported_option", 2);
     }
-    let out = run(iris(&sandbox).args(["video", "generate", "x", "--format", "png", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["x", "--format", "png", "--json"]));
     assert_nothing_sent(&out, "usage_error", 2);
-    let out = run(iris(&sandbox).args(["video", "generate", "x", "--json"]));
+    let out = run(iris(&sandbox).args(generate).args(["x", "--json"]));
     assert_nothing_sent(&out, "missing_credentials", 3);
     assert!(!Path::new(&sandbox.state().join("jobs")).exists(), "no job record before a submission");
 }
@@ -979,9 +1005,7 @@ fn video_generation_is_validated_locally_before_any_record_or_request() {
 /// in the catalog and checked before a dry run returns and before the key is needed.
 #[test]
 fn mask_problems_fail_a_dry_run_and_come_before_missing_credentials() {
-    if builtin_default(ProviderId::OpenAi, Operation::ImageEdit).is_none_or(|m| m.inputs.mask.is_none()) {
-        return;
-    }
+    assert!(builtin(IMAGE_MODEL).inputs.mask.is_some());
     let sandbox = Sandbox::new();
     std::fs::write(sandbox.path("in.png"), png(16, 16)).unwrap();
     std::fs::write(sandbox.path("mask.jpg"), jpeg(16, 16)).unwrap();
@@ -989,7 +1013,7 @@ fn mask_problems_fail_a_dry_run_and_come_before_missing_credentials() {
     for (mask, needle) in [("mask.jpg", "accepts image/png"), ("small.png", "8x8")] {
         for extra in [&["--dry-run"][..], &[]] {
             let out = run(iris(&sandbox)
-                .args(["image", "edit", "-i", "in.png", "--mask", mask, "x", "--json"])
+                .args(["image", "edit", "-m", IMAGE_MODEL, "-i", "in.png", "--mask", mask, "x", "--json"])
                 .args(extra));
             assert_nothing_sent(&out, "input_file_invalid", 2);
             let v = out.json();
@@ -999,6 +1023,8 @@ fn mask_problems_fail_a_dry_run_and_come_before_missing_credentials() {
     let out = run(iris(&sandbox).args([
         "image",
         "edit",
+        "-m",
+        IMAGE_MODEL,
         "-i",
         "in.png",
         "--mask",
@@ -1065,25 +1091,45 @@ fn borrowed_capabilities_get_no_cost_estimate() {
 #[test]
 fn unsupported_operations_fail_locally_with_exit_2() {
     let sandbox = Sandbox::new();
-    // OpenAI has no video model, whatever the catalog holds.
     let out = run(iris(&sandbox)
-        .args(["video", "generate", "waves", "--provider", "openai", "--json"])
+        .args(["video", "generate", "waves", "-m", IMAGE_MODEL, "--json"])
         .env("OPENAI_API_KEY", OPENAI_KEY));
     assert_nothing_sent(&out, "unsupported_operation", 2);
     assert!(!sandbox.state().join("jobs").exists());
-    if let Some(video) = builtin_default(ProviderId::Gemini, Operation::VideoGenerate) {
-        let out = run(iris(&sandbox).args(["image", "generate", "x", "-m", video.id, "--json"]));
-        assert_nothing_sent(&out, "unsupported_operation", 2);
+    let out = run(iris(&sandbox).args(["image", "generate", "x", "-m", VIDEO_MODEL, "--json"]));
+    assert_nothing_sent(&out, "unsupported_operation", 2);
+}
+
+/// The provider is the model's: the generation commands have no `--provider` flag
+/// (`models list` and `jobs list` take one, as a filter).
+#[test]
+fn generation_commands_take_no_provider_flag() {
+    let sandbox = Sandbox::new();
+    for command in [&["image", "generate"][..], &["image", "edit", "-i", "a.png"], &["video", "generate"]] {
+        let out = run(iris(&sandbox).args(command).args([
+            "x",
+            "-m",
+            IMAGE_MODEL,
+            "--provider",
+            "openai",
+            "--json",
+        ]));
+        assert_nothing_sent(&out, "usage_error", 2);
+        let message = out.json()["error"]["message"].as_str().unwrap().to_string();
+        assert!(message.contains("unexpected argument '--provider'"), "{command:?}: {message}");
+    }
+    for filter in [&["models", "list"][..], &["jobs", "list"]] {
+        let out = run(iris(&sandbox).args(filter).args(["--provider", "openai", "--json"]));
+        assert_eq!(out.code, 0, "{filter:?}: {}", out.stdout);
     }
 }
 
 #[test]
 fn verbose_logs_never_contain_the_prompt_or_the_key() {
-    let Some(_) = builtin_default(ProviderId::OpenAi, Operation::ImageGenerate) else { return };
     let sandbox = Sandbox::new();
     // The provider port is closed: the request fails before anything is sent.
     let out = run(iris(&sandbox)
-        .args(["-vv", "image", "generate", "UNIQUE-PROMPT-7f3a", "--json"])
+        .args(["-vv", "image", "generate", "-m", IMAGE_MODEL, "UNIQUE-PROMPT-7f3a", "--json"])
         .env("OPENAI_API_KEY", OPENAI_KEY));
     assert_eq!(out.code, 1, "{}\n{}", out.stdout, out.stderr);
     assert_eq!(out.error_code(), "network_error");

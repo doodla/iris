@@ -4,10 +4,10 @@
 //! generation guide, the Images API reference and OpenAPI spec, the model pages, and
 //! the pricing page:
 //!
-//! * models: `gpt-image-2.5-sunburst` (default for generate and edit),
-//!   `gpt-image-2.5-flare`, `gpt-image-2`; their dated default snapshots are accepted
-//!   as aliases. Deprecated `gpt-image-1*`, `chatgpt-image-latest`, and the removed
-//!   `dall-e-*` models are deliberately not registered.
+//! * models: `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2`; their
+//!   dated default snapshots are accepted as aliases. Deprecated `gpt-image-1*`,
+//!   `chatgpt-image-latest`, and the removed `dall-e-*` models are deliberately not
+//!   registered.
 //! * options and their wire names (the adapter maps exactly these, see
 //!   `providers::openai`): `count`→`n`, `size`, `quality`, `format`→`output_format`,
 //!   `compression`→`output_compression`, `background`, `moderation`.
@@ -227,7 +227,6 @@ pub static MODELS: &[ModelSpec] = &[
         aliases: &["gpt-image-2.5-sunburst-2026-09-08"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
-        default_for: BOTH,
         inputs: INPUTS,
         options: OPTIONS_2_5,
         outputs: OUTPUTS,
@@ -246,7 +245,6 @@ pub static MODELS: &[ModelSpec] = &[
         aliases: &["gpt-image-2.5-flare-2026-09-08"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
-        default_for: &[],
         inputs: INPUTS,
         options: OPTIONS_2_5,
         outputs: OUTPUTS,
@@ -265,7 +263,6 @@ pub static MODELS: &[ModelSpec] = &[
         aliases: &["gpt-image-2-2026-04-21"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
-        default_for: &[],
         inputs: INPUTS,
         options: OPTIONS_2,
         outputs: OUTPUTS,

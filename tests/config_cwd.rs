@@ -116,13 +116,21 @@ fn commands_that_need_the_working_directory_fail_before_sending_anything() {
         assert!(v["error"]["provider_status"].is_null(), "nothing was sent: {v}");
     };
     // The default output directory is the missing current directory.
-    let run = run_in_deleted_dir(&sb, &[], &["image", "generate", "a fox", "--dry-run", "--json"]);
+    let run = run_in_deleted_dir(
+        &sb,
+        &[],
+        &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run", "--json"],
+    );
     expect_cwd_error(&run, "default output directory");
-    let run = run_in_deleted_dir(&sb, &[], &["video", "generate", "a fox", "--detach", "--json"]);
+    let run =
+        run_in_deleted_dir(&sb, &[], &["video", "generate", "-m", VEO_LITE, "a fox", "--detach", "--json"]);
     expect_cwd_error(&run, "default output directory for a job");
     // A relative path cannot be resolved.
-    let run =
-        run_in_deleted_dir(&sb, &[], &["image", "generate", "a fox", "-o", "fox.png", "--dry-run", "--json"]);
+    let run = run_in_deleted_dir(
+        &sb,
+        &[],
+        &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "-o", "fox.png", "--dry-run", "--json"],
+    );
     expect_cwd_error(&run, "relative -o");
     let run = run_in_deleted_dir(&sb, &[], &["--config", "iris.toml", "config", "show", "--json"]);
     expect_cwd_error(&run, "relative --config");
@@ -134,14 +142,24 @@ fn commands_that_need_the_working_directory_fail_before_sending_anything() {
     let run = run_in_deleted_dir(
         &sb,
         &[],
-        &["image", "generate", "a fox", "-o", target.to_str().unwrap(), "--dry-run", "--json"],
+        &[
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            "a fox",
+            "-o",
+            target.to_str().unwrap(),
+            "--dry-run",
+            "--json",
+        ],
     );
     assert_eq!(run.code, 0, "{}\n{}", run.stdout, run.stderr);
     assert_eq!(run.json()["result"]["outputs"][0], target.to_str().unwrap());
     let run = run_in_deleted_dir(
         &sb,
         &[("IRIS_OUTPUT_DIR", out.to_str().unwrap())],
-        &["image", "generate", "a fox", "--dry-run", "--json"],
+        &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run", "--json"],
     );
     assert_eq!(run.code, 0, "{}\n{}", run.stdout, run.stderr);
     let planned = run.json()["result"]["outputs"][0].as_str().unwrap().to_string();

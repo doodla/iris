@@ -1,5 +1,5 @@
 //! Capability declarations. Every model Iris knows is described by a static
-//! [`ModelSpec`]; validation, `models show`, defaults, and cost estimates all
+//! [`ModelSpec`]; validation, `models show`, option defaults, and cost estimates all
 //! read from these declarations, so they must match the provider's documentation.
 
 use crate::domain::{CostEstimate, Operation, ProviderId};
@@ -264,8 +264,6 @@ pub struct ModelSpec {
     pub aliases: &'static [&'static str],
     pub lifecycle: Lifecycle,
     pub operations: &'static [Operation],
-    /// Operations for which this model is the provider's default.
-    pub default_for: &'static [Operation],
     pub inputs: InputSpec,
     pub options: &'static [OptionSpec],
     pub outputs: OutputSpec,

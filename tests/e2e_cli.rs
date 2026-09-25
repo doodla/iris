@@ -38,7 +38,7 @@ fn answering_api() -> MockApi {
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_cli"));
     api.on("POST", OPENAI_EDITS, openai_images(&[&image], "req_e2e_cli"));
     let part = serde_json::json!([inline_part("image/png", &image)]);
-    api.on("POST", &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL), gemini_parts(part));
+    api.on("POST", &gemini_generate_path(GEMINI_IMAGE_MODEL), gemini_parts(part));
     api.on(
         "POST",
         &veo_submit_path(VEO_LITE),
@@ -61,7 +61,18 @@ fn settings_follow_flag_over_env_over_file_over_default_end_to_end() {
             file_api.uri()
         ),
     );
-    let generate = ["image", "generate", "a fox", "--size", "1024x1024", "--quality", "low", "--json"];
+    let generate = [
+        "image",
+        "generate",
+        "-m",
+        OPENAI_IMAGE_MODEL,
+        "a fox",
+        "--size",
+        "1024x1024",
+        "--quality",
+        "low",
+        "--json",
+    ];
 
     // Default layer: no config file, no environment. Only inspected (config show and
     // a dry run), because the default base URL is the real provider.
@@ -74,7 +85,11 @@ fn settings_follow_flag_over_env_over_file_over_default_end_to_end() {
         ("https://api.openai.com/v1".into(), "default".into())
     );
     assert_eq!(v["result"]["config_file_exists"], false);
-    let v = default.clone().args(["image", "generate", "a fox", "--dry-run", "--json"]).run().ok();
+    let v = default
+        .clone()
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run", "--json"])
+        .run()
+        .ok();
     assert_eq!(Path::new(v["result"]["outputs"][0].as_str().unwrap()).parent().unwrap(), sb.work());
 
     // File layer (IRIS_CONFIG names the file).
@@ -119,7 +134,7 @@ fn a_credential_in_the_config_file_is_config_invalid_and_nothing_is_sent() {
     let secret = "sk-e2e-config-secret-0f9d";
     for toml in [
         format!("[providers.openai]\napi_key = \"{secret}\"\n"),
-        format!("[image]\nprovider = \"openai\"\n\n[image.auth]\nToken = \"{secret}\"\n"),
+        format!("[image]\nmodel = \"gpt-image-2\"\n\n[image.auth]\nToken = \"{secret}\"\n"),
         format!("openai_key = \"{secret}\"\n"),
     ] {
         let sb = Sandbox::new();
@@ -129,7 +144,18 @@ fn a_credential_in_the_config_file_is_config_invalid_and_nothing_is_sent() {
             .iris()
             .openai(&api)
             .env("IRIS_CONFIG", &config)
-            .args(["image", "generate", "a fox", "--size", "1024x1024", "--quality", "low", "--json"])
+            .args([
+                "image",
+                "generate",
+                "-m",
+                OPENAI_IMAGE_MODEL,
+                "a fox",
+                "--size",
+                "1024x1024",
+                "--quality",
+                "low",
+                "--json",
+            ])
             .run();
         let v = out.err(2, "config_invalid");
         let message = v["error"]["message"].as_str().unwrap();
@@ -147,21 +173,33 @@ fn usage_errors_in_json_mode_are_a_single_envelope_with_exit_2() {
     let api = answering_api();
     sb.write("p.txt", "a prompt from a file\n");
     let cases: &[(&[&str], Option<&str>, Option<&str>)] = &[
-        (&["image", "generate", "a fox", "--bogus", "--json"], None, Some("image.generate")),
-        (&["--json", "image", "generate", "a fox", "-f", "p.txt"], None, Some("image.generate")),
         (
-            &["image", "generate", "a fox", "--prompt-stdin", "--json"],
+            &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--bogus", "--json"],
+            None,
+            Some("image.generate"),
+        ),
+        (
+            &["--json", "image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "-f", "p.txt"],
+            None,
+            Some("image.generate"),
+        ),
+        (
+            &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--prompt-stdin", "--json"],
             Some("from stdin"),
             Some("image.generate"),
         ),
         (
-            &["video", "generate", "-f", "p.txt", "--prompt-stdin", "--json"],
+            &["video", "generate", "-m", VEO_LITE, "-f", "p.txt", "--prompt-stdin", "--json"],
             Some("x"),
             Some("video.generate"),
         ),
-        (&["image", "generate", "a fox", "-o", "a.png", "-d", "out", "--json"], None, Some("image.generate")),
-        (&["image", "edit", "a fox", "--json"], None, Some("image.edit")),
-        (&["image", "generate", "--json"], None, Some("image.generate")),
+        (
+            &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "-o", "a.png", "-d", "out", "--json"],
+            None,
+            Some("image.generate"),
+        ),
+        (&["image", "edit", "-m", OPENAI_IMAGE_MODEL, "a fox", "--json"], None, Some("image.edit")),
+        (&["image", "generate", "-m", OPENAI_IMAGE_MODEL, "--json"], None, Some("image.generate")),
         (&["frobnicate", "--json"], None, None),
         (&["--json"], None, None),
     ];
@@ -210,21 +248,38 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
             p
         };
 
-        let p = plan(&["image", "generate", "a fox", "--size", "1024x1024", "--quality", "low"]);
-        assert_eq!(
-            (p["provider"].as_str(), p["model"].as_str()),
-            (Some("openai"), Some(OPENAI_DEFAULT_MODEL))
-        );
+        let p = plan(&[
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            "a fox",
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+        ]);
+        assert_eq!((p["provider"].as_str(), p["model"].as_str()), (Some("openai"), Some(OPENAI_IMAGE_MODEL)));
         assert_eq!(p["async_job"], false);
         assert_eq!(p["options"]["quality"], "low");
         assert_eq!(p["cost_estimate"]["estimated"], true);
         assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.00588).abs() < 1e-9, "{p}");
 
-        let p = plan(&["image", "generate", "a fox", "--provider", "gemini", "--resolution", "512"]);
-        assert_eq!(p["model"], GEMINI_DEFAULT_IMAGE_MODEL);
+        let p = plan(&["image", "generate", "-m", GEMINI_IMAGE_MODEL, "a fox", "--resolution", "512"]);
+        assert_eq!(p["model"], GEMINI_IMAGE_MODEL);
         assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.045).abs() < 1e-9, "{p}");
 
-        let p = plan(&["image", "edit", "add a hat", "-i", "a.png", "--mask", "mask.png"]);
+        let p = plan(&[
+            "image",
+            "edit",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            "add a hat",
+            "-i",
+            "a.png",
+            "--mask",
+            "mask.png",
+        ]);
         let inputs = p["inputs"].as_array().unwrap();
         assert_eq!(inputs.len(), 2);
         assert_eq!((inputs[0]["role"].as_str(), inputs[1]["role"].as_str()), (Some("image"), Some("mask")));
@@ -238,7 +293,8 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
         assert_eq!(p["options"]["resolution"], "720p", "effective defaults are shown");
         assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.20).abs() < 1e-9, "{p}");
 
-        let out = base.clone().args(["image", "generate", "a fox", "--dry-run"]).run();
+        let out =
+            base.clone().args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run"]).run();
         assert!(out.human().starts_with("Dry run: nothing was sent"), "{}", out.stdout);
     }
     assert_eq!(api.total(), 0, "a dry run never contacts a provider");
@@ -446,131 +502,257 @@ fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
     check(limit.upper_bound("x", &ResolvedOptions::new(), [sizes[0], sizes[1]]), body_len(&route));
 }
 
-/// `default_for` shows the model a command actually uses without `--model`: the
-/// configured `providers.<p>.image_model`/`video_model` when set, else the catalog
-/// default, in both `models list` and `models show`.
+// ----- the model is always named: -m, or the config file ----------------------------------------
+
+/// Without `-m` and without a model in the config file, every generation command
+/// fails with `model_required` before anything is sent, a dry run too: exit 2, no
+/// provider status, no job record, and details that say how to choose.
 #[test]
-fn models_report_the_effective_default_model() {
+fn a_command_without_a_model_is_model_required_and_sends_nothing() {
     let sb = Sandbox::new();
-    let default_for = |v: &Value, id: &str| -> Vec<String> {
-        let models = v["result"]["models"].as_array().unwrap();
-        let m = models.iter().find(|m| m["id"] == id).unwrap_or_else(|| panic!("{id}: {v}"));
-        m["default_for"].as_array().unwrap().iter().map(|o| o.as_str().unwrap().to_string()).collect()
-    };
-    let both = ["image.generate".to_string(), "image.edit".to_string()];
-
-    let v = sb.iris().args(["models", "list", "--json"]).run().ok();
-    assert_eq!(default_for(&v, "gpt-image-2.5-sunburst"), both);
-    assert!(default_for(&v, "gpt-image-2").is_empty());
-    assert_eq!(default_for(&v, "veo-3.1-fast-generate-preview"), ["video.generate"]);
-
-    let config = sb.config(
-        "iris.toml",
-        "[providers.openai]\nimage_model = \"gpt-image-2\"\n\n[providers.gemini]\nvideo_model = \"veo-lite\"\n",
-    );
-    let mut configured = sb.iris();
-    configured.env("IRIS_CONFIG", &config);
-    let v = configured.clone().args(["models", "list", "--json"]).run().ok();
-    assert_eq!(default_for(&v, "gpt-image-2"), both);
-    assert!(default_for(&v, "gpt-image-2.5-sunburst").is_empty());
-    assert_eq!(default_for(&v, "veo-3.1-lite-generate-preview"), ["video.generate"]);
-    assert!(default_for(&v, "veo-3.1-fast-generate-preview").is_empty());
-    assert_eq!(default_for(&v, "gemini-3.1-flash-image"), both, "not configured: the catalog default");
-
-    let v = configured.clone().args(["models", "show", "gpt-image-2", "--json"]).run().ok();
-    assert_eq!(v["result"]["model"]["default_for"], serde_json::json!(both));
-    let plan = configured.clone().args(["image", "generate", "x", "--dry-run", "--json"]).run().ok();
-    assert_eq!(plan["result"]["model"], "gpt-image-2", "the listed default is the one used");
-    let human = configured.args(["models", "list"]).run();
-    let line = human.human().lines().find(|l| l.starts_with("gpt-image-2 ")).unwrap().to_string();
-    assert_eq!(line.matches("image.generate, image.edit").count(), 2, "operations and default for: {line}");
+    let api = answering_api();
+    sb.write("a.png", png(16, 16));
+    let config = sb.config("iris.toml", "[video]\nwait_timeout = \"5m\"\n");
+    for (args, op, table) in [
+        (&["image", "generate", "a fox"][..], "image.generate", "image"),
+        (&["image", "edit", "-i", "a.png", "add a hat"], "image.edit", "image"),
+        (&["video", "generate", "waves", "--detach"], "video.generate", "video"),
+    ] {
+        let candidates: Vec<&str> =
+            iris::catalog::all().filter(|m| m.supports(op.parse().unwrap())).map(|m| m.id).collect();
+        for dry_run in [false, true] {
+            let mut iris = sb.iris();
+            iris.openai(&api).gemini(&api).env("IRIS_CONFIG", &config).args(args).arg("--json");
+            if dry_run {
+                iris.arg("--dry-run");
+            }
+            let v = iris.run().err(2, "model_required");
+            let e = &v["error"];
+            assert_eq!(e["category"], "usage", "{v}");
+            assert_eq!(e["retryable"], false, "{v}");
+            assert!(e["provider_status"].is_null(), "{v}");
+            assert!(e["job_id"].is_null(), "{v}");
+            assert_eq!(
+                e["message"],
+                format!(
+                    "{op} needs a model: pass -m/--model, or set model in the [{table}] table of the config file"
+                )
+            );
+            assert_eq!(e["details"]["operation"], op);
+            assert_eq!(e["details"]["config_key"], format!("{table}.model"));
+            assert_eq!(e["details"]["config_file"], config.to_str().unwrap());
+            let listed: Vec<&str> = e["details"]["candidates"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|c| c["model"].as_str().unwrap())
+                .collect();
+            assert_eq!(listed, candidates, "every catalog model for {op}, in catalog order");
+            let first = &e["details"]["candidates"][0];
+            let spec = iris::catalog::find(candidates[0]).unwrap();
+            assert_eq!(first["provider"], spec.provider.as_str());
+            assert_eq!(first["display_name"], spec.display_name);
+            assert_eq!(first["aliases"], serde_json::json!(spec.aliases));
+            // The config file was chosen explicitly (IRIS_CONFIG), so the command the hint
+            // suggests names it.
+            let path = config.to_str().unwrap();
+            assert_eq!(
+                e["hint"],
+                format!(
+                    "run `iris --config {path} models list --operation {op}` and pass -m <MODEL>, or set model \
+                     under [{table}] in {path}"
+                )
+            );
+        }
+    }
+    assert_eq!(api.total(), 0, "nothing was sent");
+    assert!(!sb.jobs_dir().exists(), "no job record");
+    assert_eq!(files_in(&sb.work()), ["a.png"], "nothing was written");
 }
 
-/// `effective_defaults` names the provider and model a generation command uses with
-/// neither `--provider` nor `--model` (`default_for` lists one default per provider),
-/// honoring `image.provider` and the configured default models, whatever the
-/// list's filters.
+/// The config file's `[image] model` and `[video] model` name the model when `-m`
+/// is absent: the result says `model_source: config` (and the human plan and progress
+/// line name the key); `-m` wins over it and says `flag`.
 #[test]
-fn models_list_names_the_default_used_without_provider_or_model() {
+fn the_config_file_names_the_model_when_the_flag_is_absent() {
     let sb = Sandbox::new();
-    let defaults = |v: &Value| -> Vec<[String; 3]> {
-        v["result"]["effective_defaults"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|d| ["operation", "provider", "model"].map(|k| d[k].as_str().unwrap().to_string()))
-            .collect()
-    };
-    let row = |op: &str, provider: &str, model: &str| [op, provider, model].map(str::to_string);
-
-    let v = sb.iris().args(["models", "list", "--json"]).run().ok();
-    let builtin = vec![
-        row("image.generate", "openai", "gpt-image-2.5-sunburst"),
-        row("image.edit", "openai", "gpt-image-2.5-sunburst"),
-        row("video.generate", "gemini", "veo-3.1-fast-generate-preview"),
-    ];
-    assert_eq!(defaults(&v), builtin);
-    let v = sb.iris().args(["models", "list", "--provider", "gemini", "--json"]).run().ok();
-    assert_eq!(defaults(&v), builtin, "the filters do not change what a bare command uses");
-
-    let config = sb.config(
-        "iris.toml",
-        "[image]\nprovider = \"gemini\"\n\n[providers.gemini]\nimage_model = \"nano-banana-pro\"\nvideo_model = \
-         \"veo-lite\"\n",
-    );
+    let api = answering_api();
+    let config =
+        sb.config("iris.toml", "[image]\nmodel = \"nano-banana-2\"\n\n[video]\nmodel = \"veo-lite\"\n");
     let mut configured = sb.iris();
-    configured.env("IRIS_CONFIG", &config);
-    let v = configured.clone().args(["models", "list", "--json"]).run().ok();
-    assert_eq!(
-        defaults(&v),
-        [
-            row("image.generate", "gemini", "gemini-3-pro-image"),
-            row("image.edit", "gemini", "gemini-3-pro-image"),
-            row("video.generate", "gemini", "veo-3.1-lite-generate-preview"),
-        ]
-    );
+    configured.openai(&api).gemini(&api).env("IRIS_CONFIG", &config);
+
+    let v = configured.clone().args(["config", "show", "--json"]).run().ok();
+    assert_eq!(setting(&v, "image.model"), (GEMINI_IMAGE_MODEL.into(), "file".into()), "stored canonical");
+    assert_eq!(setting(&v, "video.model"), (VEO_LITE.into(), "file".into()));
+
     let plan = configured.clone().args(["image", "generate", "x", "--dry-run", "--json"]).run().ok();
     assert_eq!(
-        (&plan["result"]["provider"], &plan["result"]["model"]),
-        (&"gemini".into(), &"gemini-3-pro-image".into())
+        (plan["result"]["provider"].as_str(), plan["result"]["model"].as_str()),
+        (Some("gemini"), Some(GEMINI_IMAGE_MODEL))
     );
-    let human = configured.args(["models", "list"]).run();
-    let text = human.human();
-    assert!(text.contains("Used without --provider or --model:"), "{text}");
+    assert_eq!(plan["result"]["model_source"], "config");
+    let human = configured.clone().args(["image", "generate", "x", "--dry-run"]).run();
     assert!(
-        text.lines().any(|l| l.split_whitespace().eq(["image.generate", "gemini", "gemini-3-pro-image"])),
-        "{text}"
+        human.human().contains(&format!("model:      {GEMINI_IMAGE_MODEL} (config image.model)")),
+        "{}",
+        human.stdout
     );
-}
 
-#[test]
-fn doctor_checks_access_to_the_configured_default_model() {
-    let sb = Sandbox::new();
-    let api = MockApi::start();
-    let route = "/v1/models/gpt-image-2";
-    api.on("GET", route, json_response(200, serde_json::json!({ "id": "gpt-image-2", "object": "model" })));
-    let config = sb.config("iris.toml", "[providers.openai]\nimage_model = \"gpt-image-2\"\n");
-    // Only the OpenAI key is set, so Gemini is skipped and the mock sees every call.
-    let v = sb
-        .iris()
-        .env("IRIS_CONFIG", &config)
-        .openai(&api)
-        .args(["doctor", "--check-access", "--json"])
+    let v = configured.clone().args(["image", "generate", "x", "-o", "g.jpg", "--json"]).run().ok();
+    assert_eq!(
+        (v["result"]["model"].as_str(), v["result"]["model_source"].as_str()),
+        (Some(GEMINI_IMAGE_MODEL), Some("config"))
+    );
+    assert_eq!(api.count("POST", &gemini_generate_path(GEMINI_IMAGE_MODEL)), 1);
+    let out = configured.clone().args(["image", "generate", "x", "-o", "h.jpg"]).run();
+    assert_eq!(out.code, 0, "{}", out.stderr);
+    assert!(
+        out.stderr.contains(&format!("Requesting 1 image from gemini ({GEMINI_IMAGE_MODEL}, config image.model); this is a paid request")),
+        "{}",
+        out.stderr
+    );
+
+    let v = configured
+        .clone()
+        .args(["image", "generate", "x", "-m", OPENAI_IMAGE_MODEL, "--dry-run", "--json"])
         .run()
         .ok();
+    assert_eq!(
+        (v["result"]["model"].as_str(), v["result"]["model_source"].as_str()),
+        (Some(OPENAI_IMAGE_MODEL), Some("flag"))
+    );
+    let human =
+        configured.clone().args(["image", "generate", "x", "-m", OPENAI_IMAGE_MODEL, "--dry-run"]).run();
+    assert!(human.human().contains(&format!("model:      {OPENAI_IMAGE_MODEL}\n")), "{}", human.stdout);
+
+    sb.write("a.png", png(16, 16));
+    let v = configured.clone().args(["image", "edit", "-i", "a.png", "x", "--dry-run", "--json"]).run().ok();
+    assert_eq!(
+        (
+            v["result"]["operation"].as_str(),
+            v["result"]["model"].as_str(),
+            v["result"]["model_source"].as_str()
+        ),
+        (Some("image.edit"), Some(GEMINI_IMAGE_MODEL), Some("config"))
+    );
+
+    let plan = configured.clone().args(["video", "generate", "waves", "--dry-run", "--json"]).run().ok();
+    assert_eq!(
+        (plan["result"]["model"].as_str(), plan["result"]["model_source"].as_str()),
+        (Some(VEO_LITE), Some("config"))
+    );
+    let human = configured.clone().args(["video", "generate", "waves", "--dry-run"]).run();
+    assert!(
+        human.human().contains(&format!("model:      {VEO_LITE} (config video.model)\n")),
+        "{}",
+        human.stdout
+    );
+    let v = configured
+        .clone()
+        .args(["video", "generate", "waves", "-m", "veo", "--dry-run", "--json"])
+        .run()
+        .ok();
+    assert_eq!(
+        (v["result"]["model"].as_str(), v["result"]["model_source"].as_str()),
+        (Some("veo-3.1-generate-preview"), Some("flag"))
+    );
+
+    let out = configured.clone().args(["video", "generate", "waves", "--detach", "--json"]).run();
+    let v = out.ok();
+    let job = &v["result"]["job"];
+    assert_eq!((job["model"].as_str(), job["model_source"].as_str()), (Some(VEO_LITE), Some("config")));
+    let id = job["job_id"].as_str().unwrap();
+    assert_eq!(sb.record(id)["model_source"], "config");
+    assert!(
+        out.stderr.contains(&format!(
+            "Submitting job {id} to gemini ({VEO_LITE}, config video.model); this is a paid request"
+        )),
+        "{}",
+        out.stderr
+    );
+    let status = configured.clone().args(["jobs", "status", id, "--no-refresh"]).run();
+    assert!(
+        status.human().contains(&format!("model:      {VEO_LITE} (config video.model)\n")),
+        "{}",
+        status.stdout
+    );
+}
+
+/// A configured model the catalog does not know is `config_invalid` naming the key,
+/// even with `-m`. The command its hint names runs regardless, and so does
+/// `models show` for a listed model, since neither reads the config file (`models
+/// show --check-access` does); a name Iris deliberately gives no model gets the hint
+/// `-m` gives it.
+#[test]
+fn an_unknown_configured_model_is_config_invalid_with_a_hint_that_runs() {
+    let sb = Sandbox::new();
+    let config = sb.config("iris.toml", "[image]\nmodel = \"nope\"\n");
+    let mut configured = sb.iris();
+    configured.env("IRIS_CONFIG", &config);
+    let v = configured
+        .clone()
+        .args(["image", "generate", "x", "-m", OPENAI_IMAGE_MODEL, "--dry-run", "--json"])
+        .run()
+        .err(2, "config_invalid");
+    assert_eq!(v["error"]["details"]["key"], "image.model");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains("`iris models list --operation image.generate`"), "{hint}");
+    let v = configured.clone().args(["models", "list", "--operation", "image.generate", "--json"]).run().ok();
+    let listed: Vec<&str> =
+        v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
+    let expected: Vec<&str> = iris::catalog::all()
+        .filter(|m| m.supports(iris::domain::Operation::ImageGenerate))
+        .map(|m| m.id)
+        .collect();
+    assert_eq!(listed, expected);
+    let v = configured.clone().args(["models", "show", listed[0], "--json"]).run().ok();
+    assert_eq!(v["result"]["model"]["id"], listed[0]);
+    let v = configured.clone().args(["models", "show", listed[0], "--check-access", "--json"]).run();
+    assert_eq!(v.err(2, "config_invalid")["error"]["details"]["key"], "image.model");
+
+    let flag = sb.iris().args(["image", "generate", "x", "-m", "nano-banana", "--dry-run", "--json"]).run();
+    let flag = flag.err(2, "unknown_model");
+    let config = sb.config("declined.toml", "[image]\nmodel = \"nano-banana\"\n");
+    let file =
+        sb.iris().env("IRIS_CONFIG", &config).args(["image", "generate", "x", "--dry-run", "--json"]).run();
+    let file = file.err(2, "config_invalid");
+    assert_eq!(file["error"]["hint"], flag["error"]["hint"]);
+    assert_eq!(file["error"]["hint"].as_str(), iris::catalog::declined_name_hint("nano-banana"));
+}
+
+/// `doctor --check-access` checks every catalog model of each provider whose key is
+/// set, with one free metadata read each.
+#[test]
+fn doctor_checks_access_to_every_model_of_a_provider_with_a_key() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let models: Vec<&str> = iris::catalog::all()
+        .filter(|m| m.provider == iris::domain::ProviderId::OpenAi)
+        .map(|m| m.id)
+        .collect();
+    for id in &models {
+        api.on(
+            "GET",
+            &format!("/v1/models/{id}"),
+            json_response(200, serde_json::json!({ "id": id, "object": "model" })),
+        );
+    }
+    // Only the OpenAI key is set, so Gemini is skipped and the mock sees every call.
+    let v = sb.iris().openai(&api).args(["doctor", "--check-access", "--json"]).run().ok();
     let checks = v["result"]["checks"].as_array().unwrap();
     let access: Vec<&Value> =
         checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")).collect();
-    let ids: Vec<&str> = access.iter().map(|c| c["id"].as_str().unwrap()).collect();
-    assert_eq!(ids, ["access.openai.gpt-image-2", "access.gemini"], "{v}");
-    assert_eq!(access[0]["status"], "ok", "{v}");
+    let ids: Vec<String> = access.iter().map(|c| c["id"].as_str().unwrap().to_string()).collect();
+    let expected: Vec<String> =
+        models.iter().map(|id| format!("access.openai.{id}")).chain(["access.gemini".to_string()]).collect();
+    assert_eq!(ids, expected, "{v}");
+    assert!(access[..models.len()].iter().all(|c| c["status"] == "ok"), "{v}");
     assert_eq!(v["result"]["healthy"], true, "{v}");
-    assert_eq!(
-        api.count("GET", route),
-        1,
-        "one metadata read of the configured default (image generate and edit)"
-    );
-    assert_eq!(api.total(), 1, "the catalog default was not checked: {:?}", api.requests());
+    for id in &models {
+        assert_eq!(api.count("GET", &format!("/v1/models/{id}")), 1, "{id}");
+    }
+    assert_eq!(api.total(), models.len(), "{:?}", api.requests());
     api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {OPENAI_KEY}"))));
 }
 

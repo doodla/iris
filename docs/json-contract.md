@@ -82,6 +82,12 @@ the envelope shape, every result type, the error object, and the stable code tab
 - `warnings` is always an array (possibly empty), even on error — a request can fail after
   already producing warnings (e.g. an image saved with an adjusted extension right before a
   later failure).
+- The `iris` commands that the generation and `jobs` commands suggest (`next_steps`, and the
+  commands named in their hints and warnings) are meant to be run as given in the same
+  environment (the same `IRIS_STATE_DIR`, base URL variables, and keys). When the config file was
+  chosen explicitly (`--config`, or `IRIS_CONFIG`), they also name it:
+  `iris --config <absolute path> jobs wait job_...`, shell-quoted when the path needs it, so a
+  later command finds the same jobs even without that variable. Nothing else is added to them.
 
 Real example (`iris --json version`):
 
@@ -96,12 +102,16 @@ $ iris --json version
 
 ```json
 {
-  "provider": "openai", "model": "gpt-image-2.5-sunburst", "operation": "image.edit",
-  "status": "succeeded", "created_at": "...", "completed_at": "...",
+  "provider": "openai", "model": "gpt-image-2.5-sunburst", "model_source": "flag",
+  "operation": "image.edit", "status": "succeeded", "created_at": "...", "completed_at": "...",
   "provider_request_id": "req_...",
   "artifacts": [ Artifact ], "text": null, "usage": Usage_or_null, "cost_estimate": CostEstimate_or_null
 }
 ```
+
+`model_source` says where the model came from: `flag` (`-m`/`--model`) or `config` (the config
+file's `image.model`, or `video.model` for a video job). Iris never chooses a model itself (see
+[configuration.md](configuration.md#choosing-the-model)).
 
 ### `video.generate`, `jobs.status`, `jobs.wait`, `jobs.download`
 
@@ -109,11 +119,7 @@ $ iris --json version
 { "job": Job, "next_steps": ["iris jobs wait job_..."] }
 ```
 
-`next_steps`, and the hints and warnings that name `iris` commands, are meant to be run as given
-in the same environment (the same `IRIS_STATE_DIR`, base URL variables, and keys). When the
-config file was chosen explicitly (`--config`, or `IRIS_CONFIG`), they also name it:
-`iris --config <absolute path> jobs wait job_...`, shell-quoted when the path needs it, so a later
-command finds the same jobs even without that variable. Nothing else is added to them.
+`next_steps` lists the commands to run next, as given (see [Envelope](#envelope)).
 
 `Job` (real record, captured from a mock-server run — see
 [live-testing.md](live-testing.md) for how live runs differ):
@@ -122,8 +128,8 @@ command finds the same jobs even without that variable. Nothing else is added to
 {
   "job_id": "job_01m3a333vp4pc80nb37svfgq7x",
   "remote_operation_id": "models/veo-3.1-fast-generate-preview/operations/op_mockjob001",
-  "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "operation": "video.generate",
-  "status": "succeeded",
+  "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "model_source": "flag",
+  "operation": "video.generate", "status": "succeeded",
   "created_at": "2026-09-24T16:13:32Z", "submitted_at": "2026-09-24T16:13:32Z",
   "updated_at": "2026-09-24T16:13:34Z", "completed_at": "2026-09-24T16:13:34Z",
   "last_checked_at": "2026-09-24T16:13:34Z",
@@ -150,7 +156,8 @@ command finds the same jobs even without that variable. Nothing else is added to
 ```
 
 `request` holds only resolved, non-secret options (and input *counts*, never paths or bytes) —
-see [jobs.md](jobs.md) for what is and is not persisted, and why.
+see [jobs.md](jobs.md) for what is and is not persisted, and why. `model_source` is `null` for a
+job record that does not say where its model came from.
 
 ### `jobs.list` → `{ "jobs": [Job] }`
 
@@ -185,20 +192,7 @@ if a record changes between the check and its deletion can the command stop part
 `details.deleted` then lists what it deleted (see
 [jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
-### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [], "default_for": [] } ], "effective_defaults": [ { "operation", "provider", "model" } ] }`
-
-`default_for` (here and in `models.show`) is **per provider**: it lists the operations for which the
-model is its provider's default, the model used when that provider is selected (`--provider`, or
-the configured image provider) without `--model` — the configured
-`providers.<provider>.image_model` / `video_model` when set, otherwise the catalog default. Each
-provider has its own, so several models list `image.generate`.
-
-`effective_defaults` says which one a command with neither `--provider` nor `--model` actually
-uses: one entry per operation, `{"operation": "image.generate", "provider": "openai", "model":
-"gpt-image-2.5-sunburst"}` by default, honoring `image.provider` (`IRIS_IMAGE_PROVIDER`) and the
-configured default models. It does not depend on the `--provider`/`--operation` filters. An
-operation without a usable default (e.g. a configured default model the catalog does not know) is
-left out; the command itself reports why.
+### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [] } ] }`
 
 ### `models.show` → `{ "model": ModelCapabilities }`
 
@@ -206,7 +200,7 @@ left out; the command itself reports why.
 {
   "id": "gpt-image-2.5-sunburst", "provider": "openai", "display_name": "GPT Image 2.5 Sunburst",
   "aliases": ["gpt-image-2.5-sunburst-2026-09-08"], "lifecycle": "ga",
-  "operations": ["image.generate", "image.edit"], "default_for": ["image.generate", "image.edit"],
+  "operations": ["image.generate", "image.edit"],
   "inputs": { "max_input_images": 16, "input_media_types": ["image/png","image/jpeg","image/webp"],
               "max_input_bytes": 15700000, "mask": true,
               "mask_requirements": { "media_types": ["image/png"], "max_bytes": 4000000,
@@ -276,14 +270,11 @@ non-zero exit means doctor itself could not run (for example a usage error).
 
 Check ids are unique within one result: `config`, `credentials.<provider>`,
 `credentials.google_api_key`, `state_dir`, `output_dir`, `base_url.<provider>`, `jobs`, and with
-`--check-access` one `access.<provider>.<model>` per default model, checked once even when it is
-the default for several operations. A default model is the model a command uses without
-`--model`: the configured `providers.<provider>.image_model` / `video_model` when set, otherwise
-the catalog default — the models `default_for` lists. A single `access.<provider>` reports a
-provider whose models were not checked (e.g. its key is not set) or, with status `error`, a
-configured default model the catalog does not know; `access` reports that the configuration is
-invalid. An `ok` access check means the model is visible to the key (a free metadata read), not
-that billing tier, prepaid credit, or organization verification allow a paid request.
+`--check-access` one `access.<provider>.<model>` for every catalog model of each provider whose key
+is set, in catalog order. A single `access.<provider>` reports a provider whose models were not
+checked (e.g. its key is not set); `access` reports that the configuration is invalid. An `ok`
+access check means the model is visible to the key (a free metadata read), not that billing tier,
+prepaid credit, or organization verification allow a paid request.
 
 ### `schema` → `{ "schema": { "...": "the JSON Schema document itself" } }` (without `--json`, the raw schema is printed instead)
 
@@ -310,7 +301,7 @@ writable, which a dry run does not do because it writes nothing.
 ```json
 {
   "dry_run": true, "provider": "gemini", "model": "veo-3.1-fast-generate-preview",
-  "operation": "video.generate", "async_job": true,
+  "model_source": "config", "operation": "video.generate", "async_job": true,
   "options": { "aspect_ratio": "16:9", "count": 1, "duration": "8", "resolution": "720p" },
   "inputs": [ { "role": "first_frame", "path": "/home/you/fox.png", "media_type": "image/png", "bytes": 75 } ],
   "outputs": [ "/home/you/<job_id>.mp4" ],
@@ -366,6 +357,22 @@ $ iris image generate "x" --model does-not-exist --json
  "ok":false,"result":null,"schema_version":1,"warnings":[]}
 ```
 
+A generation command given no model — no `-m`/`--model`, and no `image.model` or `video.model` in
+the config file — fails with `model_required` (exit 2, category `usage`) before anything is sent,
+a `--dry-run` too; no job record is written. Its `details` say how to choose one:
+
+```json
+{"code":"model_required","category":"usage",
+ "message":"image.generate needs a model: pass -m/--model, or set model in the [image] table of the config file",
+ "hint":"run `iris models list --operation image.generate` and pass -m <MODEL>, or set model under [image] in /home/you/.config/iris/config.toml",
+ "details":{"operation":"image.generate","config_key":"image.model",
+            "config_file":"/home/you/.config/iris/config.toml",
+            "candidates":[{"model":"gpt-image-2.5-sunburst","provider":"openai","display_name":"GPT Image 2.5 Sunburst",
+                           "aliases":["gpt-image-2.5-sunburst-2026-09-08"]},
+                          "...one object per catalog model that supports the operation, in catalog order"]},
+ "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
+```
+
 `provider` names the provider an error concerns: the one that answered, or, for an error while
 following or downloading a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a
 download failure), the job's provider, even when the error itself is local. A refused
@@ -397,6 +404,7 @@ written; the job record keeps the original code and any unknown fields untouched
 | code | category | exit | retryable |
 |---|---|---|---|
 | `usage_error` | usage | 2 | false |
+| `model_required` | usage | 2 | false |
 | `invalid_argument` | validation | 2 | false |
 | `unsupported_operation` | validation | 2 | false |
 | `unsupported_option` | validation | 2 | false |

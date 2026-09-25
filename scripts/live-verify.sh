@@ -218,7 +218,7 @@ chmod 700 "$WORK"
 # Run the iris binary with an isolated configuration and state directory. Keys are
 # inherited from the environment, never passed as arguments.
 iris() {
-    env -u IRIS_OUTPUT_DIR -u IRIS_IMAGE_PROVIDER -u IRIS_WAIT_TIMEOUT -u IRIS_POLL_INTERVAL \
+    env -u IRIS_OUTPUT_DIR -u IRIS_WAIT_TIMEOUT -u IRIS_POLL_INTERVAL \
         -u IRIS_STORE_PROMPTS -u IRIS_LOG -u GOOGLE_API_KEY \
         IRIS_CONFIG="$CONFIG" IRIS_STATE_DIR="$STATE" "$BIN" "$@"
 }
@@ -621,13 +621,13 @@ paid_image_step() {
 
 step1() {
     paid_image_step step1 "OpenAI image generation" OPENAI_API_KEY \
-        image generate "$PROMPT_IMAGE" --provider openai -m "$OPENAI_MODEL" \
+        image generate "$PROMPT_IMAGE" -m "$OPENAI_MODEL" \
         --size 1024x1024 --quality low -d "$WORK/step1"
 }
 
 step2() {
     paid_image_step step2 "Gemini image generation" GEMINI_API_KEY \
-        image generate "$PROMPT_IMAGE" --provider gemini -m "$GEMINI_IMAGE_MODEL" \
+        image generate "$PROMPT_IMAGE" -m "$GEMINI_IMAGE_MODEL" \
         --resolution 512 --aspect-ratio 1:1 -d "$WORK/step2"
 }
 
@@ -635,7 +635,7 @@ step3a() {
     local input
     if [ "$PLAN" = 1 ] && ! done_ok step1; then input=$(placeholder_png); else input=$(artifact_of step1); fi
     paid_image_step step3a "OpenAI edit reusing the step 1 image" OPENAI_API_KEY \
-        image edit "$PROMPT_EDIT" --provider openai -m "$OPENAI_MODEL" -i "$input" \
+        image edit "$PROMPT_EDIT" -m "$OPENAI_MODEL" -i "$input" \
         --size 1024x1024 --quality low -d "$WORK/step3a"
 }
 
@@ -643,7 +643,7 @@ step3b() {
     local input
     if [ "$PLAN" = 1 ] && ! done_ok step2; then input=$(placeholder_png); else input=$(artifact_of step2); fi
     paid_image_step step3b "Gemini edit reusing the step 2 image" GEMINI_API_KEY \
-        image edit "$PROMPT_EDIT" --provider gemini -m "$GEMINI_IMAGE_MODEL" -i "$input" \
+        image edit "$PROMPT_EDIT" -m "$GEMINI_IMAGE_MODEL" -i "$input" \
         --resolution 512 --aspect-ratio 1:1 -d "$WORK/step3b"
 }
 

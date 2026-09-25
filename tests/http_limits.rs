@@ -530,7 +530,7 @@ fn an_image_answer_over_the_limit_is_reported_as_the_contract_says() {
         .iris()
         .keys()
         .env("IRIS_OPENAI_BASE_URL", format!("{}/v1", server.base))
-        .args(["image", "generate", "a lighthouse at dusk", "--json"])
+        .args(["image", "generate", "-m", support::OPENAI_IMAGE_MODEL, "a lighthouse at dusk", "--json"])
         .run();
     let v = out.err(5, "submission_uncertain");
     let e = &v["error"];

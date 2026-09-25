@@ -52,8 +52,9 @@ directory.
 A job record holds enough to resume, diagnose, and download the job, and deliberately little
 else:
 
-- Local and remote identifiers, provider, model, operation, every timestamp, and normalized
-  status.
+- Local and remote identifiers, provider, model, where the model came from (`model_source`:
+  `flag` or `config`; `null` in a record that does not say), operation, every timestamp, and
+  normalized status.
 - Resolved *non-secret* request options (e.g. `duration`, `resolution`) and input **counts**
   (`first_frame`, `last_frame`, `reference`) — never input file paths or bytes.
 - The prompt is stored as `{ "sha256", "chars", "text": null }` — a hash and a character count,
@@ -78,8 +79,8 @@ written with sorted keys:
 {
   "schema_version": 1,
   "job_id": "job_01m3asyx4dya3grvdg4b28g2ms",
-  "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "operation": "video.generate",
-  "status": "succeeded",
+  "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "model_source": "flag",
+  "operation": "video.generate", "status": "succeeded",
   "created_at": "2026-09-24T22:53:12Z", "submitted_at": "2026-09-24T22:53:12Z",
   "updated_at": "2026-09-24T22:53:12Z", "completed_at": "2026-09-24T22:53:12Z",
   "last_checked_at": "2026-09-24T22:53:12Z",
@@ -176,7 +177,7 @@ than asking you to check. Real example (the mock provider answered a submit with
 "does not prove the job was not created"):
 
 ```console
-$ iris video generate "a paper boat drifting on a pond" --duration 4 --detach --json
+$ iris video generate -m veo-lite "a paper boat drifting on a pond" --duration 4 --detach --json
 ```
 ```json
 {"command":"video.generate","error":{"category":"uncertain","code":"submission_uncertain",
@@ -188,7 +189,7 @@ $ iris video generate "a paper boat drifting on a pond" --duration 4 --detach --
  "details":{"charge_possible":true,"provider_message":"internal"},
  "retryable":false},
  "ok":false,"result":null,"schema_version":1,
- "warnings":[{"code":"preview_model","message":"veo-3.1-fast-generate-preview is a preview model; its behavior, limits, and availability may change"}]}
+ "warnings":[{"code":"preview_model","message":"veo-3.1-lite-generate-preview is a preview model; its behavior, limits, and availability may change"}]}
 $ echo $?
 5
 ```
@@ -325,11 +326,11 @@ Real end-to-end sequence against a local mock server standing in for the Gemini 
 **separate process invocations** against the same job:
 
 ```console
-$ iris video generate "waves crashing at dusk" --duration 4 --detach
-Submitting job job_01m3a5ffjkdnar227bba60tfa2 to gemini (veo-3.1-fast-generate-preview); this is a paid request
+$ iris video generate -m veo-lite "waves crashing at dusk" --duration 4 --detach
+Submitting job job_01m3a5ffjkdnar227bba60tfa2 to gemini (veo-3.1-lite-generate-preview); this is a paid request
 Job job_01m3a5ffjkdnar227bba60tfa2 accepted by gemini
-warning[preview_model]: veo-3.1-fast-generate-preview is a preview model; its behavior, limits, and availability may change
-Submitted job job_01m3a5ffjkdnar227bba60tfa2: running (gemini veo-3.1-fast-generate-preview)
+warning[preview_model]: veo-3.1-lite-generate-preview is a preview model; its behavior, limits, and availability may change
+Submitted job job_01m3a5ffjkdnar227bba60tfa2: running (gemini veo-3.1-lite-generate-preview)
 Next: iris jobs status job_01m3a5ffjkdnar227bba60tfa2
 Next: iris jobs wait job_01m3a5ffjkdnar227bba60tfa2
 
@@ -338,12 +339,12 @@ Job job_01m3a5ffjkdnar227bba60tfa2 is running (40% done)
 job_01m3a5ffjkdnar227bba60tfa2
   status:     running
   provider:   gemini
-  model:      veo-3.1-fast-generate-preview
+  model:      veo-3.1-lite-generate-preview
   created:    2026-09-24T16:55:15Z
   submitted:  2026-09-24T16:55:15Z
   checked:    2026-09-24T16:55:21Z
-  remote op:  models/veo-3.1-fast-generate-preview/operations/op_mockjob
-  cost:       ~$0.4000 USD (4 s × $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged)
+  remote op:  models/veo-3.1-lite-generate-preview/operations/op_mockjob
+  cost:       ~$0.2000 USD (4 s × $0.05/s (veo-3.1-lite-generate-preview, 720p, audio included); estimate; blocked videos are not charged)
 
 $ iris jobs wait job_01m3a5ffjkdnar227bba60tfa2
 Job job_01m3a5ffjkdnar227bba60tfa2 succeeded

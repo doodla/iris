@@ -201,7 +201,7 @@ pub fn json_response(status: u16, body: Value) -> ResponseTemplate {
 
 pub const OPENAI_GENERATIONS: &str = "/v1/images/generations";
 pub const OPENAI_EDITS: &str = "/v1/images/edits";
-pub const OPENAI_DEFAULT_MODEL: &str = "gpt-image-2.5-sunburst";
+pub const OPENAI_IMAGE_MODEL: &str = "gpt-image-2.5-sunburst";
 
 /// The usage every OpenAI success reports: 50 text input tokens, 196 output tokens.
 /// Estimate: (50 × $5 + 196 × $30) / 1M = $0.00613.
@@ -238,7 +238,7 @@ pub fn openai_error(status: u16, kind: &str, code: Option<&str>, message: &str) 
 
 // ----- Gemini API (images) ------------------------------------------------------------------
 
-pub const GEMINI_DEFAULT_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
+pub const GEMINI_IMAGE_MODEL: &str = "gemini-3.1-flash-image";
 
 /// `/v1/models/<model>:generateContent`.
 pub fn gemini_generate_path(model: &str) -> String {
@@ -257,7 +257,7 @@ pub fn gemini_parts(parts: Value) -> ResponseTemplate {
                 "thoughtsTokenCount": 40,
                 "totalTokenCount": 1172
             },
-            "modelVersion": GEMINI_DEFAULT_IMAGE_MODEL,
+            "modelVersion": GEMINI_IMAGE_MODEL,
             "responseId": "e2e-response-1"
         }),
     )

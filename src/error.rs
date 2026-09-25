@@ -39,6 +39,7 @@ pub mod exit {
 #[serde(rename_all = "snake_case")]
 pub enum ErrorCode {
     UsageError,
+    ModelRequired,
     InvalidArgument,
     UnsupportedOperation,
     UnsupportedOption,
@@ -99,6 +100,7 @@ pub enum ErrorCategory {
 impl ErrorCode {
     pub const ALL: &'static [ErrorCode] = &[
         ErrorCode::UsageError,
+        ErrorCode::ModelRequired,
         ErrorCode::InvalidArgument,
         ErrorCode::UnsupportedOperation,
         ErrorCode::UnsupportedOption,
@@ -135,6 +137,7 @@ impl ErrorCode {
         use ErrorCode::*;
         match self {
             UsageError => "usage_error",
+            ModelRequired => "model_required",
             InvalidArgument => "invalid_argument",
             UnsupportedOperation => "unsupported_operation",
             UnsupportedOption => "unsupported_option",
@@ -172,7 +175,7 @@ impl ErrorCode {
         use ErrorCategory as C;
         use ErrorCode::*;
         match self {
-            UsageError => C::Usage,
+            UsageError | ModelRequired => C::Usage,
             InvalidArgument | UnsupportedOperation | UnsupportedOption | UnknownModel | UnknownProvider
             | InputFileInvalid => C::Validation,
             ConfigInvalid => C::Config,

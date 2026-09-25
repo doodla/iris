@@ -211,15 +211,45 @@ async fn outputs_of_every_command_match_the_schema() {
         }
     };
 
-    record(&run(s(&["image", "generate", "a fox", "--quality", "low", "--json"])).await);
-    record(&run(s(&["image", "generate", "a fox", "--dry-run", "--json"])).await);
-    record(&run(s(&["image", "edit", "-i", &input, "--mask", &input, "make it blue", "--json"])).await);
-    record(&run(s(&["image", "edit", "-i", &input, "x", "--dry-run", "--json"])).await);
-    record(&run(s(&["image", "generate", "x", "-O", "nope=1", "--json"])).await);
-    let detached = run(s(&["video", "generate", "waves", "--detach", "--json"])).await;
+    record(
+        &run(s(&["image", "generate", "-m", "fake-image-1", "a fox", "--quality", "low", "--json"])).await,
+    );
+    record(&run(s(&["image", "generate", "-m", "fake-image-1", "a fox", "--dry-run", "--json"])).await);
+    record(
+        &run(s(&[
+            "image",
+            "edit",
+            "-m",
+            "fake-image-1",
+            "-i",
+            &input,
+            "--mask",
+            &input,
+            "make it blue",
+            "--json",
+        ]))
+        .await,
+    );
+    record(&run(s(&["image", "edit", "-m", "fake-image-1", "-i", &input, "x", "--dry-run", "--json"])).await);
+    record(&run(s(&["image", "generate", "-m", "fake-image-1", "x", "-O", "nope=1", "--json"])).await);
+    record(&run(s(&["image", "generate", "x", "--json"])).await); // model_required
+    let detached = run(s(&["video", "generate", "-m", "fake-video-1", "waves", "--detach", "--json"])).await;
     record(&detached);
     let id = detached["result"]["job"]["job_id"].as_str().unwrap().to_string();
-    record(&run(s(&["video", "generate", "waves", "--image", &input, "--dry-run", "--json"])).await);
+    record(
+        &run(s(&[
+            "video",
+            "generate",
+            "-m",
+            "fake-video-1",
+            "waves",
+            "--image",
+            &input,
+            "--dry-run",
+            "--json",
+        ]))
+        .await,
+    );
     record(&run(s(&["jobs", "list", "--json"])).await);
     record(&run(s(&["jobs", "status", &id, "--no-refresh", "--json"])).await);
     gemini.videos().push_poll(Ok(remote_success(&format!("{}/v1beta/files/x:download", server.uri()))));
@@ -229,9 +259,12 @@ async fn outputs_of_every_command_match_the_schema() {
     record(&run(s(&["jobs", "delete", &id, "--json"])).await);
     record(&run(s(&["jobs", "status", &id, "--json"])).await); // job_not_found
     gemini.videos().push_poll(Ok(remote_success(&format!("{}/v1beta/files/y:download", server.uri()))));
-    record(&run(s(&["video", "generate", "boat", "--poll-interval", "2s", "--json"])).await);
+    record(
+        &run(s(&["video", "generate", "-m", "fake-video-1", "boat", "--poll-interval", "2s", "--json"]))
+            .await,
+    );
     gemini.videos().push_submit(Err(iris::error::IrisError::new(ErrorCode::SubmissionUncertain, "unknown")));
-    record(&run(s(&["video", "generate", "boat", "--json"])).await);
+    record(&run(s(&["video", "generate", "-m", "fake-video-1", "boat", "--json"])).await);
     record(&run(s(&["models", "list", "--json"])).await);
     record(&run(s(&["models", "show", "fake-video-1", "--check-access", "--json"])).await);
     record(&run(s(&["models", "show", "nope", "--json"])).await);
@@ -296,12 +329,14 @@ fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
         "job_status": null, "details": null
     });
     let image = serde_json::json!({
-        "provider": "openai", "model": "m", "operation": "image.generate", "status": "succeeded",
+        "provider": "openai", "model": "m", "model_source": "flag", "operation": "image.generate",
+        "status": "succeeded",
         "created_at": "t", "completed_at": "t", "provider_request_id": null, "artifacts": [],
         "text": null, "usage": null, "cost_estimate": null
     });
     let plan = serde_json::json!({
-        "dry_run": true, "provider": "openai", "model": "m", "operation": "image.generate",
+        "dry_run": true, "provider": "openai", "model": "m", "model_source": "config",
+        "operation": "image.generate",
         "async_job": false, "options": {}, "inputs": [], "outputs": [], "credential_present": false,
         "cost_estimate": null
     });
@@ -406,7 +441,7 @@ async fn a_job_error_with_a_newer_code_still_matches_the_schema() {
     let gemini = Arc::new(FakeProvider::gemini());
     let setup = || CliSetup::new(sandbox.env(), vec![Arc::new(FakeProvider::openai()), gemini.clone()]);
     gemini.videos().push_submit(Err(iris::error::IrisError::new(ErrorCode::QuotaExceeded, "out of quota")));
-    let v = run_cli(setup(), &["video", "generate", "boat", "--json"]).await.json();
+    let v = run_cli(setup(), &["video", "generate", "-m", "fake-video-1", "boat", "--json"]).await.json();
     let id = v["error"]["job_id"].as_str().unwrap().to_string();
     let path = sandbox.state().join("jobs").join(format!("{id}.json"));
     let text = std::fs::read_to_string(&path).unwrap();

@@ -21,6 +21,7 @@ use crate::output::results::{ImageResult, PlanResult};
 use crate::providers::{ImageFailure, ImageOutput, ImageRequest, InputRole, UnusableOutput};
 
 use super::context::AppContext;
+use super::jobs::Commands;
 use super::request::{self, GenerationArgs, GenerationOutcome};
 
 /// Arguments of `image generate` / `image edit`.
@@ -34,6 +35,8 @@ pub struct ImageArgs {
 }
 
 /// Run `image generate` (`op = image.generate`) or `image edit` (`image.edit`).
+/// Hints and warnings that name `iris` commands name the config file too when it
+/// was chosen explicitly (see `Commands`).
 ///
 /// No error it returns says both `details.charge_possible: true` and
 /// `retryable: true`: a request that may already have been billed is never
@@ -44,13 +47,15 @@ pub async fn run(
     args: ImageArgs,
     warnings: &mut Vec<Warning>,
 ) -> Result<GenerationOutcome<ImageResult>, IrisError> {
-    run_checked(ctx, op, args, warnings).await.map_err(|mut e| {
+    let start = warnings.len();
+    let result = run_checked(ctx, op, args, warnings).await.map_err(|mut e| {
         let charged = e.details.get("charge_possible").and_then(serde_json::Value::as_bool) == Some(true);
         if charged && e.retryable == Some(true) {
             e.retryable = Some(false);
         }
         e
-    })
+    });
+    Commands::of(ctx).finish(result, warnings, start)
 }
 
 async fn run_checked(
@@ -63,7 +68,7 @@ async fn run_checked(
         return Err(IrisError::internal(format!("{op} is not an image operation")));
     }
     let common = &args.common;
-    let resolved = request::resolve_model(ctx, op, common, warnings)?;
+    let (resolved, model_source) = request::resolve_model(ctx, op, common, warnings)?;
     let spec = resolved.spec;
     let provider = spec.provider;
 
@@ -153,6 +158,7 @@ async fn run_checked(
             dry_run: true,
             provider,
             model: resolved.id.clone(),
+            model_source,
             operation: op,
             async_job: false,
             options: request::options_view(spec, op, &opts, ctx.settings.store_prompts.value),
@@ -179,7 +185,7 @@ async fn run_checked(
     ctx.progress.line(format!(
         "Requesting {count} image{} from {provider} ({}); this is a paid request",
         if count == 1 { "" } else { "s" },
-        resolved.id
+        request::progress_model(&resolved, model_source, op)
     ));
     // Names every file this command may keep in the state directory.
     let run_id = ulid::Ulid::generate().to_string().to_ascii_lowercase();
@@ -276,6 +282,7 @@ async fn run_checked(
     Ok(GenerationOutcome::Completed(ImageResult {
         provider,
         model: resolved.id,
+        model_source,
         operation: op,
         status: JobStatus::Succeeded,
         created_at: created_at.to_string(),

@@ -41,7 +41,7 @@ fn plain_http_is_refused_for_any_host_but_loopback() {
         sb.iris()
             .env("IRIS_GEMINI_BASE_URL", url)
             .keys()
-            .args(["video", "generate", PROMPT, "--detach", "--json"])
+            .args(["video", "generate", "-m", VEO_LITE, PROMPT, "--detach", "--json"])
             .run()
             .err(2, "config_invalid");
     }
@@ -126,17 +126,31 @@ fn every_command_that_sends_a_key_to_a_non_default_host_warns_once() {
     // An image request names the provider it went to.
     let api = MockApi::start();
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&png(8, 8)], "req_base_url_1"));
-    let v = sb.iris().openai(&api).args(["image", "generate", PROMPT, "-o", "a.png", "--json"]).run().ok();
+    let v = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "-o", "a.png", "--json"])
+        .run()
+        .ok();
     let warnings = base_url_warnings(&v);
     assert_eq!(warnings.len(), 1, "{v}");
     assert!(warnings[0].contains("OPENAI_API_KEY") && warnings[0].contains("unencrypted HTTP"), "{v}");
     // A dry run sends nothing.
-    let v = sb.iris().openai(&api).args(["image", "generate", PROMPT, "--dry-run", "--json"]).run().ok();
+    let v = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "--dry-run", "--json"])
+        .run()
+        .ok();
     assert!(base_url_warnings(&v).is_empty(), "{v}");
     assert_eq!(api.total(), 1);
 
     // Human mode: the warning goes to stderr with the result.
-    let out = sb.iris().openai(&api).args(["image", "generate", PROMPT, "-o", "b.png"]).run();
+    let out = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "-o", "b.png"])
+        .run();
     out.human();
     assert!(
         out.stderr.contains("warning[non_default_base_url]: providers.openai.base_url is"),

@@ -24,6 +24,10 @@ const LONG_ABOUT: &str = "\
 Iris generates and edits images (OpenAI GPT Image, Google Gemini \"Nano Banana\") and generates \
 videos (Google Veo) from one agent-friendly command line.
 
+Every generation command names its model: pass -m/--model, or set the model in the config file \
+([image] model, [video] model). Iris never chooses a model for you; `iris models list` shows the \
+models it knows.
+
 Image commands are synchronous: the image is saved before the command returns. Video generation \
 is a provider-native job: Iris records it locally, waits, and saves the video; with --detach it \
 returns a job id that later commands (iris jobs status/wait/download) resume, even from another \
@@ -37,9 +41,9 @@ progress and diagnostics go to stderr. Iris never prompts interactively.";
 
 const AFTER_HELP: &str = "\
 Examples:
-  iris image generate \"a watercolor fox\" -o fox.png
-  iris image edit -i photo.png \"make it autumn\" --json
-  iris video generate \"waves at dusk\" --duration 4 --detach
+  iris image generate -m gpt-image-2.5-sunburst --quality low --size 1024x1024 \"a fox\" -o fox.png
+  iris image edit -m nano-banana-2 -i photo.png \"make it autumn\" --json
+  iris video generate -m veo-lite \"waves at dusk\" --duration 4 --detach
   iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2
   iris models list --operation video.generate
   iris doctor
@@ -97,8 +101,8 @@ pub enum Command {
         long_about = "Generate images from a prompt, or edit/compose images from local reference images. \
                       Both are synchronous paid requests: the images are validated and saved before the \
                       command returns, and no job record is created.",
-        after_help = "Examples:\n  iris image generate \"a watercolor fox\" -o fox.png\n  iris image edit -i \
-                      photo.png \"make it autumn\" --json"
+        after_help = "Examples:\n  iris image generate -m gpt-image-2.5-sunburst --quality low --size 1024x1024 \
+                      \"a fox\" -o fox.png\n  iris image edit -m nano-banana-2 -i photo.png \"make it autumn\" --json"
     )]
     Image(ImageCommand),
     /// Generate videos (provider-native asynchronous jobs)
@@ -106,8 +110,8 @@ pub enum Command {
         subcommand,
         long_about = "Generate videos as provider-native asynchronous jobs. Iris records each job locally \
                       before submitting it, so it can be resumed by later commands.",
-        after_help = "Examples:\n  iris video generate \"waves at dusk\" --duration 4 -o waves.mp4\n  iris video \
-                      generate \"a paper boat\" --detach --json"
+        after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
+                      iris video generate -m veo-lite \"a paper boat\" --detach --json"
     )]
     Video(VideoCommand),
     /// List, inspect, wait for, download, and delete local video jobs
@@ -123,8 +127,8 @@ pub enum Command {
     /// List models and inspect their capabilities
     #[command(
         subcommand,
-        long_about = "List the models Iris knows and inspect their declared capabilities, options, defaults, \
-                      and published prices.",
+        long_about = "List the models Iris knows and inspect their declared capabilities, options (with \
+                      their defaults), and published prices.",
         after_help = "Examples:\n  iris models list\n  iris models show nano-banana-2 --json"
     )]
     Models(ModelsCommand),
@@ -148,10 +152,9 @@ pub enum Command {
     #[command(
         long_about = "Check credential presence (never values), configuration validity, state and output \
                       directory writability, and base URL overrides. --check-access additionally makes free \
-                      metadata calls to see whether each provider's default models (the models commands use \
-                      without --model: providers.<provider>.image_model/video_model when configured, else the \
-                      built-in default) are visible to your key; they do not check billing tier, prepaid credit, \
-                      or organization verification, so a paid request can still be refused.\n\nExit status: \
+                      metadata calls to see whether every catalog model of each provider whose API key is set \
+                      is visible to your key; they do not check billing tier, prepaid credit, or organization \
+                      verification, so a paid request can still be refused.\n\nExit status: \
                       doctor exits 0 whenever its checks ran, even when it finds problems. Read `healthy` \
                       (result.healthy with --json) or look for [error] lines instead of relying on the exit \
                       code.",
@@ -209,6 +212,10 @@ impl Command {
 
 // ----- generation -----------------------------------------------------------
 
+/// `-m/--model` help of `video generate` (the image commands' help names `image.model`).
+const VIDEO_MODEL_HELP: &str =
+    "Model id or alias (see `iris models list`); required unless the config file sets video.model";
+
 /// Exactly one prompt source.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Prompt (exactly one source)")]
@@ -224,14 +231,12 @@ pub struct PromptArgs {
     pub prompt_stdin: bool,
 }
 
-/// Provider and model selection.
+/// Model selection. The provider is the model's.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Model")]
 pub struct ModelArgs {
-    /// Provider: openai or gemini (inferred from --model when omitted)
-    #[arg(long, value_name = "PROVIDER")]
-    pub provider: Option<String>,
-    /// Model id or alias (see `iris models list`); defaults to the provider's default model
+    /// Model id or alias (see `iris models list`); required unless the config file sets image.model
+    // `video generate` replaces this help with its own config key (`VIDEO_MODEL_HELP`).
     #[arg(short = 'm', long, value_name = "MODEL")]
     pub model: Option<String>,
     /// Allow an unknown --model by declaring that it has this known model's capabilities
@@ -379,11 +384,11 @@ pub enum ImageCommand {
                       retried after it may have been processed), and every returned image is validated and \
                       saved before the command returns. Local validation (model, options, output paths, \
                       credentials) happens before anything is sent.",
-        after_help = "Examples:\n  iris image generate \"a watercolor fox\" -o fox.png\n  iris image generate \
-                      -m gpt-image-2 --quality low --size 1024x1024 \"a red kite\"\n  iris image generate \
-                      --provider gemini --aspect-ratio 16:9 -f prompt.txt -d out/\n  echo \"a lighthouse\" | \
-                      iris image generate --prompt-stdin --json\n  iris image generate \"a fox\" --dry-run \
-                      --json\n\nProvider usage is billed by the provider."
+        after_help = "Examples:\n  iris image generate -m gpt-image-2.5-sunburst --quality low --size 1024x1024 \
+                      \"a fox\" -o fox.png\n  iris image generate -m gpt-image-2 --quality low --size 1024x1024 \
+                      \"a red kite\" --dry-run --json\n  iris image generate -m nano-banana-2 --aspect-ratio 16:9 -f \
+                      prompt.txt -d out/\n  echo \"a lighthouse\" | iris image generate -m nano-banana-2 \
+                      --prompt-stdin --json\n\nProvider usage is billed by the provider."
     )]
     Generate(ImageGenerateArgs),
     /// Edit images, or compose a new image from reference images
@@ -391,10 +396,10 @@ pub enum ImageCommand {
         long_about = "Edit one or more local images, or compose a new image from reference images, guided \
                       by a prompt. Inputs are validated locally (format, size, count) before anything is \
                       sent. --mask is accepted only by models that declare mask support.",
-        after_help = "Examples:\n  iris image edit -i photo.png \"make it autumn\" -o autumn.png\n  iris image \
-                      edit -i a.png -i b.png \"combine these into one poster\" --provider gemini\n  iris image \
-                      edit -i room.png --mask mask.png \"add a window\" --json\n\nProvider usage is billed by \
-                      the provider."
+        after_help = "Examples:\n  iris image edit -m nano-banana-2 -i photo.png \"make it autumn\" -o fall.jpg\n  \
+                      iris image edit -m nano-banana-2 -i a.png -i b.png \"combine these into one poster\"\n  \
+                      iris image edit -m gpt-image-2.5-sunburst --quality low --size 1024x1024 -i room.png \\\n    \
+                      --mask mask.png \"add a window\" --json\n\nProvider usage is billed by the provider."
     )]
     Edit(ImageEditArgs),
 }
@@ -445,10 +450,12 @@ pub enum VideoCommand {
                       process.\n\nIf the caller's wait limit (--timeout) passes or you press Ctrl-C, the job \
                       keeps running remotely and stays resumable (exit 4 or 130). If the outcome of the \
                       submission itself is uncertain, Iris exits 5 and never resubmits automatically.",
-        after_help = "Examples:\n  iris video generate \"waves at dusk\" --duration 4 -o waves.mp4\n  iris video \
-                      generate \"a paper boat\" --detach --json\n  iris video generate --image first.png \
-                      \"the scene comes alive\" --timeout 15m\n  iris video generate \"city timelapse\" \
-                      --dry-run --json\n\nProvider usage is billed by the provider."
+        after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
+                      iris video generate -m veo-lite \"a paper boat\" --detach --json\n  iris video generate \
+                      -m veo-lite --image first.png \"the scene comes alive\" --timeout 15m\n  iris video \
+                      generate -m veo-lite \"city timelapse\" --dry-run --json\n\nProvider usage is billed by \
+                      the provider.",
+        mut_arg("model", |arg| arg.help(VIDEO_MODEL_HELP))
     )]
     Generate(VideoGenerateArgs),
 }
@@ -612,18 +619,20 @@ pub enum ModelsCommand {
     /// List known models
     #[command(
         long_about = "List the models in Iris's catalog with their provider, lifecycle, operations, and \
-                      aliases.",
+                      aliases. It reads only the catalog, so it runs even when the config file is invalid.",
         after_help = "Examples:\n  iris models list\n  iris models list --provider gemini --json\n  iris models \
                       list --operation image.edit"
     )]
     List(ModelsListArgs),
-    /// Show one model's capabilities, options, defaults, and prices
+    /// Show one model's capabilities, options, and prices
     #[command(
         long_about = "Show one model's declared capabilities: operations, inputs, options (with the typed \
-                      flag or -O key for each), defaults, output types, limits, published prices, and \
-                      documented access requirements. --check-access asks the provider with a free \
-                      metadata call whether the model is visible to your key; billing tier, prepaid credit, \
-                      and organization verification are not checked.",
+                      flag or -O key and the default of each), output types, limits, published prices, and \
+                      documented access requirements. Without --check-access it reads only the catalog and \
+                      whether the API key is set, so it runs even when the config file is invalid. \
+                      --check-access also asks the provider with a free metadata call whether the model is \
+                      visible to your key; billing tier, prepaid credit, and organization verification are \
+                      not checked.",
         after_help = "Examples:\n  iris models show nano-banana-2\n  iris models show gpt-image-2 --json\n  iris \
                       models show veo-fast --check-access"
     )]
@@ -688,7 +697,7 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Also check with free metadata calls whether the default models (used without --model) are
+    /// Also check with free metadata calls whether each model of a provider whose API key is set is
     /// visible to your key
     #[arg(long)]
     pub check_access: bool,
@@ -741,13 +750,19 @@ mod tests {
     }
 
     /// The command lines of an "Examples:" section: the indented lines after it, up
-    /// to the first blank line.
+    /// to the first blank line, a line ending in `\` continued on the next.
     fn examples(help: &str) -> Vec<String> {
-        help.split_once("Examples:\n")
-            .map(|(_, rest)| {
-                rest.lines().take_while(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).collect()
-            })
-            .unwrap_or_default()
+        let Some((_, rest)) = help.split_once("Examples:\n") else {
+            return Vec::new();
+        };
+        let (mut lines, mut line) = (Vec::new(), String::new());
+        for l in rest.lines().take_while(|l| !l.trim().is_empty()) {
+            match l.trim().strip_suffix('\\') {
+                Some(head) => line.push_str(head),
+                None => lines.push(std::mem::take(&mut line) + l.trim()),
+            }
+        }
+        lines
     }
 
     /// Split a command line into words the way a POSIX shell would for these
@@ -781,9 +796,11 @@ mod tests {
     }
 
     /// Every help page's examples parse: each command line (the part after the last
-    /// `|`, without shell redirections) is accepted by the command-line parser.
+    /// `|`, without shell redirections) is accepted by the command-line parser. Each
+    /// generation example names its model with `-m`, since Iris never chooses one and
+    /// an example cannot rely on a config file.
     #[test]
-    fn every_help_example_parses() {
+    fn every_help_example_parses_and_names_its_model() {
         fn collect(cmd: &clap::Command, page: &str, out: &mut Vec<(String, String)>) {
             for help in [cmd.get_after_help(), cmd.get_after_long_help()].into_iter().flatten() {
                 out.extend(examples(&help.to_string()).into_iter().map(|e| (page.to_string(), e)));
@@ -813,9 +830,18 @@ mod tests {
                 }
             }
             assert_eq!(argv.first().map(String::as_str), Some("iris"), "{page}: {line}");
-            if let Err(e) = Cli::try_parse_from(&argv) {
-                panic!("the example of `{page}` does not parse: {line}\n{e}");
-            }
+            let cli = Cli::try_parse_from(&argv)
+                .unwrap_or_else(|e| panic!("the example of `{page}` does not parse: {line}\n{e}"));
+            let model = match &cli.command {
+                Command::Image(ImageCommand::Generate(a)) => Some(&a.model),
+                Command::Image(ImageCommand::Edit(a)) => Some(&a.model),
+                Command::Video(VideoCommand::Generate(a)) => Some(&a.model),
+                _ => None,
+            };
+            assert!(
+                model.is_none_or(|m| m.model.is_some()),
+                "the example of `{page}` names no model: {line}"
+            );
         }
     }
 

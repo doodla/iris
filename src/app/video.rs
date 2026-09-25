@@ -72,7 +72,7 @@ async fn generate(
 ) -> Result<GenerationOutcome<JobResult>, IrisError> {
     let op = Operation::VideoGenerate;
     let common = &args.common;
-    let resolved = request::resolve_model(ctx, op, common, warnings)?;
+    let (resolved, model_source) = request::resolve_model(ctx, op, common, warnings)?;
     let spec = resolved.spec;
     let provider = spec.provider;
 
@@ -147,6 +147,7 @@ async fn generate(
             dry_run: true,
             provider,
             model: resolved.id.clone(),
+            model_source,
             operation: op,
             async_job: true,
             options: request::options_view(spec, op, &opts, store_prompts),
@@ -182,6 +183,7 @@ async fn generate(
         NewJob {
             provider,
             model: resolved.id.clone(),
+            model_source,
             operation: op,
             request: jobs::request_metadata(
                 spec,
@@ -203,8 +205,10 @@ async fn generate(
     let delivered = ctx.interrupt.delivered();
     ctx.store.create(&record)?;
 
-    ctx.progress
-        .line(format!("Submitting job {job_id} to {provider} ({}); this is a paid request", resolved.id));
+    ctx.progress.line(format!(
+        "Submitting job {job_id} to {provider} ({}); this is a paid request",
+        request::progress_model(&resolved, model_source, op)
+    ));
     // One that arrived before the request is sent (while the record was written or
     // the line printed) stops here, without sending it. `count()` would miss it: the
     // runtime has not been polled since, so the task forwarding a signal has not run.

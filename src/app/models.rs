@@ -4,49 +4,38 @@
 //! metadata call).
 
 use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec, OptionValue};
+use crate::config::EnvSnapshot;
 use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
-    AccessView, ConstraintView, EffectiveDefault, InputsView, LimitsView, MaskRequirementsView,
-    ModelCapabilities, ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView,
-    ProviderListResult, ProviderView,
+    AccessView, ConstraintView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities,
+    ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult,
+    ProviderView,
 };
 use crate::providers::AccountAccess;
 use crate::redact;
 
+use super::catalog::Catalog;
 use super::context::AppContext;
-use super::request::{default_provider, effective_default};
 
-/// `models list`, optionally filtered by provider and operation.
-pub fn list(ctx: &AppContext, provider: Option<ProviderId>, operation: Option<Operation>) -> ModelListResult {
-    let models = ctx
-        .catalog
+/// `models list`, optionally filtered by provider and operation. It reads only the
+/// catalog, so it needs no settings.
+pub fn list(
+    catalog: &Catalog,
+    provider: Option<ProviderId>,
+    operation: Option<Operation>,
+) -> ModelListResult {
+    let models = catalog
         .models()
         .into_iter()
         .filter(|m| provider.is_none_or(|p| m.provider == p))
         .filter(|m| operation.is_none_or(|op| m.supports(op)))
-        .map(|m| summary(ctx, m))
+        .map(summary)
         .collect();
-    ModelListResult { models, effective_defaults: effective_defaults(ctx) }
+    ModelListResult { models }
 }
 
-/// For each operation, the provider and model a generation command uses without
-/// `--provider` and `--model` (the same resolution those commands run). An
-/// operation whose default cannot be resolved (no model for it, or a configured
-/// default model the catalog does not know) is left out; the command itself
-/// reports why.
-fn effective_defaults(ctx: &AppContext) -> Vec<EffectiveDefault> {
-    Operation::ALL
-        .iter()
-        .filter_map(|&operation| {
-            let provider = default_provider(ctx, operation).ok()?;
-            let model = effective_default(ctx, provider, operation).ok()??;
-            Some(EffectiveDefault { operation, provider, model: model.id.to_string() })
-        })
-        .collect()
-}
-
-fn summary(ctx: &AppContext, m: &ModelSpec) -> ModelSummary {
+fn summary(m: &ModelSpec) -> ModelSummary {
     ModelSummary {
         id: m.id.to_string(),
         provider: m.provider,
@@ -54,33 +43,21 @@ fn summary(ctx: &AppContext, m: &ModelSpec) -> ModelSummary {
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
         operations: m.operations.to_vec(),
-        default_for: default_for(ctx, m),
     }
 }
 
-/// Operations for which `m` is its provider's default, the model used when that
-/// provider is selected without `--model`: the configured default of its provider
-/// when set, else the catalog default.
-fn default_for(ctx: &AppContext, m: &ModelSpec) -> Vec<Operation> {
-    m.operations
-        .iter()
-        .copied()
-        .filter(|op| matches!(effective_default(ctx, m.provider, *op), Ok(Some(d)) if d.id == m.id))
-        .collect()
-}
-
-/// `models show <MODEL>`: declared capabilities, options, constraints, defaults,
-/// pricing, and access. With `check_access`, asks the provider (free metadata call)
-/// whether the model is visible to the key; billing tier, credit, and organization
-/// verification are not part of that check.
-pub async fn show(
-    ctx: &AppContext,
+/// `models show <MODEL>`: declared capabilities, options (with their defaults),
+/// constraints, pricing, and access requirements, with whether the provider's key is
+/// set. It reads only the catalog and the environment, never the settings, so it runs
+/// even when the config file is invalid; [`check_access`] adds the provider's answer.
+pub fn show(
+    catalog: &Catalog,
+    env: &EnvSnapshot,
     model: &str,
-    check_access: bool,
     warnings: &mut Vec<Warning>,
 ) -> Result<ModelShowResult, IrisError> {
-    let spec = ctx.catalog.find(model).ok_or_else(|| {
-        let known: Vec<&str> = ctx.catalog.models().iter().map(|m| m.id).collect();
+    let spec = catalog.find(model).ok_or_else(|| {
+        let known: Vec<&str> = catalog.models().iter().map(|m| m.id).collect();
         let hint = crate::catalog::declined_name_hint(model).map(str::to_string).unwrap_or_else(|| {
             format!("known models: {}", if known.is_empty() { "none".to_string() } else { known.join(", ") })
         });
@@ -92,32 +69,35 @@ pub async fn show(
             format!("{} is a preview model; its behavior, limits, and availability may change", spec.id),
         ));
     }
-    let provider = spec.provider;
-    let (account_access, checked_at) = if check_access {
-        let adapter = ctx.provider(provider)?;
-        let pctx = ctx.provider_context(provider)?;
-        ctx.settings.warn_non_default_base_url(provider, warnings);
-        ctx.interrupt.arm();
-        let seen = ctx.interrupt.count();
-        let access = tokio::select! {
-            result = adapter.check_access(spec.id, &pctx) => result?,
-            () = ctx.interrupt.after(seen) => {
-                return Err(IrisError::new(ErrorCode::Interrupted, "interrupted while checking model access"));
-            }
-        };
-        (access, Some(ctx.now().to_string()))
-    } else {
-        (AccountAccess::NotChecked, None)
-    };
-    Ok(ModelShowResult { model: capabilities(ctx, spec, account_access, checked_at) })
+    Ok(ModelShowResult { model: capabilities(spec, env.credential(spec.provider).is_some()) })
 }
 
-fn capabilities(
+/// `models show --check-access`: asks the provider (free metadata call) whether the
+/// model [`show`] described is visible to the key; billing tier, credit, and
+/// organization verification are not part of that check.
+pub async fn check_access(
     ctx: &AppContext,
-    m: &ModelSpec,
-    account_access: AccountAccess,
-    checked_at: Option<String>,
-) -> ModelCapabilities {
+    shown: &mut ModelShowResult,
+    warnings: &mut Vec<Warning>,
+) -> Result<(), IrisError> {
+    let model = &mut shown.model;
+    let adapter = ctx.provider(model.provider)?;
+    let pctx = ctx.provider_context(model.provider)?;
+    ctx.settings.warn_non_default_base_url(model.provider, warnings);
+    ctx.interrupt.arm();
+    let seen = ctx.interrupt.count();
+    let access = tokio::select! {
+        result = adapter.check_access(&model.id, &pctx) => result?,
+        () = ctx.interrupt.after(seen) => {
+            return Err(IrisError::new(ErrorCode::Interrupted, "interrupted while checking model access"));
+        }
+    };
+    model.access.account_access = access;
+    model.access.checked_at = Some(ctx.now().to_string());
+    Ok(())
+}
+
+fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
     ModelCapabilities {
         id: m.id.to_string(),
         provider: m.provider,
@@ -125,7 +105,6 @@ fn capabilities(
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
         operations: m.operations.to_vec(),
-        default_for: default_for(ctx, m),
         inputs: InputsView {
             max_input_images: m.inputs.max_input_images,
             input_media_types: m.inputs.input_media_types.iter().map(|t| t.to_string()).collect(),
@@ -173,10 +152,10 @@ fn capabilities(
             .collect(),
         access: AccessView {
             credential_env: m.provider.credential_env().to_string(),
-            credential_present: ctx.settings.credential_present(m.provider),
+            credential_present,
             requirements: m.access_notes.iter().map(|n| n.to_string()).collect(),
-            account_access,
-            checked_at,
+            account_access: AccountAccess::NotChecked,
+            checked_at: None,
         },
         capabilities_source: "catalog".to_string(),
         catalog_as_of: CATALOG_AS_OF.to_string(),

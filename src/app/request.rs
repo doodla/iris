@@ -1,19 +1,18 @@
 //! Steps shared by every generation workflow (image generate/edit, video
-//! generate): provider and model resolution (docs/configuration.md), prompt limits, output counts,
+//! generate): model resolution (docs/configuration.md), prompt limits, output counts,
 //! cost estimates, and dry-run plan pieces.
 
 use std::fmt;
 use std::path::PathBuf;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::artifacts::{media, paths};
 use crate::catalog::{
     CapabilitySource, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionSource, RawOption,
     ResolvedModel, ResolvedOptions,
 };
-use crate::config::SettingSource;
-use crate::domain::{CostEstimate, Operation, ProviderId, Usage, Warning, WarningCode};
+use crate::domain::{CostEstimate, ModelSource, Operation, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::jobs;
 use crate::output::results::{PlanInput, PlanResult};
@@ -26,8 +25,6 @@ use super::context::AppContext;
 pub struct GenerationArgs {
     /// The prompt, already read from its source and checked to be non-empty.
     pub prompt: String,
-    /// `--provider`.
-    pub provider: Option<ProviderId>,
     /// `-m, --model` (catalog id, alias, or an unknown id with `capabilities_from`).
     pub model: Option<String>,
     /// `--capabilities-from <KNOWN_MODEL>`.
@@ -47,7 +44,6 @@ impl fmt::Debug for GenerationArgs {
         // Never show the prompt text.
         f.debug_struct("GenerationArgs")
             .field("prompt_chars", &self.prompt.chars().count())
-            .field("provider", &self.provider)
             .field("model", &self.model)
             .field("capabilities_from", &self.capabilities_from)
             .field("options", &self.options.iter().map(|o| o.name.as_str()).collect::<Vec<_>>())
@@ -67,10 +63,10 @@ pub enum GenerationOutcome<T> {
     Planned(PlanResult),
 }
 
-/// Resolve the provider and model (docs/configuration.md):
-/// provider = `--provider` > provider of `--model` > `IRIS_IMAGE_PROVIDER` > file
-/// `image.provider` > `openai` (video: the video provider); model = `--model` >
-/// file `providers.<p>.<kind>_model` > catalog default. Adds the warnings
+/// Resolve the model (docs/configuration.md): `-m/--model` if given, else the
+/// model the config file names for `op` (`image.model` / `video.model`), else
+/// `model_required`. Iris never chooses a model itself; the provider is the model's.
+/// Returns the model and where it came from, and adds the warnings
 /// `unverified_model_capabilities` and `preview_model`.
 ///
 /// A model resolved with `--capabilities-from` runs against the template's
@@ -82,21 +78,16 @@ pub(crate) fn resolve_model(
     op: Operation,
     args: &GenerationArgs,
     warnings: &mut Vec<Warning>,
-) -> Result<ResolvedModel, IrisError> {
-    let resolved = match args.model.as_deref() {
-        Some(model) => ctx.catalog.resolve(model, args.capabilities_from.as_deref(), args.provider)?,
+) -> Result<(ResolvedModel, ModelSource), IrisError> {
+    let (resolved, source) = match args.model.as_deref() {
+        Some(model) => (ctx.catalog.resolve(model, args.capabilities_from.as_deref())?, ModelSource::Flag),
         None => {
             if args.capabilities_from.is_some() {
                 return Err(IrisError::usage(
                     "--capabilities-from applies to an unknown --model; give --model <MODEL> as well",
                 ));
             }
-            let provider = match args.provider {
-                Some(p) => p,
-                None => default_provider(ctx, op)?,
-            };
-            let spec = default_spec(ctx, provider, op)?;
-            ResolvedModel { id: spec.id.to_string(), spec, source: CapabilitySource::Catalog }
+            (configured_model(ctx, op)?, ModelSource::Config)
         }
     };
     if let CapabilitySource::Borrowed { from } = resolved.source {
@@ -118,91 +109,81 @@ pub(crate) fn resolve_model(
             ),
         ));
     }
+    Ok((resolved, source))
+}
+
+/// The model as progress lines name it: its id, followed by the config key when the
+/// config file chose it (`gemini-3.1-flash-image, config image.model`).
+pub(crate) fn progress_model(model: &ResolvedModel, source: ModelSource, op: Operation) -> String {
+    match source {
+        ModelSource::Flag => model.id.clone(),
+        ModelSource::Config => format!("{}, config {}", model.id, op.model_config_key()),
+    }
+}
+
+/// The model the config file names for `op` (`image.model` or `video.model`, already
+/// checked to be a catalog model of the right kind when the settings loaded), which
+/// must implement `op`; `model_required` when the file names none.
+fn configured_model(ctx: &AppContext, op: Operation) -> Result<ResolvedModel, IrisError> {
+    let key = op.model_config_key();
+    let Some(id) = &ctx.settings.model(op).value else {
+        return Err(model_required(ctx, op));
+    };
+    let resolved = ctx.catalog.resolve(id, None)?;
+    if !resolved.spec.supports(op) {
+        let supported: Vec<&str> = resolved.spec.operations.iter().map(|o| o.as_str()).collect();
+        return Err(IrisError::new(
+            ErrorCode::UnsupportedOperation,
+            format!(
+                "the config file's {key} is '{id}', which does not support {op} (supports: {})",
+                supported.join(", ")
+            ),
+        )
+        .with_hint(format!(
+            "pass -m <MODEL> for {op} (`iris models list --operation {op}`), or set {key} to a model that \
+             supports it"
+        ))
+        .with_detail("config_key", key));
+    }
     Ok(resolved)
 }
 
-/// The provider a command uses without `--provider` or `--model`: the configured
-/// image provider for image operations. Video has no provider setting, so it comes
-/// from the catalog: the first provider (in `ProviderId` order) with a model
-/// declared as the default for `op`, else the first with any model for it.
-pub(crate) fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisError> {
-    if !op.is_async_job() {
-        return Ok(ctx.settings.image_provider.value);
-    }
-    let providers = ctx.catalog.providers_for(op);
-    providers
-        .iter()
-        .copied()
-        .find(|p| ctx.catalog.default_model(*p, op).is_some())
-        .or_else(|| providers.first().copied())
-        .ok_or_else(|| {
-            IrisError::new(ErrorCode::UnsupportedOperation, format!("no model in this build supports {op}"))
-                .with_hint("run `iris models list`")
+/// `model_required`: neither `-m/--model` nor the config file names a model for
+/// `op`. Nothing was sent.
+fn model_required(ctx: &AppContext, op: Operation) -> IrisError {
+    let key = op.model_config_key();
+    let table = key.split_once('.').map_or(key, |(table, _)| table);
+    let config_file = ctx.settings.config_file.value.display().to_string();
+    IrisError::new(
+        ErrorCode::ModelRequired,
+        format!("{op} needs a model: pass -m/--model, or set model in the [{table}] table of the config file"),
+    )
+    .with_hint(format!(
+        "run `iris models list --operation {op}` and pass -m <MODEL>, or set model under [{table}] in {config_file}"
+    ))
+    .with_detail("operation", op.as_str())
+    .with_detail("config_key", key)
+    .with_detail("config_file", config_file)
+    .with_detail("candidates", candidates(ctx, op))
+}
+
+/// The models a generation command for `op` can use, in catalog order, as listed in
+/// an error's `details.candidates`: one object per model, `{model, provider,
+/// display_name, aliases}`.
+fn candidates(ctx: &AppContext, op: Operation) -> Vec<Value> {
+    ctx.catalog
+        .models()
+        .into_iter()
+        .filter(|m| m.supports(op))
+        .map(|m| {
+            json!({
+                "model": m.id,
+                "provider": m.provider,
+                "display_name": m.display_name,
+                "aliases": m.aliases,
+            })
         })
-}
-
-/// The *default model* for `op` on `provider`: the model a generation command uses
-/// when no `--model` is given, i.e. the configured
-/// `providers.<provider>.image_model`/`video_model` if set, else the catalog default.
-/// `models list`/`models show` report it as `default_for` and `doctor --check-access`
-/// checks it. `Ok(None)` when there is none for this provider and operation (a
-/// configured model that does not implement `op` included); an error when the
-/// configured id is not in the catalog, since every command without `--model` fails
-/// on it too.
-pub(crate) fn effective_default(
-    ctx: &AppContext,
-    provider: ProviderId,
-    op: Operation,
-) -> Result<Option<&'static ModelSpec>, IrisError> {
-    Ok(configured_or_catalog_default(ctx, provider, op)?.filter(|m| m.provider == provider && m.supports(op)))
-}
-
-fn default_spec(
-    ctx: &AppContext,
-    provider: ProviderId,
-    op: Operation,
-) -> Result<&'static ModelSpec, IrisError> {
-    configured_or_catalog_default(ctx, provider, op)?.ok_or_else(|| {
-        let others: Vec<String> =
-            ctx.catalog.providers_for(op).into_iter().map(|p| p.as_str().to_string()).collect();
-        let hint = if others.is_empty() {
-            format!("no model in this build supports {op}")
-        } else {
-            format!("providers with a model for {op}: {}", others.join(", "))
-        };
-        IrisError::new(
-            ErrorCode::UnsupportedOperation,
-            format!("provider '{provider}' has no model for {op}"),
-        )
-        .with_hint(hint)
-    })
-}
-
-/// The configured default model for `op`'s kind if one is set (an error if the
-/// catalog does not know it), else the catalog default for `op`, if any.
-fn configured_or_catalog_default(
-    ctx: &AppContext,
-    provider: ProviderId,
-    op: Operation,
-) -> Result<Option<&'static ModelSpec>, IrisError> {
-    let settings = ctx.settings.provider(provider);
-    let (configured, kind) = if op.is_async_job() {
-        (&settings.video_model, "video_model")
-    } else {
-        (&settings.image_model, "image_model")
-    };
-    if configured.source != SettingSource::Default
-        && let Some(id) = &configured.value
-    {
-        return ctx.catalog.find(id).map(Some).ok_or_else(|| {
-            IrisError::new(
-                ErrorCode::UnknownModel,
-                format!("the configured default model '{id}' (providers.{provider}.{kind}) is not known"),
-            )
-            .with_hint("run `iris models list`, or pass --model")
-        });
-    }
-    Ok(ctx.catalog.default_model(provider, op))
+        .collect()
 }
 
 /// Prompt checks that need the model: non-empty, and within the declared limit.
