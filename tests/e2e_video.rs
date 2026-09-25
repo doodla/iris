@@ -166,6 +166,7 @@ fn a_veo_job_is_followed_across_processes_and_downloaded_through_a_redirect() {
 /// Run `line` (a command Iris suggested, starting with `iris`) through `sh`, as a
 /// user would paste it, with `iris` on PATH and the environment of a new shell
 /// session: the fake key and the mock base URL, but no state directory variable.
+#[cfg(unix)]
 fn run_suggested(sb: &Sandbox, veo: &VeoMock, line: &str) -> Out {
     let bin_dir = sb.root().join("bin");
     std::fs::create_dir_all(&bin_dir).unwrap();
