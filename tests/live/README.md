@@ -24,7 +24,8 @@ live evidence.
   marker live under `${XDG_STATE_HOME:-~/.local/state}/iris-live/`.
 - Provider access:
   - OpenAI GPT Image models may require API Organization Verification.
-  - Gemini image models and Veo need a paid tier with Prepay credits.
+  - Gemini image models and Veo have no free tier: the key's project needs a
+    paid-tier billing plan (on Prepay, a positive credit balance).
   - Veo is a preview model.
 
 Iris reads no other configuration during a live run. The script points

@@ -50,7 +50,8 @@ itself to:
   never prints or serializes its contents, and are never written to the config file, a log line,
   an error message, a persisted job record, or a command-line argument.
 - Every error message, log line, and persisted `last_error` is passed through redaction before it
-  can reach output, and every printed URL has its userinfo and query values redacted.
+  can reach output, and every printed URL has its userinfo and query values redacted, except the
+  values of a small allowlist of non-secret query parameters such as `alt`.
 - A provider's credential header is attached only to requests whose scheme, host, and port match
   that provider's *configured* base URL — including across redirects, which Iris follows itself
   precisely so it can enforce this, rather than letting the HTTP client follow them silently.
