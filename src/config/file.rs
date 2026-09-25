@@ -355,6 +355,22 @@ base_url = "https://generativelanguage.googleapis.com"
     }
 
     #[test]
+    fn an_array_of_providers_is_a_type_error() {
+        // `providers` holds one table per provider id, so an array is rejected by the
+        // `providers` key itself, even an empty one, and even as an array of tables.
+        for text in ["providers = []\n", "providers = [{}]\n", "[[providers]]\nx = 1\n"] {
+            let e = err(text);
+            assert_eq!(e.code, ErrorCode::ConfigInvalid, "{text}");
+            assert_eq!(key(&e), Some("providers"), "{text}");
+            assert!(
+                e.message.contains("`providers`: wrong type (found sequence, expected a map)"),
+                "{text}: {}",
+                e.message
+            );
+        }
+    }
+
+    #[test]
     fn wrong_types_name_the_key_and_never_quote_the_value() {
         let e = err("[jobs]\nstore_prompts = \"sk-live-abcdefghijkl\"\n");
         assert_eq!(e.code, ErrorCode::ConfigInvalid);
