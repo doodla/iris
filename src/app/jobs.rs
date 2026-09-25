@@ -680,11 +680,17 @@ async fn download_outputs(
         };
         let path = path.as_path();
         if decision != DownloadDecision::AlreadyDownloaded {
-            // Partial files of this target left by a killed earlier run (this
-            // process holds the job's download lock, so none is in use).
+            // Partial files of this target that no running process is writing:
+            // left by a run that was killed or crashed. The job's download lock
+            // does not cover them (another job may be saved to the same target),
+            // but every live writer holds a lock on its own partial file, and
+            // those are left alone.
             for stale in PartFile::remove_stale(path) {
-                ctx.progress
-                    .line(format!("Removed a partial download left by an earlier run: {}", stale.display()));
+                ctx.progress.line(format!(
+                    "Removed a partial download that no running iris process was writing (left by an \
+                     interrupted earlier run): {}",
+                    stale.display()
+                ));
             }
         }
         match (decision, recorded) {

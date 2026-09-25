@@ -23,6 +23,11 @@
 //! The temp file is removed on every failure path. Content is validated (decode /
 //! ISO-BMFF walk) before it is given its final name.
 //!
+//! Every temp file is locked (an exclusive advisory `flock` through its own
+//! handle) for as long as it exists, so [`PartFile::remove_stale`] can tell a file
+//! left by a killed process (unlocked) from one another process is still writing
+//! (locked), even when two downloads of different jobs share a target.
+//!
 //! All I/O on a temp file goes through the handle opened when it was created:
 //! writing ([`PartFile::file_mut`], [`PartFile::reset`]), validating, hashing, and
 //! syncing. The file is never reopened by name, because in a shared, writable
@@ -49,6 +54,10 @@ const MAX_RENAME_ATTEMPTS: u32 = 9999;
 const MAX_NAME_IN_PART: usize = 120;
 /// Random characters at the end of a temp file name.
 const PART_RANDOM_CHARS: usize = 8;
+/// Temp file names tried by [`PartFile::create_for`] before giving up (a name is
+/// given up only when another process's stale-file cleanup took it in the moment
+/// between its creation and its lock).
+const PART_CREATE_ATTEMPTS: u32 = 5;
 
 /// What to do when the target path already exists at finalize time. The mode
 /// applies to the requested path; see the module docs for extension-adjusted paths.
@@ -97,7 +106,9 @@ pub struct SavedArtifact {
 }
 
 /// A temp file in the target's directory, named `.<name>.iris-part-<random>`,
-/// removed when dropped unless finalized.
+/// removed when dropped unless finalized. It is locked (exclusive advisory lock on
+/// its open handle) from its creation until it is finalized or dropped, which is
+/// how [`PartFile::remove_stale`] knows it is in use.
 ///
 /// Write ONLY through [`PartFile::file_mut`] (an async writer can share the same
 /// open file via `tokio::fs::File::from_std(part.file_mut().try_clone()?)`), and
@@ -111,7 +122,10 @@ pub struct PartFile {
 
 impl PartFile {
     /// Create the temp file for `target` (creating the target directory if needed).
-    /// The file is created exclusively (`O_EXCL`) with mode `0666 & !umask`.
+    /// The file is created exclusively (`O_EXCL`) with mode `0666 & !umask`, then
+    /// locked through its handle (see the type docs). On a file system without
+    /// file locks it is used unlocked, and [`PartFile::remove_stale`], which cannot
+    /// lock it either, never removes it.
     pub fn create_for(target: &Path) -> Result<PartFile, IrisError> {
         let dir = target.parent().filter(|p| !p.as_os_str().is_empty()).ok_or_else(|| {
             IrisError::internal(format!("output path {} has no directory", target.display()))
@@ -127,20 +141,33 @@ impl PartFile {
             use std::os::unix::fs::PermissionsExt;
             builder.permissions(fs::Permissions::from_mode(0o666));
         }
-        let tmp = builder.tempfile_in(dir).map_err(|e| {
-            IrisError::io(format_args!("cannot create a temporary file in {}", dir.display()), &e)
-        })?;
-        Ok(PartFile { tmp, target: target.to_path_buf() })
+        for _ in 0..PART_CREATE_ATTEMPTS {
+            let tmp = builder.tempfile_in(dir).map_err(|e| {
+                IrisError::io(format_args!("cannot create a temporary file in {}", dir.display()), &e)
+            })?;
+            if claim(&tmp) {
+                return Ok(PartFile { tmp, target: target.to_path_buf() });
+            }
+            // Another process's cleanup found this file in the moment between its
+            // creation and its lock, and is removing it: take another name.
+        }
+        Err(IrisError::io(
+            format_args!("cannot create a temporary file in {}", dir.display()),
+            &io::Error::other("other processes kept removing the new temporary files"),
+        ))
     }
 
-    /// Remove temp files that earlier runs left for `target` (a process killed
-    /// with SIGKILL, or a crash, cannot remove its own), returning their paths.
+    /// Remove temp files for `target` that no running process is writing, i.e.
+    /// that earlier runs left behind (a process killed with SIGKILL, or a crash,
+    /// cannot remove its own), returning their paths.
     ///
     /// Only regular files named exactly like the temp files of `target`
-    /// (`.<name>.iris-part-` plus 8 random letters or digits) are removed, never
-    /// followed symbolic links or anything else; failures are ignored. Call it only
-    /// while no other download of `target` can be running (Iris holds the job's
-    /// download lock).
+    /// (`.<name>.iris-part-` plus 8 random letters or digits) are candidates, never
+    /// followed symbolic links or anything else. A candidate is removed only if its
+    /// lock can be taken: every live [`PartFile`] holds its own lock, so a file
+    /// another process (a download of another job to the same target, say) is
+    /// still writing is left alone. Where locks are not supported nothing is
+    /// removed. Failures are ignored.
     pub fn remove_stale(target: &Path) -> Vec<PathBuf> {
         let Some(dir) = target.parent().filter(|p| !p.as_os_str().is_empty()) else {
             return Vec::new();
@@ -159,8 +186,7 @@ impl PartFile {
                 continue;
             }
             let path = entry.path();
-            let regular = fs::symlink_metadata(&path).is_ok_and(|m| m.file_type().is_file());
-            if regular && fs::remove_file(&path).is_ok() {
+            if remove_if_abandoned(&path) {
                 removed.push(path);
             }
         }
@@ -201,6 +227,58 @@ impl PartFile {
         file.seek(SeekFrom::Start(0))
             .and_then(|_| sha256_reader(file))
             .map_err(|e| IrisError::io(format_args!("cannot read {}", shown.display()), &e))
+    }
+}
+
+/// Lock a new temp file through its handle and confirm its name still refers to
+/// it. `false` if another process's [`PartFile::remove_stale`] holds (or held) its
+/// lock and took the name away; `true` if it is locked and in place, or if the file
+/// system does not support locks (see [`PartFile::create_for`]).
+fn claim(tmp: &NamedTempFile) -> bool {
+    match tmp.as_file().try_lock() {
+        Ok(()) => names_this_file(tmp.path(), tmp.as_file()),
+        Err(fs::TryLockError::WouldBlock) => false,
+        Err(fs::TryLockError::Error(_)) => true,
+    }
+}
+
+/// Remove `path` if it is a regular file whose lock can be taken, i.e. no live
+/// [`PartFile`] owns it. The file is opened (to lock it) only after `lstat` says it
+/// is a regular file, and removed only while it is still the same file under that
+/// name, so a symbolic link or a file swapped in meanwhile is never touched.
+fn remove_if_abandoned(path: &Path) -> bool {
+    let Ok(listed) = fs::symlink_metadata(path) else { return false };
+    if !listed.file_type().is_file() {
+        return false;
+    }
+    let Ok(file) = File::open(path) else { return false };
+    let Ok(opened) = file.metadata() else { return false };
+    if !same_file(&listed, &opened) || file.try_lock().is_err() {
+        return false;
+    }
+    // Locked by us: no live download owns it. Remove it if the name still refers to
+    // it (the lock is released when `file` is dropped, after the removal).
+    names_this_file(path, &file) && fs::remove_file(path).is_ok()
+}
+
+/// True if `path` (not following a symbolic link) is the file open as `file`.
+fn names_this_file(path: &Path, file: &File) -> bool {
+    match (fs::symlink_metadata(path), file.metadata()) {
+        (Ok(named), Ok(open)) => same_file(&named, &open),
+        _ => false,
+    }
+}
+
+/// Same device and inode (Unix); elsewhere, both regular files of the same length.
+fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        a.dev() == b.dev() && a.ino() == b.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        a.file_type().is_file() && b.file_type().is_file() && a.len() == b.len()
     }
 }
 

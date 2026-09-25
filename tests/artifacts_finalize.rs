@@ -166,11 +166,16 @@ fn part_files_are_hidden_named_and_removed_on_drop() {
 fn stale_part_files_of_the_same_target_are_removed_and_nothing_else() {
     let dir = tempfile::tempdir().unwrap();
     let target = dir.path().join("job_x.mp4");
-    // A part file really created for the target and then abandoned (as after
-    // SIGKILL), plus one named by hand the same way.
-    let abandoned = PartFile::create_for(&target).unwrap();
-    let abandoned_path = abandoned.path().to_path_buf();
-    std::mem::forget(abandoned);
+    // A part file really created for the target and then abandoned: its content
+    // stays, but its handle (and so its lock) is gone, as after SIGKILL. Plus one
+    // named by hand the same way.
+    let abandoned_path = {
+        let mut part = PartFile::create_for(&target).unwrap();
+        part.file_mut().write_all(b"partial").unwrap();
+        let copy = dir.path().join(".job_x.mp4.iris-part-Kill9xyz");
+        fs::copy(part.path(), &copy).unwrap();
+        copy
+    };
     let stale = dir.path().join(".job_x.mp4.iris-part-AbCd1234");
     fs::write(&stale, b"partial").unwrap();
     let keep = [
@@ -553,4 +558,38 @@ fn truncated_paid_images_of_sniff_only_types_are_not_saved_as_valid() {
     assert_eq!(err.code, ErrorCode::InvalidMedia);
     assert!(err.message.contains("truncated"), "{}", err.message);
     assert!(listing(dir.path()).is_empty());
+}
+
+#[test]
+fn part_files_that_a_live_download_is_writing_are_never_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("shared").join("clip.mp4");
+    // Two downloads to the same target (two jobs saved to one path): the second
+    // one's cleanup must not remove the first one's temp file.
+    let mut first = PartFile::create_for(&target).unwrap();
+    first.file_mut().write_all(b"first half").unwrap();
+    let second = PartFile::create_for(&target).unwrap();
+    assert_ne!(first.path(), second.path());
+    assert!(PartFile::remove_stale(&target).is_empty());
+    assert!(first.path().exists() && second.path().exists());
+    // The first one finishes normally.
+    first.reset().unwrap();
+    first.file_mut().write_all(&mp4(1000)).unwrap();
+    let saved = finalize_download(first, 0, VIDEO_TYPES, FinalizeMode::NoClobber).unwrap();
+    assert_eq!(fs::read(&target).unwrap(), mp4(1000));
+    assert_eq!(saved.artifact.path, target.to_str().unwrap());
+    drop(second);
+
+    // A temp file locked through another handle (another process writing it) is
+    // kept; once that handle is closed it is abandoned and removed.
+    let held = target.with_file_name(".clip.mp4.iris-part-Held1234");
+    fs::write(&held, b"in progress").unwrap();
+    let handle = fs::File::open(&held).unwrap();
+    handle.lock().unwrap();
+    assert!(PartFile::remove_stale(&target).is_empty());
+    assert!(held.exists());
+    drop(handle);
+    assert_eq!(PartFile::remove_stale(&target), vec![held.clone()]);
+    assert!(!held.exists());
+    assert!(target.exists(), "the finished file is never a candidate");
 }

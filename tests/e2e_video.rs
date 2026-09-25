@@ -977,6 +977,58 @@ fn two_concurrent_waits_download_the_output_once() {
     veo.assert_no_credential_leaks();
 }
 
+#[test]
+fn downloads_of_two_jobs_to_one_target_never_remove_each_others_temp_files() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let (a, b) = (submit_detached(&sb, &veo, &[]), submit_detached(&sb, &veo, &[]));
+    veo.succeed();
+    for id in [&a, &b] {
+        sb.iris().gemini(&veo.api).args(["jobs", "wait", id, "--no-download", "--json"]).run().ok();
+    }
+    // The file host holds every download until the gate opens, so both downloads
+    // are in flight at once however the processes are scheduled.
+    let gate = veo.hold_file(
+        wiremock::ResponseTemplate::new(200).set_body_raw(veo_video(), "video/mp4"),
+        Duration::from_secs(30),
+    );
+    let download = |id: &str| {
+        sb.iris().gemini(&veo.api).args(["jobs", "download", id, "-o", "shared/clip.mp4", "--json"]).spawn()
+    };
+    let parts = || -> Vec<String> {
+        files_in(&sb.path("shared")).into_iter().filter(|n| n.starts_with(".clip.mp4.iris-part-")).collect()
+    };
+
+    // A creates its temp file just before it requests the output.
+    let first = download(&a);
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while parts().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "the first download never created its temp file");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let first_part = parts();
+    // B's cleanup of stale temp files for the same target runs before it starts
+    // downloading; A's live temp file must survive it.
+    let second = download(&b);
+    second.wait_for_stderr(&format!("Downloading output 0 of job {b}"), Duration::from_secs(30));
+    assert!(parts().iter().any(|n| first_part.contains(n)), "the first download's temp file was removed");
+    gate.open();
+    let (first, second) = (first.finish(), second.finish());
+    let (va, vb) = (first.ok(), second.ok());
+    assert!(!second.stderr.contains("Removed a partial download"), "{}", second.stderr);
+
+    let target = sb.path("shared/clip.mp4");
+    for v in [&va, &vb] {
+        assert_video(&job_of(v)["artifacts"][0], &target);
+    }
+    assert!(parts().is_empty(), "no temp files are left: {:?}", files_in(&sb.path("shared")));
+    for id in [&a, &b] {
+        assert_eq!(sb.record(id)["outputs"][0]["download_state"], "downloaded");
+    }
+    assert_eq!(veo.submits(), 2);
+    veo.assert_no_credential_leaks();
+}
+
 // ----- scenario 10 (video): secret hygiene with -vv ---------------------------------------------
 
 #[test]

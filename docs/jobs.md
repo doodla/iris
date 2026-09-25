@@ -283,9 +283,13 @@ Order of decision for each output, under the job's download lock:
 4. Finalize through a temp file in the target directory and a no-clobber (or, with `--overwrite`,
    atomic-replace) rename — never a partial file under the final name.
 
-Before a new download (or local copy) of a target, Iris removes temp files that an earlier run
-left for that same target (`.<name>.iris-part-<8 random characters>`, regular files only), while
-it holds the job's download lock, so no other download of the job can be using them.
+Every temp file is locked (an exclusive advisory `flock`) by the process writing it, for as long
+as it exists. Before a new download (or local copy) of a target, Iris removes the temp files for
+that same target (`.<name>.iris-part-<8 random characters>`, regular files only) whose lock it can
+take: files that no running Iris process is writing, left by a run that was killed or crashed. A
+file another process is still writing — a download of a different job to the same path, say — is
+left alone, so two downloads never remove each other's temp files. On a file system without file
+locks, nothing is removed automatically (delete such leftovers by hand).
 
 **What a killed process can leave behind.** Ctrl-C, SIGTERM, and SIGHUP are handled (see above)
 and clean up after themselves; SIGKILL, a crash, or a power loss cannot. Nothing partial ever
