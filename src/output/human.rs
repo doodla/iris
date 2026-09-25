@@ -9,7 +9,7 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use crate::domain::{Artifact, CostEstimate, JobStatus, Warning};
+use crate::domain::{Artifact, CostEstimate, JobStatus, Warning, WarningCode};
 use crate::providers::AccountAccess;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
@@ -63,19 +63,15 @@ pub fn schema_document(schema: &Value) -> String {
     text
 }
 
-/// The public warning code (docs/json-contract.md) for text a model returned
-/// alongside its images. Its JSON message points at the result's `text` field,
-/// which human mode prints as a "Model text" line instead, so [`warning`] rewords it.
-pub const PROVIDER_TEXT_OUTPUT: &str = "provider_text_output";
-
 /// One warning line for stderr. A message written for the JSON result is reworded
-/// where human mode shows the thing it points at somewhere else.
+/// where human mode shows the thing it points at somewhere else: the message of
+/// `provider_text_output` points at the result's `text` field, which human mode
+/// prints as a "Model text" line instead.
 pub fn warning(w: &Warning) -> String {
-    let message = match w.code.as_str() {
-        PROVIDER_TEXT_OUTPUT => {
-            "the model also returned text alongside the image; it is printed as \"Model text\""
-        }
-        _ => w.message.as_str(),
+    let message = if w.is(WarningCode::ProviderTextOutput) {
+        "the model also returned text alongside the image; it is printed as \"Model text\""
+    } else {
+        w.message.as_str()
     };
     format!("warning[{}]: {message}\n", w.code)
 }

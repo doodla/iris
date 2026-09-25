@@ -15,7 +15,7 @@ use super::wire::{
 };
 use crate::artifacts::media;
 use crate::catalog::gemini::MAX_REQUEST_BYTES;
-use crate::domain::{Operation, ProviderId, Usage, Warning};
+use crate::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass, TransportKind};
 use crate::providers::{GeneratedImage, ImageOutput, ImageRequest, ProviderContext};
@@ -33,18 +33,6 @@ const BLOCKING_FINISH_REASONS: &[&str] = &[
     "IMAGE_RECITATION",
     "LANGUAGE",
 ];
-
-/// Warning code: the model returned text parts next to (or instead of) images.
-pub const WARNING_TEXT_OUTPUT: &str = "provider_text_output";
-/// Warning code: the provider returned more images than requested (all are kept).
-pub const WARNING_OUTPUT_COUNT: &str = "unexpected_output_count";
-/// Warning code: a valid image was labeled with another media type, or with none;
-/// it is kept under the type its bytes show. Same code as the OpenAI adapter uses.
-const WARNING_FORMAT_MISMATCH: &str = "output_format_mismatch";
-/// Warning code: one returned inline item is not a usable image (not base64, or not
-/// a recognized image) while other images were kept. Same code as the OpenAI adapter
-/// uses.
-const WARNING_ITEM_UNUSABLE: &str = "output_item_unusable";
 
 /// Run `image.generate` or `image.edit` (`op`) against `generateContent`.
 pub async fn run(op: Operation, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
@@ -326,21 +314,21 @@ fn interpret(
     let mut warnings = Vec::new();
     if text.is_some() {
         warnings.push(Warning::new(
-            WARNING_TEXT_OUTPUT,
+            WarningCode::ProviderTextOutput,
             "the model also returned text; it is reported in the result's `text` field",
         ));
     }
     warnings.extend(mismatches);
     for problem in &unusable {
         warnings.push(Warning::new(
-            WARNING_ITEM_UNUSABLE,
+            WarningCode::OutputItemUnusable,
             format!("{}; it was skipped and every usable image was kept", problem.why),
         ));
     }
     if returned > requested {
         let usable = images.len();
         warnings.push(Warning::new(
-            WARNING_OUTPUT_COUNT,
+            WarningCode::UnexpectedOutputCount,
             format!(
                 "the model returned {returned} items ({usable} usable) for a request of {requested}; every \
                  usable image was kept"
@@ -389,7 +377,7 @@ fn decode_image(
     let matches_label = declared.is_some_and(|d| media::is_image(d) && media::accepts(&[d], sniffed));
     let warning = (!matches_label).then(|| {
         Warning::new(
-            WARNING_FORMAT_MISMATCH,
+            WarningCode::OutputFormatMismatch,
             format!(
                 "the Gemini API returned response item {index} {labeled} but its content is {sniffed}; it \
                  is kept as {sniffed} because the request completed and may have been billed"

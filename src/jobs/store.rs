@@ -259,7 +259,7 @@ impl JobStore {
                 Err(e) if e.code == ErrorCode::JobNotFound => {}
                 Err(e) => {
                     let warning = Warning::new(
-                        "job_record_unreadable",
+                        crate::domain::WarningCode::JobRecordUnreadable,
                         format!("skipped job record {}: {}", entry.path().display(), e.message),
                     );
                     if fs::symlink_metadata(entry.path()).is_ok_and(|m| m.file_type().is_file()) {

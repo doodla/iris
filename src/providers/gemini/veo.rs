@@ -27,9 +27,6 @@ use crate::redact;
 /// Media type of Veo outputs (MP4, 24 fps).
 const VIDEO_MP4: &str = "video/mp4";
 
-/// Warning code: the provider filtered some outputs of an otherwise successful job.
-pub const WARNING_CONTENT_FILTERED: &str = "content_filtered";
-
 const UNCERTAIN_HINT: &str = "the provider may have accepted this paid request; check usage/billing in Google AI \
                               Studio before resubmitting; Iris will not resubmit automatically";
 
@@ -328,7 +325,7 @@ fn interpret(op: Operation, remote_id: &str) -> RemoteStatus {
     let mut warnings = Vec::new();
     if let Some(n) = video.rai_media_filtered_count.filter(|n| *n > 0) {
         warnings.push(Warning::new(
-            WARNING_CONTENT_FILTERED,
+            crate::domain::WarningCode::ContentFiltered,
             format!("the provider filtered {n} output(s) of this job for safety"),
         ));
     }

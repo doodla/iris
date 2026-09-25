@@ -421,7 +421,7 @@ pub(super) fn outcome_warning(path: &Path, outcome: &SaveOutcome) -> Option<Warn
         SaveOutcome::Written => None,
         SaveOutcome::AlreadyPresent => Some(already_present_warning(path)),
         SaveOutcome::Renamed { requested } => Some(Warning::new(
-            "output_renamed",
+            crate::domain::WarningCode::OutputRenamed,
             format!(
                 "a different file already exists at {}; saved to {} instead so nothing is overwritten",
                 requested.display(),
@@ -515,7 +515,7 @@ fn identical(path: &Path, sha256: &str) -> bool {
 /// The `already_downloaded` warning for an identical file at `path`.
 pub fn already_present_warning(path: &Path) -> Warning {
     Warning::new(
-        "already_downloaded",
+        crate::domain::WarningCode::AlreadyDownloaded,
         format!("an identical file is already at {}; nothing was written", path.display()),
     )
 }

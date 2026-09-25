@@ -13,7 +13,7 @@ use crate::catalog::{
     ResolvedModel, ResolvedOptions,
 };
 use crate::config::SettingSource;
-use crate::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
+use crate::domain::{CostEstimate, Operation, ProviderId, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::jobs;
 use crate::output::results::{PlanInput, PlanResult};
@@ -101,7 +101,7 @@ pub(crate) fn resolve_model(
     };
     if let CapabilitySource::Borrowed { from } = resolved.source {
         warnings.push(Warning::new(
-            "unverified_model_capabilities",
+            WarningCode::UnverifiedModelCapabilities,
             format!(
                 "'{}' is not in Iris's catalog; its capabilities are assumed to be those of '{from}' \
                  (unverified), so the provider may reject options or inputs Iris accepted",
@@ -111,7 +111,7 @@ pub(crate) fn resolve_model(
     }
     if resolved.spec.lifecycle == Lifecycle::Preview {
         warnings.push(Warning::new(
-            "preview_model",
+            WarningCode::PreviewModel,
             format!(
                 "{} is a preview model; its behavior, limits, and availability may change",
                 resolved.spec.id
@@ -319,7 +319,7 @@ pub(crate) fn cost_unavailable(model: &ResolvedModel) -> Warning {
             model.spec.id
         ),
     };
-    Warning::new("cost_estimate_unavailable", message)
+    Warning::new(WarningCode::CostEstimateUnavailable, message)
 }
 
 /// The options a request runs with: every explicit value, plus the declared

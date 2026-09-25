@@ -30,7 +30,7 @@ use super::{
     Provider, ProviderContext,
 };
 use crate::artifacts::media;
-use crate::domain::{ProviderId, Warning};
+use crate::domain::{ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, HttpResponse};
 use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireImagesResponse, WireOptions};
@@ -49,18 +49,6 @@ const CREDENTIAL_HEADER: CredentialHeader = CredentialHeader { name: "authorizat
 
 /// Input and mask media types the Images API accepts.
 const INPUT_MEDIA_TYPES: &[&str] = &[media::PNG, media::JPEG, media::WEBP];
-
-/// Warning: a returned image is a valid image of another type than the requested or
-/// echoed `output_format`. It is kept under its real type (paid output is
-/// never discarded). Listed in docs/json-contract.md's warning codes.
-const WARNING_FORMAT_MISMATCH: &str = "output_format_mismatch";
-/// Warning: the response holds a different number of images than `n` asked for.
-/// Same code as the Gemini adapter uses. Listed in docs/json-contract.md's warning codes.
-const WARNING_OUTPUT_COUNT: &str = "unexpected_output_count";
-/// Warning: one returned item cannot be used (a URL instead of data, missing or
-/// invalid base64, content that is not an image) while other items were kept. Same
-/// code as the Gemini adapter uses. Listed in docs/json-contract.md's warning codes.
-const WARNING_ITEM_UNUSABLE: &str = "output_item_unusable";
 
 /// The OpenAI provider: image generation and editing through the Images API.
 #[derive(Debug, Default)]
@@ -337,7 +325,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
             expectations.iter().filter(|(_, m)| *m != actual).map(|(why, _)| why.as_str()).collect();
         if !unmet.is_empty() {
             warnings.push(Warning::new(
-                WARNING_FORMAT_MISMATCH,
+                WarningCode::OutputFormatMismatch,
                 format!(
                     "OpenAI returned response item {index} as {actual}, but {}; it is kept as {actual} \
                      because the request completed and may have been billed",
@@ -358,7 +346,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
     }
     for problem in &unusable {
         warnings.push(Warning::new(
-            WARNING_ITEM_UNUSABLE,
+            WarningCode::OutputItemUnusable,
             format!("{}; it was skipped and every usable image was kept", problem.why),
         ));
     }
@@ -368,7 +356,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         let noun = if returned == 1 { "item" } else { "items" };
         let usable = images.len();
         warnings.push(Warning::new(
-            WARNING_OUTPUT_COUNT,
+            WarningCode::UnexpectedOutputCount,
             format!(
                 "OpenAI returned {returned} {noun} ({usable} usable) for a request of {wanted} (n); every \
                  usable image was kept"

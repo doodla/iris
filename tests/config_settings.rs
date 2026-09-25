@@ -7,10 +7,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use iris::catalog;
-use iris::config::{
-    CliOverrides, EnvSnapshot, Platform, SettingSource, Settings, WARNING_NON_DEFAULT_BASE_URL,
-    platform_paths,
-};
+use iris::config::{CliOverrides, EnvSnapshot, Platform, SettingSource, Settings, platform_paths};
 use iris::domain::{Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 
@@ -546,7 +543,7 @@ fn describe_lists_every_setting_with_sources_and_never_secrets() {
 
     let warnings = s.warnings();
     assert_eq!(warnings.len(), 1);
-    assert_eq!(warnings[0].code, WARNING_NON_DEFAULT_BASE_URL);
+    assert!(warnings[0].is(iris::domain::WarningCode::NonDefaultBaseUrl), "{:?}", warnings[0]);
     assert!(warnings[0].message.contains("OPENAI_API_KEY") && warnings[0].message.contains("unencrypted"));
 
     let paths = s.config_path();
@@ -709,7 +706,7 @@ fn plain_http_base_urls_must_be_loopback_and_are_warned_about_once() {
         s.warn_non_default_base_url(ProviderId::OpenAi, &mut warnings);
     }
     assert_eq!(warnings.len(), 1, "{warnings:?}");
-    assert_eq!(warnings[0].code, WARNING_NON_DEFAULT_BASE_URL);
+    assert_eq!(warnings[0].code, iris::domain::WarningCode::NonDefaultBaseUrl.as_str());
     assert!(warnings[0].message.contains("GEMINI_API_KEY is sent to that host over unencrypted HTTP"));
     assert_eq!(Some(warnings[0].clone()), s.base_url_warning(ProviderId::Gemini));
 }

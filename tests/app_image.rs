@@ -12,7 +12,7 @@ use std::sync::atomic::Ordering;
 use iris::app::image::{self, ImageArgs};
 use iris::app::{GenerationArgs, GenerationOutcome, Interrupt};
 use iris::catalog::{OptionSource, OptionValue, RawOption};
-use iris::domain::{Operation, ProviderId, Usage, Warning};
+use iris::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use iris::error::{ErrorCode, IrisError};
 use iris::output::results::{ImageResult, PlanResult};
 use support::*;
@@ -303,7 +303,7 @@ async fn extra_images_text_and_provider_warnings_are_all_kept() {
     let f = Fixture::new();
     let mut out = image_output(vec![png(4, 4), png(5, 5)]);
     out.text = Some("here you go".into());
-    out.warnings.push(Warning::new("provider_text_output", "the model returned text"));
+    out.warnings.push(Warning::new(WarningCode::ProviderTextOutput, "the model returned text"));
     f.gemini.images().push(Ok(out));
     let mut a = args("x");
     a.common.model = Some("fake-gemini-image".into());

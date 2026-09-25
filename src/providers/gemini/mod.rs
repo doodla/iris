@@ -26,8 +26,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 pub use client::{API_V1, API_V1BETA};
-pub use image::{WARNING_OUTPUT_COUNT, WARNING_TEXT_OUTPUT};
-pub use veo::{WARNING_CONTENT_FILTERED, check_output_uri, is_operation_name, validate_output_uri};
+pub use veo::{check_output_uri, is_operation_name, validate_output_uri};
 
 use super::{
     AccountAccess, CredentialHeader, ImageOutput, ImageProvider, ImageRequest, Provider, ProviderContext,

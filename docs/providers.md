@@ -70,6 +70,11 @@ compiler alone):
   `details.charge_possible: true` (video or synchronous image); never resubmit it
   yourself. See `providers/gemini/veo.rs::classify_submit` for the reference implementation of
   this rule.
+- **Warnings come from the registry.** Build them with `Warning::new(WarningCode::…, message)`
+  and reuse an existing code when it fits (`output_format_mismatch`, `output_item_unusable`,
+  `unexpected_output_count`, ...). A new code is added to `WarningCode` in `src/domain.rs` and
+  to the table in [json-contract.md](json-contract.md#warning-codes); a contract test checks that
+  both lists agree and that no other source file spells out a code.
 - **`poll` is idempotent** and uses the `IdempotentRead` retry class (retried on connect errors,
   timeouts, 408/429/5xx). It must never mutate anything Iris cannot safely repeat.
 - **Report retention honestly.** `output_retention()` returns `Some(duration)` only when the

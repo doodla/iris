@@ -858,15 +858,13 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
 #[tokio::test]
 async fn human_text_says_where_model_text_is_and_completion_only_for_reported_outcomes() {
     let f = Fixture::new();
-    // The output layer rewords the warning by its public code, without reaching into
-    // the adapter; the two constants must name the same code.
-    assert_eq!(iris::output::human::PROVIDER_TEXT_OUTPUT, iris::providers::gemini::WARNING_TEXT_OUTPUT);
+    // The output layer rewords the warning by its public code (WarningCode).
     // Model text: JSON keeps pointing at the result's `text`; human mode prints it.
     let text_output = || {
         let mut output = image_output(vec![png(8, 8)]);
         output.text = Some("a short caption".into());
         output.warnings.push(iris::domain::Warning::new(
-            iris::providers::gemini::WARNING_TEXT_OUTPUT,
+            iris::domain::WarningCode::ProviderTextOutput,
             "the model also returned text; it is reported in the result's `text` field",
         ));
         output

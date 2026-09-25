@@ -24,7 +24,7 @@ use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
 
-use crate::domain::Warning;
+use crate::domain::{Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 
 use super::media;
@@ -182,7 +182,7 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                     [] => String::new(),
                 };
                 warnings.push(Warning::new(
-                    "output_extension_adjusted",
+                    WarningCode::OutputExtensionAdjusted,
                     format!("{shown} has no extension; saving as {saving_as}"),
                 ));
             }
@@ -384,7 +384,7 @@ pub fn adjust_extension(path: &Path, media_type: &str) -> (PathBuf, Option<Warni
     }
     let adjusted = path.with_extension(want);
     let warning = Warning::new(
-        "output_extension_adjusted",
+        WarningCode::OutputExtensionAdjusted,
         format!(
             "the provider returned {media_type}; saving as {} instead of {}",
             adjusted.display(),

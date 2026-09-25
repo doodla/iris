@@ -70,9 +70,6 @@ pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 pub const DEFAULT_SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Default tracing filter.
 pub const DEFAULT_LOG_FILTER: &str = "warn";
-/// Warning code: a provider base URL differs from the default, so its API key is
-/// sent to a non-default host.
-pub const WARNING_NON_DEFAULT_BASE_URL: &str = "non_default_base_url";
 
 /// A resolved value and the layer it came from.
 #[derive(Debug, Clone, PartialEq)]
@@ -445,13 +442,13 @@ impl Settings {
     }
 
     /// Warnings about the configuration itself: currently one
-    /// [`WARNING_NON_DEFAULT_BASE_URL`] per provider whose base URL is not the
+    /// `non_default_base_url` warning per provider whose base URL is not the
     /// default (its API key is sent there). `config show` and `doctor` print these.
     pub fn warnings(&self) -> Vec<Warning> {
         self.providers().filter_map(|p| self.base_url_warning(p.provider)).collect()
     }
 
-    /// The [`WARNING_NON_DEFAULT_BASE_URL`] warning for `provider`, if its base URL
+    /// The `non_default_base_url` warning for `provider`, if its base URL
     /// is not the default: it names the host its API key is sent to.
     pub fn base_url_warning(&self, provider: ProviderId) -> Option<Warning> {
         let p = self.provider(provider);
@@ -466,7 +463,7 @@ impl Settings {
         };
         let insecure = if p.base_url.value.scheme() == "http" { " over unencrypted HTTP" } else { "" };
         Some(Warning::new(
-            WARNING_NON_DEFAULT_BASE_URL,
+            crate::domain::WarningCode::NonDefaultBaseUrl,
             format!(
                 "providers.{}.base_url is {} ({origin}); {} is sent to that host{insecure}",
                 provider.as_str(),
@@ -476,7 +473,7 @@ impl Settings {
         ))
     }
 
-    /// Add `provider`'s [`WARNING_NON_DEFAULT_BASE_URL`] warning to `warnings`
+    /// Add `provider`'s `non_default_base_url` warning to `warnings`
     /// (once, however often it is called) when its base URL is not the default.
     /// Every command that attaches `provider`'s credential to a request calls this
     /// first, so each use of a key at a non-default host is reported, not only

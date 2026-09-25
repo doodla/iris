@@ -6,8 +6,10 @@
 mod support;
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use iris::domain::WarningCode;
 use iris::error::{ErrorCategory, ErrorCode};
 use iris::output::{SCHEMA_VERSION, human};
 use serde_json::Value;
@@ -16,6 +18,47 @@ use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schema/iris-output.v1.schema.json");
+const CONTRACT_DOC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/json-contract.md");
+
+/// The body rows of the first Markdown table under the heading line `heading` of
+/// docs/json-contract.md: trimmed cells, with surrounding backticks removed.
+fn contract_table(heading: &str) -> Vec<Vec<String>> {
+    let doc = std::fs::read_to_string(CONTRACT_DOC).expect("docs/json-contract.md exists");
+    let section = doc
+        .split_once(&format!("\n{heading}\n"))
+        .unwrap_or_else(|| panic!("docs/json-contract.md has no heading {heading:?}"))
+        .1;
+    let rows: Vec<Vec<String>> = section
+        .lines()
+        .take_while(|line| !line.starts_with("## "))
+        .skip_while(|line| !line.starts_with('|'))
+        .take_while(|line| line.starts_with('|'))
+        .map(|line| {
+            line.trim()
+                .trim_matches('|')
+                .split('|')
+                .map(|cell| cell.trim().trim_matches('`').to_string())
+                .collect()
+        })
+        .collect();
+    assert!(rows.len() > 2, "no table under {heading:?}");
+    assert!(rows[1].iter().all(|cell| cell.chars().all(|c| c == '-' || c == ':')), "{:?}", rows[1]);
+    rows[2..].to_vec()
+}
+
+/// Every `.rs` file under `dir`, recursively.
+fn rust_files(dir: &Path) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            files.extend(rust_files(&path));
+        } else if path.extension().is_some_and(|e| e == "rs") {
+            files.push(path);
+        }
+    }
+    files
+}
 
 #[test]
 fn committed_schema_matches_the_generated_schema() {
@@ -315,4 +358,60 @@ async fn a_job_error_with_a_newer_code_still_matches_the_schema() {
         v["result"]["job"]["error"]["details"]["recorded_code"], "quota_exceeded_for_a_new_reason",
         "{v}"
     );
+}
+
+/// The warning codes docs/json-contract.md lists are exactly the registry's.
+#[test]
+fn the_documented_warning_codes_are_the_registry() {
+    let rows = contract_table("## Warning codes");
+    let documented: Vec<String> = rows.iter().map(|row| row[0].clone()).collect();
+    let unique: BTreeSet<String> = documented.iter().cloned().collect();
+    assert_eq!(unique.len(), documented.len(), "a warning code is documented twice: {documented:?}");
+    let registry: BTreeSet<String> = WarningCode::ALL.iter().map(|c| c.as_str().to_string()).collect();
+    assert_eq!(unique, registry, "docs/json-contract.md \"Warning codes\" vs WarningCode::ALL");
+    assert!(rows.iter().all(|row| row.len() == 2 && !row[1].is_empty()), "every code has a meaning");
+}
+
+/// Warnings are built only from the registry: no source file besides the registry
+/// (src/domain.rs) spells out a warning code or builds a `Warning` literally (both
+/// would let a code outside the registry reach the output), and every registered
+/// code has an emitter.
+#[test]
+fn warnings_are_only_built_from_the_registry() {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let registry = src.join("domain.rs");
+    let sources: Vec<(PathBuf, String)> = rust_files(&src)
+        .into_iter()
+        .filter(|path| *path != registry)
+        .map(|path| {
+            let text = std::fs::read_to_string(&path).unwrap();
+            (path, text)
+        })
+        .collect();
+    assert!(sources.len() > 10, "found the sources under {}", src.display());
+    for (path, text) in &sources {
+        for code in WarningCode::ALL {
+            assert!(
+                !text.contains(&format!("\"{code}\"")),
+                "{} spells out the warning code \"{code}\"; use WarningCode::{code:?}",
+                path.display()
+            );
+        }
+        for (at, _) in text.match_indices("Warning {") {
+            let named = text[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || c == '_');
+            let rest = text[at + "Warning {".len()..].trim_start();
+            assert!(
+                named || !(rest.starts_with("code") || rest.starts_with("message") || rest.starts_with("..")),
+                "{} builds a Warning literally; use Warning::new(WarningCode::…, …)",
+                path.display()
+            );
+        }
+    }
+    for code in WarningCode::ALL {
+        let emitter = format!("WarningCode::{code:?}");
+        assert!(
+            sources.iter().any(|(_, text)| text.contains(&emitter)),
+            "{code} is registered (and documented) but nothing emits it"
+        );
+    }
 }

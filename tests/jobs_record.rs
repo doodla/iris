@@ -6,7 +6,7 @@ use iris::catalog::{
     InputCounts, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OptionValue, OutputSpec,
     ResolvedOptions,
 };
-use iris::domain::{Artifact, DownloadState, JobStatus, Operation, ProviderId, Usage, Warning};
+use iris::domain::{Artifact, DownloadState, JobStatus, Operation, ProviderId, Usage, Warning, WarningCode};
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobRecord, NewJob, OutputPlan, PollApplied, PromptRecord, request_metadata};
 use iris::providers::{RemoteArtifact, RemoteStatus, SubmittedOperation};
@@ -247,7 +247,7 @@ fn poll_success_records_outputs_usage_and_retention() {
                     media_type: Some("video/mp4".into()),
                 }],
                 usage: Some(usage.clone()),
-                warnings: vec![Warning::new("retention_limited", "download within 2 days")],
+                warnings: vec![Warning::new(WarningCode::RetentionLimited, "download within 2 days")],
             },
             Some(Duration::from_secs(2 * 24 * 3600)),
             ts(100),
@@ -256,7 +256,7 @@ fn poll_success_records_outputs_usage_and_retention() {
     assert_eq!(
         applied,
         PollApplied::Succeeded {
-            warnings: vec![Warning::new("retention_limited", "download within 2 days")]
+            warnings: vec![Warning::new(WarningCode::RetentionLimited, "download within 2 days")]
         }
     );
     assert_eq!(rec.status(), JobStatus::Succeeded);

@@ -511,13 +511,27 @@ for diagnosis.
 ## Warning codes
 
 Warnings never fail a command; they annotate a successful (or even a failed) result with
-something the caller should know:
+something the caller should know. Every code Iris emits is in this table (a test compares it with
+the code's registry); the `message` says what happened in the case at hand:
 
-`unverified_model_capabilities`, `output_extension_adjusted`, `output_renamed`,
-`output_format_mismatch`, `cost_estimate_unavailable`, `job_record_unreadable`,
-`provider_text_output`, `already_downloaded`, `retention_limited`, `preview_model`,
-`non_default_base_url`, `content_filtered`, `unexpected_output_count`, `status_refresh_failed`,
-`output_item_unusable`, `output_saved_elsewhere`.
+| code | meaning |
+|---|---|
+| `unverified_model_capabilities` | the model was resolved with `--capabilities-from`: its capabilities are assumed to be the named known model's |
+| `output_extension_adjusted` | an output file's extension was added (an `-o` path without one) or changed to match the type actually returned |
+| `output_renamed` | a different file appeared at the target meanwhile; the output was saved as `<stem>.<n>.<ext>` so nothing is overwritten |
+| `output_format_mismatch` | a valid image came back as another type than requested or labeled; it is kept under its real type |
+| `cost_estimate_unavailable` | no cost estimate could be made for this request (the message says why) |
+| `job_record_unreadable` | a local job record could not be read and was skipped |
+| `provider_text_output` | the model returned text too; it is in the result's `text` |
+| `already_downloaded` | an identical file is already at the target; nothing was written |
+| `retention_limited` | the provider keeps the job's outputs only for a limited time; download them before `remote_expires_at` |
+| `preview_model` | the model is a preview model: its behavior, limits, and availability may change |
+| `non_default_base_url` | a provider's base URL is not the default; its API key is sent to that host |
+| `content_filtered` | the provider filtered some outputs of the job for safety |
+| `unexpected_output_count` | the provider returned another number of items than requested; every usable image was kept |
+| `status_refresh_failed` | the job's remote status could not be refreshed; the last known status is shown |
+| `output_item_unusable` | a returned item is not a usable image and was skipped; every usable image was kept |
+| `output_saved_elsewhere` | paid output could not be saved where it was requested and was saved in the state directory instead |
 
 Paid image output is judged by its bytes, never by the provider's label, and one bad item never
 costs the others: a valid image of another type than requested or labeled (or with no label) is

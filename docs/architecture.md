@@ -84,7 +84,7 @@ Two invariants the layering protects:
 
 | module | responsibility |
 |---|---|
-| `domain` | Shared plain types used everywhere: `ProviderId` (also each provider's fixed identity: id, credential variable, default base URL, base URL variable), `Operation`, job/download status enums, `Artifact`, `Usage`, `CostEstimate`, `Warning`. |
+| `domain` | Shared plain types used everywhere: `ProviderId` (also each provider's fixed identity: id, credential variable, default base URL, base URL variable), `Operation`, job/download status enums, `Artifact`, `Usage`, `CostEstimate`, `Warning` and the `WarningCode` registry every warning is built from. |
 | `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the exit-code mapping (see [json-contract.md](json-contract.md)). |
 | `secret` | The `Secret` newtype: `Debug`/`Display` print `***`, and it is never `Serialize`. Credentials are held as `Secret` from the moment they are read from the environment. |
 | `redact` | `redact_url` (strips userinfo, replaces query values with `REDACTED` except an allowlist), `scrub` (removes any configured credential value from text), `truncate`. Every error message, provider message, log line, and persisted `last_error` passes through these before it can reach stdout, stderr, or disk. |

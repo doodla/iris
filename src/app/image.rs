@@ -14,17 +14,13 @@ use std::path::PathBuf;
 
 use crate::artifacts::{self, FinalizeMode, Naming, PathRequest};
 use crate::catalog::{self, InputCounts, OptionSource, RawOption};
-use crate::domain::{Artifact, JobStatus, Operation, Warning};
+use crate::domain::{Artifact, JobStatus, Operation, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{ImageResult, PlanResult};
 use crate::providers::{ImageOutput, ImageRequest, InputRole};
 
 use super::context::AppContext;
 use super::request::{self, GenerationArgs, GenerationOutcome};
-
-/// Warning: a paid image could not be saved where it was requested and was saved
-/// in `<state_dir>/unsaved/` instead. Listed in docs/json-contract.md's warning codes.
-const WARNING_SAVED_ELSEWHERE: &str = "output_saved_elsewhere";
 
 /// Arguments of `image generate` / `image edit`.
 #[derive(Debug, Clone, Default)]
@@ -314,7 +310,7 @@ fn save_all(
                              instead so the paid output is not lost",
                             e.message, artifact.path
                         );
-                        warnings.push(Warning::new(WARNING_SAVED_ELSEWHERE, message));
+                        warnings.push(Warning::new(WarningCode::OutputSavedElsewhere, message));
                         saving.elsewhere.push(artifact.path.clone());
                         saving.saved.push(artifact);
                         continue;

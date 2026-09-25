@@ -216,17 +216,117 @@ pub enum DownloadState {
     Expired,
 }
 
+/// Every warning code Iris emits: the registry of the public, additive set listed in
+/// docs/json-contract.md ("Warning codes"). A [`Warning`] is only built from one of
+/// these ([`Warning::new`]); the contract tests compare this list with the
+/// documented one and check that no other source file spells out a code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WarningCode {
+    /// A model resolved with `--capabilities-from`: its capabilities are assumed.
+    UnverifiedModelCapabilities,
+    /// An output file extension was added or changed to match the media type.
+    OutputExtensionAdjusted,
+    /// A file appeared at the target meanwhile; the output got a numbered name.
+    OutputRenamed,
+    /// A valid image of another type than requested or labeled; kept as it is.
+    OutputFormatMismatch,
+    /// No cost estimate could be made (the message says why).
+    CostEstimateUnavailable,
+    /// A job record could not be read and was skipped.
+    JobRecordUnreadable,
+    /// The model returned text too (in the result's `text`).
+    ProviderTextOutput,
+    /// An identical file is already at the target; nothing was written.
+    AlreadyDownloaded,
+    /// The provider keeps a job's outputs only for a limited time.
+    RetentionLimited,
+    /// A preview model: behavior, limits, and availability may change.
+    PreviewModel,
+    /// A provider base URL is not the default; its API key is sent there.
+    NonDefaultBaseUrl,
+    /// The provider filtered some outputs of a job for safety.
+    ContentFiltered,
+    /// The provider returned another number of items than requested.
+    UnexpectedOutputCount,
+    /// A job's remote status could not be refreshed; the last known one is shown.
+    StatusRefreshFailed,
+    /// A returned item is not a usable image; it was skipped.
+    OutputItemUnusable,
+    /// Paid output could not be saved where requested and went to the state directory.
+    OutputSavedElsewhere,
+}
+
+impl WarningCode {
+    /// Every code, in the order of the documented list. The compiler does not check
+    /// that it is complete; the `warning_codes_are_distinct_snake_case_names` test
+    /// compares it with the enum's variants.
+    pub const ALL: &'static [WarningCode] = &[
+        WarningCode::UnverifiedModelCapabilities,
+        WarningCode::OutputExtensionAdjusted,
+        WarningCode::OutputRenamed,
+        WarningCode::OutputFormatMismatch,
+        WarningCode::CostEstimateUnavailable,
+        WarningCode::JobRecordUnreadable,
+        WarningCode::ProviderTextOutput,
+        WarningCode::AlreadyDownloaded,
+        WarningCode::RetentionLimited,
+        WarningCode::PreviewModel,
+        WarningCode::NonDefaultBaseUrl,
+        WarningCode::ContentFiltered,
+        WarningCode::UnexpectedOutputCount,
+        WarningCode::StatusRefreshFailed,
+        WarningCode::OutputItemUnusable,
+        WarningCode::OutputSavedElsewhere,
+    ];
+
+    /// The public snake_case code.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            WarningCode::UnverifiedModelCapabilities => "unverified_model_capabilities",
+            WarningCode::OutputExtensionAdjusted => "output_extension_adjusted",
+            WarningCode::OutputRenamed => "output_renamed",
+            WarningCode::OutputFormatMismatch => "output_format_mismatch",
+            WarningCode::CostEstimateUnavailable => "cost_estimate_unavailable",
+            WarningCode::JobRecordUnreadable => "job_record_unreadable",
+            WarningCode::ProviderTextOutput => "provider_text_output",
+            WarningCode::AlreadyDownloaded => "already_downloaded",
+            WarningCode::RetentionLimited => "retention_limited",
+            WarningCode::PreviewModel => "preview_model",
+            WarningCode::NonDefaultBaseUrl => "non_default_base_url",
+            WarningCode::ContentFiltered => "content_filtered",
+            WarningCode::UnexpectedOutputCount => "unexpected_output_count",
+            WarningCode::StatusRefreshFailed => "status_refresh_failed",
+            WarningCode::OutputItemUnusable => "output_item_unusable",
+            WarningCode::OutputSavedElsewhere => "output_saved_elsewhere",
+        }
+    }
+}
+
+impl fmt::Display for WarningCode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// A non-fatal notice attached to a result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Warning {
+    // Iris emits only `WarningCode`s; the field is a string so that a reader keeps a
+    // code it does not know.
     /// Stable snake_case warning code (additive set; see docs/json-contract.md).
     pub code: String,
     pub message: String,
 }
 
 impl Warning {
-    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
-        Warning { code: code.into(), message: message.into() }
+    pub fn new(code: WarningCode, message: impl Into<String>) -> Self {
+        Warning { code: code.as_str().to_string(), message: message.into() }
+    }
+
+    /// Whether this warning has `code`.
+    pub fn is(&self, code: WarningCode) -> bool {
+        self.code == code.as_str()
     }
 }
 
@@ -291,9 +391,9 @@ mod tests {
 
     use super::ProviderId;
 
-    /// The provider names the enum itself declares, read from its derived JSON
-    /// Schema: the derive sees every variant, unlike the hand-written `ALL`.
-    fn declared_names() -> Vec<String> {
+    /// The names an enum itself declares, read from its derived JSON Schema: the
+    /// derive sees every variant, unlike a hand-written `ALL`.
+    fn declared_names_of(schema: schemars::Schema) -> Vec<String> {
         fn collect(v: &Value, out: &mut Vec<String>) {
             match v {
                 Value::Object(map) => {
@@ -309,10 +409,14 @@ mod tests {
                 _ => {}
             }
         }
-        let schema = serde_json::to_value(schemars::schema_for!(ProviderId)).unwrap();
+        let schema = serde_json::to_value(schema).unwrap();
         let mut names = Vec::new();
         collect(&schema, &mut names);
         names
+    }
+
+    fn declared_names() -> Vec<String> {
+        declared_names_of(schemars::schema_for!(ProviderId))
     }
 
     #[test]
@@ -336,6 +440,26 @@ mod tests {
             cataloged, all_set,
             "every provider has catalog models, and every model's provider is in ALL"
         );
+    }
+
+    #[test]
+    fn warning_codes_are_distinct_snake_case_names() {
+        use super::WarningCode;
+        let names: BTreeSet<&str> = WarningCode::ALL.iter().map(|c| c.as_str()).collect();
+        assert_eq!(names.len(), WarningCode::ALL.len(), "duplicate warning code");
+        let declared = declared_names_of(schemars::schema_for!(WarningCode));
+        let declared: BTreeSet<&str> = declared.iter().map(String::as_str).collect();
+        assert_eq!(declared, names, "WarningCode::ALL must list every variant");
+        for code in WarningCode::ALL {
+            assert_eq!(serde_json::to_value(code).unwrap(), Value::from(code.as_str()));
+        }
+        for name in names {
+            assert!(
+                name.starts_with(|c: char| c.is_ascii_lowercase())
+                    && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "{name}"
+            );
+        }
     }
 
     #[test]

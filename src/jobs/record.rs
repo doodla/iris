@@ -280,7 +280,7 @@ impl JobOutput {
     pub fn unusable_warning(&self, job_id: &JobId) -> Option<Warning> {
         let why = self.unusable_reason()?;
         Some(Warning::new(
-            "output_item_unusable",
+            crate::domain::WarningCode::OutputItemUnusable,
             format!(
                 "output {} of job {job_id} cannot be downloaded: the provider's URI for it is unusable ({why}); \
                  the other outputs are unaffected",

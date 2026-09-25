@@ -134,7 +134,7 @@ async fn refresh_running(
         Err(e) if e.code == ErrorCode::Interrupted => Err(e),
         Err(e) => {
             warnings.push(Warning::new(
-                "status_refresh_failed",
+                crate::domain::WarningCode::StatusRefreshFailed,
                 format!("could not refresh the remote status ({}); showing the last known status", e.message),
             ));
             Ok(rec)
@@ -210,7 +210,7 @@ async fn download_parsed(
         Err(e) if e.code != ErrorCode::Interrupted && e.retryable == Some(true) => {
             status_checked = false;
             warnings.push(Warning::new(
-                "status_refresh_failed",
+                crate::domain::WarningCode::StatusRefreshFailed,
                 format!("could not check the remote status ({}); going by the last known status", e.message),
             ));
         }
@@ -544,7 +544,7 @@ fn retention_warning(rec: &JobRecord, now: Timestamp) -> Option<Warning> {
                  with `iris jobs download {id}`"
             )
         };
-        Warning::new("retention_limited", message)
+        Warning::new(crate::domain::WarningCode::RetentionLimited, message)
     })
 }
 

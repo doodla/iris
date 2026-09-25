@@ -4,7 +4,7 @@
 //! metadata call).
 
 use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec};
-use crate::domain::{Operation, ProviderId, Warning};
+use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
     AccessView, ConstraintView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities,
@@ -71,7 +71,7 @@ pub async fn show(
     })?;
     if spec.lifecycle == crate::catalog::Lifecycle::Preview {
         warnings.push(Warning::new(
-            "preview_model",
+            WarningCode::PreviewModel,
             format!("{} is a preview model; its behavior, limits, and availability may change", spec.id),
         ));
     }
