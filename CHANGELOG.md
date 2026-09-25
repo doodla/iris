@@ -29,7 +29,9 @@ machine-readable contract for agents.
   the config file names (`[image] model`, `[video] model`); Iris never chooses one. Without
   either, the command fails with `model_required` (exit 2) before anything is sent, listing the
   models that support the operation with their summaries and lowest estimates. The provider is
-  the model's, and results report `model_source` (`flag` or `config`).
+  the model's, and results report `model_source` (`flag` or `config`), as do errors that name the
+  model (`details.model_source`, and `(config image.model)` after the name when the config file
+  chose it).
 - **Local validation before anything is sent.** Options, inputs and cross-option rules are declared
   per model in the catalog and checked identically by `--dry-run` and a real run (mask rules,
   inline request caps, model-id syntax for `--capabilities-from` models included). The API key is

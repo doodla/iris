@@ -1205,6 +1205,35 @@ fn refusals_carry_the_models_and_paths_they_are_about() {
     assert_eq!(v["error"]["details"]["option"], "format");
 }
 
+/// An error that names a model the config file chose says so after the model's
+/// name (`(config image.model)`), and every error that names the resolved model
+/// carries `details.model_source`; an error that does not name it is unchanged.
+#[test]
+fn an_error_about_a_configured_model_says_it_came_from_the_config_file() {
+    let sb = Sandbox::new();
+    let config = sb.write("team.toml", "[image]\nmodel = \"nano-banana-2\"\n[video]\nmodel = \"veo-fast\"\n");
+    let team =
+        |args: &[&str]| sb.iris().arg("--config").arg(&config).args(args).args(["--dry-run", "--json"]).run();
+    let v = team(&["image", "generate", "a lighthouse", "--quality", "low", "--size", "1024x1024"])
+        .err(2, "unsupported_option");
+    assert_eq!(
+        v["error"]["message"],
+        "model 'gemini-3.1-flash-image' (config image.model) does not support --size for image.generate"
+    );
+    assert_eq!(v["error"]["details"]["model_source"], "config");
+    let v = team(&["image", "generate", "a lighthouse", "-m", "nano-banana-2", "--quality", "low"])
+        .err(2, "unsupported_option");
+    assert_eq!(
+        v["error"]["message"],
+        "model 'gemini-3.1-flash-image' does not support --quality for image.generate"
+    );
+    assert_eq!(v["error"]["details"]["model_source"], "flag");
+    // Not about the model: unchanged.
+    let v = team(&["video", "generate", "waves", "--duration", "5"]).err(2, "invalid_argument");
+    assert!(v["error"]["details"].get("model_source").is_none(), "{v}");
+    assert!(!v["error"]["message"].as_str().unwrap().contains("config"), "{v}");
+}
+
 /// An option or input the model does not take is refused with the catalog models
 /// that do take it (`details.supported_by`, named by the hint with `-m`), and an
 /// enum value the option does not allow with the values it does (`details.allowed`);

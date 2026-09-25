@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use crate::artifacts::{self, FinalizeMode, Naming, PathRequest};
 use crate::catalog::{self, InputCounts, OptionSource, RawOption, ResolvedModel};
-use crate::domain::{Artifact, JobStatus, Operation, Usage, Warning, WarningCode};
+use crate::domain::{Artifact, JobStatus, ModelSource, Operation, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{ImageResult, PlanResult};
 use crate::providers::{ImageFailure, ImageOutput, ImageRequest, InputRole, UnusableOutput};
@@ -48,7 +48,7 @@ pub async fn run(
     warnings: &mut Vec<Warning>,
 ) -> Result<GenerationOutcome<ImageResult>, IrisError> {
     let start = warnings.len();
-    let result = run_checked(ctx, op, args, warnings).await.map_err(|mut e| {
+    let result = resolved_run(ctx, op, args, warnings).await.map_err(|mut e| {
         let charged = e.details.get("charge_possible").and_then(serde_json::Value::as_bool) == Some(true);
         if charged && e.retryable == Some(true) {
             e.retryable = Some(false);
@@ -58,7 +58,9 @@ pub async fn run(
     Commands::of(ctx).finish(result, warnings, start)
 }
 
-async fn run_checked(
+/// Resolve the model, then run; every later error that names the model says where
+/// it came from ([`request::with_model_source`]).
+async fn resolved_run(
     ctx: &AppContext,
     op: Operation,
     args: ImageArgs,
@@ -67,8 +69,21 @@ async fn run_checked(
     if !matches!(op, Operation::ImageGenerate | Operation::ImageEdit) {
         return Err(IrisError::internal(format!("{op} is not an image operation")));
     }
+    let (resolved, model_source) = request::resolve_model(ctx, op, &args.common, warnings)?;
+    run_checked(ctx, op, args, resolved.clone(), model_source, warnings)
+        .await
+        .map_err(|e| request::with_model_source(e, &resolved, model_source, op))
+}
+
+async fn run_checked(
+    ctx: &AppContext,
+    op: Operation,
+    args: ImageArgs,
+    resolved: ResolvedModel,
+    model_source: ModelSource,
+    warnings: &mut Vec<Warning>,
+) -> Result<GenerationOutcome<ImageResult>, IrisError> {
     let common = &args.common;
-    let (resolved, model_source) = request::resolve_model(ctx, op, common, warnings)?;
     let spec = resolved.spec;
     let provider = spec.provider;
 

@@ -143,6 +143,35 @@ pub(crate) fn resolve_model(
     Ok((resolved, source))
 }
 
+/// An error of a generation command whose model is `model`, from `source`: when the
+/// error names the model, its message says after that mention that the config file
+/// chose it (`model 'gemini-3.1-flash-image' (config image.model) does not support
+/// --size …`), and `details.model_source` says where it came from (`flag` or
+/// `config`). The workflows apply this once to every error raised after the model
+/// is resolved; an error that does not name the model is returned as it is.
+pub(crate) fn with_model_source(
+    mut error: IrisError,
+    model: &ResolvedModel,
+    source: ModelSource,
+    op: Operation,
+) -> IrisError {
+    let quoted = [format!("'{}'", model.id), format!("'{}'", model.spec.id)];
+    let plain = [model.id.clone(), model.spec.id.to_string()];
+    let Some(end) =
+        quoted.iter().chain(&plain).find_map(|m| error.message.find(m.as_str()).map(|at| at + m.len()))
+    else {
+        return error;
+    };
+    let source = match source {
+        ModelSource::Flag => "flag",
+        ModelSource::Config => {
+            error.message.insert_str(end, &format!(" (config {})", op.model_config_key()));
+            "config"
+        }
+    };
+    error.with_detail("model_source", source)
+}
+
 /// The model as progress lines name it: its id, followed by the config key when the
 /// config file chose it (`gemini-3.1-flash-image, config image.model`).
 pub(crate) fn progress_model(model: &ResolvedModel, source: ModelSource, op: Operation) -> String {
@@ -175,6 +204,7 @@ fn configured_model(ctx: &AppContext, op: Operation) -> Result<ResolvedModel, Ir
              supports it"
         ))
         .with_detail("config_key", key)
+        .with_detail("model_source", "config")
         .with_detail("operation", op.as_str())
         .with_detail("candidates", ctx.catalog.candidates(Some(op))));
     }

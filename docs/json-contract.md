@@ -541,6 +541,11 @@ model does not (or none was given):
 "details":{"suggestions":["-O background=VALUE"],"usage":"..."}
 ```
 
+An error of a generation command that names its model carries `details.model_source` (`flag` or
+`config`, as in results), and when the config file chose the model the message says so after the
+model's name: `model 'gemini-3.1-flash-image' (config image.model) does not support --size for
+image.generate`.
+
 `provider` names the provider an error concerns: the one that answered, or, for an error while
 following or downloading a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a
 download failure), the job's provider, even when the error itself is local. A refused

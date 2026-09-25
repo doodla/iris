@@ -27,9 +27,9 @@ use std::time::Duration;
 use serde_json::json;
 
 use crate::artifacts::{self, Naming, PathRequest};
-use crate::catalog::{self, InputCounts};
+use crate::catalog::{self, InputCounts, ResolvedModel};
 use crate::config::{ENV_POLL_INTERVAL, ENV_WAIT_TIMEOUT, KEY_POLL_INTERVAL, KEY_WAIT_TIMEOUT, Resolved};
-use crate::domain::{JobStatus, Operation, ProviderId, Warning};
+use crate::domain::{JobStatus, ModelSource, Operation, ProviderId, Warning};
 use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
 use crate::jobs::{self, JobId, JobRecord, NewJob, OutputPlan, PromptRecord};
 use crate::output::results::{JobResult, PlanResult, PlanWait, WaitSetting};
@@ -63,18 +63,26 @@ pub async fn run(
     warnings: &mut Vec<Warning>,
 ) -> Result<GenerationOutcome<JobResult>, IrisError> {
     let start = warnings.len();
-    let result = generate(ctx, args, warnings).await;
+    let op = Operation::VideoGenerate;
+    let result = match request::resolve_model(ctx, op, &args.common, warnings) {
+        // Every later error that names the model says where it came from.
+        Ok((resolved, model_source)) => generate(ctx, args, resolved.clone(), model_source, warnings)
+            .await
+            .map_err(|e| request::with_model_source(e, &resolved, model_source, op)),
+        Err(e) => Err(e),
+    };
     Commands::of(ctx).finish(result, warnings, start)
 }
 
 async fn generate(
     ctx: &AppContext,
     args: VideoArgs,
+    resolved: ResolvedModel,
+    model_source: ModelSource,
     warnings: &mut Vec<Warning>,
 ) -> Result<GenerationOutcome<JobResult>, IrisError> {
     let op = Operation::VideoGenerate;
     let common = &args.common;
-    let (resolved, model_source) = request::resolve_model(ctx, op, common, warnings)?;
     let spec = resolved.spec;
     let provider = spec.provider;
 

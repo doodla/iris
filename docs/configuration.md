@@ -275,7 +275,10 @@ Dry run: nothing was sent and nothing was charged.
 ```
 
 The progress line of a real run names it the same way: `Requesting 1 image from gemini
-(gemini-3.1-flash-image, config image.model); this is a paid request`.
+(gemini-3.1-flash-image, config image.model); this is a paid request`. So does an error that names
+the model, after its name, and its `details.model_source` says `config` (`flag` for `-m`): with that
+file, `iris image generate "a fox" --quality low` fails with `model 'gemini-3.1-flash-image' (config
+image.model) does not support --quality for image.generate`.
 
 ## Timeouts
 
