@@ -4,10 +4,9 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Iris intends to follow
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
-No release has been tagged yet: the section below becomes the `0.1.0` release (and its GitHub
-release notes) when that version is tagged, following the release steps in CONTRIBUTING.md.
-
 ## [Unreleased]
+
+## [0.1.0] - 2026-09-25
 
 Iris's first release: a Rust CLI that generates and edits images and generates videos through
 OpenAI and Google, with a durable job model for provider-native asynchronous work and a
@@ -189,3 +188,6 @@ machine-readable contract for agents.
 - No Windows support (builds, CI, or installer) in v1; Linux and macOS only.
 - macOS archives are not signed or notarized; see [docs/install.md](https://github.com/doodla/iris/blob/main/docs/install.md) for installing
   one downloaded in a browser.
+
+[Unreleased]: https://github.com/doodla/iris/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/doodla/iris/releases/tag/v0.1.0

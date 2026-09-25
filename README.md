@@ -63,13 +63,11 @@ failover, and Windows.
 
 ## Installation
 
-### From a published release (once one exists)
+### From a release
 
-Iris ships a small POSIX-sh installer per release ([docs/install.md](docs/install.md) has the
-full details: pinned installs, passing options through the pipe, checksum verification, upgrade,
-and uninstall). **No release has been published yet**, so the one-liner below documents the
-intended path (the installer itself is tested offline against local fixtures — see
-[docs/install.md](docs/install.md)); it cannot install anything until the first release exists:
+Iris ships a small POSIX-sh installer with each release ([docs/install.md](docs/install.md) has
+the full details: pinned installs, passing options through the pipe, checksum verification,
+upgrade, and uninstall):
 
 ```console
 $ curl -fsSL https://raw.githubusercontent.com/doodla/iris/main/install.sh | sh
@@ -81,8 +79,7 @@ installed version plus any PATH change you need.
 
 ### Building from source
 
-Building from source needs no release, only Rust 1.89 or newer (`rustup` is the easiest way to get
-a toolchain):
+Building from source needs Rust 1.89 or newer (`rustup` is the easiest way to get a toolchain):
 
 ```console
 $ git clone https://github.com/doodla/iris && cd iris

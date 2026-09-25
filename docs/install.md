@@ -37,22 +37,7 @@ HTTPS requests (installer download, and every provider API call `iris` itself ma
 **system's CA trust store**, not a bundled one. On a minimal container or base image, install
 `ca-certificates` (or your distribution's equivalent) first, or TLS verification will fail.
 
-## Status: no release has been published yet
-
-`doodla/iris` has **no published release** yet, so the installer paths below describe intended
-behavior that is tested offline — against local fixtures and against locally built release
-archives (see [Testing the installer without a real release](#testing-the-installer-without-a-real-release))
-— not against a real GitHub release. Building from source needs no release:
-
-```console
-$ git clone https://github.com/doodla/iris && cd iris
-$ cargo install --locked --path .
-```
-
-This needs a Rust toolchain (`rustup` is the easiest way to get one); the minimum supported Rust
-version is 1.89. `--locked` builds exactly the dependency versions in the committed `Cargo.lock`.
-
-## Once a release exists: the one-command installer
+## The one-command installer
 
 ```console
 $ curl -fsSL https://raw.githubusercontent.com/doodla/iris/main/install.sh | sh
@@ -204,6 +189,19 @@ $ rm "/Users/you/Library/Application Support/iris/config.toml"       # config, s
 `iris jobs delete --all` (see [jobs.md](jobs.md#local-deletion-vs-remote-state)) removes only
 *local job records* — it is not a substitute for deleting the state directory, and neither of
 these ever cancels or deletes anything on a provider.
+
+## Building from source
+
+To build and install from the repository instead of a release archive (Linux and macOS, as for the
+archives):
+
+```console
+$ git clone https://github.com/doodla/iris && cd iris
+$ cargo install --locked --path .
+```
+
+This needs a Rust toolchain (`rustup` is the easiest way to get one); the minimum supported Rust
+version is 1.89. `--locked` builds exactly the dependency versions in the committed `Cargo.lock`.
 
 ## Verifying what you installed
 
