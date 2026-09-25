@@ -415,6 +415,100 @@ fn a_video_plan_says_how_long_the_real_run_waits_and_why() {
     assert!(v["result"]["wait"].is_null(), "an image command does not wait: {v}");
 }
 
+/// `--max-cost <USD>` refuses a request estimated above the cap, or without an
+/// estimate, as `cost_limit_exceeded` (exit 2) before anything is sent: the provider
+/// sees nothing and no job record is written, in a dry run too. A plan within the cap
+/// reports it (`max_cost`, and on the human cost line). The value is a positive
+/// decimal number of US dollars; anything else is `invalid_argument`.
+#[test]
+fn max_cost_refuses_before_anything_is_sent() {
+    let sb = Sandbox::new();
+    let api = answering_api();
+    let iris = || {
+        let mut iris = sb.iris();
+        iris.openai(&api).gemini(&api);
+        iris
+    };
+    let low = ["-m", OPENAI_IMAGE_MODEL, "--quality", "low", "--size", "1024x1024"];
+    for dry_run in [false, true] {
+        let with = |args: &[&str]| {
+            let mut iris = iris();
+            iris.args(args).arg("--json");
+            if dry_run {
+                iris.arg("--dry-run");
+            }
+            iris.run().err(2, "cost_limit_exceeded")
+        };
+        let v = with(&[&["image", "generate", "a fox", "--max-cost", "0.005"][..], &low].concat());
+        let e = &v["error"];
+        assert_eq!(
+            (e["category"].as_str(), e["provider_status"].is_null()),
+            (Some("validation"), true),
+            "{v}"
+        );
+        assert_eq!(e["details"]["max_cost"], 0.005);
+        assert_eq!(e["details"]["cost_estimate"]["amount"], 0.00588);
+        assert!(e["details"]["cost_estimate_unavailable"].is_null());
+
+        let v = with(&["image", "generate", "a fox", "-m", OPENAI_IMAGE_MODEL, "--max-cost", "1"]);
+        let reason = v["error"]["details"]["cost_estimate_unavailable"].as_str().unwrap();
+        assert!(reason.starts_with("quality and size are auto") && reason.contains("pass --quality"), "{v}");
+        assert!(v["error"]["details"]["cost_estimate"].is_null());
+        assert!(v["error"]["hint"].as_str().unwrap().contains("get one as the message says"), "{v}");
+
+        // A model resolved with --capabilities-from has no estimate with any options.
+        let borrowed = ["-m", "gpt-image-7-new", "--capabilities-from", OPENAI_IMAGE_MODEL];
+        let v =
+            with(&[&["image", "generate", "a fox", "--max-cost", "1"][..], &borrowed, &low[2..]].concat());
+        let reason = v["error"]["details"]["cost_estimate_unavailable"].as_str().unwrap();
+        assert!(reason.contains("prices are not assumed to apply"), "{v}");
+        assert_eq!(v["error"]["hint"], "--max-cost cannot be applied to this request; run without it", "{v}");
+
+        let v = with(&["video", "generate", "waves", "-m", VEO_LITE, "--duration", "8", "--max-cost", "0.3"]);
+        assert_eq!(v["error"]["details"]["cost_estimate"]["amount"], 0.4, "{v}");
+    }
+    assert_eq!(api.total(), 0, "nothing was sent");
+    assert!(!sb.jobs_dir().exists(), "no job record");
+
+    // Within the cap: the plan reports it; at the cap is within.
+    let v = iris()
+        .args(["image", "generate", "a fox", "--max-cost", "0.00588", "--dry-run", "--json"])
+        .args(low)
+        .run()
+        .ok();
+    assert_eq!(v["result"]["max_cost"], 0.00588);
+    let v = iris().args(["image", "generate", "a fox", "--dry-run", "--json"]).args(low).run().ok();
+    assert!(v["result"]["max_cost"].is_null());
+    let out = iris()
+        .args(["video", "generate", "waves", "-m", VEO_LITE, "--duration", "4", "--max-cost", "0.25"])
+        .arg("--dry-run")
+        .run();
+    let cost = out.human().lines().find(|l| l.starts_with("  cost:")).unwrap_or_default().to_string();
+    assert!(cost.starts_with("  cost:       ~$0.2 USD, within --max-cost $0.25 (4 s × $0.05/s"), "{cost}");
+
+    // Human output of a refusal: the code, the estimate against the cap, and the hint.
+    let out = iris().args(["image", "generate", "a fox", "--max-cost", "0.005"]).args(low).run();
+    assert_eq!(out.code, 2);
+    assert!(
+        out.stderr.contains(
+            "error[cost_limit_exceeded]: the request is estimated at $0.00588 USD, above --max-cost $0.005"
+        ),
+        "{}",
+        out.stderr
+    );
+    assert!(out.stderr.contains("hint: choose cheaper options or a cheaper model"), "{}", out.stderr);
+
+    for bad in ["0", "-1", "abc", "1e-3", "inf", "0.0.1", "$1", " 1", ""] {
+        let v = iris()
+            .args(["image", "generate", "a fox", "--max-cost", bad, "--dry-run", "--json"])
+            .args(low)
+            .run()
+            .err(2, "invalid_argument");
+        assert_eq!(v["error"]["details"]["flag"], "--max-cost", "{bad:?}: {v}");
+    }
+    assert_eq!(api.total(), 0);
+}
+
 // ----- local validation parity: a dry run rejects what the real run would -------------------------
 
 /// Unknown ids given with `--capabilities-from` must satisfy the id syntax of the

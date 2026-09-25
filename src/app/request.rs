@@ -37,6 +37,9 @@ pub struct GenerationArgs {
     pub overwrite: bool,
     /// `--dry-run`: validate locally and return the plan; nothing is sent.
     pub dry_run: bool,
+    /// `--max-cost <USD>`: refuse the request unless its pre-call estimate is at most
+    /// this many US dollars ([`check_max_cost`]).
+    pub max_cost: Option<f64>,
 }
 
 impl fmt::Debug for GenerationArgs {
@@ -50,6 +53,7 @@ impl fmt::Debug for GenerationArgs {
             .field("output", &self.output)
             .field("overwrite", &self.overwrite)
             .field("dry_run", &self.dry_run)
+            .field("max_cost", &self.max_cost)
             .finish()
     }
 }
@@ -304,8 +308,28 @@ pub(crate) fn effective_count(spec: &ModelSpec, op: Operation, opts: &ResolvedOp
         .unwrap_or(1)
 }
 
-/// The model's cost estimate for this request, or why there is none and how to get
-/// one (the model's own estimator says which options to pass), as the
+/// Why a request has no pre-call cost estimate ([`estimate`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum NoEstimate {
+    /// The model's estimator has none for these option values; its reason names the
+    /// options to pass for one.
+    OtherOptions(String),
+    /// No request to this model has one: Iris applies no prices to it (a model
+    /// without an estimator, or one resolved with `--capabilities-from`).
+    NoPrices(String),
+}
+
+impl NoEstimate {
+    /// Why, as the `cost_estimate_unavailable` warning gives it.
+    pub(crate) fn reason(&self) -> &str {
+        match self {
+            NoEstimate::OtherOptions(reason) | NoEstimate::NoPrices(reason) => reason,
+        }
+    }
+}
+
+/// The model's cost estimate for this request, or why there is none and, when other
+/// options give one, which (the model's own estimator names them), as the
 /// `cost_estimate_unavailable` warning reports it ([`cost_unavailable`]). A model
 /// resolved with `--capabilities-from` has none: it borrows the template's
 /// capabilities, not its prices.
@@ -314,21 +338,22 @@ pub(crate) fn estimate(
     op: Operation,
     opts: &ResolvedOptions,
     count: u32,
-) -> Result<CostEstimate, String> {
+) -> Result<CostEstimate, NoEstimate> {
     if let CapabilitySource::Borrowed { from } = model.source {
-        return Err(format!(
+        return Err(NoEstimate::NoPrices(format!(
             "the model was given the capabilities of '{from}' with --capabilities-from, and that model's prices \
              are not assumed to apply to it; check the provider's published prices"
-        ));
+        )));
     }
     let spec = model.spec;
     let Some(estimator) = spec.estimate else {
-        return Err(format!(
+        return Err(NoEstimate::NoPrices(format!(
             "Iris cannot estimate the cost of {} before the call; `iris models show {}` lists its published prices",
             spec.id, spec.id
-        ));
+        )));
     };
     (estimator.estimate)(spec, &EstimateInput { operation: op, options: opts, count })
+        .map_err(NoEstimate::OtherOptions)
 }
 
 /// The cost estimate from the usage a provider reported for a completed call (it
@@ -349,8 +374,57 @@ fn priced(model: &ResolvedModel) -> Option<&'static ModelSpec> {
 }
 
 /// Warning `cost_estimate_unavailable`, with the reason [`estimate`] gave.
-pub(crate) fn cost_unavailable(reason: &str) -> Warning {
-    Warning::new(WarningCode::CostEstimateUnavailable, format!("no cost estimate: {reason}"))
+pub(crate) fn cost_unavailable(why: &NoEstimate) -> Warning {
+    Warning::new(WarningCode::CostEstimateUnavailable, format!("no cost estimate: {}", why.reason()))
+}
+
+/// `--max-cost`: `cost_limit_exceeded` when the request's pre-call estimate is above
+/// the cap, or when there is none, so nothing is sent. Called before a dry run
+/// returns, so a dry run refuses the same way. The cap compares the estimate, which
+/// can leave out prompt, input-image, and thinking tokens (its basis says what it
+/// leaves out), so the bill can be higher than the cap, by what the basis leaves out.
+/// Without an estimate the hint says how to get one only when other options give
+/// one ([`NoEstimate`]).
+pub(crate) fn check_max_cost(
+    max_cost: Option<f64>,
+    estimate: &Result<CostEstimate, NoEstimate>,
+) -> Result<(), IrisError> {
+    let Some(max) = max_cost else { return Ok(()) };
+    let refusal = |message: String, hint: &str| {
+        IrisError::new(ErrorCode::CostLimitExceeded, message)
+            .with_hint(hint)
+            .with_detail("max_cost", max)
+            .with_detail("cost_estimate", serde_json::to_value(estimate.as_ref().ok()).unwrap_or(Value::Null))
+            // The reason the `cost_estimate_unavailable` warning gives, under its name.
+            .with_detail(
+                WarningCode::CostEstimateUnavailable.as_str(),
+                estimate.as_ref().err().map(NoEstimate::reason),
+            )
+    };
+    match estimate {
+        Ok(estimate) if estimate.amount <= max => Ok(()),
+        Ok(estimate) => Err(refusal(
+            format!(
+                "the request is estimated at ${} {}, above --max-cost ${max}",
+                estimate.amount, estimate.currency
+            ),
+            "choose cheaper options or a cheaper model (`iris models list` shows each model's cheapest \
+             request), or raise --max-cost",
+        )),
+        Err(why) => Err(refusal(
+            format!(
+                "--max-cost ${max} needs a cost estimate, and there is none for this request: {}",
+                why.reason()
+            ),
+            match why {
+                NoEstimate::OtherOptions(_) => {
+                    "a request is checked against --max-cost by its pre-call estimate; get one as the message \
+                     says, or run without --max-cost"
+                }
+                NoEstimate::NoPrices(_) => "--max-cost cannot be applied to this request; run without it",
+            },
+        )),
+    }
 }
 
 /// The options a request runs with: every explicit value, plus the declared

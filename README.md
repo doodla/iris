@@ -164,7 +164,19 @@ at its published prices, and a name the real run generates is shown as its patte
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
-{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"detach":false,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"detach":false,"dry_run":true,"inputs":[],"max_cost":null,"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"prompt_fingerprint":{"chars":13,"sha256":"1191409152a26c2e3a7b6e7e0fc0f0dbc04a0c2aef096f8e20239abd84a7c3c6"},"provider":"openai","wait":null},"schema_version":1,"warnings":[]}
+```
+
+To cap what a command may spend, add `--max-cost <USD>`: a request whose pre-call estimate is
+above the cap, or that has no estimate, fails with `cost_limit_exceeded` (exit 2) before anything
+is sent, in a dry run too. The cap compares the estimate, which can leave out prompt, input-image,
+and thinking tokens (its basis says what it leaves out), so the bill can be higher than the cap,
+by what the basis leaves out:
+
+```console
+$ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --max-cost 0.005
+error[cost_limit_exceeded]: the request is estimated at $0.00588 USD, above --max-cost $0.005
+  hint: choose cheaper options or a cheaper model (`iris models list` shows each model's cheapest request), or raise --max-cost
 ```
 
 ## More examples

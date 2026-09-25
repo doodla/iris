@@ -32,8 +32,8 @@ use crate::output::results::{CompletionsResult, SchemaResult};
 use crate::output::{self, CommandName, Envelope, ErrorBody, ResultPayload, human};
 
 use args::{
-    Cli, Command, ConfigCommand, ImageCommand, JobsCommand, ModelArgs, ModelsCommand, OptionFlags,
-    OutputArgs, PromptArgs, ProvidersCommand, Shell, VideoCommand,
+    Cli, Command, ConfigCommand, ExecutionArgs, ImageCommand, JobsCommand, ModelArgs, ModelsCommand,
+    OptionFlags, OutputArgs, PromptArgs, ProvidersCommand, Shell, VideoCommand,
 };
 use render::{Output, Sink};
 
@@ -297,19 +297,19 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
     let request = match command {
         Command::Image(ImageCommand::Generate(a)) => {
             let common =
-                generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
+                generation(&a.prompt, &a.model, a.options.flags(), &a.output, &a.execution, io, &mut o)?;
             Request::Image(Operation::ImageGenerate, ImageArgs { common, images: Vec::new(), mask: None })
         }
         Command::Image(ImageCommand::Edit(a)) => {
             let common =
-                generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
+                generation(&a.prompt, &a.model, a.options.flags(), &a.output, &a.execution, io, &mut o)?;
             let images = a.images.into_iter().map(|p| absolute(&io.env, p)).collect::<Result<_, _>>()?;
             let mask = a.mask.map(|p| absolute(&io.env, p)).transpose()?;
             Request::Image(Operation::ImageEdit, ImageArgs { common, images, mask })
         }
         Command::Video(VideoCommand::Generate(a)) => {
             let common =
-                generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
+                generation(&a.prompt, &a.model, a.options.flags(), &a.output, &a.execution, io, &mut o)?;
             o.wait_timeout = duration_flag("--timeout", a.timeout.as_deref())?;
             o.poll_interval = duration_flag("--poll-interval", a.poll_interval.as_deref())?;
             Request::Video(VideoArgs {
@@ -387,7 +387,7 @@ fn generation(
     model: &ModelArgs,
     flags: OptionFlags<'_>,
     output: &OutputArgs,
-    dry_run: bool,
+    execution: &ExecutionArgs,
     io: &mut Io,
     overrides: &mut Overrides,
 ) -> Result<GenerationArgs, IrisError> {
@@ -406,7 +406,8 @@ fn generation(
         options,
         output: output.output.clone().map(|p| output_path(&io.env, p)).transpose()?,
         overwrite: output.overwrite,
-        dry_run,
+        dry_run: execution.dry_run,
+        max_cost: execution.max_cost.as_deref().map(max_cost_flag).transpose()?,
     })
 }
 
@@ -484,6 +485,22 @@ fn parse_status(raw: &str) -> Result<JobStatus, IrisError> {
             "{message} (expected submitting, submission_unknown, running, succeeded, failed, or expired)"
         ))
     })
+}
+
+/// `--max-cost <USD>`: a positive decimal number of US dollars, such as `0.05` or `2`
+/// (digits with at most one decimal point; no sign, exponent, or currency symbol).
+fn max_cost_flag(raw: &str) -> Result<f64, IrisError> {
+    let decimal = raw.bytes().any(|b| b.is_ascii_digit())
+        && raw.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+        && raw.bytes().filter(|&b| b == b'.').count() <= 1;
+    match raw.parse::<f64>() {
+        Ok(usd) if decimal && usd > 0.0 && usd.is_finite() => Ok(usd),
+        _ => Err(IrisError::invalid(format!(
+            "--max-cost: '{}' is not a positive number of US dollars (such as 0.05)",
+            crate::redact::truncate(raw, 40)
+        ))
+        .with_detail("flag", "--max-cost")),
+    }
 }
 
 fn duration_flag(flag: &str, raw: Option<&str>) -> Result<Option<Duration>, IrisError> {

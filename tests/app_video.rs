@@ -1225,3 +1225,44 @@ async fn the_video_model_comes_from_the_flag_or_the_config_file_and_is_otherwise
     assert_eq!((res.job.model.as_str(), res.job.model_source), ("fake-video-1", Some(ModelSource::Config)));
     assert_eq!(record_json(&f.sandbox.state(), &res.job.job_id)["model_source"], "config");
 }
+
+/// `--max-cost` on a video: a job estimated above the cap (the default 8 seconds at
+/// $0.10/s is $0.80), or without an estimate, is refused before any record or
+/// request, in a dry run too; one at the cap is submitted.
+#[tokio::test]
+async fn max_cost_refuses_a_job_before_any_record_or_request() {
+    let f = Fixture::new().await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let capped = |max: f64, dry_run: bool| {
+        let mut a = detached("x");
+        a.common.max_cost = Some(max);
+        a.common.dry_run = dry_run;
+        a
+    };
+    for dry_run in [false, true] {
+        let e = video::run(&ctx, capped(0.5, dry_run), &mut w).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::CostLimitExceeded, "dry_run={dry_run}");
+        assert_eq!((e.exit_code(), e.provider_status, e.job_id.as_deref()), (2, None, None));
+        assert_eq!(e.details["max_cost"], 0.5);
+        assert!((e.details["cost_estimate"]["amount"].as_f64().unwrap() - 0.8).abs() < 1e-9);
+
+        let mut a = capped(5.0, dry_run);
+        a.common.model = Some("fake-video-9".into());
+        a.common.capabilities_from = Some("fake-video-1".into());
+        let e = video::run(&ctx, a, &mut w).await.unwrap_err();
+        assert_eq!(e.code, ErrorCode::CostLimitExceeded, "no estimate for a borrowed model");
+        assert!(e.details["cost_estimate"].is_null());
+    }
+    assert!(!f.sandbox.state().join("jobs").exists(), "no record was created");
+    assert_eq!(f.submits(), 0, "nothing was sent");
+
+    let plan = match video::run(&ctx, capped(0.8, true), &mut w).await.unwrap() {
+        GenerationOutcome::Planned(p) => p,
+        GenerationOutcome::Completed(_) => panic!("expected a plan"),
+    };
+    assert_eq!(plan.max_cost, Some(0.8));
+    let res = completed(video::run(&ctx, capped(0.8, false), &mut w).await.unwrap());
+    assert_eq!(res.job.status, JobStatus::Running);
+    assert_eq!(f.submits(), 1, "at the cap: submitted");
+}

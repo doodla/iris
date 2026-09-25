@@ -380,6 +380,25 @@ impl VideoOptions {
     }
 }
 
+/// Dry run and spending cap of a generation command.
+#[derive(Debug, Args, Default)]
+#[command(next_help_heading = "Execution")]
+pub struct ExecutionArgs {
+    /// Validate everything locally and print the plan; nothing is sent or charged
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Spending cap in US dollars (e.g. 0.05): refuse to send the request if its estimated cost is
+    /// higher, or if it has no estimate
+    ///
+    /// The cap compares the pre-call estimate, which can leave out prompt, input-image, and thinking
+    /// tokens (its basis says what it leaves out), so the bill can be higher than the cap, by what
+    /// the basis leaves out. A dry run refuses the same way, and its plan shows the cap on the cost
+    /// line.
+    // A negative number is taken as the value, so it is refused as not positive.
+    #[arg(long, value_name = "USD", allow_negative_numbers = true)]
+    pub max_cost: Option<String>,
+}
+
 /// Where to save outputs.
 #[derive(Debug, Args, Default)]
 #[command(next_help_heading = "Output")]
@@ -405,8 +424,9 @@ pub enum ImageCommand {
                       credentials) happens before anything is sent.",
         after_help = "Examples:\n  iris image generate -m gpt-image-2.5-sunburst --quality low --size 1024x1024 \
                       \"a fox\" -o fox.png\n  iris image generate -m gpt-image-2 --quality low --size 1024x1024 \
-                      \"a red kite\" --dry-run --json\n  iris image generate -m nano-banana-2 --aspect-ratio 16:9 -f \
-                      prompt.txt -d out/\n  echo \"a lighthouse\" | iris image generate -m nano-banana-2 \
+                      \"a red kite\" --dry-run --json\n  iris image generate -m gpt-image-2 --quality low --size \
+                      1024x1024 --max-cost 0.01 \"a fox\"\n  iris image generate -m nano-banana-2 --aspect-ratio \
+                      16:9 -f prompt.txt -d out/\n  echo \"a lighthouse\" | iris image generate -m nano-banana-2 \
                       --prompt-stdin --json\n\nProvider usage is billed by the provider."
     )]
     Generate(ImageGenerateArgs),
@@ -433,9 +453,8 @@ pub struct ImageGenerateArgs {
     pub options: ImageOptions,
     #[command(flatten)]
     pub output: OutputArgs,
-    /// Validate everything locally and print the plan; nothing is sent or charged
-    #[arg(long, help_heading = "Execution")]
-    pub dry_run: bool,
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
 }
 
 #[derive(Debug, Args)]
@@ -454,9 +473,8 @@ pub struct ImageEditArgs {
     pub options: ImageOptions,
     #[command(flatten)]
     pub output: OutputArgs,
-    /// Validate everything locally and print the plan; nothing is sent or charged
-    #[arg(long, help_heading = "Execution")]
-    pub dry_run: bool,
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
 }
 
 #[derive(Debug, Subcommand)]
@@ -481,8 +499,9 @@ pub enum VideoCommand {
         after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
                       iris video generate -m veo-lite \"a paper boat\" --detach --json\n  iris video generate \
                       -m veo-lite --image first.png \"the scene comes alive\" --timeout 15m\n  iris video \
-                      generate -m veo-lite \"city timelapse\" --dry-run --json\n\nProvider usage is billed by \
-                      the provider.",
+                      generate -m veo-lite \"city timelapse\" --dry-run --json\n  iris video generate -m veo-lite \
+                      \"a paper boat\" --duration 4 --max-cost 0.25 --detach\n\nProvider usage is billed by the \
+                      provider.",
         mut_arg("model", |arg| arg.help(VIDEO_MODEL_HELP))
     )]
     Generate(VideoGenerateArgs),
@@ -516,9 +535,8 @@ pub struct VideoGenerateArgs {
     /// Time between status checks (at least 2s)
     #[arg(long, value_name = "DURATION", help_heading = "Waiting")]
     pub poll_interval: Option<String>,
-    /// Validate everything locally and print the plan; nothing is sent or charged
-    #[arg(long, help_heading = "Execution")]
-    pub dry_run: bool,
+    #[command(flatten)]
+    pub execution: ExecutionArgs,
 }
 
 // ----- jobs -----------------------------------------------------------------

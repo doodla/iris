@@ -477,7 +477,10 @@ names the options to pass for one. Every model declares its `billing`, reported 
 list`, `models show` and dry-run plans: `paid` for every model today, since requests are billed
 to the provider account at its published prices and neither provider has a free tier for these
 models (not every request is billed: Google does not charge for a video it blocks). Human output
-derives its "this is a paid request" wording from that value.
+derives its "this is a paid request" wording from that value. `--max-cost <USD>` caps what one
+generation command may spend: a request whose pre-call estimate is above the cap, or that has no
+estimate, is refused before anything is sent (`cost_limit_exceeded`), in a dry run too. The cap
+is given on the command line only, with no config key or environment variable.
 
 **Why.** Consumer subscriptions do not grant API access: Google states that Google AI plan
 benefits apply only in the AI Studio web interface and that API use is billed separately
@@ -490,7 +493,18 @@ neither that nor a billing tier is visible to a metadata read, which is why the 
 visibility. An agent needs whether a request costs money, and what to change to learn how much,
 as data it can act on rather than prose: `billing` is a value (an open set, so a later free model
 needs no special case), and the estimator that cannot price a request knows which of its options
-made it unknowable.
+made it unknowable. A cap lets an agent that pays stop a request before it is sent, and the
+pre-call estimate is the only figure Iris has at that point, so the cap compares the estimate and
+says so: estimates can leave out prompt, input-image, and thinking tokens (each basis says what),
+so the bill can be higher than the cap, by what the basis leaves out, and it is never described
+as a guarantee. The difference can be large: OpenAI does not document how the input images of a
+GPT Image edit are counted, and an edit takes up to 16 of them. A request without an estimate
+cannot be checked, so it is refused rather than let through; the refusal carries the reason there
+is none, which says what to pass for an estimate when other options give one, and otherwise (a
+model without an estimator, or one resolved with `--capabilities-from`) the hint says to run
+without the cap. A cap in the
+config file or the environment would apply to commands that never mention it, an unseen choice of
+the kind Iris avoids for the model too (see [No default model](#no-default-model)).
 
 **Sources.** [Google AI plans and the Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans) ·
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key) ·

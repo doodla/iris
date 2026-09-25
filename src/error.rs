@@ -46,6 +46,7 @@ pub enum ErrorCode {
     UnknownModel,
     UnknownProvider,
     InputFileInvalid,
+    CostLimitExceeded,
     ConfigInvalid,
     OutputExists,
     JobNotFound,
@@ -107,6 +108,7 @@ impl ErrorCode {
         ErrorCode::UnknownModel,
         ErrorCode::UnknownProvider,
         ErrorCode::InputFileInvalid,
+        ErrorCode::CostLimitExceeded,
         ErrorCode::ConfigInvalid,
         ErrorCode::OutputExists,
         ErrorCode::JobNotFound,
@@ -144,6 +146,7 @@ impl ErrorCode {
             UnknownModel => "unknown_model",
             UnknownProvider => "unknown_provider",
             InputFileInvalid => "input_file_invalid",
+            CostLimitExceeded => "cost_limit_exceeded",
             ConfigInvalid => "config_invalid",
             OutputExists => "output_exists",
             JobNotFound => "job_not_found",
@@ -177,7 +180,7 @@ impl ErrorCode {
         match self {
             UsageError | ModelRequired => C::Usage,
             InvalidArgument | UnsupportedOperation | UnsupportedOption | UnknownModel | UnknownProvider
-            | InputFileInvalid => C::Validation,
+            | InputFileInvalid | CostLimitExceeded => C::Validation,
             ConfigInvalid => C::Config,
             OutputExists => C::Conflict,
             JobNotFound => C::NotFound,
@@ -469,6 +472,7 @@ mod tests {
         assert_eq!(ErrorCode::UsageError.exit_code(), 2);
         assert_eq!(ErrorCode::UnsupportedOption.exit_code(), 2);
         assert_eq!(ErrorCode::OutputExists.exit_code(), 2);
+        assert_eq!(ErrorCode::CostLimitExceeded.exit_code(), 2);
         assert_eq!(ErrorCode::JobNotFound.exit_code(), 2);
         assert_eq!(ErrorCode::MissingCredentials.exit_code(), 3);
         assert_eq!(ErrorCode::QuotaExceeded.exit_code(), 3);

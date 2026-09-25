@@ -357,6 +357,7 @@ creates and removes at once, a dry run proves the nearest existing directory wri
   "outputs": [ "/home/you/<job_id>.mp4" ],
   "credential_present": true,
   "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.8, "...": "..." },
+  "max_cost": 1.0,
   "prompt_fingerprint": { "sha256": "c039da7d...", "chars": 31 }
 }
 ```
@@ -381,6 +382,9 @@ be written: with several outputs, `<stem>-<i>.<ext>`. `i` counts from 1 (`-n 3 -
 `p-1.png`, `p-2.png`, `p-3.png`), while the result's `artifacts[].index` counts from 0.
 `prompt_fingerprint` is the fingerprint of the prompt the real run would send, the same object a
 video job shows (`job.prompt_fingerprint`), so a caller can record it before the paid call.
+`max_cost` is the spending cap `--max-cost` applied, in US dollars, or `null` without the flag; a
+plan with a cap exists only when the request's pre-call estimate is at most the cap (see
+[`cost_limit_exceeded`](#error-object)), and the human plan shows it on its cost line.
 
 ### Shared objects
 
@@ -520,6 +524,31 @@ of its cheapest single-output request and their estimate, or `null`):
  "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
 ```
 
+`--max-cost <USD>` on `image generate`, `image edit`, and `video generate` is a spending cap per
+command, given explicitly (no config key or environment variable sets one). A request whose pre-call
+estimate is above the cap, or that has no pre-call estimate (an `auto` quality or size on OpenAI, a
+model resolved with `--capabilities-from`), fails with `cost_limit_exceeded` (exit 2, category
+`validation`) before anything is sent, a `--dry-run` too; no job record is written. A request
+estimated exactly at the cap is sent. The cap compares the **estimate**, which can leave out prompt,
+input-image, and thinking tokens (each estimate's `basis` says what it leaves out), so the bill can
+be higher than the cap, by what the basis leaves out: it is a check before sending, not a
+guarantee. `details.max_cost` is the cap, `details.cost_estimate` the request's estimate (or
+`null`), and `details.cost_estimate_unavailable`, when there is no estimate, the reason the
+`cost_estimate_unavailable` warning gives (else `null`). When other options give an estimate (an
+`auto` quality or size), the reason says which to pass; when none do (a model resolved with
+`--capabilities-from`), the hint says the cap cannot be applied to the request and to run without
+it. A value
+that is not a positive decimal number of US dollars (`0.05`, `2`) is `invalid_argument` with
+`details.flag`.
+
+```json
+{"code":"cost_limit_exceeded","category":"validation",
+ "message":"the request is estimated at $0.00588 USD, above --max-cost $0.005",
+ "hint":"choose cheaper options or a cheaper model (`iris models list` shows each model's cheapest request), or raise --max-cost",
+ "details":{"max_cost":0.005,"cost_estimate":{"amount":0.00588,"...":"..."},"cost_estimate_unavailable":null},
+ "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
+```
+
 A command line that does not parse (an unknown flag or subcommand, a missing or malformed value) is
 `usage_error` (exit 2, category `usage`), with the parser's full text in `details.usage` and what
 to type instead in `details.suggestions` (as for `unknown_model`; empty when there is nothing to
@@ -590,6 +619,7 @@ written; the job record keeps the original code and any unknown fields untouched
 | `unknown_model` | validation | 2 | false |
 | `unknown_provider` | validation | 2 | false |
 | `input_file_invalid` | validation | 2 | false |
+| `cost_limit_exceeded` | validation | 2 | false |
 | `config_invalid` | config | 2 | false |
 | `output_exists` | conflict | 2 | false |
 | `job_not_found` | not_found | 2 | false |

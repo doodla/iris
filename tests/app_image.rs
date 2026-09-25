@@ -888,3 +888,80 @@ async fn ctrl_c_during_the_request_is_reported_as_possibly_charged() {
     assert_eq!(e.retryable, Some(false), "the request may have been billed: not presented as retryable");
     assert!(files_in(&f.sandbox.work()).is_empty());
 }
+
+/// `--max-cost`: a request whose pre-call estimate is above the cap, or that has no
+/// estimate, is `cost_limit_exceeded` before anything is sent, in a dry run too; one
+/// estimated at the cap is sent, and its plan reports the cap.
+#[tokio::test]
+async fn max_cost_refuses_a_request_estimated_above_it_or_without_an_estimate() {
+    let f = Fixture::new();
+    let capped = |max: f64, options: Vec<RawOption>| {
+        let mut a = args("x");
+        a.common.options = options;
+        a.common.max_cost = Some(max);
+        a
+    };
+    let low = || flag("quality", "low", "--quality");
+    for dry_run in [false, true] {
+        // $0.01 per image: above a cap of $0.005, and two images above $0.015.
+        for (max, options) in [(0.005, vec![low()]), (0.015, vec![low(), flag("count", "2", "--count")])] {
+            let mut a = capped(max, options);
+            a.common.dry_run = dry_run;
+            let e = f.run(Operation::ImageGenerate, a).await.0.unwrap_err();
+            assert_eq!(e.code, ErrorCode::CostLimitExceeded, "{max} dry_run={dry_run}");
+            assert_eq!((e.exit_code(), e.provider_status, e.retryable), (2, None, Some(false)));
+            assert_eq!(e.details["max_cost"], max);
+            assert!(e.details["cost_estimate"]["amount"].as_f64().unwrap() > max, "{:?}", e.details);
+            assert!(e.details["cost_estimate_unavailable"].is_null());
+            assert!(e.message.contains(&format!("above --max-cost ${max}")), "{}", e.message);
+            assert!(e.hint.as_deref().unwrap().contains("raise --max-cost"), "{:?}", e.hint);
+        }
+
+        // No estimate (quality auto): refused, with the estimator's reason, which names
+        // the options that give one.
+        let mut a = capped(1.0, Vec::new());
+        a.common.dry_run = dry_run;
+        let e = f.run(Operation::ImageGenerate, a).await.0.unwrap_err();
+        assert_eq!(e.code, ErrorCode::CostLimitExceeded);
+        assert!(e.details["cost_estimate"].is_null());
+        assert_eq!(e.details["cost_estimate_unavailable"], FAKE_AUTO_QUALITY);
+        assert!(e.message.ends_with(FAKE_AUTO_QUALITY), "{}", e.message);
+        assert!(e.hint.as_deref().unwrap().contains("get one as the message says"), "{:?}", e.hint);
+
+        // A model without an estimator, and one that borrowed another's capabilities:
+        // no options give an estimate, so the cap cannot be applied.
+        let cannot = Some("--max-cost cannot be applied to this request; run without it");
+        let mut a = capped(1.0, Vec::new());
+        a.common.model = Some("fake-gemini-image".into());
+        a.common.dry_run = dry_run;
+        let e = f.run(Operation::ImageGenerate, a).await.0.unwrap_err();
+        assert_eq!(e.code, ErrorCode::CostLimitExceeded);
+        assert!(e.message.contains("Iris cannot estimate the cost of fake-gemini-image"), "{}", e.message);
+        assert_eq!(e.hint.as_deref(), cannot);
+        let mut a = capped(1.0, vec![low()]);
+        a.common.model = Some("fake-image-9".into());
+        a.common.capabilities_from = Some("fake-image-1".into());
+        a.common.dry_run = dry_run;
+        let e = f.run(Operation::ImageGenerate, a).await.0.unwrap_err();
+        assert_eq!(e.code, ErrorCode::CostLimitExceeded);
+        assert!(e.details["cost_estimate_unavailable"].as_str().unwrap().contains("prices are not assumed"));
+        assert_eq!(e.hint.as_deref(), cannot);
+    }
+    assert_eq!(f.calls(), 0, "nothing was sent");
+    assert!(files_in(&f.sandbox.work()).is_empty(), "nothing was written");
+
+    // At the cap: planned with the cap, then sent.
+    let mut a = capped(0.01, vec![low()]);
+    a.common.dry_run = true;
+    let plan = planned(f.run(Operation::ImageGenerate, a).await.0.unwrap());
+    assert_eq!((plan.max_cost, plan.cost_estimate.unwrap().amount), (Some(0.01), 0.01));
+    assert_eq!(f.calls(), 0);
+    let res = completed(f.run(Operation::ImageGenerate, capped(0.01, vec![low()])).await.0.unwrap());
+    assert_eq!(res.artifacts.len(), 1);
+    assert_eq!(f.calls(), 1);
+
+    // Without the flag the plan has no cap.
+    let mut a = args("x");
+    a.common.dry_run = true;
+    assert_eq!(planned(f.run(Operation::ImageGenerate, a).await.0.unwrap()).max_cost, None);
+}

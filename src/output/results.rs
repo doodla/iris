@@ -493,6 +493,9 @@ pub struct PlanResult {
     pub outputs: Vec<String>,
     pub credential_present: bool,
     pub cost_estimate: Option<CostEstimate>,
+    /// The spending cap `--max-cost` applied, in US dollars; null without it. A plan
+    /// with a cap exists only when the request's pre-call estimate is at most the cap.
+    pub max_cost: Option<f64>,
     /// The fingerprint of the prompt the real run would send, as a video job records
     /// it (`job.prompt_fingerprint`); never the text.
     pub prompt_fingerprint: PromptFingerprint,

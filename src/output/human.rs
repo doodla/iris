@@ -626,9 +626,17 @@ fn plan(res: &PlanResult) -> String {
             if res.credential_present { "is set" } else { "is NOT set (required for the real run)" }
         ),
     );
+    // With --max-cost the plan exists only when the estimate is at most the cap, and
+    // the estimate is shown unrounded next to it.
     field(
         "cost",
-        res.cost_estimate.as_ref().map(cost).unwrap_or_else(|| "no estimate available".to_string()),
+        match (&res.cost_estimate, res.max_cost) {
+            (Some(c), Some(max)) => {
+                format!("~${} {}, within --max-cost ${max} ({})", c.amount, c.currency, c.basis)
+            }
+            (Some(c), None) => cost(c),
+            (None, _) => "no estimate available".to_string(),
+        },
     );
     out
 }

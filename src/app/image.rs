@@ -181,6 +181,7 @@ async fn run_checked(
         .image()
         .ok_or_else(|| IrisError::internal(format!("provider '{provider}' has no image adapter")))?;
     let pre_estimate = request::estimate(&resolved, op, &opts, count);
+    request::check_max_cost(common.max_cost, &pre_estimate)?;
 
     if common.dry_run {
         if let Err(reason) = &pre_estimate {
@@ -202,6 +203,7 @@ async fn run_checked(
             outputs: plan.shown.clone(),
             credential_present: ctx.settings.credential_present(provider),
             cost_estimate: pre_estimate.ok(),
+            max_cost: common.max_cost,
             prompt_fingerprint: PromptFingerprint::of(&common.prompt),
         }));
     }

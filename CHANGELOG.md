@@ -51,6 +51,11 @@ machine-readable contract for agents.
   Models resolved with `--capabilities-from` get none, since the template model's prices are not
   assumed. Every model reports its `billing` (`paid`) in `models list`, `models show`, and
   dry-run plans.
+- **A spending cap per command**: `--max-cost <USD>` on `image generate`, `image edit` and `video
+  generate` refuses a request whose pre-call estimate is above the cap, or that has no estimate,
+  with `cost_limit_exceeded` (exit 2) before anything is sent, in a dry run too. The cap compares
+  the estimate, which can leave out prompt, input-image and thinking tokens, so the bill can be
+  higher, by what the estimate leaves out; the plan reports the cap it applied (`max_cost`).
 
 **Paid requests are never retried or discarded behind your back**
 

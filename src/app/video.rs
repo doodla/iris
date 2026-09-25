@@ -136,6 +136,7 @@ async fn generate(
         .video()
         .ok_or_else(|| IrisError::internal(format!("provider '{provider}' has no video adapter")))?;
     let estimate = request::estimate(&resolved, op, &opts, count);
+    request::check_max_cost(common.max_cost, &estimate)?;
     if let Err(reason) = &estimate {
         warnings.push(request::cost_unavailable(reason));
     }
@@ -164,6 +165,7 @@ async fn generate(
             outputs: plan.shown.clone(),
             credential_present: ctx.settings.credential_present(provider),
             cost_estimate: estimate,
+            max_cost: common.max_cost,
             prompt_fingerprint: PromptFingerprint::of(&common.prompt),
         }));
     }
