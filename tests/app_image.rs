@@ -491,6 +491,43 @@ async fn a_possibly_charged_error_is_never_reported_as_retryable() {
     assert_eq!(r.unwrap_err().retryable, Some(true));
 }
 
+/// A completed answer the provider bills but that holds no image (`details.charged`)
+/// is a known outcome: it keeps the provider's retryability, and its reported usage
+/// gets a cost estimate when the model has one (never for borrowed capabilities).
+#[tokio::test]
+async fn a_charged_answer_without_an_image_gets_an_estimate_from_its_usage() {
+    let f = Fixture::new();
+    let usage = Usage {
+        input_tokens: Some(10),
+        output_tokens: Some(5),
+        total_tokens: Some(15),
+        provider_usage: None,
+    };
+    let charged = || {
+        IrisError::new(ErrorCode::ProviderError, "the model returned no image")
+            .with_provider(ProviderId::OpenAi)
+            .with_retryable(Some(true))
+            .with_detail("charged", true)
+            .with_detail("usage", serde_json::to_value(&usage).unwrap())
+    };
+    f.openai.images().push(Err(charged()));
+    let (r, _) = f.run(Operation::ImageGenerate, args("x")).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.retryable, Some(true), "charged is not charge_possible: the outcome is known");
+    assert_eq!(e.details["usage"]["output_tokens"], 5);
+    assert_eq!(e.details["cost_estimate"]["amount"], 0.005, "{:?}", e.details);
+    assert_eq!(e.details["cost_estimate"]["estimated"], true);
+
+    f.openai.images().push(Err(charged()));
+    let mut a = args("x");
+    a.common.model = Some("fake-image-9".into());
+    a.common.capabilities_from = Some("fake-image-1".into());
+    let (r, _) = f.run(Operation::ImageGenerate, a).await;
+    let e = r.unwrap_err();
+    assert!(e.details.get("usage").is_some());
+    assert!(e.details.get("cost_estimate").is_none(), "no prices for borrowed capabilities: {:?}", e.details);
+}
+
 #[tokio::test]
 async fn provider_errors_pass_through_and_nothing_is_saved() {
     let f = Fixture::new();

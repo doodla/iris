@@ -378,6 +378,12 @@ async fn text_only_answers_map_by_finish_reason() {
     assert_eq!(err.provider_code.as_deref(), Some("NO_IMAGE"));
     assert_eq!(err.details["model_text"], "I can't draw that.");
     assert_eq!(err.provider_request_id.as_deref(), Some("resp-abc123"));
+    // A completed 200 is billed by its reported usage: known, not uncertain.
+    assert_eq!(err.details["charged"], true);
+    assert!(err.details.get("charge_possible").is_none(), "{:?}", err.details);
+    assert_eq!(err.details["usage"]["input_tokens"], 14);
+    assert_eq!(err.details["usage"]["output_tokens"], 747 + 180);
+    assert_eq!(err.details["usage"]["provider_usage"]["thoughtsTokenCount"], 180);
 
     // STOP with text only is still "no image".
     let err = no_image_error(response_with(vec![json!({"text": "Which kite?"})], "STOP")).await;
@@ -391,10 +397,14 @@ async fn text_only_answers_map_by_finish_reason() {
         assert_eq!(err.provider_code.as_deref(), Some(reason));
         assert_eq!(err.details["provider_message"], "Unable to show the generated image.");
         assert_eq!(err.exit_code(), 1);
+        assert_eq!(err.details["charged"], true, "{reason}");
+        assert_eq!(err.details["usage"]["total_tokens"], 941, "{reason}");
+        assert_eq!(err.retryable, Some(false), "{reason}");
     }
 
     let err = no_image_error(response_with(vec![], "PUP_LIMITED_DISABLED")).await;
     assert_eq!(err.code, ErrorCode::PermissionDenied);
+    assert_eq!(err.details["charged"], true);
 
     for reason in ["IMAGE_OTHER", "OTHER", "MAX_TOKENS", "MALFORMED_RESPONSE"] {
         assert_eq!(no_image_error(response_with(vec![], reason)).await.code, ErrorCode::ProviderError);
@@ -411,6 +421,13 @@ async fn a_blocked_prompt_is_content_blocked() {
     assert_eq!(err.code, ErrorCode::ContentBlocked);
     assert_eq!(err.provider_code.as_deref(), Some("SAFETY"));
     assert_eq!(err.details["block_reason"], "SAFETY");
+    assert_eq!(err.details["charged"], true);
+    assert_eq!(err.details["usage"]["input_tokens"], 9);
+
+    // Without usageMetadata there is no usage to report; the answer is still charged.
+    let err = no_image_error(json!({"promptFeedback": {"blockReason": "SAFETY"}})).await;
+    assert_eq!(err.details["charged"], true);
+    assert!(err.details.get("usage").is_none(), "{:?}", err.details);
 }
 
 /// Warning codes of an output, in order.

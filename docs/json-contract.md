@@ -347,7 +347,7 @@ the real run records the job.
   "provider": "openai|null", "provider_status": 429, "provider_code": "string|null",
   "provider_request_id": "string|null",
   "job_id": "string|null", "remote_operation_id": "string|null", "job_status": "string|null",
-  "details": { "...": "code-specific extras, e.g. charge_possible, cause_code, record_error, provider_accepted" }
+  "details": { "...": "code-specific extras, e.g. charge_possible, charged, usage, cause_code, record_error, provider_accepted" }
 }
 ```
 
@@ -435,7 +435,10 @@ whether *retrying the same request* might help — it is never an instruction to
 submission automatically; see [jobs.md](jobs.md#submission-uncertainty) for why Iris never
 resubmits a paid request whose outcome it cannot prove. An image-command error whose
 `details.charge_possible` is `true` (the provider may have processed and billed the request) never
-says `retryable: true`.
+says `retryable: true`. `details.charged: true` is different: the provider completed the request
+and bills it, a known outcome rather than an uncertain one, so it does not by itself make an error
+non-retryable (see the Gemini case below); running the command again is a new request, billed
+again.
 
 The recorded error of a job that has ended without success (`failed`, `expired`,
 `submission_unknown`) — in `job.error`, and as the error `jobs wait` and `jobs download` report
@@ -503,7 +506,11 @@ a Veo submission it is `submission_uncertain`, and the job is recorded as `submi
 
 A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retryable, for a 5xx)
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
-errors are not charged. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
+errors are not charged. A Gemini answer that completed (HTTP 200) without an image — only text
+(`provider_error`, `retryable: true`), a blocked prompt or output (`content_blocked`), or a limited
+account (`permission_denied`) — is billed by the tokens it reports: its error carries
+`details.charged: true`, the sanitized `details.usage` (a `Usage` object) when the answer reported
+usage, and `details.cost_estimate` computed from it when Iris can estimate the model's cost. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
 with `retryable: false` and `details.charge_possible: true`.
 
 `interrupted` (exit 130) covers SIGINT (Ctrl-C), SIGTERM, and SIGHUP alike, once Iris has started

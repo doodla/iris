@@ -346,6 +346,45 @@ fn gemini_blocks_are_content_blocked_and_save_nothing() {
     }
 }
 
+/// A 200 answer with only text is billed: the error says so (`details.charged`),
+/// reports the usage and a cost estimate from it, and stays retryable because the
+/// outcome is known (running again is a new request).
+#[test]
+fn a_gemini_answer_without_an_image_reports_its_charged_usage() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on(
+        "POST",
+        &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL),
+        json_response(
+            200,
+            json!({
+                "candidates": [{ "content": { "role": "model", "parts": [{ "text": "I cannot draw that" }] },
+                                 "finishReason": "STOP" }],
+                "usageMetadata": { "promptTokenCount": 10, "candidatesTokenCount": 5, "totalTokenCount": 15,
+                                   "candidatesTokensDetails": [{ "modality": "TEXT", "tokenCount": 5 }] }
+            }),
+        ),
+    );
+    let v = sb
+        .iris()
+        .gemini(&api)
+        .args(["image", "generate", "something", "--provider", "gemini", "--json"])
+        .run()
+        .err(1, "provider_error");
+    let e = &v["error"];
+    assert_eq!(e["retryable"], true, "{v}");
+    assert_eq!(e["details"]["charged"], true, "{v}");
+    assert!(e["details"].get("charge_possible").is_none(), "{v}");
+    assert_eq!(e["details"]["usage"]["input_tokens"], 10, "{v}");
+    let estimate = &e["details"]["cost_estimate"];
+    assert_eq!(estimate["estimated"], true, "{v}");
+    // 10 input tokens at $0.50/1M and 5 text tokens at $3/1M (gemini-3.1-flash-image).
+    assert_eq!(estimate["amount"], 0.00002, "{v}");
+    assert_eq!(api.total(), 1, "never retried");
+    assert!(files_in(&sb.work()).is_empty());
+}
+
 // ----- paid output is never discarded -------------------------------------------------------------
 
 #[test]

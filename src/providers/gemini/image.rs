@@ -306,9 +306,14 @@ fn interpret(
             }
             return Err(err);
         }
-        return Err(no_image_error(&resp, text.as_deref())
+        let mut err = no_image_error(&resp, text.as_deref())
             .with_provider_status(status)
-            .with_provider_request_id(request_id));
+            .with_provider_request_id(request_id)
+            .with_detail("charged", true);
+        if let Some(usage) = usage.as_ref().and_then(|u| serde_json::to_value(u).ok()) {
+            err = err.with_detail("usage", usage);
+        }
+        return Err(err);
     }
 
     let mut warnings = Vec::new();
@@ -407,6 +412,12 @@ fn usage_from_metadata(meta: &serde_json::Value) -> Option<Usage> {
 /// Zero final images: blocked prompt/output → `content_blocked`; account limited →
 /// `permission_denied`; anything else → `provider_error`, retryable (a synchronous
 /// call has no remote job, and the model may produce an image on another try).
+///
+/// The answer is a completed HTTP 200, which Google bills by the usage it reports
+/// (only requests that fail with 400 or 500 errors are not charged): the caller adds
+/// `details.charged: true` and the sanitized `details.usage`. That is a known
+/// outcome, not an uncertain one, so it does not by itself make the error
+/// non-retryable; running the command again is a new, separately billed request.
 fn no_image_error(resp: &GenerateContentResponse, text: Option<&str>) -> IrisError {
     let block_reason = resp
         .prompt_feedback
@@ -425,14 +436,20 @@ fn no_image_error(resp: &GenerateContentResponse, text: Option<&str>) -> IrisErr
         IrisError::new(ErrorCode::ContentBlocked, format!("the Gemini API blocked the prompt ({reason})"))
             .with_provider_code(client::safe_text(reason))
             .with_detail("block_reason", client::safe_text(reason))
-            .with_hint("change the prompt or input images; the provider may still bill input tokens")
+            .with_hint(
+                "change the prompt or input images; the request completed, so the provider bills the tokens it \
+                 reports in details.usage",
+            )
     } else if let Some(reason) = finish_reasons.iter().find(|r| BLOCKING_FINISH_REASONS.contains(r)) {
         IrisError::new(
             ErrorCode::ContentBlocked,
             format!("the Gemini API blocked the generated image ({reason})"),
         )
         .with_provider_code(*reason)
-        .with_hint("change the prompt or input images; the provider may still bill input and thinking tokens")
+        .with_hint(
+            "change the prompt or input images; the request completed, so the provider bills the input and \
+             thinking tokens it reports in details.usage",
+        )
     } else if finish_reasons.contains(&"PUP_LIMITED_DISABLED") {
         IrisError::new(
             ErrorCode::PermissionDenied,
@@ -450,8 +467,8 @@ fn no_image_error(resp: &GenerateContentResponse, text: Option<&str>) -> IrisErr
         )
         .with_retryable(Some(true))
         .with_hint(
-            "running the command again may succeed, but it is billed again; the provider may bill input and \
-             thinking tokens for this attempt",
+            "running the command again may succeed, but it is billed again; this attempt completed, so the \
+             provider bills the input and thinking tokens it reports in details.usage",
         );
         if let Some(r) = reason {
             e = e.with_provider_code(client::safe_text(r));

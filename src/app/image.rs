@@ -13,8 +13,8 @@
 use std::path::PathBuf;
 
 use crate::artifacts::{self, FinalizeMode, Naming, PathRequest};
-use crate::catalog::{self, InputCounts, OptionSource, RawOption};
-use crate::domain::{Artifact, JobStatus, Operation, Warning, WarningCode};
+use crate::catalog::{self, InputCounts, OptionSource, RawOption, ResolvedModel};
+use crate::domain::{Artifact, JobStatus, Operation, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{ImageResult, PlanResult};
 use crate::providers::{ImageOutput, ImageRequest, InputRole};
@@ -189,7 +189,7 @@ async fn run_checked(
         }
     };
     let output: ImageOutput = tokio::select! {
-        result = call => result?,
+        result = call => result.map_err(|e| with_usage_estimate(e, &resolved))?,
         () = ctx.interrupt.after(seen) => {
             // Interrupted, but the outcome is as uncertain as a lost connection: not retryable.
             return Err(IrisError::new(
@@ -276,6 +276,20 @@ async fn run_checked(
         usage: output.usage,
         cost_estimate,
     }))
+}
+
+/// An error from a completed answer the provider bills (`details.charged`) carries
+/// the usage it reported in `details.usage`; add the cost estimate computed from it
+/// (`details.cost_estimate`) when the model has one.
+fn with_usage_estimate(e: IrisError, model: &ResolvedModel) -> IrisError {
+    let usage = e.details.get("usage").cloned().and_then(|u| serde_json::from_value::<Usage>(u).ok());
+    match usage.and_then(|usage| request::estimate_from_usage(model, &usage)) {
+        Some(estimate) => match serde_json::to_value(estimate) {
+            Ok(estimate) => e.with_detail("cost_estimate", estimate),
+            Err(_) => e,
+        },
+        None => e,
+    }
 }
 
 /// What happened to the images of one paid response.
