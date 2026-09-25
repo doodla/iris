@@ -337,6 +337,12 @@ fn interpret(
                 if let Some(sniffed) = first.sniffed {
                     err = err.with_detail("sniffed_media_type", sniffed);
                 }
+                if let Some(t) = &text {
+                    err = err.with_detail(
+                        "model_text",
+                        redact::truncate(&redact::scrub(t), client::PROVIDER_TEXT_MAX),
+                    );
+                }
                 err
             }
             None => no_image_error(&resp, text.as_deref()).with_provider_status(status),

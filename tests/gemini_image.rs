@@ -569,6 +569,15 @@ async fn an_answer_without_any_usable_image_is_a_bad_response_that_is_charged() 
     assert_eq!(err.details["sniffed_media_type"], "video/mp4");
     assert_eq!(err.details["charged"], true);
     assert_eq!(err.unusable, [UnusableOutput { item: 0, bytes: mp4_head.to_vec() }]);
+    assert!(err.details.get("model_text").is_none());
+
+    // Text next to the unusable item is kept, as for an answer with no image at all.
+    let server = MockServer::start().await;
+    let parts = vec![json!({"text": "Here is your picture."}), image_part("video/mp4", mp4_head)];
+    mount_ok(&server, response_with(parts, "STOP")).await;
+    let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
+    assert_eq!(err.details["model_text"], "Here is your picture.");
 
     // Without usageMetadata there is no usage to report; the answer is still charged.
     let server = MockServer::start().await;
