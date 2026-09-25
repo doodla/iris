@@ -7,8 +7,9 @@
 //! * Default names: images `iris-<ulid>.<ext>` (`iris-<ulid>-<i>.<ext>` when several),
 //!   videos `<job_id>.<ext>` (`<job_id>-<i>.<ext>`), `i` starting at 1. Generated
 //!   names use only `[a-z0-9_.-]`; remote data never contributes to local names.
-//!   Each plan generates a fresh ULID, so the image names a `--dry-run` shows are
-//!   indicative: the real run plans again under a new id.
+//!   Each plan generates a fresh ULID (and a video plan uses the job's new id), so a
+//!   `--dry-run` shows a generated name as its pattern (`iris-<ulid>.png`,
+//!   `<job_id>.mp4`: [`PlannedOutputs::shown`]); the real run generates its own.
 //! * `-o PATH` is used literally; with several artifacts it becomes
 //!   `<stem>-<i>.<ext>`. Its extension must agree with `--format` and with what
 //!   the model can produce; without `--format` it selects the format. It must name
@@ -64,6 +65,10 @@ pub struct PathRequest<'a> {
 pub struct PlannedOutputs {
     /// One absolute path per artifact, in index order.
     pub paths: Vec<PathBuf>,
+    /// The paths as a dry run shows them: `paths`, except that a name the real run
+    /// generates is shown as its pattern (`iris-<ulid>.png`, `<job_id>.mp4`, with
+    /// `-<i>` when there are several).
+    pub shown: Vec<String>,
     /// Media type the plan expects the provider to return.
     pub media_type: &'static str,
     /// Image format selected by the `-o` extension when `--format` was not given
@@ -123,7 +128,7 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
 
     let mut warnings = Vec::new();
     let mut implied_format = None;
-    let (media_type, paths) = match req.output {
+    let (media_type, paths, shown) = match req.output {
         Some(output) => {
             let names_directory = output.as_os_str().to_string_lossy().ends_with(std::path::MAIN_SEPARATOR);
             let output = resolve_file_target(output)?;
@@ -134,7 +139,7 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                 )));
             }
             let ext = output.extension().map(|e| e.to_string_lossy().into_owned());
-            let shown = output.display().to_string();
+            let given = output.display().to_string();
             let mut extension_added = false;
             let (media_type, base) = match ext {
                 None => {
@@ -187,17 +192,22 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                 };
                 warnings.push(Warning::new(
                     WarningCode::OutputExtensionAdjusted,
-                    format!("{shown} has no extension; saving as {saving_as}"),
+                    format!("{given} has no extension; saving as {saving_as}"),
                 ));
             }
-            (media_type, paths)
+            let shown = paths.iter().map(|p| p.display().to_string()).collect();
+            (media_type, paths, shown)
         }
         None => {
             let media_type = format_type.unwrap_or(default_type);
             let ext = media::extension_for(media_type).unwrap_or("bin");
             let dir = absolute(req.dir)?;
-            let stem = match req.naming {
-                Naming::Image => format!("iris-{}", ulid::Ulid::generate().to_string().to_ascii_lowercase()),
+            // The generated part of the name, and its pattern.
+            let (stem, pattern) = match req.naming {
+                Naming::Image => (
+                    format!("iris-{}", ulid::Ulid::generate().to_string().to_ascii_lowercase()),
+                    "iris-<ulid>",
+                ),
                 Naming::Video { job_id } => {
                     if job_id.is_empty()
                         || !job_id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
@@ -206,18 +216,21 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                             "invalid job id for a file name: {job_id:?}"
                         )));
                     }
-                    job_id.to_string()
+                    (job_id.to_string(), "<job_id>")
                 }
             };
-            let paths = if req.count == 1 {
-                vec![dir.join(format!("{stem}.{ext}"))]
-            } else {
-                (1..=req.count).map(|i| dir.join(format!("{stem}-{i}.{ext}"))).collect()
+            let names = |stem: &str| -> Vec<PathBuf> {
+                if req.count == 1 {
+                    vec![dir.join(format!("{stem}.{ext}"))]
+                } else {
+                    (1..=req.count).map(|i| dir.join(format!("{stem}-{i}.{ext}"))).collect()
+                }
             };
-            (media_type, paths)
+            let shown = names(pattern).iter().map(|p| p.display().to_string()).collect();
+            (media_type, names(&stem), shown)
         }
     };
-    Ok(PlannedOutputs { paths, media_type, implied_format, warnings })
+    Ok(PlannedOutputs { paths, shown, media_type, implied_format, warnings })
 }
 
 /// What to do instead of writing media to standard output or a device.
@@ -329,9 +342,13 @@ pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
 ///
 /// * the nearest existing ancestor must be a directory; a regular file (or a
 ///   broken symbolic link) in the way is `invalid_argument` (exit 2);
-/// * with `create` (every real run; pass `false` for `--dry-run`, which must not
-///   touch the filesystem) the directory is created if missing and proven
-///   writable by creating and removing a `.iris-preflight.iris-part-*` temp file.
+/// * with `create` (a real run, once the credential is known to be present) the
+///   directory is created if missing and proven writable by creating a check file
+///   in it and removing it at once;
+/// * without `create` (`--dry-run`, and the checks a real run makes before it
+///   knows the credential is present) no directory is created and nothing is left
+///   behind: the nearest existing directory is proven writable the same way, since
+///   that is where the real run creates the directory or writes the file.
 ///
 /// A location that cannot be used as given (no permission, a read-only file
 /// system, a parent that cannot be created, a file in the way) is
@@ -349,29 +366,54 @@ pub fn preflight_dirs(paths: &[PathBuf], create: bool) -> Result<(), IrisError> 
             continue;
         }
         checked.push(dir);
-        check_ancestors(dir)?;
+        let existing = check_ancestors(dir)?;
         if create {
             fs::create_dir_all(dir).map_err(|e| {
                 location_error(format_args!("cannot create output directory {}", dir.display()), dir, &e)
             })?;
-            tempfile::Builder::new()
-                .prefix(".iris-preflight.iris-part-")
-                .rand_bytes(8)
-                .tempfile_in(dir)
-                .map_err(|e| {
-                    location_error(
-                        format_args!("output directory {} is not writable", dir.display()),
-                        dir,
-                        &e,
-                    )
-                })?;
+            prove_writable(dir, dir)?;
+        } else if let Some(existing) = existing {
+            prove_writable(existing, dir)?;
         }
     }
     Ok(())
 }
 
-/// The nearest existing ancestor of `dir` (itself included) must be a directory.
-fn check_ancestors(dir: &Path) -> Result<(), IrisError> {
+/// Prove `probe` writable, where the output directory `dir` is (`probe` itself) or
+/// would be created (its nearest existing ancestor), by creating a check file
+/// `.iris-preflight.iris-part-<ulid>` in it and removing it at once. Errors name
+/// the directory (`details.path`: `dir`), not the check file, unless the check file
+/// could not be removed (`details.path`: the check file).
+/// Hand-rolled on `std::fs` rather than `tempfile`, whose errors name the random
+/// file and whose drop ignores a failed removal.
+fn prove_writable(probe: &Path, dir: &Path) -> Result<(), IrisError> {
+    let unwritable = |e: io::Error| {
+        let context = if probe == dir {
+            format!("output directory {} is not writable", dir.display())
+        } else {
+            format!("cannot create output directory {}: {} is not writable", dir.display(), probe.display())
+        };
+        location_error(format_args!("{context}"), dir, &e)
+    };
+    let id = ulid::Ulid::generate().to_string().to_ascii_lowercase();
+    let check = probe.join(format!(".iris-preflight.iris-part-{id}"));
+    fs::OpenOptions::new().write(true).create_new(true).open(&check).map_err(unwritable)?;
+    fs::remove_file(&check).map_err(|e| {
+        location_error(
+            format_args!(
+                "cannot remove the check file {} Iris created in {}",
+                check.display(),
+                probe.display()
+            ),
+            &check,
+            &e,
+        )
+    })
+}
+
+/// The nearest existing ancestor of `dir` (itself included) must be a directory;
+/// returns it (`None` only for a relative `dir` none of whose ancestors exists).
+fn check_ancestors(dir: &Path) -> Result<Option<&Path>, IrisError> {
     for ancestor in dir.ancestors().filter(|a| !a.as_os_str().is_empty()) {
         let blocked = |what: &str| {
             IrisError::invalid(format!(
@@ -383,7 +425,7 @@ fn check_ancestors(dir: &Path) -> Result<(), IrisError> {
             .with_hint(DIR_HINT)
         };
         match fs::metadata(ancestor) {
-            Ok(meta) if meta.is_dir() => return Ok(()),
+            Ok(meta) if meta.is_dir() => return Ok(Some(ancestor)),
             Ok(_) => return Err(blocked("not a directory")),
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 if fs::symlink_metadata(ancestor).is_ok() {
@@ -401,7 +443,7 @@ fn check_ancestors(dir: &Path) -> Result<(), IrisError> {
             }
         }
     }
-    Ok(())
+    Ok(None)
 }
 
 const DIR_HINT: &str = "choose a writable directory with -d/--out-dir, or another -o/--output path";

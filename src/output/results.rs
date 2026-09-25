@@ -400,10 +400,16 @@ pub struct PlanResult {
     pub operation: Operation,
     /// True if the real command would create a provider-native async job.
     pub async_job: bool,
+    /// True if `--detach` was given: the real run would return right after the
+    /// submission instead of waiting. Always false for synchronous commands.
+    pub detach: bool,
     /// The model's billing: whether the real run costs money.
     pub billing: Billing,
     pub options: serde_json::Map<String, serde_json::Value>,
     pub inputs: Vec<PlanInput>,
+    /// Absolute output paths. A name the real run generates is shown as its
+    /// pattern: `iris-<ulid>.<ext>` for an image, `<job_id>.<ext>` for a video
+    /// (`-<i>` before the extension when there are several).
     pub outputs: Vec<String>,
     pub credential_present: bool,
     pub cost_estimate: Option<CostEstimate>,

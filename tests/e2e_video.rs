@@ -1693,8 +1693,13 @@ fn jobs_wait_refuses_an_unusable_output_target_before_waiting() {
     let id = submit_detached(&sb, &veo, &[]);
     std::fs::write(sb.path("afile"), b"x").unwrap();
 
-    // The job is still running: each refusal comes before any poll or wait.
-    for target in [vec!["-o", "-"], vec!["-o", "afile/clip.mp4"], vec!["-d", "afile/sub"]] {
+    // The job is still running: each refusal comes before any poll or wait, a directory
+    // that cannot be created included (Linux refuses new entries in /proc, even to root).
+    let mut targets = vec![vec!["-o", "-"], vec!["-o", "afile/clip.mp4"], vec!["-d", "afile/sub"]];
+    if cfg!(target_os = "linux") {
+        targets.push(vec!["-d", "/proc/iris-sub"]);
+    }
+    for target in targets {
         let v = sb
             .iris()
             .gemini(&veo.api)

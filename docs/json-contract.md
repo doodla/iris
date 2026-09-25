@@ -321,14 +321,17 @@ The `command` stays the generation command (`image.generate`, `image.edit`, or
 `video.generate`); `result` is the plan, and nothing is sent or charged. A dry run makes every
 local check the real run makes before sending — model and options, input files and the rules that
 relate them (mask format, alpha channel, size, and dimensions; an inline request cap), output
-paths — in the same order, before the credential check, so it fails exactly where the real run
-would fail locally. The one exception is the output directory: a real run creates it and proves it
-writable, which a dry run does not do because it writes nothing.
+paths and whether they can be written — in the same order, before the credential check, so it
+fails exactly where the real run would fail locally. It creates no directory and leaves nothing
+behind: where a real run creates the output directory and proves it writable with a check file it
+creates and removes at once, a dry run proves the nearest existing directory writable the same way
+(where the real run would create the directory or write the file).
 
 ```json
 {
   "dry_run": true, "provider": "gemini", "model": "veo-3.1-fast-generate-preview",
-  "model_source": "config", "operation": "video.generate", "async_job": true, "billing": "paid",
+  "model_source": "config", "operation": "video.generate", "async_job": true, "detach": true,
+  "billing": "paid",
   "options": { "aspect_ratio": "16:9", "count": 1, "duration": "8", "resolution": "720p" },
   "inputs": [ { "role": "first_frame", "path": "/home/you/fox.png", "media_type": "image/png", "bytes": 75 } ],
   "outputs": [ "/home/you/<job_id>.mp4" ],
@@ -340,11 +343,14 @@ writable, which a dry run does not do because it writes nothing.
 `billing` is the model's, as `models.list` reports it: `paid` means the real run is billed to the
 provider account at its published prices. A plan for a model resolved with `--capabilities-from`
 reports the template model's `billing`, the safe assumption that the unknown model's requests cost
-money too, while it gives no cost estimate. `outputs` are absolute paths, and every planned path is
-lexically normalized (`.` and `..` removed without resolving symbolic links), exactly as the real
-run writes it. Default names are indicative: image names contain an id generated for each plan
-(`iris-<ulid>.png`), so the real run picks a new one, and video plans show a `<job_id>` placeholder
-because the job id is assigned when the real run records the job.
+money too, while it gives no cost estimate. `detach` is `true` when `--detach` was given, so the
+real run would return right after the submission; it is `false` for a synchronous image command.
+`outputs` are absolute paths, and every planned path is lexically normalized (`.` and `..` removed
+without resolving symbolic links), exactly as the real run writes it. A name the real run
+generates is shown as its pattern, since the real run generates its own: `iris-<ulid>.<ext>` for
+an image (the real run's ULID) and `<job_id>.<ext>` for a video (the id of the job the real run
+records), with `-<i>` before the extension when there are several (`iris-<ulid>-1.png`). A name
+given with `-o` is shown as it will be written.
 
 ### Shared objects
 
@@ -558,8 +564,9 @@ output; `./-` names a file called `-`), an `-o` naming a standard stream or file
 (`/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/…`, `/proc/…/fd/…`) whatever it currently
 points to, and an `-o` naming an existing device, pipe, or socket (e.g. `/dev/null`); the last two
 carry `details.path`. A real run creates the output directory and proves it writable before the
-paid request; `--dry-run` writes nothing, so it catches a file in the way but not a missing
-permission. Other I/O failures there (e.g. a full disk) stay `io_error` (exit 1).
+paid request; `--dry-run` refuses the same locations, creating no directory and leaving nothing
+behind (see [`plan`](#plan-any-generation-command-run-with---dry-run)). Other I/O failures there
+(e.g. a full disk) stay `io_error` (exit 1).
 
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint

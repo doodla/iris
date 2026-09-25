@@ -2065,6 +2065,10 @@
         "credential_present": {
           "type": "boolean"
         },
+        "detach": {
+          "description": "True if `--detach` was given: the real run would return right after the\nsubmission instead of waiting. Always false for synchronous commands.",
+          "type": "boolean"
+        },
         "dry_run": {
           "description": "Always `true`.",
           "type": "boolean"
@@ -2090,6 +2094,7 @@
           "type": "object"
         },
         "outputs": {
+          "description": "Absolute output paths. A name the real run generates is shown as its\npattern: `iris-<ulid>.<ext>` for an image, `<job_id>.<ext>` for a video\n(`-<i>` before the extension when there are several).",
           "items": {
             "type": "string"
           },
@@ -2106,6 +2111,7 @@
         "model_source",
         "operation",
         "async_job",
+        "detach",
         "billing",
         "options",
         "inputs",

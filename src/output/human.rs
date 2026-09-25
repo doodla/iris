@@ -574,6 +574,9 @@ fn plan(res: &PlanResult) -> String {
     field("provider", res.provider.as_str().to_string());
     field("model", model_with_source(&res.model, Some(res.model_source), res.operation));
     field("async job", yes_no(res.async_job).to_string());
+    if res.async_job {
+        field("detach", yes_no(res.detach).to_string());
+    }
     field("billing", billing(res.billing));
     let options: Vec<String> = res.options.iter().map(|(k, v)| format!("{k}={}", value_text(v))).collect();
     // Explicit values plus declared defaults (the values the request runs with).

@@ -1049,22 +1049,57 @@ async fn dry_run_output_paths_are_normalized_and_show_what_the_real_run_names() 
     let parent = f.sandbox.work().parent().unwrap().to_path_buf();
     assert_eq!(v["result"]["outputs"][0], parent.join("up").join("x.png").to_str().unwrap(), "{v}");
 
-    // Default image names carry a fresh id per plan (indicative); video plans show a placeholder.
+    // A name the real run generates is shown as its pattern, never as a name the real run
+    // will not use: images `iris-<ulid>`, videos `<job_id>`, with `-<i>` for several, in a
+    // directory normalized like every other planned path.
+    let out = |name: &str| f.sandbox.path("out").join(name).to_str().unwrap().to_string();
     let v = f
         .run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "a/../out", "--dry-run", "--json"])
         .await
         .json();
-    let planned = v["result"]["outputs"][0].as_str().unwrap().to_string();
-    assert!(planned.starts_with(f.sandbox.path("out").join("iris-").to_str().unwrap()), "{planned}");
+    assert_eq!(v["result"]["outputs"], serde_json::json!([out("iris-<ulid>.png")]), "{v}");
+    let v = f
+        .run(&["image", "generate", "-m", "fake-image-1", "x", "-n", "2", "-d", "out", "--dry-run", "--json"])
+        .await
+        .json();
+    assert_eq!(
+        v["result"]["outputs"],
+        serde_json::json!([out("iris-<ulid>-1.png"), out("iris-<ulid>-2.png")])
+    );
+    let human = f.run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "out", "--dry-run"]).await;
+    assert!(
+        human.stdout.contains(&format!("  output:     {}\n", out("iris-<ulid>.png"))),
+        "{}",
+        human.stdout
+    );
     let v = f.run(&["video", "generate", "-m", "fake-video-1", "x", "--dry-run", "--json"]).await.json();
     assert_eq!(v["result"]["outputs"][0], f.sandbox.path("<job_id>.mp4").to_str().unwrap(), "{v}");
-    // The placeholder path of a video plan is normalized like every other planned path.
     let v = f
         .run(&["video", "generate", "-m", "fake-video-1", "x", "-d", "a/../out", "--dry-run", "--json"])
         .await
         .json();
-    let expected = f.sandbox.path("out").join("<job_id>.mp4");
-    assert_eq!(v["result"]["outputs"][0], expected.to_str().unwrap(), "{v}");
+    assert_eq!(v["result"]["outputs"], serde_json::json!([out("<job_id>.mp4")]), "{v}");
+    assert!(!f.sandbox.path("out").exists(), "a dry run creates no directory");
+}
+
+/// A plan says whether the real run would detach: `--detach` given to `video
+/// generate`; never for a synchronous image command. Human plans of async jobs show it.
+#[tokio::test]
+async fn a_plan_says_whether_the_real_run_detaches() {
+    let f = Fixture::new();
+    for (args, detach) in [
+        (&["video", "generate", "-m", "fake-video-1", "x", "--detach"][..], true),
+        (&["video", "generate", "-m", "fake-video-1", "x"], false),
+        (&["image", "generate", "-m", "fake-image-1", "x"], false),
+    ] {
+        let mut argv = args.to_vec();
+        argv.extend(["--dry-run", "--json"]);
+        let v = f.run(&argv).await.json();
+        assert_eq!(v["result"]["detach"], detach, "{args:?}: {v}");
+        let human = f.run(&argv[..argv.len() - 1]).await;
+        let line = format!("  detach:     {}\n", if detach { "yes" } else { "no" });
+        assert_eq!(human.stdout.contains(&line), args[0] == "video", "{args:?}: {}", human.stdout);
+    }
 }
 
 #[tokio::test]
@@ -1088,14 +1123,25 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
         assert!(v["error"]["hint"].as_str().unwrap().contains("-d/--out-dir"), "{v}");
     }
 
-    // A directory that cannot be created (Linux refuses new entries in /proc).
+    // A directory that cannot be created or written (Linux refuses new entries in /proc, even
+    // to root) is refused alike by a real run and a dry run, naming the output directory.
     if cfg!(target_os = "linux") {
-        let v = f
-            .run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "/proc/iris-nope/sub", "--json"])
-            .await
-            .json();
-        assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
-        assert_eq!(v["error"]["details"]["path"], "/proc/iris-nope/sub");
+        for (args, path) in [
+            (
+                &["image", "generate", "-m", "fake-image-1", "x", "-d", "/proc/iris-nope/sub"][..],
+                "/proc/iris-nope/sub",
+            ),
+            (&["image", "generate", "-m", "fake-image-1", "x", "-o", "/proc/out.png"], "/proc"),
+            (&["video", "generate", "-m", "fake-video-1", "x", "-d", "/proc/sub", "--detach"], "/proc/sub"),
+            (&["video", "generate", "-m", "fake-video-1", "x", "-o", "/proc/out.mp4", "--detach"], "/proc"),
+        ] {
+            for dry_run in [&[][..], &["--dry-run"]] {
+                let argv: Vec<&str> = args.iter().chain(dry_run).chain(&["--json"]).copied().collect();
+                let v = f.run(&argv).await.json();
+                assert_eq!(v["error"]["code"], "invalid_argument", "{argv:?}: {v}");
+                assert_eq!(v["error"]["details"]["path"], path, "{argv:?}: {v}");
+            }
+        }
     }
 
     // No write permission (skipped when the tests run with privileges that bypass it).
@@ -1104,14 +1150,28 @@ async fn unusable_output_locations_are_invalid_arguments_and_nothing_is_sent() {
     std::fs::create_dir(&locked).unwrap();
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o555)).unwrap();
     if std::fs::create_dir(locked.join("probe")).is_err() {
-        let v = f
-            .run(&["image", "generate", "-m", "fake-image-1", "x", "-d", "locked/sub", "--json"])
-            .await
-            .json();
-        assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
-        assert_eq!(v["error"]["details"]["path"], locked.join("sub").to_str().unwrap());
+        for dry_run in [&[][..], &["--dry-run"]] {
+            let args = ["image", "generate", "-m", "fake-image-1", "x", "-d", "locked/sub", "--json"];
+            let argv: Vec<&str> = args.iter().chain(dry_run).copied().collect();
+            let v = f.run(&argv).await.json();
+            assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
+            assert_eq!(v["error"]["details"]["path"], locked.join("sub").to_str().unwrap());
+        }
     }
     std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A usable location passes a dry run with no directory created and nothing left behind.
+    let before = files_in(&f.sandbox.work());
+    for args in [
+        &["image", "generate", "-m", "fake-image-1", "x", "-d", "fresh/sub", "--dry-run", "--json"][..],
+        &["image", "generate", "-m", "fake-image-1", "x", "--dry-run", "--json"],
+        &["video", "generate", "-m", "fake-video-1", "x", "-o", "fresh/x.mp4", "--dry-run", "--json"],
+    ] {
+        let run = f.run(args).await;
+        assert_eq!(run.code, 0, "{args:?}: {}", run.stdout);
+    }
+    assert!(!f.sandbox.path("fresh").exists());
+    assert_eq!(files_in(&f.sandbox.work()), before);
 
     assert_eq!(f.image_calls(), 0, "nothing was sent");
     assert_eq!(f.gemini.videos().submit_calls.load(Ordering::SeqCst), 0);

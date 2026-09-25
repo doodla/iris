@@ -25,7 +25,7 @@ use std::path::PathBuf;
 
 use serde_json::json;
 
-use crate::artifacts::{self, Naming, PathRequest, media};
+use crate::artifacts::{self, Naming, PathRequest};
 use crate::catalog::{self, InputCounts};
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
@@ -139,11 +139,6 @@ async fn generate(
             .chain(references.iter())
             .map(request::plan_input)
             .collect();
-        let outputs = if common.output.is_some() {
-            plan.paths.iter().map(|p| p.display().to_string()).collect()
-        } else {
-            placeholder_outputs(&out_dir, plan.media_type, count)
-        };
         return Ok(GenerationOutcome::Planned(PlanResult {
             dry_run: true,
             provider,
@@ -151,10 +146,11 @@ async fn generate(
             model_source,
             operation: op,
             async_job: true,
+            detach: args.detach,
             billing: spec.billing,
             options: request::options_view(spec, op, &opts, store_prompts),
             inputs,
-            outputs,
+            outputs: plan.shown.clone(),
             credential_present: ctx.settings.credential_present(provider),
             cost_estimate: estimate,
         }));
@@ -480,14 +476,4 @@ fn as_uncertain(e: IrisError) -> IrisError {
         "the provider may have accepted this paid request; check usage/billing in the provider console before \
          resubmitting; Iris will not resubmit automatically",
     )
-}
-
-/// Planned output paths for a dry run, where the job id does not exist yet.
-/// Lexically normalized like every other planned path (`-d a/../out` plans
-/// `<cwd>/out/<job_id>.mp4`), which is the form the real run writes to.
-fn placeholder_outputs(dir: &std::path::Path, media_type: &str, count: u32) -> Vec<String> {
-    let dir = artifacts::paths::normalize_lexically(dir);
-    let ext = media::extension_for(media_type).unwrap_or("bin");
-    let name = |suffix: String| dir.join(format!("<job_id>{suffix}.{ext}")).display().to_string();
-    if count == 1 { vec![name(String::new())] } else { (1..=count).map(|i| name(format!("-{i}"))).collect() }
 }

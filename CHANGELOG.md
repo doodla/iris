@@ -33,10 +33,14 @@ machine-readable contract for agents.
 - **Local validation before anything is sent.** Options, inputs and cross-option rules are declared
   per model in the catalog and checked identically by `--dry-run` and a real run (mask rules,
   inline request caps, model-id syntax for `--capabilities-from` models included). The API key is
-  checked before any output directory is created. An unusable output location is
-  `invalid_argument` (exit 2) with `details.path`; `-o -` and the names of standard streams are
-  refused, since Iris writes files and prints their paths. When the provider chooses the image
-  type, `-o` gets an `output_extension_may_change` warning.
+  checked before any output directory is created. An unusable output location (a file in the way,
+  a directory that cannot be created or written) is `invalid_argument` (exit 2) with
+  `details.path`, in a dry run too, which creates no directory and leaves nothing behind (it
+  creates and removes one check file); `-o -` and the names of standard streams are refused, since
+  Iris writes files and prints their paths. When the provider chooses the image
+  type, `-o` gets an `output_extension_may_change` warning. A dry-run plan shows a name the real run
+  generates as its pattern (`iris-<ulid>.png`, `<job_id>.mp4`) and says whether the real run would
+  detach (`detach`).
 - **Cost estimates**, always labeled as estimates: before the call where supportable, from the
   reported usage afterwards. Without one, `cost_estimate_unavailable` says why and which options
   to pass for one (on OpenAI, `--quality` and `--size`, naming only those that are `auto`).

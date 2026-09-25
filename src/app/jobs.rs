@@ -399,10 +399,11 @@ pub(crate) async fn wait_parsed(
 }
 
 /// Check an explicit `-o`/`-d` of `jobs wait` before waiting, so a location that
-/// cannot be used (a standard stream, a device, a file where a directory should be)
-/// is refused at once instead of after the job finishes. Nothing is created; a
-/// file already at the target is decided on after the wait, as usual (it may be
-/// this job's own earlier download).
+/// cannot be used (a standard stream, a device, a file where a directory should be,
+/// a directory that cannot be written) is refused at once instead of after the job
+/// finishes. No directory is created and nothing is left behind; a file already at
+/// the target is decided on after the wait, as usual (it may be this job's own
+/// earlier download).
 fn precheck_explicit_target(ctx: &AppContext, id: &JobId, target: &Target) -> Result<(), IrisError> {
     let explicit_dir = ctx.settings.output_dir.source == SettingSource::Flag;
     if target.output.is_none() && !explicit_dir {

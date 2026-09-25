@@ -159,11 +159,12 @@ Validate a request locally, with no charge and no credentials required, before s
 With an explicit size and quality the plan carries a pre-call estimate (with `auto`, the default,
 the model chooses them, so it is `null` and a `cost_estimate_unavailable` warning names the
 options to pass for one). `billing: "paid"` says the real run is billed to your provider account
-at its published prices:
+at its published prices, and a name the real run generates is shown as its pattern
+(`iris-<ulid>.png`):
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
-{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-01m3at0b4p5p26d7c3c6jftqz7.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"detach":false,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
 ```
 
 ## More examples

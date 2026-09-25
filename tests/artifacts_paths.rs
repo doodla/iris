@@ -57,9 +57,15 @@ fn several_images_share_one_ulid_with_indices_from_one() {
     }
     let stem = |n: &str| n.split('-').nth(1).unwrap().to_string();
     assert_eq!(stem(names[0]), stem(names[2]));
-    // Separate plans get distinct names.
+    // Separate plans get distinct names, so a plan shows the generated part as its pattern.
     let again = plan_outputs(&image_req(dir.path(), 1, None, None)).unwrap();
     assert_ne!(again.paths[0], plan_outputs(&image_req(dir.path(), 1, None, None)).unwrap().paths[0]);
+    let shown = |n: &str| dir.path().join(n).display().to_string();
+    assert_eq!(
+        plan.shown,
+        [shown("iris-<ulid>-1.jpg"), shown("iris-<ulid>-2.jpg"), shown("iris-<ulid>-3.jpg")]
+    );
+    assert_eq!(again.shown, [shown("iris-<ulid>.png")]);
 }
 
 #[test]
@@ -74,11 +80,14 @@ fn video_names_use_the_job_id() {
         media_types: VIDEO_TYPES,
     };
     assert_eq!(plan_outputs(&one).unwrap().paths, vec![dir.path().join(format!("{JOB}.mp4"))]);
+    let shown = |n: &str| dir.path().join(n).display().to_string();
+    assert_eq!(plan_outputs(&one).unwrap().shown, [shown("<job_id>.mp4")]);
     let two = PathRequest { count: 2, ..one };
     assert_eq!(
         plan_outputs(&two).unwrap().paths,
         vec![dir.path().join(format!("{JOB}-1.mp4")), dir.path().join(format!("{JOB}-2.mp4"))]
     );
+    assert_eq!(plan_outputs(&two).unwrap().shown, [shown("<job_id>-1.mp4"), shown("<job_id>-2.mp4")]);
     let bad = PathRequest { naming: Naming::Video { job_id: "../x" }, ..one };
     assert_eq!(plan_outputs(&bad).unwrap_err().code, ErrorCode::InternalError);
 }
@@ -104,6 +113,9 @@ fn explicit_output_is_used_literally_and_indexed_for_several() {
         plan.paths,
         vec![dir.path().join("cat-1.png"), dir.path().join("cat-2.png"), dir.path().join("cat-3.png")]
     );
+    // Names given with -o are shown as they are.
+    let shown: Vec<String> = plan.paths.iter().map(|p| p.display().to_string()).collect();
+    assert_eq!(plan.shown, shown);
 
     let rel = plan_outputs(&image_req(dir.path(), 1, Some(Path::new("rel/out.webp")), None)).unwrap();
     assert_eq!(rel.paths, vec![std::env::current_dir().unwrap().join("rel/out.webp")]);
@@ -337,10 +349,13 @@ fn preflight_dirs_creates_missing_directories_and_proves_them_writable() {
     assert!(entries(&deep).is_empty());
     assert_eq!(entries(dir.path()), vec!["renders"]);
 
-    // --dry-run checks without creating anything.
+    // --dry-run checks without creating a directory or leaving anything behind.
     let planned = dir.path().join("later").join("x.png");
     preflight_dirs(std::slice::from_ref(&planned), false).unwrap();
     assert!(!dir.path().join("later").exists());
+    preflight_dirs(&[deep.join("c.png")], false).unwrap();
+    assert!(entries(&deep).is_empty());
+    assert_eq!(entries(dir.path()), vec!["renders"]);
 }
 
 #[test]
@@ -393,7 +408,23 @@ fn preflight_dirs_reports_uncreatable_and_unwritable_directories_as_invalid_argu
     let unwritable = PathBuf::from("/proc/cat.png");
     let err = preflight_dirs(std::slice::from_ref(&unwritable), true).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);
-    assert!(err.message.contains("output directory /proc is not writable"), "{}", err.message);
+    // The file system's own reason, and the directory, not the check file's random name.
+    assert_eq!(err.message, "output directory /proc is not writable: No such file or directory (os error 2)");
+    assert_eq!(err.details["path"], "/proc");
+
+    // Without creating a directory (a dry run), the same locations are refused: the
+    // nearest existing directory, where the real run would create or write, is
+    // proven writable instead.
+    let err = preflight_dirs(std::slice::from_ref(&uncreatable), false).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidArgument);
+    assert_eq!(
+        err.message,
+        "cannot create output directory /proc/iris-preflight-test: /proc is not writable: No such file or \
+         directory (os error 2)"
+    );
+    assert_eq!(err.details["path"], "/proc/iris-preflight-test");
+    let err = preflight_dirs(std::slice::from_ref(&unwritable), false).unwrap_err();
+    assert_eq!(err.message, "output directory /proc is not writable: No such file or directory (os error 2)");
     assert_eq!(err.details["path"], "/proc");
 }
 

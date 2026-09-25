@@ -139,8 +139,8 @@ async fn run_checked(
         ));
     }
     artifacts::preflight(&plan.paths, common.overwrite)?;
-    // Check the output directories without creating anything yet: a real run
-    // creates them only once the credential is known to be present.
+    // Check the output directories without creating them (a dry run stops after
+    // this): a real run creates them only once the credential is known to be present.
     artifacts::preflight_dirs(&plan.paths, false)?;
 
     let adapter = ctx
@@ -161,10 +161,11 @@ async fn run_checked(
             model_source,
             operation: op,
             async_job: false,
+            detach: false,
             billing: spec.billing,
             options: request::options_view(spec, op, &opts, ctx.settings.store_prompts.value),
             inputs,
-            outputs: plan.paths.iter().map(|p| p.display().to_string()).collect(),
+            outputs: plan.shown.clone(),
             credential_present: ctx.settings.credential_present(provider),
             cost_estimate: pre_estimate.ok(),
         }));
