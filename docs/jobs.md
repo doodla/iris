@@ -155,10 +155,11 @@ never "forgets" a file it already saved successfully.
 
 A video submission is a paid, non-idempotent request. If Iris cannot prove what happened to it —
 a timeout or connection reset *after* the request was sent, or a 2xx response whose body could not
-be parsed for an operation id — the job is recorded as `submission_unknown` and the command exits
-**5**. This is terminal for Iris: it will never resubmit that request automatically, on the theory
-that a duplicate paid video is worse than asking you to check. Real example (the mock provider
-answered a submit with HTTP 500, which "does not prove the job was not created"):
+be read in full (cut off, or longer than the 16 MiB Iris reads) or parsed for an operation id — the
+job is recorded as `submission_unknown` and the command exits **5**. This is terminal for Iris: it
+will never resubmit that request automatically, on the theory that a duplicate paid video is worse
+than asking you to check. Real example (the mock provider answered a submit with HTTP 500, which
+"does not prove the job was not created"):
 
 ```console
 $ iris video generate "a paper boat drifting on a pond" --duration 4 --detach --json

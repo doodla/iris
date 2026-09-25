@@ -1,8 +1,10 @@
 //! Size and time limits of the HTTP executor: bounded response bodies and the
 //! upload allowance of request time limits. Most tests use raw 127.0.0.1 socket
 //! servers, which can stream an endless body or read a request slowly; some go
-//! through the Veo and image adapters to check how a paid submission reports them.
-//! Offline; fake key only.
+//! through the Veo and image adapters, or the `iris` binary, to check how a paid
+//! submission reports them. Offline; fake keys only.
+
+mod support;
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -24,7 +26,7 @@ use iris::providers::{
     ImageProvider, ImageRequest, InputImage, InputRole, ProviderContext, VideoProvider, VideoRequest,
 };
 use iris::secret::Secret;
-use serde_json::json;
+use serde_json::{Value, json};
 
 const KEY: &str = "test-gemini-key-000";
 const OPERATION: &str = "models/veo-3.1-lite-generate-preview/operations/abc123xyz";
@@ -515,4 +517,35 @@ async fn image_answers_that_never_arrive_whole_are_uncertain_and_say_what_happen
             assert_eq!(server.connections.load(Ordering::SeqCst), 1, "{case}: never resent");
         }
     }
+}
+
+/// End to end, as docs/json-contract.md describes it: a paid image call whose answer
+/// is longer than Iris reads exits 5 with `submission_uncertain`, the 2xx status,
+/// `details.transport: "other"` and `charge_possible`, no retry delay and no job.
+/// The request is sent once, and nothing is saved.
+#[test]
+fn an_image_answer_over_the_limit_is_reported_as_the_contract_says() {
+    let server = raw_server(vec![Script::reply(oversized_answer())]);
+    let sb = support::Sandbox::new();
+    let out = sb
+        .iris()
+        .keys()
+        .env("IRIS_OPENAI_BASE_URL", format!("{}/v1", server.base))
+        .args(["image", "generate", "a lighthouse at dusk", "--json"])
+        .run();
+    let v = out.err(5, "submission_uncertain");
+    let e = &v["error"];
+    assert_eq!(e["provider"], "openai", "{v}");
+    assert_eq!(e["provider_status"], 200, "{v}");
+    assert_eq!(e["retryable"], false, "{v}");
+    assert_eq!(e["retry_after_seconds"], Value::Null, "{v}");
+    assert_eq!(e["job_id"], Value::Null, "{v}");
+    assert_eq!(e["details"]["transport"], "other", "{v}");
+    assert_eq!(e["details"]["charge_possible"], true, "{v}");
+    let message = e["message"].as_str().unwrap();
+    assert!(message.contains("the answer could not be read in full"), "{message}");
+    assert!(message.contains("over Iris's 512 MiB limit"), "{message}");
+    assert_eq!(server.connections.load(Ordering::SeqCst), 1, "never resent");
+    let saved = support::files_in(&sb.work());
+    assert!(saved.is_empty(), "nothing is saved: {saved:?}");
 }

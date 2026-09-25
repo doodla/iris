@@ -331,6 +331,15 @@ download failure), the job's provider, even when the error itself is local. A re
 `jobs delete` identifies the job only by `job_id` and `job_status`: its `provider` and
 `remote_operation_id` are `null` even when the job has them (`iris jobs status <id>` shows both).
 
+`retry_after_seconds` is the delay, in whole seconds (at least 1), that the provider asked for
+before the request is tried again (`Retry-After`, `retry-after-ms`, or Google's `RetryInfo`). Iris
+reports it only when trying again can help: it is `null` whenever `retryable` is `false` — for
+example `submission_uncertain` (sending the request again could pay twice) or `quota_exceeded` for
+a used-up daily quota — even when the provider's answer asked for a delay. When Iris retries a
+request itself, it waits out a requested delay of up to 60 seconds; a longer one stops with
+`rate_limited`, whose `retry_after_seconds` says how long to wait (see
+[decisions.md](decisions.md#retry-classes-and-why-vendor-retry-guidance-is-overridden)).
+
 `provider_code` and `details.provider_message` are informational and **unstable** — they come
 from the provider and can change without notice; `code` is Iris's own, stable, public taxonomy.
 Every string in an error is secret-scrubbed and signed-URL-redacted, and any provider message is
@@ -417,12 +426,24 @@ A paid **synchronous** image request whose outcome Iris cannot know is reported 
 that Iris did not retry it, and `job_id: null` — Iris has no way to resume a synchronous call,
 unlike a video job (see [jobs.md](jobs.md#why-synchronous-calls-have-no-job-record)). That covers:
 
-- no complete answer after the request was sent: a timeout (`details.transport: "timeout"`) or a
-  connection that failed (`details.transport: "other"`; a dropped connection is never reported as
-  a timeout);
+- no complete answer after the request was sent: a timeout (`details.transport: "timeout"`), or a
+  connection that failed or an answer that could not be read in full (`details.transport:
+  "other"`; a dropped connection is never reported as a timeout). `provider_status` is the
+  answer's HTTP status when one arrived before the failure, and `null` otherwise;
+- a success answer larger than Iris reads (512 MiB for an image answer; see
+  [configuration.md](configuration.md#security-rules)): `details.transport: "other"` with the 2xx
+  `provider_status`. The provider processed the request, but Iris stopped reading its answer, so
+  the images in it are lost; it is never resent;
 - an OpenAI HTTP 408 or 5xx answer, except the documented `server_is_overloaded` 503, which says
   the request was not processed and is retried automatically. OpenAI errors carry the
   `X-Client-Request-Id` Iris sent in `details.client_request_id`.
+
+Other success answers — a job status check, a model metadata read, a Veo submission — are read up
+to 16 MiB. A longer one is `provider_bad_response` for a request that costs nothing (a status check
+or a metadata read), with the answer's `provider_status`, `details.limit_bytes` (the limit), and
+`details.declared_bytes` when the answer declared a longer `Content-Length`; it is not retried. For
+a Veo submission it is `submission_uncertain`, and the job is recorded as `submission_unknown` (see
+[jobs.md](jobs.md#submission-uncertainty)).
 
 A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retryable, for a 5xx)
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500

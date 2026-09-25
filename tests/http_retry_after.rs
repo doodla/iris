@@ -3,7 +3,9 @@
 //! an error that is worth retrying. An agent that waits and resubmits whenever it
 //! sees a delay must never do so after an uncertain paid submission (it could pay
 //! twice) or an exhausted daily quota (it cannot succeed). Offline: wiremock on
-//! 127.0.0.1, fake key.
+//! 127.0.0.1, fake keys; the last test runs the `iris` binary.
+
+mod support;
 
 use std::time::Duration;
 
@@ -165,4 +167,47 @@ async fn retryable_gemini_errors_keep_the_retry_delay() {
     assert_eq!((err.code, err.retryable), (ErrorCode::RateLimited, Some(true)), "{err:?}");
     assert_eq!(err.retry_after, Some(Duration::ZERO));
     assert_eq!(sent(&server).await, 3, "a rate limit is retried; nothing was processed");
+}
+
+/// End to end, as docs/json-contract.md describes `retry_after_seconds`: it is null
+/// whenever `retryable` is false. A Veo submission answered 503 with `Retry-After:
+/// 30` exits 5 without it, in the envelope and in the job record; an image request
+/// that hit a used-up daily quota (429 with `Retry-After: 20`) exits 3 without it.
+#[test]
+fn json_errors_that_are_not_retryable_carry_no_retry_delay() {
+    let sb = support::Sandbox::new();
+
+    let api = support::MockApi::start();
+    let submit = support::veo_submit_path(VIDEO_MODEL);
+    let unavailable = support::json_response(
+        503,
+        google_error(503, "UNAVAILABLE", "The service is currently unavailable.", json!([])),
+    )
+    .insert_header("retry-after", "30");
+    api.on("POST", &submit, unavailable);
+    let out = sb
+        .iris()
+        .gemini(&api)
+        .args(["video", "generate", "a paper boat drifting on a pond", "-m", VIDEO_MODEL])
+        .args(["--duration", "4", "--resolution", "720p", "--detach", "--json"])
+        .run();
+    let v = out.err(5, "submission_uncertain");
+    let e = &v["error"];
+    assert_eq!(e["retryable"], false, "{v}");
+    assert_eq!(e["retry_after_seconds"], Value::Null, "{v}");
+    assert_eq!(e["job_status"], "submission_unknown", "{v}");
+    let record = sb.record(e["job_id"].as_str().unwrap());
+    assert_eq!(record["error"]["code"], "submission_uncertain", "{record}");
+    assert_eq!(record["error"]["retry_after_seconds"], Value::Null, "{record}");
+    assert_eq!(api.count("POST", &submit), 1);
+
+    let api = support::MockApi::start();
+    let generate = support::gemini_generate_path(IMAGE_MODEL);
+    api.on("POST", &generate, support::json_response(429, daily_quota()).insert_header("retry-after", "20"));
+    let out =
+        sb.iris().gemini(&api).args(["image", "generate", "a red kite", "-m", IMAGE_MODEL, "--json"]).run();
+    let v = out.err(3, "quota_exceeded");
+    assert_eq!(v["error"]["retryable"], false, "{v}");
+    assert_eq!(v["error"]["retry_after_seconds"], Value::Null, "{v}");
+    assert_eq!(api.count("POST", &generate), 1);
 }

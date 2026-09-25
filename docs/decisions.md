@@ -219,7 +219,10 @@ estimate, because the known model's prices need not apply.
 
 Backoff is exponential (1 s doubling to at most 30 s) with full jitter. A provider-requested
 delay (`Retry-After`, `retry-after-ms`, or Google's `RetryInfo`) is honored up to 60 seconds; a
-longer one stops with `rate_limited` and the delay in `retry_after_seconds`. An
+longer one stops with `rate_limited` and the delay in `retry_after_seconds`. An error that
+trying again cannot help (`retryable: false`, such as an uncertain paid submission or a used-up
+daily quota) never carries the delay, whatever the answer asked for: a caller that waits it out
+and sends the request again could pay twice, or only fail again. An
 `x-should-retry: false` response header (which OpenAI sends) stops retries.
 
 **Why.** Both providers' guidance says to retry 5xx and timeouts, and OpenAI's official Python
@@ -244,7 +247,8 @@ client will wait.
 **Decision.** A paid request whose outcome is unknown is reported as `submission_uncertain`
 (exit 5), never resubmitted:
 
-- **Images, both providers:** a timeout or a lost connection after the request was sent. The
+- **Images, both providers:** a timeout or a lost connection after the request was sent, or an
+  answer that could not be read in full (cut off, or longer than the 512 MiB Iris reads). The
   error has `retryable: false`, `details.charge_possible: true`, and `job_id: null`.
 - **OpenAI images:** also an HTTP 408 or 5xx answer, except the documented overload rejection.
 - **Gemini images:** an HTTP 4xx or 5xx answer is not uncertain; it keeps its ordinary code
