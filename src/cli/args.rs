@@ -510,7 +510,8 @@ pub enum JobsCommand {
     #[command(
         long_about = "Wait for a job to finish, then download its outputs (unless --no-download). Works from \
                       any process: the job is resumed from its local record. The wait limit and Ctrl-C only \
-                      stop waiting; the job keeps running remotely (exit 4 or 130).",
+                      stop waiting; the job keeps running remotely (exit 4 or 130). With --overwrite, \
+                      outputs downloaded earlier are fetched again and replace the saved files.",
         after_help = "Examples:\n  iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs wait \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --timeout 30m -d videos/ --json\n  iris jobs wait \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download"
@@ -520,7 +521,9 @@ pub enum JobsCommand {
     #[command(
         long_about = "Download the outputs of a succeeded job. Nothing is ever regenerated or resubmitted. \
                       Repeating a download is safe: an intact file already at the target is reported as \
-                      already_downloaded, and an intact earlier download is copied locally.",
+                      already_downloaded, and an intact earlier download is copied locally. With \
+                      --overwrite, every output is fetched from the provider again and replaces the saved \
+                      file atomically.",
         after_help = "Examples:\n  iris jobs download job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs download \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json"
     )]
@@ -528,8 +531,10 @@ pub enum JobsCommand {
     /// Delete LOCAL job records (no remote cancellation or deletion)
     #[command(
         long_about = "Delete local job records only. Remote jobs are not cancelled and downloaded files are \
-                      not deleted. Jobs that are still submitting or running are refused unless --force \
-                      (they would become unrecoverable).",
+                      not deleted. Deletion is all or nothing. Without --force, jobs that are still \
+                      submitting or running, and succeeded jobs whose outputs were not downloaded while the \
+                      provider still keeps them, are refused (they would become unrecoverable). With --all \
+                      --force, unreadable job record files are deleted too.",
         after_help = "Examples:\n  iris jobs delete job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs delete --all\n  \
                       iris jobs delete --all --force --json"
     )]
@@ -594,7 +599,8 @@ pub struct JobsDeleteArgs {
     /// Delete every local job record
     #[arg(long)]
     pub all: bool,
-    /// Also delete records of jobs that are still submitting or running
+    /// Also delete jobs that are still submitting or running, or whose outputs were not downloaded
+    /// (with --all: also unreadable job records)
     #[arg(long)]
     pub force: bool,
 }
