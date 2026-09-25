@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 use crate::artifacts::{media, paths};
 use crate::catalog::{
-    CapabilitySource, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionSource, RawOption,
+    self, CapabilitySource, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionSource, RawOption,
     ResolvedModel, ResolvedOptions,
 };
 use crate::domain::{CostEstimate, ModelSource, Operation, Usage, Warning, WarningCode};
@@ -92,11 +92,26 @@ pub(crate) fn resolve_model(
         }
     };
     if let CapabilitySource::Borrowed { from } = resolved.source {
+        // An id that nearly names catalog models is more likely a slip than a new
+        // model; it is still sent as typed (a new model can look like a near miss).
+        let near: Vec<String> = catalog::suggestions(&ctx.catalog.models(), &resolved.id, Some(op))
+            .iter()
+            .map(|id| format!("-m {id}"))
+            .collect();
+        let slip = match near.as_slice() {
+            [] => String::new(),
+            [one] => format!("; did you mean {one}? --capabilities-from sends '{}' as typed", resolved.id),
+            [first, rest @ ..] => format!(
+                "; did you mean {first}{}? --capabilities-from sends '{}' as typed",
+                rest.iter().map(|m| format!(" or {m}")).collect::<String>(),
+                resolved.id
+            ),
+        };
         warnings.push(Warning::new(
             WarningCode::UnverifiedModelCapabilities,
             format!(
                 "'{}' is not in Iris's catalog; its capabilities are assumed to be those of '{from}' \
-                 (unverified), so the provider may reject options or inputs Iris accepted",
+                 (unverified), so the provider may reject options or inputs Iris accepted{slip}",
                 resolved.id
             ),
         ));

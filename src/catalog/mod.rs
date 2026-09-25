@@ -100,10 +100,12 @@ impl DeclinedName {
 /// generation command given the name, if any. The hint names the command that lists
 /// the models for `op`, after, for a name Iris declines, why and what to use instead
 /// for `op` ([`DeclinedName::hint`]), and otherwise the models `name` nearly names
-/// ([`suggestions`], also in `details.suggestions`) as "did you mean …?". Only an `-m`
-/// that is neither declined nor close to a model gets the suggestion to use a model
-/// Iris does not know yet with `--capabilities-from`. The app adds the models the
-/// command can use (`details.candidates`).
+/// ([`suggestions`], also in `details.suggestions`) as "did you mean …?", or, when
+/// those are all models of other operations, which operations they are for (they are
+/// not suggestions for `op`). Only an `-m` that is neither declined nor close to a
+/// model gets the suggestion to use a model Iris does not know yet with
+/// `--capabilities-from`. The app adds the models the command can use
+/// (`details.candidates`).
 pub fn unknown_model(
     models: &[&'static ModelSpec],
     name: &str,
@@ -126,9 +128,15 @@ pub fn unknown_model(
     };
     let declined = declined(name);
     let suggested = if declined.is_some() { Vec::new() } else { suggestions(models, name, op) };
+    // Close models of other operations are named for what they do, not suggested.
+    let elsewhere = match (&declined, suggested.as_slice(), op) {
+        (None, [], Some(_)) => suggestions(models, name, None),
+        _ => Vec::new(),
+    };
     let hint = match (declined, suggested.as_slice()) {
         (Some(declined), _) => declined.hint(op.as_slice(), &listing),
         (None, [_, ..]) => format!("did you mean {}? otherwise {listing}", or_list(&suggested)),
+        (None, []) if !elsewhere.is_empty() => format!("{}; {listing}", models_for(models, &elsewhere)),
         (None, []) if op.is_some() && !template => format!(
             "{listing}; to use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> to declare \
              which known model's capabilities it has"
@@ -241,14 +249,46 @@ fn word_matches(typed: &str, word: &str) -> bool {
     typed == word || (long(typed) && long(word) && strsim::jaro_winkler(typed, word) >= 0.9)
 }
 
+/// What the models `ids` of `models` are for, grouped by their operations:
+/// `veo-3.1-lite-generate-preview is a video.generate model`, `a and b are
+/// video.generate models`.
+fn models_for(models: &[&'static ModelSpec], ids: &[&str]) -> String {
+    let mut groups: Vec<(String, Vec<&str>)> = Vec::new();
+    for id in ids {
+        let Some(spec) = models.iter().find(|m| m.id == *id) else { continue };
+        let ops: Vec<&str> = spec.operations.iter().map(|op| op.as_str()).collect();
+        let ops = list_with(&ops, "and");
+        match groups.iter_mut().find(|(o, _)| *o == ops) {
+            Some((_, group)) => group.push(id),
+            None => groups.push((ops, vec![id])),
+        }
+    }
+    let clauses: Vec<String> = groups
+        .iter()
+        .map(|(ops, ids)| match ids.as_slice() {
+            [one] => {
+                let article = if ops.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                format!("{one} is {article} {ops} model")
+            }
+            many => format!("{} are {ops} models", list_with(many, "and")),
+        })
+        .collect();
+    clauses.join("; ")
+}
+
 /// `a`, `a or b`, `a, b, or c`.
 fn or_list(items: &[impl AsRef<str>]) -> String {
+    list_with(items, "or")
+}
+
+/// `a`, `a <conjunction> b`, `a, b, <conjunction> c`.
+fn list_with(items: &[impl AsRef<str>], conjunction: &str) -> String {
     let items: Vec<&str> = items.iter().map(AsRef::as_ref).collect();
     match items.as_slice() {
         [] => String::new(),
         [one] => one.to_string(),
-        [first, second] => format!("{first} or {second}"),
-        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+        [first, second] => format!("{first} {conjunction} {second}"),
+        [rest @ .., last] => format!("{}, {conjunction} {last}", rest.join(", ")),
     }
 }
 

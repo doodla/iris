@@ -454,8 +454,11 @@ never `gpt-image-2`. Words no model has are ignored, but the words some model ha
 than half of the name's words and not only digits, so `veo-4-ultra` and `sora-2`, which may be
 models Iris does not know yet, suggest nothing. Of the models left, those matching the most words
 exactly are suggested. With suggestions, the hint asks "did you mean …?" and does not offer
-`--capabilities-from`, which would send the name as given; only a name that is neither declined nor
-close to a model gets the `--capabilities-from` hint shown above:
+`--capabilities-from`, which would send the name as given. When the models a name nearly names are
+all for other operations, they are not suggestions for this one: the hint says what they are for
+instead (`veo-3.1-lite-generate-preview is a video.generate model; run …`), again without
+`--capabilities-from`. Only a name that is neither declined nor close to a model gets the
+`--capabilities-from` hint shown above:
 
 ```console
 $ iris image generate "x" -m gpt-image-2.5 --json
@@ -719,7 +722,7 @@ the code's registry); the `message` says what happened in the case at hand:
 
 | code | meaning |
 |---|---|
-| `unverified_model_capabilities` | the model was resolved with `--capabilities-from`: its capabilities are assumed to be the named known model's |
+| `unverified_model_capabilities` | the model was resolved with `--capabilities-from`: its capabilities are assumed to be the named known model's; when the id nearly names catalog models of the operation, the message also asks "did you mean -m …?" (the id is still sent as typed) |
 | `output_extension_adjusted` | an output file's extension was added (an `-o` path without one) or changed to match the type actually returned |
 | `output_renamed` | a different file appeared at the target meanwhile; the output was saved as `<stem>.<n>.<ext>` so nothing is overwritten |
 | `output_format_mismatch` | a valid image came back as another type than requested or labeled; it is kept under its real type |

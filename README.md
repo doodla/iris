@@ -238,14 +238,14 @@ declines, such as `dall-e-3`, `veo-3`, or the bare `nano-banana` (Google's Nano 
 `gemini-2.5-flash-image`), says why and what to use instead. An option the model does not take is
 refused naming the models that take it. The provider is the model's; results say which of the two
 named it (`model_source`: `flag` or `config`). For a model Iris doesn't know yet,
-`--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
-known model's capabilities (sent to the provider as given, validated as that known model, and
-flagged with an `unverified_model_capabilities` warning) rather than refusing outright. Iris makes
-no cost estimate for such a model, since the known model's prices may not apply, and the id must
-use characters the provider's API accepts in a model id (for Gemini and Veo: letters, digits, `.`,
-`_`, and `-`), checked before anything is sent. Any option a model accepts but has no typed flag
-for is reachable through `-O key=value` (repeatable); `iris models show <model>` lists every
-option, typed or `-O`-only.
+`--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a known model's capabilities
+(sent to the provider as given, validated as that known model, and flagged with an
+`unverified_model_capabilities` warning, which also asks "did you mean -m …?" when the id nearly
+names a catalog model) rather than refusing outright. Iris makes no cost estimate for such a model,
+since the known model's prices may not apply, and the id must use characters the provider's API
+accepts in a model id (for Gemini and Veo: letters, digits, `.`, `_`, and `-`), checked before
+anything is sent. Any option a model accepts but has no typed flag for is reachable through `-O
+key=value` (repeatable); `iris models show <model>` lists every option, typed or `-O`-only.
 
 Without `-o`/`-d`, Iris saves to the current directory under a predictable name: images as
 `iris-<ulid>.<ext>` (the extension follows the actual returned media type), and video job outputs

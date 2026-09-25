@@ -1025,14 +1025,39 @@ fn a_near_miss_model_asks_did_you_mean() {
         assert!(!hint.contains("--capabilities-from"), "{hint}");
         assert_eq!(candidate_ids(&v), catalog_ids(Some(&op)), "{model}");
     }
-    // A near miss of a model of another operation suggests nothing for this one.
+    // A near miss of models of another operation suggests nothing for this one; the
+    // hint says what those models are for, and offers no --capabilities-from.
+    for (model, hint) in [
+        ("veo-3.1-lite", "veo-3.1-lite-generate-preview is a video.generate model"),
+        (
+            "veo-3.1",
+            "veo-3.1-fast-generate-preview, veo-3.1-generate-preview, and veo-3.1-lite-generate-preview are \
+             video.generate models",
+        ),
+    ] {
+        let v = sb
+            .iris()
+            .args(["image", "generate", "x", "-m", model, "--dry-run", "--json"])
+            .run()
+            .err(2, "unknown_model");
+        assert_eq!(v["error"]["details"]["suggestions"], json!([]));
+        assert_eq!(
+            v["error"]["hint"],
+            format!("{hint}; run `iris models list --operation image.generate` and pass -m <MODEL>")
+        );
+    }
     let v = sb
         .iris()
-        .args(["image", "generate", "x", "-m", "veo-3.1", "--dry-run", "--json"])
+        .args(["video", "generate", "x", "-m", "nano-banana-lite", "--dry-run", "--json"])
         .run()
         .err(2, "unknown_model");
-    assert_eq!(v["error"]["details"]["suggestions"], json!([]));
-    assert!(v["error"]["hint"].as_str().unwrap().contains("--capabilities-from <KNOWN_MODEL>"), "{v}");
+    assert!(
+        v["error"]["hint"].as_str().unwrap().starts_with(
+            "gemini-3.1-flash-lite-image is an image.generate and image.edit model; run `iris models list \
+             --operation video.generate`"
+        ),
+        "{v}"
+    );
     // `models show` suggests among every model; a template near miss is suggested too.
     let v = sb.iris().args(["models", "show", "veo-lite-3.1", "--json"]).run().err(2, "unknown_model");
     assert_eq!(v["error"]["details"]["suggestions"], json!(["veo-3.1-lite-generate-preview"]));
@@ -1064,6 +1089,36 @@ fn a_near_miss_model_asks_did_you_mean() {
         human.stderr
     );
     assert_eq!(api.total(), 0, "nothing was sent");
+}
+
+/// An unknown `-m` given with `--capabilities-from` is sent as typed, with the
+/// `unverified_model_capabilities` warning; when it nearly names catalog models of
+/// the operation, the warning asks "did you mean -m …?" (a new model can look like
+/// a near miss, so the run is not refused).
+#[test]
+fn a_near_miss_sent_with_capabilities_from_is_named_in_the_warning() {
+    let sb = Sandbox::new();
+    let unverified = |model: &str| {
+        let v = sb
+            .iris()
+            .args(["video", "generate", "waves", "-m", model, "--capabilities-from", "veo-lite"])
+            .args(["--dry-run", "--json"])
+            .run()
+            .ok();
+        assert_eq!(v["result"]["model"], model);
+        let warnings = v["warnings"].as_array().unwrap();
+        let w = warnings.iter().find(|w| w["code"] == "unverified_model_capabilities").unwrap();
+        w["message"].as_str().unwrap().to_string()
+    };
+    let message = unverified("veo-3.1-lite");
+    assert!(
+        message.ends_with(
+            "; did you mean -m veo-3.1-lite-generate-preview? --capabilities-from sends 'veo-3.1-lite' as typed"
+        ),
+        "{message}"
+    );
+    let message = unverified("veo-4-ultra");
+    assert!(!message.contains("did you mean"), "{message}");
 }
 
 /// An option or input the model does not take is refused with the catalog models
