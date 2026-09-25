@@ -141,9 +141,10 @@ A finished operation with output URIs is `succeeded` with every URI recorded (th
 the private record): whether Iris trusts a URI enough to fetch it is a download decision, made anew
 by every download (see [Downloads](#downloads)). An output whose "URI" is not even an http(s) URL
 without user information or a fragment can never be downloaded: that output alone is recorded
-`failed` with `provider_bad_response` (warning `output_item_unusable`), is never offered for
-download, and the job's other outputs are kept. Only a provider-reported error (including a safety
-block), a finished operation without any output, or one whose every output URI is unusable
+`failed` with `provider_bad_response`, is never offered for download, and the job's other outputs
+are kept. Every command that sees the job finish or downloads it names such an output once, in a
+warning `output_item_unusable`. Only a provider-reported error (including a safety block), a
+finished operation without any output, or one whose every output URI is unusable
 (`provider_bad_response`) makes a job `failed`.
 
 A job that has ended without success keeps its error, and `jobs status`, `jobs wait`, and `jobs

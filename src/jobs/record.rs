@@ -273,6 +273,22 @@ impl JobOutput {
         output_uri_problem(&self.remote_uri)
     }
 
+    /// Warning `output_item_unusable` naming this output of job `job_id`, if its
+    /// URI is unusable ([`unusable_reason`](Self::unusable_reason)). Built here
+    /// only, so the poll that finds the job finished and the download that skips
+    /// the output report the same warning, which a command then gives once.
+    pub fn unusable_warning(&self, job_id: &JobId) -> Option<Warning> {
+        let why = self.unusable_reason()?;
+        Some(Warning::new(
+            "output_item_unusable",
+            format!(
+                "output {} of job {job_id} cannot be downloaded: the provider's URI for it is unusable ({why}); \
+                 the other outputs are unaffected",
+                self.index
+            ),
+        ))
+    }
+
     /// `pending` or `failed` and fetchable: a download may still get it.
     pub fn awaits_download(&self) -> bool {
         matches!(self.download_state, DownloadState::Pending | DownloadState::Failed)
@@ -834,14 +850,7 @@ impl JobRecord {
                     .with_detail("uri", redact::redact_url(&self.outputs[index as usize].remote_uri))
                     .with_hint("this output cannot be downloaded; the job's other outputs are unaffected");
                     self.record_output_problem(index, &error, DownloadState::Failed, now)?;
-                    warnings.push(Warning::new(
-                        "output_item_unusable",
-                        format!(
-                            "output {index} of job {} cannot be downloaded: the provider's URI for it is \
-                             unusable ({why}); the other outputs are unaffected",
-                            self.job_id
-                        ),
-                    ));
+                    warnings.extend(self.outputs[index as usize].unusable_warning(&self.job_id));
                 }
                 PollApplied::Succeeded { warnings }
             }

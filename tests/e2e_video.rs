@@ -587,35 +587,46 @@ fn done_with_samples(veo: &VeoMock, uris: &[&str]) -> wiremock::ResponseTemplate
     )
 }
 
+/// The messages of the `output_item_unusable` warnings in an envelope.
+fn unusable_warnings(v: &Value) -> Vec<&str> {
+    let warnings = v["warnings"].as_array().unwrap().iter();
+    warnings.filter(|w| w["code"] == "output_item_unusable").map(|w| w["message"].as_str().unwrap()).collect()
+}
+
 #[test]
 fn a_finished_job_keeps_every_usable_sample_when_another_has_an_unusable_uri() {
     let sb = Sandbox::new();
     let veo = VeoMock::start();
     let id = submit_detached(&sb, &veo, &[]);
     let good = veo.output_uri();
-    veo.operation.set(done_with_samples(&veo, &[&good, "ftp://files.example/v.mp4"]));
+    veo.operation.set(done_with_samples(&veo, &[&good, "ftp://files.example/v.mp4", &good]));
 
     let out = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run();
     let v = out.ok();
     let job = job_of(&v);
     assert_eq!(job["status"], "succeeded");
-    assert_eq!(job["artifacts"].as_array().unwrap().len(), 1, "{job}");
+    assert_eq!(job["artifacts"].as_array().unwrap().len(), 2, "{job}");
     assert_video(&job["artifacts"][0], &sb.path(&format!("{id}-1.mp4")));
+    assert_video(&job["artifacts"][1], &sb.path(&format!("{id}-3.mp4")));
     assert_eq!(job["outputs"][1]["download_state"], "failed");
     assert_eq!(job["outputs"][1]["last_error"]["code"], "provider_bad_response");
     assert_eq!(job["outputs"][1]["last_error"]["retryable"], false);
-    assert!(warning_codes(&v).contains(&"output_item_unusable".to_string()), "{v}");
-    assert_eq!(v["result"]["next_steps"], json!([]), "nothing is left that a download could get");
-    assert_eq!(veo.file_fetches(), 1);
-
-    // A later download keeps the saved output and names the unusable one again.
-    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
-    let codes = warning_codes(&v);
-    assert!(
-        codes.contains(&"already_downloaded".to_string())
-            && codes.contains(&"output_item_unusable".to_string())
+    // The poll that saw the job finish and the download that skipped the output
+    // both meet it; the command names it once.
+    assert_eq!(
+        unusable_warnings(&v),
+        [format!(
+            "output 1 of job {id} cannot be downloaded: the provider's URI for it is unusable (it is not an \
+         http(s) URL); the other outputs are unaffected"
+        )]
     );
-    assert_eq!(veo.file_fetches(), 1);
+    assert_eq!(v["result"]["next_steps"], json!([]), "nothing is left that a download could get");
+    assert_eq!(veo.file_fetches(), 2);
+
+    // A later download keeps the saved outputs and names the unusable one again, once.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert_eq!(warning_codes(&v), ["already_downloaded", "output_item_unusable", "already_downloaded"]);
+    assert_eq!(veo.file_fetches(), 2);
     assert_eq!(job_of(&v)["outputs"][1]["last_error"]["details"]["uri"], "ftp://files.example/v.mp4");
     assert_eq!(sb.record(&id)["outputs"][1]["remote_uri"], "ftp://files.example/v.mp4", "kept as sent");
 
@@ -635,6 +646,36 @@ fn a_finished_job_keeps_every_usable_sample_when_another_has_an_unusable_uri() {
     assert_eq!(veo.file_fetches(), 0);
     assert_eq!(veo.submits(), 1);
     veo.assert_no_credential_leaks();
+}
+
+#[test]
+fn every_command_that_sees_a_job_finish_names_an_unusable_output_once() {
+    // `jobs wait` is covered above; `jobs download` (whose status check sees the
+    // job finish) and `video generate` also poll, then download.
+    for command in ["jobs download", "video generate"] {
+        let sb = Sandbox::new();
+        let veo = VeoMock::start();
+        let good = veo.output_uri();
+        let done = || done_with_samples(&veo, &[&good, "https://user:pw@files.example/v.mp4"]);
+        let v = if command == "jobs download" {
+            let id = submit_detached(&sb, &veo, &[]);
+            veo.operation.set(done());
+            sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok()
+        } else {
+            veo.operation.set(done());
+            let args = ["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--json"];
+            sb.iris().gemini(&veo.api).args(args).run().ok()
+        };
+        let job = job_of(&v);
+        assert_eq!(job["status"], "succeeded", "{command}: {v}");
+        assert_eq!(job["artifacts"].as_array().unwrap().len(), 1, "{command}: {job}");
+        let unusable = unusable_warnings(&v);
+        assert_eq!(unusable.len(), 1, "{command}: {v}");
+        assert!(unusable[0].starts_with(&format!("output 1 of job {} ", job["job_id"].as_str().unwrap())));
+        assert!(!v.to_string().contains("pw@"), "{command}: {v}");
+        assert_eq!((veo.submits(), veo.file_fetches()), (1, 1), "{command}");
+        veo.assert_no_credential_leaks();
+    }
 }
 
 #[test]

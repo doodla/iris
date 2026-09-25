@@ -313,8 +313,12 @@ fn outputs_with_unusable_uris_fail_alone_and_only_all_of_them_fail_the_job() {
         let (good, broken) = (&rec.outputs()[0], &rec.outputs()[1]);
         assert_eq!(good.download_state, DownloadState::Pending);
         assert!(good.awaits_download() && good.unusable_reason().is_none());
+        assert_eq!(good.unusable_warning(rec.job_id()), None);
         assert_eq!(broken.download_state, DownloadState::Failed);
         assert!(!broken.awaits_download() && broken.unusable_reason().is_some(), "{bad}");
+        // The same warning a later download gives for the output (so a command
+        // that polls and then downloads can give it once).
+        assert_eq!(broken.unusable_warning(rec.job_id()).as_ref(), Some(&warnings[0]));
         let error = broken.last_error.as_ref().unwrap();
         assert_eq!(error.code, ErrorCode::ProviderBadResponse);
         assert_eq!(error.retryable, Some(false));

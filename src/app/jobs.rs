@@ -946,14 +946,13 @@ async fn download_outputs(
     for ((out, planned), &decision) in rec.outputs().iter().zip(&plan.paths).zip(&decisions) {
         // The provider gave no usable URI for this output (recorded `failed` when
         // the job finished): nothing can fetch it, and the others are unaffected.
-        if let Some(why) = out.unusable_reason() {
-            warnings.push(Warning::new(
-                "output_item_unusable",
-                format!(
-                    "output {} of job {id} cannot be downloaded: the provider's URI for it is unusable ({why})",
-                    out.index
-                ),
-            ));
+        // One warning per output and command: when this command's own poll saw
+        // the job finish (`jobs wait`, `video generate`, or the refresh of `jobs
+        // download`), that poll has reported it already.
+        if let Some(warning) = out.unusable_warning(id) {
+            if !warnings.contains(&warning) {
+                warnings.push(warning);
+            }
             continue;
         }
         let recorded = out.recorded_file();
