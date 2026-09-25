@@ -247,7 +247,8 @@ provider's credential variable removed and its base URL pointed at a dead local 
 in `tests/cli_process.rs`; `Iris::new` and `credential_vars` in `tests/support/process.rs`), so a
 developer's real key for the new provider never reaches the offline suite.
 
-**Contract, help text, package metadata, and documents that name providers, updated by hand:**
+**Contract, help text, package metadata, documents, and test and verification tooling that name
+providers, updated by hand:**
 
 - The JSON Schema. `ProviderId` is an enum in the published schema (every `provider` field), so
   regenerate it with `cargo run -q -- schema > schema/iris-output.v1.schema.json`
@@ -271,8 +272,21 @@ developer's real key for the new provider never reaches the offline suite.
   [architecture.md](architecture.md)'s module table (it names `providers/{openai,gemini}/` and
   `catalog/{openai,gemini,veo}.rs`), `CHANGELOG.md`, and [decisions.md](decisions.md) (the API
   choices you made, with source links and the date you checked them; see section 1).
-- `AGENTS.md`'s credential rule, which names the variables Iris reads: a new variable is a
-  deliberate change to that rule.
+- `AGENTS.md`'s credential rule and `SECURITY.md` (its scope and its notes on how Iris handles
+  secrets), which name the variables Iris reads: a new variable is a deliberate change to that
+  rule. The bug report template (`.github/ISSUE_TEMPLATE/bug_report.md`) lists the providers.
+- Fixtures for the provider's own tests. For the process tests: a fake key next to `OPENAI_KEY`
+  and `GEMINI_KEY` in `tests/support/process.rs`, added to the key scans in `Out::assert_hygiene`
+  there and in `MockApi::assert_credentials_only_in` (`tests/support/mock.rs`), and a helper like
+  `Iris::gemini` that points the provider at a mock server with that key. For the in-process app
+  tests: a fake key in `tests/app_support.rs`, set by `Sandbox::env`.
+- The opt-in live verification. `scripts/live-verify.sh` names each provider's variables in its
+  usage text and in three checks: its mock-mode guard (every `IRIS_*_BASE_URL` must point at
+  loopback and every key must be fake), its refusal to run live while any `IRIS_*_BASE_URL`
+  override is set, and its key-leak scan (`leaks_secret`). `tests/live/README.md` describes those
+  rules. Add the new provider's variables to the usage text, all three checks, and that README.
+  Add live steps for the provider, with their costs in `tests/live/README.md` and
+  [live-testing.md](live-testing.md), only deliberately: they are paid.
 
 Deliberately provider-specific, and not needed for a new provider: `doctor`'s warning that
 `GOOGLE_API_KEY` is set but ignored, and each adapter's own error mapping.
