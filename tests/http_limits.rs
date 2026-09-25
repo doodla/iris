@@ -211,7 +211,6 @@ fn veo_request(reference_bytes: usize) -> VideoRequest {
         vec![InputImage {
             role: InputRole::Reference,
             path: PathBuf::from("/tmp/ref.png"),
-            file_name: "ref.png".to_string(),
             media_type: "image/png".to_string(),
             bytes,
         }]

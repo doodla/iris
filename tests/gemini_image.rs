@@ -77,7 +77,6 @@ fn input(bytes: Vec<u8>, media_type: &str, name: &str) -> InputImage {
     InputImage {
         role: InputRole::Image,
         path: PathBuf::from(format!("/tmp/{name}")),
-        file_name: name.to_string(),
         media_type: media_type.to_string(),
         bytes,
     }
@@ -1028,8 +1027,7 @@ async fn check_access_reports_rejected_keys_and_unknown_outcomes() {
 fn the_provider_declares_origin_base_url_header_auth_and_retention() {
     let p = GeminiProvider::new();
     assert_eq!(p.id(), ProviderId::Gemini);
-    assert_eq!(p.default_base_url(), "https://generativelanguage.googleapis.com");
-    assert_eq!(p.default_base_url(), ProviderId::Gemini.default_base_url());
+    assert_eq!(p.id().default_base_url(), "https://generativelanguage.googleapis.com");
     assert_eq!(p.credential_header().name, "x-goog-api-key");
     assert_eq!(p.credential_header().prefix, "");
     assert!(p.image().is_some() && p.video().is_some());

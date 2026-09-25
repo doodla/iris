@@ -106,7 +106,6 @@ fn input(role: InputRole, name: &str, media_type: &str, bytes: Vec<u8>) -> Input
     InputImage {
         role,
         path: PathBuf::from(format!("/fixtures/{name}")),
-        file_name: name.to_string(),
         media_type: media_type.to_string(),
         bytes,
     }
@@ -214,7 +213,7 @@ async fn generate_err(server: &MockServer) -> IrisError {
 fn provider_metadata_and_registry_entry() {
     let p = OpenAiProvider::new();
     assert_eq!(p.id(), ProviderId::OpenAi);
-    assert_eq!(p.default_base_url(), "https://api.openai.com/v1");
+    assert_eq!(p.id().default_base_url(), "https://api.openai.com/v1");
     assert_eq!(p.docs_url(), "https://developers.openai.com/api/docs/guides/image-generation");
     let h = p.credential_header();
     assert_eq!((h.name, h.prefix), ("authorization", "Bearer "));

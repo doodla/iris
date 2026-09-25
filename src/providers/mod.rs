@@ -48,8 +48,6 @@ pub enum InputRole {
 pub struct InputImage {
     pub role: InputRole,
     pub path: PathBuf,
-    /// File name without directories, for multipart uploads.
-    pub file_name: String,
     /// Media type sniffed from content (e.g. `image/png`).
     pub media_type: String,
     pub bytes: Vec<u8>,
@@ -59,7 +57,6 @@ impl std::fmt::Debug for InputImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("InputImage")
             .field("role", &self.role)
-            .field("file_name", &self.file_name)
             .field("media_type", &self.media_type)
             .field("bytes", &self.bytes.len())
             .finish()
@@ -199,12 +196,9 @@ pub struct ProviderContext {
 /// Common provider surface.
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// The provider's identity; its default API base URL and credential variable
+    /// are [`ProviderId::default_base_url`] and [`ProviderId::credential_env`].
     fn id(&self) -> ProviderId;
-    /// The default API base URL: [`ProviderId::default_base_url`], the single
-    /// definition configuration also uses.
-    fn default_base_url(&self) -> &'static str {
-        self.id().default_base_url()
-    }
     fn credential_header(&self) -> CredentialHeader;
     fn docs_url(&self) -> &'static str;
 

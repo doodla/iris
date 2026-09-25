@@ -1,8 +1,8 @@
 //! Iris: generate and edit images and generate videos through multiple providers
 //! from one agent-friendly CLI.
 //!
-//! Layering (a module only depends on those after it):
-//! `cli -> app -> {providers, jobs, artifacts, catalog, config, output} -> {http, redact, error, domain}`.
+//! The module layers (which module may depend on which, and why) are described in
+//! `docs/architecture.md#layering`.
 
 #![forbid(unsafe_code)]
 

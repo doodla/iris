@@ -34,7 +34,7 @@ fn png(width: u32, height: u32) -> Vec<u8> {
 }
 
 #[test]
-fn valid_image_is_read_with_sniffed_type_and_safe_upload_name() {
+fn valid_image_is_read_with_its_sniffed_type() {
     let dir = tempfile::tempdir().unwrap();
     // PNG content behind a misleading name and extension.
     let path = dir.path().join("my photo (1).JPEG");
@@ -46,7 +46,6 @@ fn valid_image_is_read_with_sniffed_type_and_safe_upload_name() {
     assert_eq!(img.bytes, bytes);
     assert_eq!(img.path, path);
     assert!(img.path.is_absolute());
-    assert_eq!(img.file_name, "my_photo__1_.png");
 }
 
 #[test]
@@ -135,7 +134,6 @@ fn heic_is_accepted_by_sniffing_when_declared() {
     let spec = InputSpec { input_media_types: &["image/png", "image/heif"], ..SPEC };
     let img = read_input_image(&path, InputRole::Image, &spec).unwrap();
     assert_eq!(img.media_type, "image/heic");
-    assert_eq!(img.file_name, "photo.heic");
 }
 
 #[test]

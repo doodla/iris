@@ -23,9 +23,8 @@ use super::media;
 /// * a mask that must have an alpha channel has one.
 ///
 /// Every failure is `input_file_invalid` naming the file (and the accepted types
-/// where relevant). The returned `path` is absolute; `file_name` is a sanitized
-/// name (`[A-Za-z0-9._-]`) with the extension of the sniffed type. Rules that relate
-/// several inputs are checked by [`check_request_inputs`].
+/// where relevant). The returned `path` is absolute. Rules that relate several
+/// inputs are checked by [`check_request_inputs`].
 pub fn read_input_image(path: &Path, role: InputRole, spec: &InputSpec) -> Result<InputImage, IrisError> {
     let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
     let shown = abs.display().to_string();
@@ -85,13 +84,7 @@ pub fn read_input_image(path: &Path, role: InputRole, spec: &InputSpec) -> Resul
         media::validate_bytes(&bytes, &[]).map_err(corrupt)?;
     }
 
-    Ok(InputImage {
-        role,
-        file_name: upload_name(&abs, media_type),
-        path: abs,
-        media_type: media_type.to_string(),
-        bytes,
-    })
+    Ok(InputImage { role, path: abs, media_type: media_type.to_string(), bytes })
 }
 
 /// Rules that relate several inputs of one request, checked after every input was
@@ -190,19 +183,4 @@ fn role_label(role: InputRole) -> String {
         InputRole::Reference => "reference image",
     }
     .to_string()
-}
-
-/// `<sanitized stem>.<canonical ext>`, for multipart uploads and provider display.
-fn upload_name(path: &Path, media_type: &str) -> String {
-    let stem: String = path
-        .file_stem()
-        .map(|s| s.to_string_lossy())
-        .unwrap_or_default()
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
-        .take(100)
-        .collect();
-    let stem = if stem.trim_matches('.').is_empty() { "image".to_string() } else { stem };
-    let ext = media::extension_for(media_type).unwrap_or("bin");
-    format!("{stem}.{ext}")
 }

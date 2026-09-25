@@ -72,7 +72,6 @@ fn image(role: InputRole, media_type: &str, bytes: &[u8]) -> InputImage {
     InputImage {
         role,
         path: PathBuf::from("/tmp/frame"),
-        file_name: "frame".to_string(),
         media_type: media_type.to_string(),
         bytes: bytes.to_vec(),
     }

@@ -464,9 +464,6 @@ impl Provider for FakeProvider {
     fn id(&self) -> ProviderId {
         self.id
     }
-    fn default_base_url(&self) -> &'static str {
-        "http://127.0.0.1:9"
-    }
     fn credential_header(&self) -> CredentialHeader {
         match self.id {
             ProviderId::OpenAi => CredentialHeader { name: "authorization", prefix: "Bearer " },
