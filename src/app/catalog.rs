@@ -1,9 +1,9 @@
 //! The set of models the app resolves against.
 //!
-//! In production this is the built-in catalog, and every lookup delegates to the
-//! contract functions in [`crate::catalog`] (`find`, `default_model`, `resolve`).
-//! Tests can inject their own static [`ModelSpec`]s; resolution over a custom list
-//! runs the same code (`crate::catalog::resolve_in`).
+//! In production this is the built-in catalog. Tests can inject their own static
+//! [`ModelSpec`]s. Either way every lookup runs the shared functions of
+//! [`crate::catalog`] (`find_in`, `default_model_in`, `providers_for_in`,
+//! `resolve_in`) over [`Catalog::models`], so both follow the same rules.
 
 use crate::catalog::{self, ModelSpec, ResolvedModel};
 use crate::domain::{Operation, ProviderId};
@@ -36,31 +36,17 @@ impl Catalog {
 
     /// Look up a model by id or alias.
     pub fn find(&self, id_or_alias: &str) -> Option<&'static ModelSpec> {
-        match &self.custom {
-            None => catalog::find(id_or_alias),
-            Some(models) => {
-                models.iter().copied().find(|m| m.id == id_or_alias || m.aliases.contains(&id_or_alias))
-            }
-        }
+        catalog::find_in(self.models(), id_or_alias)
     }
 
     /// The provider's default model for an operation.
     pub fn default_model(&self, provider: ProviderId, op: Operation) -> Option<&'static ModelSpec> {
-        match &self.custom {
-            None => catalog::default_model(provider, op),
-            Some(models) => {
-                models.iter().copied().find(|m| m.provider == provider && m.default_for.contains(&op))
-            }
-        }
+        catalog::default_model_in(self.models(), provider, op)
     }
 
     /// Providers with at least one model supporting `op`, sorted.
     pub fn providers_for(&self, op: Operation) -> Vec<ProviderId> {
-        let mut out: Vec<ProviderId> =
-            self.models().into_iter().filter(|m| m.supports(op)).map(|m| m.provider).collect();
-        out.sort();
-        out.dedup();
-        out
+        catalog::providers_for_in(self.models(), op)
     }
 
     /// Operations supported by at least one model of `provider`, in canonical order.
@@ -74,17 +60,14 @@ impl Catalog {
     }
 
     /// Resolve `--model` / `--capabilities-from` / `--provider` (see
-    /// [`crate::catalog::resolve`] for the rules; custom lists use the same code).
+    /// [`crate::catalog::resolve`] for the rules).
     pub fn resolve(
         &self,
         model: &str,
         capabilities_from: Option<&str>,
         provider: Option<ProviderId>,
     ) -> Result<ResolvedModel, IrisError> {
-        match &self.custom {
-            None => catalog::resolve(model, capabilities_from, provider),
-            Some(models) => catalog::resolve_in(models, model, capabilities_from, provider),
-        }
+        catalog::resolve_in(&self.models(), model, capabilities_from, provider)
     }
 }
 

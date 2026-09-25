@@ -32,12 +32,31 @@ pub fn all() -> impl Iterator<Item = &'static ModelSpec> {
 
 /// Look up a model by id or alias (case-sensitive ids; aliases are lowercase).
 pub fn find(id_or_alias: &str) -> Option<&'static ModelSpec> {
-    all().find(|m| m.id == id_or_alias || m.aliases.contains(&id_or_alias))
+    find_in(all(), id_or_alias)
+}
+
+/// [`find`] over an explicit model list. Ids and aliases are unique across the
+/// built-in catalog (a test checks it), so at most one model matches there.
+pub fn find_in(
+    models: impl IntoIterator<Item = &'static ModelSpec>,
+    id_or_alias: &str,
+) -> Option<&'static ModelSpec> {
+    models.into_iter().find(|m| m.id == id_or_alias || m.aliases.contains(&id_or_alias))
 }
 
 /// The provider's default model for an operation, if the provider supports it.
 pub fn default_model(provider: ProviderId, op: Operation) -> Option<&'static ModelSpec> {
-    all().find(|m| m.provider == provider && m.default_for.contains(&op))
+    default_model_in(all(), provider, op)
+}
+
+/// [`default_model`] over an explicit model list. The built-in catalog declares at
+/// most one default per provider and operation (a test checks it).
+pub fn default_model_in(
+    models: impl IntoIterator<Item = &'static ModelSpec>,
+    provider: ProviderId,
+    op: Operation,
+) -> Option<&'static ModelSpec> {
+    models.into_iter().find(|m| m.provider == provider && m.default_for.contains(&op))
 }
 
 /// The syntax of model ids `provider`'s adapter can send (checked for unknown ids
@@ -51,7 +70,16 @@ pub fn model_id_syntax(provider: ProviderId) -> ModelIdSyntax {
 
 /// Providers that implement an operation with at least one model.
 pub fn providers_for(op: Operation) -> Vec<ProviderId> {
-    let mut out: Vec<ProviderId> = all().filter(|m| m.supports(op)).map(|m| m.provider).collect();
+    providers_for_in(all(), op)
+}
+
+/// [`providers_for`] over an explicit model list, sorted.
+pub fn providers_for_in(
+    models: impl IntoIterator<Item = &'static ModelSpec>,
+    op: Operation,
+) -> Vec<ProviderId> {
+    let mut out: Vec<ProviderId> =
+        models.into_iter().filter(|m| m.supports(op)).map(|m| m.provider).collect();
     out.sort();
     out.dedup();
     out
@@ -109,7 +137,7 @@ pub fn resolve_in(
     capabilities_from: Option<&str>,
     provider: Option<ProviderId>,
 ) -> Result<ResolvedModel, IrisError> {
-    let find = |id: &str| models.iter().copied().find(|m| m.id == id || m.aliases.contains(&id));
+    let find = |id: &str| find_in(models.iter().copied(), id);
     if let Some(spec) = find(model) {
         if capabilities_from.is_some() {
             return Err(IrisError::usage(format!(
@@ -169,7 +197,37 @@ pub fn resolve_in(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
+
+    /// Lookups return the first match, so a name declared twice, or a second default
+    /// for one provider and operation, would be shadowed silently: the whole catalog
+    /// must be unambiguous.
+    #[test]
+    fn names_are_unique_and_each_provider_has_at_most_one_default_per_operation() {
+        let mut names: BTreeMap<String, &str> = BTreeMap::new();
+        for m in all() {
+            for name in std::iter::once(m.id).chain(m.aliases.iter().copied()) {
+                // Case-insensitively, so two names never differ only in case.
+                if let Some(other) = names.insert(name.to_ascii_lowercase(), m.id) {
+                    panic!("'{name}' names both {other} and {}", m.id);
+                }
+            }
+            for op in m.default_for {
+                assert!(m.supports(*op), "{} is the default for {op}, which it does not support", m.id);
+            }
+        }
+        for &provider in ProviderId::ALL {
+            for &op in Operation::ALL {
+                let defaults: Vec<&str> = all()
+                    .filter(|m| m.provider == provider && m.default_for.contains(&op))
+                    .map(|m| m.id)
+                    .collect();
+                assert!(defaults.len() <= 1, "{provider} has several defaults for {op}: {defaults:?}");
+            }
+        }
+    }
 
     #[test]
     fn every_catalog_id_and_alias_satisfies_its_providers_model_id_syntax() {
