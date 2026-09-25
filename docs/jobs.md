@@ -487,7 +487,7 @@ ids:
 ```console
 $ iris jobs delete --all
 error[invalid_argument]: 2 of the 3 job(s) cannot be deleted: job_01m3a3eg0fgm3qsnw4eybjd7v5 (running), job_01m39pq2gd0a7w3k5c8e1v6h9n (submitting; probably abandoned, shown as submission_unknown); nothing was deleted
-  hint: wait for active jobs to finish (`iris jobs wait <id>`), delete the other jobs by id, or pass --force to delete the local records anyway (remote jobs are not cancelled; for a job still submitting, check the provider console first)
+  hint: wait for active jobs to finish (`iris jobs wait <id>`), delete the other jobs by id, or pass --force to delete the local records anyway (remote jobs are not cancelled, and outputs not downloaded can no longer be fetched; for a job still submitting, check the provider console first)
 $ echo $?
 2
 ```
