@@ -7,12 +7,18 @@
 use std::collections::BTreeSet;
 
 use iris::catalog::{
-    InputCounts, ModelSpec, OptionKind, OptionSource, OptionValue, RawOption, validate_request,
+    EstimateInput, InputCounts, ModelSpec, OptionKind, OptionSource, OptionValue, RawOption, ResolvedOptions,
+    validate_request,
 };
 use iris::domain::Operation;
 
 /// Input names a constraint may refer to (the plan's input roles).
 pub const INPUT_NAMES: &[&str] = &["image", "mask", "first_frame", "last_frame", "reference"];
+
+/// An option as `-O name=value` gives it.
+fn raw(name: &str, value: &str) -> RawOption {
+    RawOption { name: name.to_string(), value: value.to_string(), source: OptionSource::Generic }
+}
 
 /// Values to try for one option: unset, then a sample of valid values.
 fn candidates(kind: &OptionKind, default: Option<&str>) -> Vec<Option<String>> {
@@ -34,6 +40,31 @@ fn candidates(kind: &OptionKind, default: Option<&str>) -> Vec<Option<String>> {
         }
     }
     values
+}
+
+/// Every combination of candidate values, one per option of `op` (see
+/// [`candidates`]); `also` adds a value to try for an option it names.
+fn option_combinations(spec: &ModelSpec, op: Operation, also: &[(&str, &str)]) -> Vec<Vec<RawOption>> {
+    let mut combinations: Vec<Vec<RawOption>> = vec![Vec::new()];
+    for option in spec.options_for(op) {
+        let mut values = candidates(&option.kind, option.default);
+        for (_, value) in also.iter().filter(|(name, _)| *name == option.name) {
+            if !values.contains(&Some(value.to_string())) {
+                values.push(Some(value.to_string()));
+            }
+        }
+        combinations = combinations
+            .into_iter()
+            .flat_map(|combination| {
+                values.iter().map(move |value| {
+                    let mut combination = combination.clone();
+                    combination.extend(value.as_deref().map(|value| raw(option.name, value)));
+                    combination
+                })
+            })
+            .collect();
+    }
+    combinations
 }
 
 /// Input combinations within the model's declared limits for `op`.
@@ -120,28 +151,7 @@ pub fn assert_constraints_cover_the_validator(spec: &ModelSpec) {
 
     let mut hit: BTreeSet<String> = BTreeSet::new();
     for op in spec.operations {
-        // Every combination of candidate values, one per option of `op`.
-        let mut combinations: Vec<Vec<RawOption>> = vec![Vec::new()];
-        for option in spec.options_for(*op) {
-            let values = candidates(&option.kind, option.default);
-            combinations = combinations
-                .into_iter()
-                .flat_map(|raw| {
-                    values.iter().map(move |value| {
-                        let mut raw = raw.clone();
-                        if let Some(value) = value {
-                            raw.push(RawOption {
-                                name: option.name.to_string(),
-                                value: value.clone(),
-                                source: OptionSource::Generic,
-                            });
-                        }
-                        raw
-                    })
-                })
-                .collect();
-        }
-        for raw in &combinations {
+        for raw in &option_combinations(spec, *op, &[]) {
             for counts in input_combinations(spec, *op) {
                 let Err(e) = validate_request(spec, *op, raw, counts) else { continue };
                 let constraint = e.details.get("constraint").and_then(|c| c.as_str()).unwrap_or_else(|| {
@@ -159,4 +169,67 @@ pub fn assert_constraints_cover_the_validator(spec: &ModelSpec) {
     }
     let missing: Vec<&str> = declared.iter().copied().filter(|c| !hit.contains(*c)).collect();
     assert!(missing.is_empty(), "{}: declared constraints never enforced: {missing:?}", spec.id);
+}
+
+/// Outputs a request with `options` asks for: the explicit or default `count`, else 1.
+fn output_count(spec: &ModelSpec, op: Operation, options: &ResolvedOptions) -> i64 {
+    if !spec.options_for(op).any(|o| o.name == "count") {
+        return 1;
+    }
+    spec.effective(options, "count").and_then(|v| v.as_int()).unwrap_or(1)
+}
+
+/// The model's declared cheapest request (`Estimator::lowest`) is its cheapest valid
+/// single-output request, as its own estimator prices it:
+///
+/// * the declared options are options of the model, validate for every operation of
+///   the model (by its own rules), ask for one output, and are estimated the same for
+///   every operation, as `ModelSpec::lowest_estimate` reports;
+/// * no valid single-output combination of option values (every enum and boolean
+///   value, integer bounds, unset; a pattern option unset, at its default, or at its
+///   declared value) and input counts within the declared limits is estimated lower.
+///
+/// A pattern option has more values than these (OpenAI's `size`), so a provider's
+/// tests also try that option's values themselves.
+pub fn assert_lowest_estimate_is_the_cheapest(spec: &ModelSpec) {
+    let Some(estimator) = spec.estimate else {
+        assert!(spec.lowest_estimate().is_none(), "{}", spec.id);
+        return;
+    };
+    let (options, lowest) =
+        spec.lowest_estimate().unwrap_or_else(|| panic!("{}: its cheapest request has no estimate", spec.id));
+    let declared: Vec<RawOption> = estimator.lowest.iter().map(|(name, value)| raw(name, value)).collect();
+    let estimate = |op: Operation, options: &ResolvedOptions| {
+        (estimator.estimate)(spec, &EstimateInput { operation: op, options, count: 1 })
+    };
+    let mut tried = 0;
+    for &op in spec.operations {
+        let minimal = input_combinations(spec, op)[0];
+        let resolved = validate_request(spec, op, &declared, minimal)
+            .unwrap_or_else(|e| panic!("{} {op}: the cheapest request is invalid: {}", spec.id, e.message));
+        assert_eq!(resolved, options, "{} {op}", spec.id);
+        assert_eq!(output_count(spec, op, &resolved), 1, "{} {op}: one output", spec.id);
+        assert_eq!(estimate(op, &resolved).as_ref(), Some(&lowest), "{} {op}", spec.id);
+
+        for raw in option_combinations(spec, op, estimator.lowest) {
+            for counts in input_combinations(spec, op) {
+                let Ok(options) = validate_request(spec, op, &raw, counts) else { continue };
+                if output_count(spec, op, &options) != 1 {
+                    continue;
+                }
+                tried += 1;
+                if let Some(e) = estimate(op, &options) {
+                    assert!(
+                        e.amount >= lowest.amount,
+                        "{} {op}: {raw:?} is estimated at {} (below the declared cheapest request, {}): {}",
+                        spec.id,
+                        e.amount,
+                        lowest.amount,
+                        e.basis
+                    );
+                }
+            }
+        }
+    }
+    assert!(tried > 0, "{}", spec.id);
 }

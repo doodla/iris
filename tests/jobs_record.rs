@@ -745,6 +745,7 @@ static TEST_SPEC: ModelSpec = ModelSpec {
     id: "veo-test",
     provider: ProviderId::Gemini,
     display_name: "Veo test",
+    summary: "A test video model",
     aliases: &[],
     lifecycle: Lifecycle::Preview,
     operations: &[Operation::VideoGenerate],

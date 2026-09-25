@@ -28,8 +28,8 @@ machine-readable contract for agents.
 - **Explicit models.** Every generation command names its model: `-m`/`--model`, or the model
   the config file names (`[image] model`, `[video] model`); Iris never chooses one. Without
   either, the command fails with `model_required` (exit 2) before anything is sent, listing the
-  models that support the operation. The provider is the model's, and results report
-  `model_source` (`flag` or `config`).
+  models that support the operation with their summaries and lowest estimates. The provider is
+  the model's, and results report `model_source` (`flag` or `config`).
 - **Local validation before anything is sent.** Options, inputs and cross-option rules are declared
   per model in the catalog and checked identically by `--dry-run` and a real run (mask rules,
   inline request caps, model-id syntax for `--capabilities-from` models included). The API key is
@@ -90,10 +90,12 @@ machine-readable contract for agents.
   warning codes open to later additions.
 - A stable error taxonomy with documented exit codes (0, 1, 2, 3, 4, 5, 130) and a registry of
   warning codes; tests check the documented tables and every help example against the code.
-- `iris models list`/`show`: declared operations, options (typed defaults, `max_chars`),
-  machine-readable `constraints`, input requirements, output types, published prices with their
-  source and date, and documented access requirements. `--check-access` is a free check of
-  whether a model is visible to your key.
+- `iris models list`/`show`: a one-line summary of what each model is for, the estimate of its
+  cheapest single-output request (`lowest_estimate`, computed by the model's own estimator),
+  declared operations, options (typed defaults, `max_chars`), machine-readable `constraints`,
+  input requirements, output types, published prices with their source and date, and documented
+  access requirements. `--check-access` is a free check of whether a model is visible to your
+  key.
 - `iris config show`/`path`, `iris doctor` (exits 0 whenever its checks ran; read `healthy`;
   `--check-access` checks every model of each provider whose key is set),
   `iris completions` (bash, zsh, fish, elvish) and `iris version` (`git_commit` is set by release

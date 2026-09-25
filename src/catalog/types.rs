@@ -229,6 +229,18 @@ pub struct RequestRules {
 /// Cost estimator hook (before the call, from options).
 pub type CostEstimator = fn(&ModelSpec, &EstimateInput<'_>) -> Option<CostEstimate>;
 
+/// A model's pre-call cost estimate: the estimator, and the request it estimates
+/// lowest.
+#[derive(Debug, Clone, Copy)]
+pub struct Estimator {
+    pub estimate: CostEstimator,
+    /// Option values (`name`, value as `-O` takes it) of the model's cheapest
+    /// single-output request; the options not listed keep their defaults.
+    /// `models list` and `models show` report its estimate as `lowest_estimate`, and
+    /// the catalog tests check that no valid request is estimated lower.
+    pub lowest: &'static [(&'static str, &'static str)],
+}
+
 /// Post-call cost estimator hook, from provider-reported usage. The usage already
 /// covers every output of the response, so implementations must not multiply by count.
 pub type UsageEstimator = fn(&ModelSpec, &crate::domain::Usage) -> Option<CostEstimate>;
@@ -260,6 +272,10 @@ pub struct ModelSpec {
     pub id: &'static str,
     pub provider: ProviderId,
     pub display_name: &'static str,
+    /// One line for choosing the model: what it is for and its trade-off, in the
+    /// provider's documented terms (or, where the provider says nothing, factual
+    /// differences such as options and prices).
+    pub summary: &'static str,
     /// Alternative names accepted by `--model` (e.g. "nano-banana-2").
     pub aliases: &'static [&'static str],
     pub lifecycle: Lifecycle,
@@ -274,7 +290,8 @@ pub struct ModelSpec {
     pub docs_url: &'static str,
     /// Cross-option rules and the validator enforcing them, if any.
     pub validate: Option<RequestRules>,
-    pub estimate: Option<CostEstimator>,
+    /// Pre-call cost estimate, if the model's published prices support one.
+    pub estimate: Option<Estimator>,
     /// Post-call estimate from reported usage (preferred over `estimate` when it returns a value).
     pub estimate_usage: Option<UsageEstimator>,
 }
@@ -299,5 +316,20 @@ impl ModelSpec {
             let spec = self.option(name)?;
             spec.default.and_then(|d| OptionValue::parse(&spec.kind, d).ok())
         })
+    }
+
+    /// The options of the model's cheapest single-output request ([`Estimator::lowest`])
+    /// and the estimate its own estimator gives them, for its first operation (the
+    /// catalog tests check that every operation gives the same); `None` without an
+    /// estimator.
+    pub fn lowest_estimate(&self) -> Option<(ResolvedOptions, CostEstimate)> {
+        let estimator = self.estimate?;
+        let mut options = ResolvedOptions::new();
+        for (name, value) in estimator.lowest {
+            options.insert(*name, OptionValue::parse(&self.option(name)?.kind, value).ok()?);
+        }
+        let operation = *self.operations.first()?;
+        let estimate = (estimator.estimate)(self, &EstimateInput { operation, options: &options, count: 1 })?;
+        Some((options, estimate))
     }
 }

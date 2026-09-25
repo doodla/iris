@@ -169,7 +169,9 @@ fn model_required(ctx: &AppContext, op: Operation) -> IrisError {
 
 /// The models a generation command for `op` can use, in catalog order, as listed in
 /// an error's `details.candidates`: one object per model, `{model, provider,
-/// display_name, aliases}`.
+/// display_name, summary, aliases, lowest_estimate}` (the `lowest_estimate` of
+/// `models list`: the options of the cheapest single-output request and their
+/// estimate, null without an estimator).
 fn candidates(ctx: &AppContext, op: Operation) -> Vec<Value> {
     ctx.catalog
         .models()
@@ -180,7 +182,9 @@ fn candidates(ctx: &AppContext, op: Operation) -> Vec<Value> {
                 "model": m.id,
                 "provider": m.provider,
                 "display_name": m.display_name,
+                "summary": m.summary,
                 "aliases": m.aliases,
+                "lowest_estimate": super::models::lowest_estimate(m),
             })
         })
         .collect()
@@ -268,7 +272,7 @@ pub(crate) fn estimate(
     count: u32,
 ) -> Option<CostEstimate> {
     let spec = priced(model)?;
-    spec.estimate.and_then(|f| f(spec, &EstimateInput { operation: op, options: opts, count }))
+    spec.estimate.and_then(|e| (e.estimate)(spec, &EstimateInput { operation: op, options: opts, count }))
 }
 
 /// The cost estimate from the usage a provider reported for a completed call (it

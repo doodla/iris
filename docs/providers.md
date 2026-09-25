@@ -123,6 +123,7 @@ pub static MODELS: &[ModelSpec] = &[
         id: "seedance-1-pro",                       // sent to the provider verbatim
         provider: ProviderId::Seedance,
         display_name: "Seedance 1 Pro",
+        summary: "…",                                 // what it is for and its trade-off, in one line
         aliases: &[],                                 // e.g. dated-snapshot aliases
         lifecycle: Lifecycle::Preview,                 // ga | preview | deprecated, as documented
         operations: &[Operation::VideoGenerate],
@@ -135,7 +136,10 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: &["Preview model", "Paid tier required"],
         docs_url: "https://…",
         validate: Some(RULES),                         // cross-field rules and their published constraints
-        estimate: Some(estimate_pre_call),              // pre-call cost estimate, or None if unsupportable
+        estimate: Some(Estimator {                      // pre-call cost estimate, or None if unsupportable
+            estimate: estimate_pre_call,
+            lowest: &[("duration", "4")],               // the cheapest single-output request's options
+        }),
         estimate_usage: None,                           // post-call estimate from reported usage, if any
     },
 ];
@@ -190,7 +194,18 @@ Then:
    catalog tests: it tries every combination of declared values and fails if the check rejects
    something that is not a declared constraint, or a declared constraint is never enforced.
 6. Cite your sources: `pricing` entries carry `source_url` and `as_of`; `access_notes` state
-   documented account requirements in the provider's own words, never inferred ones.
+   documented account requirements in the provider's own words, never inferred ones. The
+   `summary` says what the model is for and its trade-off in the provider's documented terms;
+   where the provider says nothing that helps choose, state factual differences (options, prices)
+   rather than marketing.
+7. If the model's prices support an estimate before the call, set `estimate` to an `Estimator`: the
+   estimate function, and in `lowest` the option values of the model's cheapest single-output
+   request. `models list` and `models show` report that request's estimate as `lowest_estimate`,
+   computed by the same function, and so do the `model_required` candidates. Call
+   `catalog_support::assert_lowest_estimate_is_the_cheapest` from your catalog tests: it validates
+   the declared options and fails if any valid combination of declared values is estimated lower
+   (try the values of a pattern option, such as OpenAI's `size`, in your own test, as
+   `tests/openai_catalog.rs` does).
 
 ## 4. Register the adapter
 

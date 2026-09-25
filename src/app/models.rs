@@ -8,9 +8,9 @@ use crate::config::EnvSnapshot;
 use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
-    AccessView, ConstraintView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities,
-    ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult,
-    ProviderView,
+    AccessView, ConstraintView, InputsView, LimitsView, LowestEstimate, MaskRequirementsView,
+    ModelCapabilities, ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView,
+    ProviderListResult, ProviderView,
 };
 use crate::providers::AccountAccess;
 use crate::redact;
@@ -40,10 +40,23 @@ fn summary(m: &ModelSpec) -> ModelSummary {
         id: m.id.to_string(),
         provider: m.provider,
         display_name: m.display_name.to_string(),
+        summary: m.summary.to_string(),
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
         operations: m.operations.to_vec(),
+        lowest_estimate: lowest_estimate(m),
     }
+}
+
+/// The model's cheapest single-output request and its estimate
+/// ([`ModelSpec::lowest_estimate`]), as `models list`, `models show`, and the
+/// `model_required` candidates report it.
+pub(crate) fn lowest_estimate(m: &ModelSpec) -> Option<LowestEstimate> {
+    let (options, cost_estimate) = m.lowest_estimate()?;
+    Some(LowestEstimate {
+        options: options.iter().map(|(name, value)| (name.clone(), value.clone())).collect(),
+        cost_estimate,
+    })
 }
 
 /// `models show <MODEL>`: declared capabilities, options (with their defaults),
@@ -102,6 +115,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
         id: m.id.to_string(),
         provider: m.provider,
         display_name: m.display_name.to_string(),
+        summary: m.summary.to_string(),
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
         operations: m.operations.to_vec(),
@@ -150,6 +164,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
                 as_of: p.as_of.to_string(),
             })
             .collect(),
+        lowest_estimate: lowest_estimate(m),
         access: AccessView {
             credential_env: m.provider.credential_env().to_string(),
             credential_present,

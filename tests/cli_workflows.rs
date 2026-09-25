@@ -501,6 +501,24 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     let ids: Vec<&str> =
         v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["fake-image-1", "fake-gemini-image", "fake-video-1"]);
+    // To choose by: what each model is for, and the estimate of its cheapest
+    // single-output request (null without an estimator), in JSON and in the table.
+    let models = v["result"]["models"].as_array().unwrap();
+    assert_eq!(models[0]["summary"], FAKE_IMAGE_MODEL.summary);
+    assert_eq!(models[0]["lowest_estimate"]["options"], serde_json::json!({"quality": "low"}));
+    assert_eq!(models[0]["lowest_estimate"]["cost_estimate"]["amount"], 0.01);
+    assert!(models[1]["lowest_estimate"].is_null(), "{}", models[1]);
+    assert_eq!(models[2]["lowest_estimate"]["options"], serde_json::json!({"duration": "4"}));
+    // The estimate always comes with the options that give it.
+    let table = f.run(&["models", "list"]).await.stdout;
+    let lines: Vec<&str> = table.lines().collect();
+    assert!(lines[0].starts_with("MODEL ") && lines[0].ends_with(" ALIASES"), "{table}");
+    assert!(lines[1].starts_with("fake-image-1 "), "{table}");
+    assert_eq!(lines[2], format!("  {}", FAKE_IMAGE_MODEL.summary));
+    assert_eq!(lines[3], "  cheapest single-output request: ~$0.0100 with quality=low");
+    assert!(lines[4].starts_with("fake-gemini-image "), "{table}");
+    assert_eq!(lines[6], "  no estimate before the call");
+    assert_eq!(lines.last().unwrap(), &"  cheapest single-output request: ~$0.4000 with duration=4");
     let v = f.run(&["models", "list", "--operation", "video.generate", "--json"]).await.json();
     assert_eq!(v["result"]["models"].as_array().unwrap().len(), 1);
     let v = f.run(&["models", "list", "--provider", "gemini", "--json"]).await.json();
@@ -554,6 +572,16 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     assert_eq!(run.error_code(), "unknown_model");
     let run = f.run(&["models", "show", "fake-img"]).await;
     assert!(run.stdout.contains("--quality: low|high|auto (default auto)"), "{}", run.stdout);
+    assert!(
+        run.stdout.contains(&format!("\n  summary:     {}\n", FAKE_IMAGE_MODEL.summary)),
+        "{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout.contains("\n  cheapest:    ~$0.0100 USD with --quality low (1 image(s) x $0.01 (fake))\n"),
+        "{}",
+        run.stdout
+    );
 
     let run = f.run(&["providers", "list", "--json"]).await;
     let v = run.json();

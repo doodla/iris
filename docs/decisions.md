@@ -240,6 +240,43 @@ naming `nano-banana-2` and `nano-banana-pro`, and `model = "nano-banana"` in the
 [Veo guide](https://ai.google.dev/gemini-api/docs/veo) ·
 [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
 
+### What each model is for, and what it costs at least
+
+**Decision.** Every catalog model has a one-line `summary` (what it is for and its trade-off) and
+declares the options of its cheapest single-output request. `models list` and `models show`
+report both (the request's options and estimate as `lowest_estimate`; human output shows the
+estimate with those options), and the `model_required` candidates carry the summary and the same
+`lowest_estimate`. An estimate never appears without the options that give it. The summaries use
+the providers' own positioning: OpenAI's guide chooses Sunburst for workflows where editing
+precision matters most and Flare for fast, high-quality everyday generation (its most capable
+and its fastest model); Google describes Nano Banana 2 as its most versatile image model, Nano
+Banana 2 Lite as its fastest and cheapest, Nano Banana Pro as the premium choice for the most
+complex visual tasks, Veo 3.1 Standard as best for professional-grade 4K output and complex
+camera movements, and the Veo Fast versions as optimized for speed. For GPT Image 2, which its
+page calls state-of-the-art while the guide says to use a 2.5 model for new integrations, the
+summary gives that advice and the documented differences: its quality levels and, by OpenAI's
+calculator (indicative for the 2.5 models), its output tokens. The catalog tests check the
+summaries' relative price claims against the rate tables. The Gemini image and Veo guides were
+checked for this on 2026-09-25, the other pages on 2026-09-24.
+
+**Why.** An agent must name its model (see [No default model](#no-default-model)), so it needs to
+know what each model is for and what it costs before choosing, without reading provider pages.
+The lowest estimate is computed by the model's own estimator, so it cannot disagree with the
+estimate a dry run of that request gets, and a test fails if any valid combination of declared
+option values (and, for OpenAI, any valid size) is estimated lower than the declared request.
+OpenAI's cheapest request is `--quality low --size 1440x480`, not a square size: the calculator
+formula scales each quality's base down by the aspect ratio, so at low quality 1024x1024 needs 196
+output tokens, 1536x1024 158, and 1440x480 54. That is OpenAI's published formula, not an Iris
+quirk, and the `size` option's description says so.
+
+**Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
+[OpenAI image generation guide (calculator)](https://developers.openai.com/api/docs/guides/image-generation) ·
+[Gemini image generation guide](https://ai.google.dev/gemini-api/docs/image-generation) ·
+[Veo guide](https://ai.google.dev/gemini-api/docs/veo) ·
+[Veo 3.1 model page](https://ai.google.dev/gemini-api/docs/models/veo-3.1-generate-preview) ·
+[OpenAI pricing](https://developers.openai.com/api/docs/pricing) ·
+[Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
+
 ## Paid requests: retries and uncertain outcomes
 
 ### Retry classes, and why vendor retry guidance is overridden

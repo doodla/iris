@@ -4,12 +4,14 @@
 //! These values come from verified research against Google's official
 //! documentation (docs checked 2026-09-24). Where the provider's pages
 //! disagree, the conservative value is declared (Flash Lite: 1K only and the ten
-//! aspect ratios listed on its model card).
+//! aspect ratios listed on its model card). The summaries follow the image
+//! generation guide's description of each model (checked 2026-09-25) and the
+//! published per-image prices.
 
 use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
 
 use super::types::{
-    EstimateInput, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
+    EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
     OutputSpec, PriceRule, RequestSizeLimit,
 };
 use super::{CATALOG_AS_OF, round_usd};
@@ -228,12 +230,21 @@ pub const DECLINED_NAMES: &[(&str, &str)] = &[(
      (gemini-3.1-flash-image) or nano-banana-pro (gemini-3-pro-image)",
 )];
 
+/// The cheapest single-output request of Nano Banana 2: the smallest resolution
+/// (the per-image price depends only on it).
+const LOWEST_FLASH: &[(&str, &str)] = &[("resolution", "512")];
+/// The cheapest single-output request of the models whose smallest resolution is 1K
+/// (Nano Banana Pro charges as much for 2K).
+const LOWEST_1K: &[(&str, &str)] = &[("resolution", "1K")];
+
 /// Built-in Gemini image models.
 pub static MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "gemini-3.1-flash-image",
         provider: ProviderId::Gemini,
         display_name: "Nano Banana 2 (Gemini 3.1 Flash Image)",
+        summary: "Google's most versatile image model, balancing speed with 4K output, world knowledge and text \
+                  rendering; good with multiple reference images",
         aliases: &["nano-banana-2"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
@@ -245,13 +256,15 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: &[ACCESS_NOTE_PAID_TIER, ACCESS_NOTE_AUTH_KEY],
         docs_url: DOCS_URL,
         validate: None,
-        estimate: Some(estimate_image),
+        estimate: Some(Estimator { estimate: estimate_image, lowest: LOWEST_FLASH }),
         estimate_usage: Some(estimate_from_usage),
     },
     ModelSpec {
         id: "gemini-3.1-flash-lite-image",
         provider: ProviderId::Gemini,
         display_name: "Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)",
+        summary: "Google's fastest and cheapest image model: 1K only, and not optimized for multiple reference \
+                  images or multi-turn editing",
         aliases: &["nano-banana-2-lite"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
@@ -267,13 +280,15 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: None,
-        estimate: Some(estimate_image),
+        estimate: Some(Estimator { estimate: estimate_image, lowest: LOWEST_1K }),
         estimate_usage: Some(estimate_from_usage),
     },
     ModelSpec {
         id: "gemini-3-pro-image",
         provider: ProviderId::Gemini,
         display_name: "Nano Banana Pro (Gemini 3 Pro Image)",
+        summary: "Google's premium image model for the most complex visual tasks and professional assets; the \
+                  highest per-image price at each resolution",
         aliases: &["nano-banana-pro"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
@@ -285,7 +300,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: &[ACCESS_NOTE_PAID_TIER, ACCESS_NOTE_AUTH_KEY],
         docs_url: DOCS_URL,
         validate: None,
-        estimate: Some(estimate_image),
+        estimate: Some(Estimator { estimate: estimate_image, lowest: LOWEST_1K }),
         estimate_usage: Some(estimate_from_usage),
     },
 ];

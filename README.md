@@ -51,9 +51,10 @@ prices before a call or from the provider's own reported usage after one — see
 - **Machine-readable everything**: a versioned `--json` envelope, a published JSON Schema
   (`iris schema`), a stable error-code taxonomy, and a documented exit-code mapping, so an agent
   never has to parse human prose.
-- **Honest capability reporting**: `iris models show` lists exactly what a model accepts, its
-  published prices, and documented access requirements, generated from Iris's built-in catalog —
-  never invented.
+- **Honest capability reporting**: `iris models list` says what each model is for and what its
+  cheapest request costs, and `iris models show` lists exactly what a model accepts, its published
+  prices, and documented access requirements, generated from Iris's built-in catalog — never
+  invented.
 
 Out of scope for v1: a GUI, a hosted backend or daemon, browser automation of consumer apps
 (ChatGPT, the Gemini app, Google Flow), speculative future providers, automatic cross-provider
@@ -323,18 +324,54 @@ Generated from `iris models list` / `iris models show` against Iris's built-in c
 $ iris models list
 MODEL                          PROVIDER  LIFECYCLE  OPERATIONS                  ALIASES
 gpt-image-2.5-sunburst         openai    ga         image.generate, image.edit  gpt-image-2.5-sunburst-2026-09-08
+  OpenAI's most capable image model, for workflows where editing precision matters most
+  cheapest single-output request: ~$0.0016 with quality=low size=1440x480
 gpt-image-2.5-flare            openai    ga         image.generate, image.edit  gpt-image-2.5-flare-2026-09-08
+  OpenAI's fastest image model, for fast, high-quality everyday generation, at the same token rates
+  as Sunburst
+  cheapest single-output request: ~$0.0016 with quality=low size=1440x480
 gpt-image-2                    openai    ga         image.generate, image.edit  gpt-image-2-2026-04-21
+  The earlier GPT Image model; OpenAI says to use a 2.5 model for new integrations. Quality up to
+  high, and at medium and high about 4x the 2.5 models' output tokens (OpenAI's calculator,
+  indicative for 2.5)
+  cheapest single-output request: ~$0.0016 with quality=low size=1440x480
 gemini-3.1-flash-image         gemini    ga         image.generate, image.edit  nano-banana-2
+  Google's most versatile image model, balancing speed with 4K output, world knowledge and text
+  rendering; good with multiple reference images
+  cheapest single-output request: ~$0.0450 with resolution=512
 gemini-3.1-flash-lite-image    gemini    ga         image.generate, image.edit  nano-banana-2-lite
+  Google's fastest and cheapest image model: 1K only, and not optimized for multiple reference
+  images or multi-turn editing
+  cheapest single-output request: ~$0.0336 with resolution=1K
 gemini-3-pro-image             gemini    ga         image.generate, image.edit  nano-banana-pro
+  Google's premium image model for the most complex visual tasks and professional assets; the
+  highest per-image price at each resolution
+  cheapest single-output request: ~$0.1340 with resolution=1K
 veo-3.1-fast-generate-preview  gemini    preview    video.generate              veo-fast
+  Veo 3.1 optimized for speed: every Veo option Iris offers, 4k and reference images included, at a
+  lower per-second price than Veo 3.1 Standard
+  cheapest single-output request: ~$0.4000 with duration=4 resolution=720p
 veo-3.1-generate-preview       gemini    preview    video.generate              veo
+  Veo 3.1 Standard, which Google calls best for professional-grade 4K output and complex camera
+  movements; every Veo option Iris offers, at the highest per-second price
+  cheapest single-output request: ~$1.6000 with duration=4 resolution=720p
 veo-3.1-lite-generate-preview  gemini    preview    video.generate              veo-lite
+  The lowest-priced Veo model: up to 1080p, with no 4k, no reference images, and no negative prompt
+  cheapest single-output request: ~$0.2000 with duration=4 resolution=720p
 ```
 
-Choose a model by what it accepts and what it costs (`iris models show <model>` lists both), then
-pass its id or alias with `-m`, or name it once in the config file so commands without `-m` use it:
+Each model's row is followed by its summary (what it is for and its trade-off, from the
+provider's documentation) and the estimate of its cheapest single-output request with the options
+that give it, computed by the same estimator as a real request's (`lowest_estimate` with
+`--json`). For the OpenAI models that request is 1440x480 at low quality, a 3:1 size: by
+OpenAI's published calculator formula a non-square size never needs more output tokens than a
+square one with the same number of pixels, so a larger non-square size can cost less than a
+smaller square one. A 1024x1024 image at low quality is estimated at $0.00588.
+
+Choose a model by what it is for, what it accepts, and what it costs: `iris models list` shows
+the summaries and lowest estimates, `iris models show <model>` every option and published price,
+and `--dry-run` the estimate of the exact request before you pay for it. Then pass the model's id
+or alias with `-m`, or name it once in the config file so commands without `-m` use it:
 
 ```toml
 [image]

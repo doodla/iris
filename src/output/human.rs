@@ -127,7 +127,12 @@ fn saved_lines(artifacts: &[Artifact]) -> String {
 
 /// A cost estimate; the basis always says how it was estimated.
 fn cost(c: &CostEstimate) -> String {
-    format!("~${:.4} {} ({})", c.amount, c.currency, c.basis)
+    format!("{} {} ({})", amount(c), c.currency, c.basis)
+}
+
+/// The amount of a cost estimate, marked as approximate: `~$0.0059`.
+fn amount(c: &CostEstimate) -> String {
+    format!("~${:.4}", c.amount)
 }
 
 fn image(res: &ImageResult, r: &mut Rendered) {
@@ -298,6 +303,9 @@ fn lifecycle<T: serde::Serialize>(l: &T) -> String {
     serde_json::to_value(l).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
+/// One row per model, each followed by its summary and the estimate of its cheapest
+/// single-output request with the options that give it, indented and wrapped at
+/// [`NOTE_WIDTH`] columns.
 fn model_list(res: &ModelListResult) -> String {
     if res.models.is_empty() {
         return "No models in the catalog.\n".to_string();
@@ -315,7 +323,48 @@ fn model_list(res: &ModelListResult) -> String {
             ]
         })
         .collect();
-    table(&["MODEL", "PROVIDER", "LIFECYCLE", "OPERATIONS", "ALIASES"], &rows)
+    let table = table(&["MODEL", "PROVIDER", "LIFECYCLE", "OPERATIONS", "ALIASES"], &rows);
+    let mut lines = table.lines();
+    let mut out = format!("{}\n", lines.next().unwrap_or_default());
+    for (line, m) in lines.zip(&res.models) {
+        let cost = match &m.lowest_estimate {
+            Some(lowest) => {
+                let options: Vec<String> =
+                    lowest.options.iter().map(|(name, value)| format!("{name}={value}")).collect();
+                let with = if options.is_empty() { "the defaults".to_string() } else { options.join(" ") };
+                format!("cheapest single-output request: {} with {with}", amount(&lowest.cost_estimate))
+            }
+            None => "no estimate before the call".to_string(),
+        };
+        let _ = writeln!(out, "{line}");
+        out.push_str(&wrapped(&m.summary, "  ", NOTE_WIDTH));
+        out.push_str(&wrapped(&cost, "  ", NOTE_WIDTH));
+    }
+    out
+}
+
+/// Width of the indented notes under a table row.
+const NOTE_WIDTH: usize = 100;
+
+/// `text` in lines of at most `width` columns, each starting with `indent` (a word
+/// longer than a line keeps a line of its own).
+fn wrapped(text: &str, indent: &str, width: usize) -> String {
+    let mut out = String::new();
+    let mut line = String::new();
+    for word in text.split_whitespace() {
+        if !line.is_empty() && indent.len() + line.chars().count() + 1 + word.chars().count() > width {
+            let _ = writeln!(out, "{indent}{line}");
+            line.clear();
+        }
+        if !line.is_empty() {
+            line.push(' ');
+        }
+        line.push_str(word);
+    }
+    if !line.is_empty() {
+        let _ = writeln!(out, "{indent}{line}");
+    }
+    out
 }
 
 fn model_show(m: &ModelCapabilities) -> String {
@@ -324,6 +373,7 @@ fn model_show(m: &ModelCapabilities) -> String {
     let mut field = |label: &str, value: String| {
         let _ = writeln!(out, "  {:<12} {value}", format!("{label}:"));
     };
+    field("summary", m.summary.clone());
     if !m.aliases.is_empty() {
         field("aliases", join(&m.aliases));
     }
@@ -402,6 +452,21 @@ fn model_show(m: &ModelCapabilities) -> String {
                 p.usd, p.unit, p.description, p.as_of, p.source_url
             );
         }
+    }
+    if let Some(lowest) = &m.lowest_estimate {
+        let options: Vec<String> = lowest
+            .options
+            .iter()
+            .map(|(name, value)| {
+                match m.options.iter().find(|o| &o.name == name).and_then(|o| o.flag.as_ref()) {
+                    Some(flag) => format!("{flag} {value}"),
+                    None => format!("-O {name}={value}"),
+                }
+            })
+            .collect();
+        let with = if options.is_empty() { "the defaults".to_string() } else { options.join(" ") };
+        let c = &lowest.cost_estimate;
+        let _ = writeln!(out, "  cheapest:    {} {} with {with} ({})", amount(c), c.currency, c.basis);
     }
     let a = &m.access;
     let access = match a.account_access {
@@ -528,6 +593,13 @@ fn plan(res: &PlanResult) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notes_wrap_at_word_boundaries() {
+        assert_eq!(wrapped("aa bb cc", "  ", 7), "  aa bb\n  cc\n");
+        assert_eq!(wrapped("aa averyverylongword b", "  ", 7), "  aa\n  averyverylongword\n  b\n");
+        assert_eq!(wrapped("", "  ", 7), "");
+    }
 
     #[test]
     fn tables_align_columns_and_trim_trailing_space() {

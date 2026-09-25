@@ -18,8 +18,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use iris::app::{AppContext, Catalog, Clock, Deps, Interrupt, Progress};
 use iris::catalog::{
-    Constraint, EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelSpec, OptionKind, OptionSpec,
-    OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
+    Constraint, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, MaskSpec, ModelSpec, OptionKind,
+    OptionSpec, OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
 use iris::config::{CliOverrides, EnvSnapshot, Platform, Resolved, SettingSource, Settings};
 use iris::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
@@ -124,6 +124,7 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     id: "fake-image-1",
     provider: ProviderId::OpenAi,
     display_name: "Fake Image 1",
+    summary: "A fake OpenAI-like image model with a mask and an estimator",
     aliases: &["fake-img"],
     lifecycle: Lifecycle::Ga,
     operations: IMAGE_OPS,
@@ -155,7 +156,7 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     access_notes: &["Fake access note"],
     docs_url: "https://example.invalid/docs",
     validate: None,
-    estimate: Some(fake_image_estimate),
+    estimate: Some(Estimator { estimate: fake_image_estimate, lowest: &[("quality", "low")] }),
     estimate_usage: Some(fake_usage_estimate),
 };
 
@@ -188,6 +189,7 @@ pub static FAKE_GEMINI_IMAGE: ModelSpec = ModelSpec {
     id: "fake-gemini-image",
     provider: ProviderId::Gemini,
     display_name: "Fake Gemini Image",
+    summary: "A fake Gemini-like image model without an estimator",
     aliases: &[],
     lifecycle: Lifecycle::Ga,
     operations: IMAGE_OPS,
@@ -278,6 +280,7 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
     id: "fake-video-1",
     provider: ProviderId::Gemini,
     display_name: "Fake Video 1",
+    summary: "A fake Veo-like video model",
     aliases: &["fake-vid"],
     lifecycle: Lifecycle::Preview,
     operations: VIDEO_OPS,
@@ -304,7 +307,7 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
     access_notes: &["Preview model (fake)"],
     docs_url: "https://example.invalid/video",
     validate: Some(RequestRules { constraints: &[FAKE_LAST_FRAME_RULE], check: fake_video_rules }),
-    estimate: Some(fake_video_estimate),
+    estimate: Some(Estimator { estimate: fake_video_estimate, lowest: &[("duration", "4")] }),
     estimate_usage: None,
 };
 

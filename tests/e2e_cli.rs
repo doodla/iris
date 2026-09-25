@@ -552,7 +552,15 @@ fn a_command_without_a_model_is_model_required_and_sends_nothing() {
             let spec = iris::catalog::find(candidates[0]).unwrap();
             assert_eq!(first["provider"], spec.provider.as_str());
             assert_eq!(first["display_name"], spec.display_name);
+            assert_eq!(first["summary"], spec.summary);
             assert_eq!(first["aliases"], serde_json::json!(spec.aliases));
+            // What each model costs at least, to choose by, with the options that give it:
+            // the `lowest_estimate` `models list` reports.
+            for (candidate, id) in e["details"]["candidates"].as_array().unwrap().iter().zip(&candidates) {
+                let (options, estimate) = iris::catalog::find(id).unwrap().lowest_estimate().unwrap();
+                let lowest = serde_json::json!({ "options": options, "cost_estimate": estimate });
+                assert_eq!(candidate["lowest_estimate"], lowest, "{id}");
+            }
             // The config file was chosen explicitly (IRIS_CONFIG), so the command the hint
             // suggests names it.
             let path = config.to_str().unwrap();

@@ -14,6 +14,12 @@
 //! * prices: token rates per 1M tokens, identical for all three models.
 //! * estimates: the output-token formula of the calculator on OpenAI's image
 //!   generation guide. Billing uses the response's `usage`; see [`cost_from_usage`].
+//! * summaries: the image generation guide's choice between the 2.5 models (Sunburst
+//!   "for workflows where editing precision matters most", Flare "for fast,
+//!   high-quality everyday image generation") and their model pages (Sunburst is
+//!   "our most capable model", Flare "our fastest model"). For GPT Image 2 the guide
+//!   says "For new integrations, use one of the GPT Image 2.5 models", so its summary
+//!   gives that advice and the documented differences.
 
 use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
 use crate::error::IrisError;
@@ -21,8 +27,8 @@ use crate::error::IrisError;
 use super::options::OptionValue;
 use super::round_usd;
 use super::types::{
-    Constraint, EstimateInput, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec, OptionKind,
-    OptionSpec, OutputSpec, PriceRule, RequestRules, ValidationInput,
+    Constraint, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec,
+    OptionKind, OptionSpec, OutputSpec, PriceRule, RequestRules, ValidationInput,
 };
 
 /// Official pricing page the rates below come from.
@@ -145,7 +151,10 @@ const SIZE: OptionSpec = OptionSpec {
     description: "Output size: `auto` (the model chooses; no pre-call cost estimate) or WIDTHxHEIGHT \
                   with both edges multiples of 16, the longer edge at most 3840, an aspect ratio of at \
                   most 3:1, and 655,360 to 8,294,400 pixels. Sizes above 2560x1440 are experimental. \
-                  1024x1024, 1536x1024 and 1024x1536 are the recommended sizes.",
+                  1024x1024, 1536x1024 and 1024x1536 are the recommended sizes. By OpenAI's published \
+                  calculator formula a non-square size never needs more output tokens than a square one with \
+                  the same number of pixels, so a larger non-square size can cost less than a smaller square \
+                  one (low: 1536x1024 is 158 tokens, 1024x1024 is 196).",
 };
 
 const QUALITY_2_5: OptionSpec = OptionSpec {
@@ -218,12 +227,20 @@ const OPTIONS_2_5: &[OptionSpec] =
     &[COUNT, SIZE, QUALITY_2_5, FORMAT, COMPRESSION, BACKGROUND_2_5, MODERATION];
 const OPTIONS_2: &[OptionSpec] = &[COUNT, SIZE, QUALITY_2, FORMAT, COMPRESSION, BACKGROUND_2, MODERATION];
 
+/// The cheapest single-output request of every GPT Image model: `low` quality at
+/// 1440x480. The calculator formula scales the quality's base down by the aspect
+/// ratio, so a size near 3:1 with few pixels needs the fewest output tokens (54 at
+/// low, where 1024x1024 needs 196); 1408x480 and 1424x480 need as many for fewer
+/// pixels. `tests/openai_catalog.rs` checks it against every valid size.
+const LOWEST: &[(&str, &str)] = &[("quality", "low"), ("size", "1440x480")];
+
 /// The OpenAI models Iris knows.
 pub static MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "gpt-image-2.5-sunburst",
         provider: ProviderId::OpenAi,
         display_name: "GPT Image 2.5 Sunburst",
+        summary: "OpenAI's most capable image model, for workflows where editing precision matters most",
         aliases: &["gpt-image-2.5-sunburst-2026-09-08"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
@@ -235,13 +252,15 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: Some(RULES),
-        estimate: Some(estimate_gpt_image_2_5),
+        estimate: Some(Estimator { estimate: estimate_gpt_image_2_5, lowest: LOWEST }),
         estimate_usage: Some(cost_from_usage),
     },
     ModelSpec {
         id: "gpt-image-2.5-flare",
         provider: ProviderId::OpenAi,
         display_name: "GPT Image 2.5 Flare",
+        summary: "OpenAI's fastest image model, for fast, high-quality everyday generation, at the same token \
+                  rates as Sunburst",
         aliases: &["gpt-image-2.5-flare-2026-09-08"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
@@ -253,13 +272,16 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: Some(RULES),
-        estimate: Some(estimate_gpt_image_2_5),
+        estimate: Some(Estimator { estimate: estimate_gpt_image_2_5, lowest: LOWEST }),
         estimate_usage: Some(cost_from_usage),
     },
     ModelSpec {
         id: "gpt-image-2",
         provider: ProviderId::OpenAi,
         display_name: "GPT Image 2",
+        summary: "The earlier GPT Image model; OpenAI says to use a 2.5 model for new integrations. Quality up to \
+                  high, and at medium and high about 4x the 2.5 models' output tokens (OpenAI's calculator, \
+                  indicative for 2.5)",
         aliases: &["gpt-image-2-2026-04-21"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
@@ -271,7 +293,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: Some(RULES),
-        estimate: Some(estimate_gpt_image_2),
+        estimate: Some(Estimator { estimate: estimate_gpt_image_2, lowest: LOWEST }),
         estimate_usage: Some(cost_from_usage),
     },
 ];

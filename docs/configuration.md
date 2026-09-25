@@ -227,8 +227,9 @@ $ echo $?
 
 With `--json`, the error's `details` hold the `operation`, the `config_key` (`image.model` or
 `video.model`), the resolved `config_file`, and the `candidates`: one `{model, provider,
-display_name, aliases}` object per catalog model that supports the operation, in catalog order
-(see [json-contract.md](json-contract.md#error-object)).
+display_name, summary, aliases, lowest_estimate}` object per catalog model that supports the
+operation, in catalog order, with what the model is for and its cheapest single-output request
+with that request's estimated cost (see [json-contract.md](json-contract.md#error-object)).
 
 A configured model must be a catalog id or alias of its table's kind (`image.model` an image
 model, `video.model` a video model); anything else is `config_invalid` naming the key when the

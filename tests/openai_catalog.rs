@@ -42,7 +42,7 @@ fn validate(
 fn estimate(id: &str, pairs: &[(&str, &str)], count: u32) -> Option<iris::domain::CostEstimate> {
     let spec = model(id);
     let options = validate(id, Operation::ImageGenerate, pairs).unwrap();
-    (spec.estimate.unwrap())(
+    (spec.estimate.unwrap().estimate)(
         spec,
         &EstimateInput { operation: Operation::ImageGenerate, options: &options, count },
     )
@@ -382,6 +382,107 @@ fn estimator_returns_none_when_quality_or_size_is_auto() {
         assert!(estimate(id, &[("size", "1024x1024")], 1).is_none(), "{id}: quality auto");
         assert!(estimate(id, &[("quality", "auto"), ("size", "1024x1024")], 1).is_none());
         assert!(estimate(id, &[("quality", "low"), ("size", "auto")], 1).is_none());
+    }
+}
+
+/// The cheapest request of every GPT Image model is `low` quality at the cheapest
+/// size the model accepts: `catalog_support` tries every other valid combination of
+/// declared values, and this tries every valid size at every quality.
+#[test]
+fn the_cheapest_request_is_low_quality_at_the_cheapest_valid_size() {
+    for m in openai::MODELS {
+        catalog_support::assert_lowest_estimate_is_the_cheapest(m);
+        let (options, lowest) = m.lowest_estimate().unwrap();
+        let options: Vec<(&String, String)> = options.iter().map(|(k, v)| (k, v.to_string())).collect();
+        assert_eq!(
+            options,
+            [(&"quality".to_string(), "low".into()), (&"size".to_string(), "1440x480".into())]
+        );
+        assert_eq!(lowest.amount, 0.00162, "54 output tokens: {}", lowest.basis);
+
+        let OptionKind::Enum(qualities) = m.option("quality").unwrap().kind else {
+            panic!("quality is an enum")
+        };
+        let mut sizes = 0;
+        for w in (16..=openai::SIZE_MAX_EDGE).step_by(16) {
+            for h in (16..=openai::SIZE_MAX_EDGE).step_by(16) {
+                let size = format!("{w}x{h}");
+                if openai::validate_size(&size).is_err() {
+                    continue;
+                }
+                sizes += 1;
+                for quality in qualities {
+                    let options =
+                        validate(m.id, Operation::ImageGenerate, &[("quality", quality), ("size", &size)])
+                            .unwrap_or_else(|e| panic!("{quality} {size}: {}", e.message));
+                    let input =
+                        EstimateInput { operation: Operation::ImageGenerate, options: &options, count: 1 };
+                    if let Some(e) = (m.estimate.unwrap().estimate)(m, &input) {
+                        assert!(e.amount >= lowest.amount, "{} {quality} {size}: {}", m.id, e.basis);
+                    }
+                }
+            }
+        }
+        assert_eq!(sizes, 29_146, "every valid size was tried");
+    }
+}
+
+/// The `size` description says why a non-square size can cost less than a square
+/// one, with the calculator's own token counts, and its claim holds for every valid
+/// size and quality: a non-square size never needs more output tokens than a square
+/// one with the same number of pixels (the formula's `u` is the base at 1:1).
+#[test]
+fn the_size_description_explains_that_a_non_square_size_can_need_fewer_tokens() {
+    let low = openai::calculator_base(openai::CALCULATOR_BASE_2_5, "low").unwrap();
+    assert_eq!(openai::calculator_base(openai::CALCULATOR_BASE_2, "low"), Some(low));
+    let wide = openai::estimated_output_tokens(low, 1536, 1024);
+    let square = openai::estimated_output_tokens(low, 1024, 1024);
+    assert!(wide < square);
+    for m in openai::MODELS {
+        let description = m.option("size").unwrap().description;
+        let words = description.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            words.contains(
+                "By OpenAI's published calculator formula a non-square size never needs more output tokens \
+                 than a square one with the same number of pixels, so a larger non-square size can cost less \
+                 than a smaller square one"
+            ),
+            "{words}"
+        );
+        assert!(
+            words.contains(&format!("(low: 1536x1024 is {wide} tokens, 1024x1024 is {square})")),
+            "{words}"
+        );
+    }
+    let bases = openai::CALCULATOR_BASE_2_5.iter().chain(openai::CALCULATOR_BASE_2).map(|(_, base)| *base);
+    for base in bases {
+        let square =
+            |pixels: u64| (f64::from(base) * f64::from(base) * (2e6 + pixels as f64) / 4e6).ceil() as u64;
+        for w in (16..=openai::SIZE_MAX_EDGE).step_by(16) {
+            for h in (16..=openai::SIZE_MAX_EDGE).step_by(16) {
+                if openai::validate_size(&format!("{w}x{h}")).is_ok() {
+                    let tokens = openai::estimated_output_tokens(base, w, h);
+                    assert!(tokens <= square(w * h), "base {base}: {w}x{h} needs {tokens}");
+                }
+            }
+        }
+    }
+}
+
+/// The summary of GPT Image 2 compares its output tokens with the 2.5 models' by
+/// OpenAI's calculator: equal at low, about four times as many at medium and high.
+#[test]
+fn gpt_image_2_needs_about_four_times_the_output_tokens_at_medium_and_high() {
+    for (w, h) in [(1024, 1024), (1536, 1024), (1024, 1536), (1440, 480), (2048, 2048), (3840, 2160)] {
+        let tokens = |table, quality| {
+            openai::estimated_output_tokens(openai::calculator_base(table, quality).unwrap(), w, h)
+        };
+        assert_eq!(tokens(openai::CALCULATOR_BASE_2, "low"), tokens(openai::CALCULATOR_BASE_2_5, "low"));
+        for quality in ["medium", "high"] {
+            let ratio = tokens(openai::CALCULATOR_BASE_2, quality) as f64
+                / tokens(openai::CALCULATOR_BASE_2_5, quality) as f64;
+            assert!((3.5..=4.5).contains(&ratio), "{quality} {w}x{h}: {ratio}");
+        }
     }
 }
 

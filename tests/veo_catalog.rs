@@ -59,7 +59,7 @@ fn estimate_usd(id: &str, opts: &[(&str, &str)]) -> f64 {
         .map(|(n, v)| RawOption { name: n.to_string(), value: v.to_string(), source: OptionSource::Generic })
         .collect();
     let options = validate_request(s, Operation::VideoGenerate, &raw, InputCounts::default()).unwrap();
-    let e = (s.estimate.unwrap())(
+    let e = (s.estimate.unwrap().estimate)(
         s,
         &EstimateInput { operation: Operation::VideoGenerate, options: &options, count: 1 },
     )
@@ -244,6 +244,28 @@ fn estimates_are_duration_times_the_rate_for_the_resolution() {
     assert!((estimate_usd(FAST, &[("resolution", "4k")]) - 2.40).abs() < 1e-9);
     assert!((estimate_usd(STANDARD, &[("duration", "4")]) - 1.60).abs() < 1e-9);
     assert!((estimate_usd(STANDARD, &[("resolution", "4k")]) - 4.80).abs() < 1e-9);
+}
+
+/// Every model's cheapest request is 4 seconds at 720p (`catalog_support` tries every
+/// valid request), and the summaries' price claims hold at every resolution: Veo 3.1
+/// costs the most per second, Fast less, and Lite the least.
+#[test]
+fn the_cheapest_request_and_the_summaries_follow_the_published_prices() {
+    for m in catalog::veo::MODELS {
+        catalog_support::assert_lowest_estimate_is_the_cheapest(m);
+        let (options, _) = m.lowest_estimate().unwrap();
+        let options: Vec<(&str, String)> = options.iter().map(|(k, v)| (k.as_str(), v.to_string())).collect();
+        assert_eq!(options, [("duration", "4".to_string()), ("resolution", "720p".to_string())], "{}", m.id);
+    }
+    let amount = |id: &str| spec(id).lowest_estimate().unwrap().1.amount;
+    assert_eq!((amount(LITE), amount(FAST), amount(STANDARD)), (0.2, 0.4, 1.6));
+    for res in ["720p", "1080p", "4k"] {
+        let rate = |id: &str| catalog::veo::rate_per_second(spec(id).id, res);
+        assert!(rate(FAST).unwrap() < rate(STANDARD).unwrap(), "{res}");
+        if let Some(lite) = rate(LITE) {
+            assert!(lite < rate(FAST).unwrap(), "{res}");
+        }
+    }
 }
 
 #[test]

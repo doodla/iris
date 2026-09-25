@@ -4,14 +4,18 @@
 //! These values come from verified research against Google's official
 //! documentation (docs checked 2026-09-24). Only the three `veo-3.1-*-preview`
 //! models remain on the Gemini API; the shut-down `veo-2.0-*`/`veo-3.0-*` ids are
-//! deliberately not registered.
+//! deliberately not registered. The summaries follow the Veo 3.1 model page ("best
+//! for professional-grade 4K output, natively synchronized audio generation, and
+//! complex camera movements"), the Veo guide (Fast versions "optimizing for speed";
+//! the parameter table's per-model options, checked 2026-09-25), and the published
+//! per-second prices, where Google calls the model Veo 3.1 Standard.
 
 use crate::domain::{CostEstimate, Operation, ProviderId};
 use crate::error::IrisError;
 
 use super::types::{
-    Constraint, EstimateInput, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec, OutputSpec,
-    PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
+    Constraint, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec,
+    OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
 use super::{CATALOG_AS_OF, round_usd};
 
@@ -186,12 +190,18 @@ const fn per_second(description: &'static str, usd: f64) -> PriceRule {
     PriceRule { description, unit: "second", usd, source_url: PRICING_URL, as_of: CATALOG_AS_OF }
 }
 
+/// The cheapest single-output request of every Veo model: the shortest video at the
+/// lowest resolution (the price is per second, by resolution).
+const LOWEST: &[(&str, &str)] = &[("duration", "4"), ("resolution", "720p")];
+
 /// Built-in Veo models.
 pub static MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "veo-3.1-fast-generate-preview",
         provider: ProviderId::Gemini,
         display_name: "Veo 3.1 Fast",
+        summary: "Veo 3.1 optimized for speed: every Veo option Iris offers, 4k and reference images included, \
+                  at a lower per-second price than Veo 3.1 Standard",
         aliases: &["veo-fast"],
         lifecycle: Lifecycle::Preview,
         operations: VIDEO,
@@ -216,13 +226,15 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: Some(FULL_RULES),
-        estimate: Some(estimate_video),
+        estimate: Some(Estimator { estimate: estimate_video, lowest: LOWEST }),
         estimate_usage: None,
     },
     ModelSpec {
         id: "veo-3.1-generate-preview",
         provider: ProviderId::Gemini,
         display_name: "Veo 3.1",
+        summary: "Veo 3.1 Standard, which Google calls best for professional-grade 4K output and complex camera \
+                  movements; every Veo option Iris offers, at the highest per-second price",
         aliases: &["veo"],
         lifecycle: Lifecycle::Preview,
         operations: VIDEO,
@@ -247,13 +259,15 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: Some(FULL_RULES),
-        estimate: Some(estimate_video),
+        estimate: Some(Estimator { estimate: estimate_video, lowest: LOWEST }),
         estimate_usage: None,
     },
     ModelSpec {
         id: "veo-3.1-lite-generate-preview",
         provider: ProviderId::Gemini,
         display_name: "Veo 3.1 Lite",
+        summary: "The lowest-priced Veo model: up to 1080p, with no 4k, no reference images, and no negative \
+                  prompt",
         aliases: &["veo-lite"],
         lifecycle: Lifecycle::Preview,
         operations: VIDEO,
@@ -277,7 +291,7 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: Some(LITE_RULES),
-        estimate: Some(estimate_video),
+        estimate: Some(Estimator { estimate: estimate_video, lowest: LOWEST }),
         estimate_usage: None,
     },
 ];

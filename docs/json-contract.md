@@ -192,13 +192,34 @@ if a record changes between the check and its deletion can the command stop part
 `details.deleted` then lists what it deleted (see
 [jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
-### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [] } ] }`
+### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "operations": [], "lowest_estimate" } ] }`
+
+`summary` is one line on what the model is for and its trade-off, from the provider's
+documentation. `lowest_estimate` is the model's cheapest single-output request, as its own
+pre-call estimator prices it (the same estimate a `--dry-run` of that request gives), or `null`
+when Iris cannot estimate the model's cost before a call:
+
+```json
+"lowest_estimate": {
+  "options": { "quality": "low", "size": "1440x480" },
+  "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.00162,
+                     "basis": "estimate: 1 image × 54 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1440x480); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included",
+                     "source_url": "https://developers.openai.com/api/docs/pricing", "as_of": "2026-09-24" }
+}
+```
+
+`options` are the values to pass (each option's typed flag or `-O name=value`, as `models show`
+lists them); every other option keeps its default. The OpenAI models' cheapest size is not
+square: by OpenAI's published calculator formula a non-square size never needs more output tokens
+than a square one with the same number of pixels, so a larger non-square size can cost less than a
+smaller square one.
 
 ### `models.show` → `{ "model": ModelCapabilities }`
 
 ```json
 {
   "id": "gpt-image-2.5-sunburst", "provider": "openai", "display_name": "GPT Image 2.5 Sunburst",
+  "summary": "OpenAI's most capable image model, for workflows where editing precision matters most",
   "aliases": ["gpt-image-2.5-sunburst-2026-09-08"], "lifecycle": "ga",
   "operations": ["image.generate", "image.edit"],
   "inputs": { "max_input_images": 16, "input_media_types": ["image/png","image/jpeg","image/webp"],
@@ -218,6 +239,8 @@ if a record changes between the check and its deletion can the command stop part
   "pricing": [ { "description": "Text input tokens (prompt)", "unit": "1M text input tokens",
                  "usd": 5.0, "source_url": "https://developers.openai.com/api/docs/pricing",
                  "as_of": "2026-09-24" } ],
+  "lowest_estimate": { "options": { "quality": "low", "size": "1440x480" },
+                       "cost_estimate": { "amount": 0.00162, "...": "..." } },
   "access": { "credential_env": "OPENAI_API_KEY", "credential_present": true,
               "requirements": ["API Organization Verification may be required for GPT Image models"],
               "account_access": "not_checked", "checked_at": null },
@@ -226,11 +249,11 @@ if a record changes between the check and its deletion can the command stop part
 }
 ```
 
-Each option's `type` is `enum` (its `values` listed), `integer` (`min`..=`max`), `boolean`, or
-`string`: a pattern described by `syntax`, or free text at most `max_chars` characters long
-(`max_chars` is `null` for every other option). `default` is the value in effect when the option
-is omitted, typed like the option's values (`"auto"`, `1`, `true`), or `null` when the provider
-documents none.
+`summary` and `lowest_estimate` are the ones `models.list` reports. Each option's `type` is
+`enum` (its `values` listed), `integer` (`min`..=`max`), `boolean`, or `string`: a pattern
+described by `syntax`, or free text at most `max_chars` characters long (`max_chars` is `null`
+for every other option). `default` is the value in effect when the option is omitted, typed like
+the option's values (`"auto"`, `1`, `true`), or `null` when the provider documents none.
 
 `constraints` lists the rules that relate several options or inputs (e.g. Veo's
 `high_resolution_requires_duration_8`, `references_exclude_frames`,
@@ -359,7 +382,9 @@ $ iris image generate "x" --model does-not-exist --json
 
 A generation command given no model — no `-m`/`--model`, and no `image.model` or `video.model` in
 the config file — fails with `model_required` (exit 2, category `usage`) before anything is sent,
-a `--dry-run` too; no job record is written. Its `details` say how to choose one:
+a `--dry-run` too; no job record is written. Its `details` say how to choose one: each candidate
+carries the model's `summary` and its `lowest_estimate` as `models list` reports it (the options
+of its cheapest single-output request and their estimate, or `null`):
 
 ```json
 {"code":"model_required","category":"usage",
@@ -368,7 +393,10 @@ a `--dry-run` too; no job record is written. Its `details` say how to choose one
  "details":{"operation":"image.generate","config_key":"image.model",
             "config_file":"/home/you/.config/iris/config.toml",
             "candidates":[{"model":"gpt-image-2.5-sunburst","provider":"openai","display_name":"GPT Image 2.5 Sunburst",
-                           "aliases":["gpt-image-2.5-sunburst-2026-09-08"]},
+                           "summary":"OpenAI's most capable image model, for workflows where editing precision matters most",
+                           "aliases":["gpt-image-2.5-sunburst-2026-09-08"],
+                           "lowest_estimate":{"options":{"quality":"low","size":"1440x480"},
+                                              "cost_estimate":{"amount":0.00162,"...":"..."}}},
                           "...one object per catalog model that supports the operation, in catalog order"]},
  "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
 ```

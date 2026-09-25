@@ -50,8 +50,11 @@ fn estimate(id: &str, opts: &[(&str, &str)]) -> iris::domain::CostEstimate {
     let s = spec(id);
     let options = validate(id, Operation::ImageGenerate, opts, 0).expect("valid options");
     let estimator = s.estimate.expect("every Gemini image model has an estimator");
-    estimator(s, &EstimateInput { operation: Operation::ImageGenerate, options: &options, count: 1 })
-        .expect("estimate for a declared resolution")
+    (estimator.estimate)(
+        s,
+        &EstimateInput { operation: Operation::ImageGenerate, options: &options, count: 1 },
+    )
+    .expect("estimate for a declared resolution")
 }
 
 fn gemini_models() -> Vec<&'static ModelSpec> {
@@ -302,6 +305,33 @@ fn pre_call_estimate_is_the_per_image_price_for_the_effective_resolution() {
     for (id, res, usd) in cases {
         let e = estimate(id, &[("resolution", res)]);
         assert!((e.amount - usd).abs() < 1e-9, "{id} {res}: {}", e.amount);
+    }
+}
+
+/// Each model's cheapest request is its smallest resolution (`catalog_support` tries
+/// every valid request), and the summaries' price claims hold: Nano Banana 2 Lite is
+/// the cheapest, and Nano Banana Pro has the highest per-image price at each of its
+/// resolutions.
+#[test]
+fn the_cheapest_request_and_the_summaries_follow_the_published_prices() {
+    for m in catalog::gemini::MODELS {
+        catalog_support::assert_lowest_estimate_is_the_cheapest(m);
+    }
+    let lowest = |id: &str| {
+        let (options, estimate) = spec(id).lowest_estimate().unwrap();
+        (options.get("resolution").unwrap().to_string(), estimate.amount)
+    };
+    assert_eq!(lowest(FLASH), ("512".to_string(), 0.045));
+    assert_eq!(lowest(LITE), ("1K".to_string(), 0.0336));
+    assert_eq!(lowest(PRO), ("1K".to_string(), 0.134));
+    assert!(gemini_models().iter().all(|m| m.lowest_estimate().unwrap().1.amount >= lowest(LITE).1));
+    for res in ["1K", "2K", "4K"] {
+        let pro = estimate(PRO, &[("resolution", res)]).amount;
+        for other in [FLASH, LITE] {
+            if validate(other, Operation::ImageGenerate, &[("resolution", res)], 0).is_ok() {
+                assert!(estimate(other, &[("resolution", res)]).amount < pro, "{other} {res}");
+            }
+        }
     }
 }
 

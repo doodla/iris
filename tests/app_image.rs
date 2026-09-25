@@ -766,6 +766,11 @@ async fn the_model_comes_from_the_flag_or_the_config_file_and_is_otherwise_requi
                 .map(|c| c["model"].as_str().unwrap())
                 .collect();
             assert_eq!(candidates, ["fake-image-1", "fake-gemini-image"], "image models, in catalog order");
+            let fake = &e.details["candidates"][0];
+            assert_eq!(fake["summary"], FAKE_IMAGE_MODEL.summary);
+            assert_eq!(fake["lowest_estimate"]["options"], serde_json::json!({"quality": "low"}));
+            assert_eq!(fake["lowest_estimate"]["cost_estimate"]["amount"], 0.01);
+            assert!(e.details["candidates"][1]["lowest_estimate"].is_null(), "no estimator");
         }
     }
     assert_eq!(f.calls(), 0, "nothing was sent");

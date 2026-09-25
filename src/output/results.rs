@@ -1,6 +1,8 @@
 //! Result payloads of every command (see docs/json-contract.md). These types ARE the JSON contract:
 //! the published schema is generated from them.
 
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -102,9 +104,25 @@ pub struct ModelSummary {
     pub id: String,
     pub provider: ProviderId,
     pub display_name: String,
+    /// What the model is for and its trade-off, in one line (from the provider's
+    /// documentation).
+    pub summary: String,
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
+    /// The estimate of the model's cheapest single-output request; null when Iris
+    /// cannot estimate the model's cost before a call.
+    pub lowest_estimate: Option<LowestEstimate>,
+}
+
+/// The cheapest single-output request of a model, as its own pre-call estimator
+/// prices it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct LowestEstimate {
+    /// The option values to pass (with their typed flags or `-O name=value`); every
+    /// other option keeps its default.
+    pub options: BTreeMap<String, OptionValue>,
+    pub cost_estimate: CostEstimate,
 }
 
 /// `models.list`.
@@ -218,6 +236,9 @@ pub struct ModelCapabilities {
     pub id: String,
     pub provider: ProviderId,
     pub display_name: String,
+    /// What the model is for and its trade-off, in one line (from the provider's
+    /// documentation).
+    pub summary: String,
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
@@ -228,6 +249,9 @@ pub struct ModelCapabilities {
     pub outputs: OutputsView,
     pub limits: LimitsView,
     pub pricing: Vec<PriceView>,
+    /// The estimate of the model's cheapest single-output request; null when Iris
+    /// cannot estimate the model's cost before a call.
+    pub lowest_estimate: Option<LowestEstimate>,
     pub access: AccessView,
     /// `catalog` (declared by Iris, checked on `catalog_as_of`).
     pub capabilities_source: String,
