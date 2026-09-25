@@ -126,7 +126,7 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
 
 ```json
 {
-  "job_id": "job_01m3a333vp4pc80nb37svfgq7x",
+  "job_id": "job_01m3a333vp4pc80nb37svfgq7x", "label": null,
   "remote_operation_id": "models/veo-3.1-fast-generate-preview/operations/op_mockjob001",
   "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "model_source": "flag",
   "operation": "video.generate", "status": "succeeded",
@@ -174,10 +174,17 @@ trailing whitespace), and `chars` its length in characters (Unicode scalar value
 caller finds a job whose submitting process was killed before printing anything (see
 [jobs.md](jobs.md#finding-a-job-whose-submitting-process-was-killed)).
 
+`label` is the label `video generate --label` recorded with the job, or `null`. No two local job
+records share a label (see [`label_in_use`](#error-object)), so a caller that labels each intended
+video finds its job with `iris jobs list --label <LABEL>`; a labeled job that is still `submitting`
+or `running` has that command among its `next_steps`. The label is stored and shown as written
+(the prompt is kept only as `prompt_fingerprint`), so it should not contain anything secret.
+
 ### `jobs.list` → `{ "jobs": [Job] }`
 
 A record that cannot be read (corrupt or written by a future Iris version) is skipped with a
-`job_record_unreadable` warning rather than failing the whole listing.
+`job_record_unreadable` warning rather than failing the whole listing. `--label <LABEL>` lists only
+the job with that label (at most one), and `--status` and `--provider` filter likewise.
 
 ### `jobs.delete` → `{ "deleted": ["job_..."], "remote_effect": "none", "note": "Local records only; remote jobs and downloaded files are untouched." }`
 
@@ -362,6 +369,7 @@ creates and removes at once, a dry run proves the nearest existing directory wri
 {
   "dry_run": true, "provider": "gemini", "model": "veo-3.1-fast-generate-preview",
   "model_source": "config", "operation": "video.generate", "async_job": true, "detach": false,
+  "label": null,
   "wait": { "timeout": { "seconds": 1200.0, "source": "file", "flag": "--timeout",
                          "env_var": "IRIS_WAIT_TIMEOUT", "key": "video.wait_timeout" },
             "poll_interval": { "seconds": 10.0, "source": "default", "flag": "--poll-interval",
@@ -399,7 +407,9 @@ be written: with several outputs, `<stem>-<i>.<ext>`. `i` counts from 1 (`-n 3 -
 video job shows (`job.prompt_fingerprint`), so a caller can record it before the paid call.
 `max_cost` is the spending cap `--max-cost` applied, in US dollars, or `null` without the flag; a
 plan with a cap exists only when the request's pre-call estimate is at most the cap (see
-[`cost_limit_exceeded`](#error-object)), and the human plan shows it on its cost line.
+[`cost_limit_exceeded`](#error-object)), and the human plan shows it on its cost line. `label` is
+the label the real run would record the job with (`video generate --label`), or `null`; a plan with
+a label exists only when no local record has it.
 
 ### Shared objects
 
@@ -566,6 +576,30 @@ that is not a positive decimal number of US dollars (`0.05`, `2`) is `invalid_ar
  "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
 ```
 
+`video generate --label <LABEL>` (1 to 64 letters, digits, `.`, `_`, or `-`, starting with a letter
+or digit; anything else is `invalid_argument` with `details.flag`) with a label that a local job
+record already has, in any status, is `label_in_use` (exit 2, category `conflict`) before anything
+is sent, a `--dry-run` too, and no record is written. `job_id` and `job_status` name the job that
+has the label (with its `provider` and `remote_operation_id`), and `details` holds the `label`, that
+job's `model`, and its `created_at`. The hint depends on that job's status: an active job is
+followed with `jobs status`/`jobs wait` (deleting its record does not cancel it), a succeeded one
+downloaded, a `submission_unknown` one checked in the provider's console before anything is
+submitted again, and for a failed or expired one the record is deleted or another label used (the
+full table is in [jobs.md](jobs.md#labels-find-a-job-and-never-submit-it-twice)). The check and the
+new record are one step under the job store's lock, so of two commands submitting with one label at
+the same time, only one submits. While a local job record cannot be read, it could have the label:
+a labeled submission is then `state_invalid` (exit 1, `retryable: false`, nothing sent, a dry run
+too) with the records' paths in `details.unreadable` and the `label` in `details.label`.
+
+```json
+{"code":"label_in_use","category":"conflict",
+ "message":"label 'paper-boat-1' is already used by job job_01m3a59a5syx5aex0a0qv8qc3x (running, created 2026-09-24T16:55:15Z)",
+ "hint":"the job is still running: follow it with `iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x` or `iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x`; deleting its local record does not cancel the remote job, which keeps running and is billed; to submit another paid job, use another label",
+ "job_id":"job_01m3a59a5syx5aex0a0qv8qc3x","job_status":"running","provider":"gemini",
+ "details":{"label":"paper-boat-1","model":"veo-3.1-lite-generate-preview","created_at":"2026-09-24T16:55:15Z"},
+ "retryable":false,"provider_status":null,"...":"other Error fields omitted for brevity"}
+```
+
 A command line that does not parse (an unknown flag or subcommand, a missing or malformed value) is
 `usage_error` (exit 2, category `usage`), with the parser's full text in `details.usage` and what
 to type instead in `details.suggestions` (as for `unknown_model`; empty when there is nothing to
@@ -600,7 +634,8 @@ image.generate`.
 
 `provider` names the provider an error concerns: the one that answered, or, for an error while
 following or downloading a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a
-download failure), the job's provider, even when the error itself is local. A refused
+download failure) or about another job (`label_in_use`), that job's provider, even when the error
+itself is local. A refused
 `jobs delete` identifies the job only by `job_id` and `job_status`: its `provider` and
 `remote_operation_id` are `null` even when the job has them (`iris jobs status <id>` shows both).
 
@@ -639,6 +674,7 @@ written; the job record keeps the original code and any unknown fields untouched
 | `cost_limit_exceeded` | validation | 2 | false |
 | `config_invalid` | config | 2 | false |
 | `output_exists` | conflict | 2 | false |
+| `label_in_use` | conflict | 2 | false |
 | `job_not_found` | not_found | 2 | false |
 | `missing_credentials` | auth | 3 | false |
 | `authentication_failed` | auth | 3 | false |

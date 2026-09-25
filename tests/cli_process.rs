@@ -129,6 +129,7 @@ fn run(cmd: &mut Command) -> Out {
 
 fn new_job(sandbox: &Sandbox) -> NewJob {
     NewJob {
+        label: None,
         provider: ProviderId::Gemini,
         model: "veo-test-model".into(),
         model_source: ModelSource::Flag,

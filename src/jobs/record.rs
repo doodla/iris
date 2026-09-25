@@ -34,7 +34,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
-use super::JobId;
+use super::{JobId, JobLabel};
 use crate::artifacts::RecordedFile;
 use crate::catalog::{InputCounts, ModelSpec, OptionKind, ResolvedOptions};
 use crate::domain::{
@@ -347,6 +347,8 @@ impl JobOutput {
 /// `Debug` lists the `request` keys only (free-text options may hold prompt text).
 #[derive(Clone)]
 pub struct NewJob {
+    /// The caller's label (`--label`), unique among the store's records.
+    pub label: Option<JobLabel>,
     pub provider: ProviderId,
     /// Model id sent to the provider.
     pub model: String,
@@ -364,6 +366,7 @@ pub struct NewJob {
 impl fmt::Debug for NewJob {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("NewJob")
+            .field("label", &self.label)
             .field("provider", &self.provider)
             .field("model", &self.model)
             .field("model_source", &self.model_source)
@@ -397,6 +400,7 @@ pub enum PollApplied {
 const RECORD_FIELDS: &[&str] = &[
     "schema_version",
     "job_id",
+    "label",
     "provider",
     "model",
     "model_source",
@@ -432,6 +436,10 @@ const RECORD_FIELDS: &[&str] = &[
 pub struct JobRecord {
     schema_version: u32,
     job_id: JobId,
+    /// The caller's label (`--label`), unique among the store's records; `null`
+    /// without one, and in records from older versions. Kept as written: a label is
+    /// compared, never interpreted.
+    label: Option<String>,
     provider: ProviderId,
     model: String,
     /// Where the model came from; `null` in a record that does not say.
@@ -466,6 +474,7 @@ impl fmt::Debug for JobRecord {
         f.debug_struct("JobRecord")
             .field("schema_version", &self.schema_version)
             .field("job_id", &self.job_id)
+            .field("label", &self.label)
             .field("provider", &self.provider)
             .field("model", &self.model)
             .field("model_source", &self.model_source)
@@ -510,6 +519,7 @@ impl JobRecord {
         Ok(JobRecord {
             schema_version: JOB_RECORD_VERSION,
             job_id,
+            label: new.label.map(|label| label.as_str().to_string()),
             provider: new.provider,
             model: new.model,
             model_source: Some(new.model_source),
@@ -543,6 +553,10 @@ impl JobRecord {
     }
     pub fn job_id(&self) -> &JobId {
         &self.job_id
+    }
+    /// The caller's label, if the job has one.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
     pub fn provider(&self) -> ProviderId {
         self.provider
@@ -1009,6 +1023,7 @@ impl JobRecord {
         let artifacts = outputs.iter().filter_map(|o| o.artifact.clone()).collect();
         JobView {
             job_id: self.job_id.to_string(),
+            label: self.label.clone(),
             remote_operation_id: self.remote_operation_id.clone(),
             provider: self.provider,
             model: self.model.clone(),
@@ -1196,6 +1211,7 @@ mod tests {
     #[test]
     fn record_fields_list_matches_serialized_fields() {
         let new = NewJob {
+            label: None,
             provider: ProviderId::Gemini,
             model: "m".into(),
             model_source: ModelSource::Flag,

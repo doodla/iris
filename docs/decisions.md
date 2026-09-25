@@ -406,7 +406,12 @@ does not know as `internal_error` while keeping the original. Every write goes t
 in the same directory, is flushed with `sync_all`, renamed over the record, and followed by a
 best-effort directory sync. A per-job lock file (`std::fs::File::lock`, which is `flock` on Linux
 and macOS) serializes each read-modify-write, and a second per-job lock is held for a whole
-download; listing takes no lock. A record still `submitting` after the whole paid-submission
+download; listing takes no lock. A job may carry a caller's label (`--label`), unique among the
+records of the state directory: a record with a label is created under a store-wide lock
+(`labels.lock`), taken before the other records' labels are read and held until the new record is
+written, so a label another record has is refused (`label_in_use`) and two processes creating one
+label cannot both submit; while a record cannot be read, a labeled submission is refused, since that
+record could have the label. A record still `submitting` after the whole paid-submission
 timeout budget plus 60 seconds is reported as `submission_unknown`. Prompts are stored as a
 SHA-256 hash and a character count unless `jobs.store_prompts` is enabled. `jobs delete` removes
 only local records, refuses active jobs without `--force`, and never cancels anything remotely.
@@ -419,6 +424,12 @@ to the open file description. The standard library has provided file locking sin
 no locking crate is needed; `tempfile` supplies the exclusive temporary files. Keeping unknown
 fields lets an older Iris rewrite a record written by a newer one without destroying data.
 Prompts can be sensitive, and a hash is enough to match a job to a prompt you still have.
+A submission cannot be made idempotent at the provider, since Veo offers no idempotency key (see
+[Retry classes](#retry-classes-and-why-vendor-retry-guidance-is-overridden)), so the label makes it
+idempotent locally: a script that reruns with the same label after a crash finds the job instead of
+paying for a second one. The check has to share a lock with the write, since two processes that
+each checked first and then wrote could both submit, and it cannot pass over a record it cannot
+read.
 
 **Sources.** [`std::fs::File::lock`](https://doc.rust-lang.org/std/fs/struct.File.html#method.lock) ·
 [`tempfile::NamedTempFile`](https://docs.rs/tempfile/3.27.0/tempfile/struct.NamedTempFile.html) ·

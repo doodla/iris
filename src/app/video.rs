@@ -31,7 +31,7 @@ use crate::catalog::{self, InputCounts, ResolvedModel};
 use crate::config::{ENV_POLL_INTERVAL, ENV_WAIT_TIMEOUT, KEY_POLL_INTERVAL, KEY_WAIT_TIMEOUT, Resolved};
 use crate::domain::{JobStatus, ModelSource, Operation, ProviderId, Warning};
 use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
-use crate::jobs::{self, JobId, JobRecord, NewJob, OutputPlan, PromptRecord};
+use crate::jobs::{self, JobId, JobLabel, JobRecord, NewJob, OutputPlan, PromptRecord};
 use crate::output::results::{JobResult, PlanResult, PlanWait, PromptFingerprint, WaitSetting};
 use crate::providers::{InputRole, VideoRequest};
 
@@ -53,6 +53,8 @@ pub struct VideoArgs {
     pub references: Vec<PathBuf>,
     /// `--detach`: submit, record, and return.
     pub detach: bool,
+    /// `--label`: the job's label, which no other local record may have.
+    pub label: Option<JobLabel>,
 }
 
 /// Run `video generate`. Hints and next steps that name `iris` commands name the
@@ -128,7 +130,8 @@ async fn generate(
     warnings.extend(plan.warnings.iter().cloned());
     artifacts::preflight(&plan.paths, common.overwrite)?;
     // Only checked here; directories are created once the credential is known to
-    // be present (below), so a run that cannot be sent leaves nothing behind.
+    // be present and the job is recorded (below), so a run that cannot be sent
+    // leaves nothing behind.
     artifacts::preflight_dirs(&plan.paths, false)?;
 
     let video = ctx
@@ -142,6 +145,11 @@ async fn generate(
     }
     let estimate = estimate.ok();
     let store_prompts = ctx.settings.store_prompts.value;
+    // A label another record has refuses the run here, a dry run too; the record is
+    // created under the store lock below, which checks it again.
+    if let Some(label) = &args.label {
+        ctx.store.check_label(label.as_str())?;
+    }
 
     if common.dry_run {
         let inputs = first_frame
@@ -158,6 +166,7 @@ async fn generate(
             operation: op,
             async_job: true,
             detach: args.detach,
+            label: args.label.as_ref().map(|label| label.as_str().to_string()),
             wait: (!args.detach).then(|| plan_wait(ctx)),
             billing: spec.billing,
             options: request::options_view(spec, op, &opts, store_prompts),
@@ -183,7 +192,6 @@ async fn generate(
     video.validate(&req)?;
     let pctx = ctx.provider_context(provider)?;
     ctx.settings.warn_non_default_base_url(provider, warnings);
-    artifacts::preflight_dirs(&plan.paths, true)?;
 
     // Persist the record BEFORE the paid request.
     let (plan_dir, plan_path) = match &common.output {
@@ -193,6 +201,7 @@ async fn generate(
     let record = JobRecord::with_id(
         job_id.clone(),
         NewJob {
+            label: args.label.clone(),
             provider,
             model: resolved.id.clone(),
             model_source,
@@ -216,6 +225,11 @@ async fn generate(
     let seen = ctx.interrupt.count();
     let delivered = ctx.interrupt.delivered();
     ctx.store.create(&record)?;
+    // Created only now, so a record the store refuses (a label another record has)
+    // leaves no directory behind; one that cannot be created discards the record.
+    if let Err(e) = artifacts::preflight_dirs(&plan.paths, true) {
+        return Err(discard_unsent(ctx, &job_id, e, ctx.now()));
+    }
 
     ctx.progress.line(format!(
         "Submitting job {job_id} to {provider} ({}); this is a {} request",

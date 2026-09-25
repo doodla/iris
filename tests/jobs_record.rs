@@ -28,6 +28,7 @@ fn new_job() -> NewJob {
     let mut request = Map::new();
     request.insert("duration_seconds".into(), json!(4));
     NewJob {
+        label: None,
         provider: ProviderId::Gemini,
         model: "veo-test".into(),
         model_source: ModelSource::Flag,
@@ -88,6 +89,7 @@ fn new_record_matches_the_v1_schema_shape() {
     let mut expected = vec![
         "schema_version",
         "job_id",
+        "label",
         "provider",
         "model",
         "model_source",
@@ -120,6 +122,7 @@ fn new_record_matches_the_v1_schema_shape() {
     assert_eq!(value["created_at"], ts(0).to_string());
     assert!(value["created_at"].as_str().unwrap().ends_with('Z'));
     assert_eq!(value["submitted_at"], Value::Null);
+    assert_eq!(value["label"], Value::Null);
     assert_eq!(value["output_plan"], json!({"dir": null, "path": null, "overwrite": false}));
     assert_eq!(value["prompt"]["text"], Value::Null);
     assert_eq!(value["prompt"]["chars"], 13);

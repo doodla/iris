@@ -186,6 +186,9 @@ fn job_block(j: &JobView) -> String {
     let mut field = |label: &str, value: &str| {
         let _ = writeln!(out, "  {:<11} {value}", format!("{label}:"));
     };
+    if let Some(label) = &j.label {
+        field("label", label);
+    }
     field("status", j.status.as_str());
     field("provider", j.provider.as_str());
     field("model", &model_with_source(&j.model, j.model_source, j.operation));
@@ -279,6 +282,7 @@ fn job_list(res: &JobListResult) -> String {
         .map(|j| {
             vec![
                 j.job_id.clone(),
+                j.label.clone().unwrap_or_else(|| "-".to_string()),
                 j.status.as_str().to_string(),
                 j.provider.as_str().to_string(),
                 j.model.clone(),
@@ -286,7 +290,7 @@ fn job_list(res: &JobListResult) -> String {
             ]
         })
         .collect();
-    table(&["JOB ID", "STATUS", "PROVIDER", "MODEL", "CREATED"], &rows)
+    table(&["JOB ID", "LABEL", "STATUS", "PROVIDER", "MODEL", "CREATED"], &rows)
 }
 
 fn job_delete(res: &JobDeleteResult) -> String {
@@ -637,6 +641,9 @@ fn plan(res: &PlanResult) -> String {
     field("async job", yes_no(res.async_job).to_string());
     if res.async_job {
         field("detach", yes_no(res.detach).to_string());
+    }
+    if let Some(label) = &res.label {
+        field("label", label.clone());
     }
     if let Some(wait) = &res.wait {
         field(

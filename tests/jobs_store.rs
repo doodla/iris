@@ -10,7 +10,7 @@ use iris::domain::{JobStatus, ModelSource, Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::http::Timeouts;
 use iris::jobs::{
-    JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord, RefusalKind, paid_submit_budget,
+    JobId, JobLabel, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord, RefusalKind, paid_submit_budget,
 };
 use iris::providers::SubmittedOperation;
 use jiff::Timestamp;
@@ -18,6 +18,7 @@ use serde_json::{Map, Value, json};
 
 fn new_job() -> NewJob {
     NewJob {
+        label: None,
         provider: ProviderId::Gemini,
         model: "veo-test".into(),
         model_source: ModelSource::Flag,
@@ -751,4 +752,222 @@ async fn async_download_lock_waits_without_blocking_the_runtime() {
         store.download_lock_async(&missing, Duration::from_millis(10)).await.unwrap_err().code,
         ErrorCode::JobNotFound
     );
+}
+
+// ----- labels ------------------------------------------------------------------------------------
+
+/// A new job carrying `label`.
+fn labeled(label: &str) -> NewJob {
+    NewJob { label: Some(JobLabel::parse(label, "--label").unwrap()), ..new_job() }
+}
+
+/// A record with `label` in `status`, reached through the record's own transitions.
+fn labeled_in(label: &str, status: JobStatus) -> JobRecord {
+    use iris::providers::{RemoteArtifact, RemoteStatus};
+    let mut rec = JobRecord::new(labeled(label), now()).unwrap();
+    let submitted = SubmittedOperation { remote_id: "operations/7".into(), provider_request_id: None };
+    let rejected = IrisError::new(ErrorCode::ProviderError, "rejected");
+    match status {
+        JobStatus::Submitting => {}
+        JobStatus::Failed => rec.mark_rejected(&rejected, now()).unwrap(),
+        JobStatus::SubmissionUnknown => rec.mark_submission_unknown(&rejected, now()).unwrap(),
+        JobStatus::Running | JobStatus::Succeeded | JobStatus::Expired => {
+            rec.mark_submitted(&submitted, now()).unwrap();
+            let poll = match status {
+                JobStatus::Succeeded => Some(RemoteStatus::Succeeded {
+                    outputs: vec![RemoteArtifact {
+                        uri: "https://example.invalid/v".into(),
+                        media_type: None,
+                    }],
+                    usage: None,
+                    warnings: vec![],
+                }),
+                JobStatus::Expired => Some(RemoteStatus::Gone { error: rejected.clone() }),
+                _ => None,
+            };
+            if let Some(poll) = poll {
+                rec.apply_poll(poll, None, now()).unwrap();
+            }
+        }
+    }
+    assert_eq!(rec.status(), status);
+    rec
+}
+
+/// No two records share a label: whatever the status of the record that has it, a
+/// new record with the label is `label_in_use`, naming that job, and is not
+/// written; another label, or none, is created as usual. The hint says what to do
+/// for that job's status, and what submitting again costs.
+#[test]
+fn a_label_is_refused_while_any_record_has_it_with_a_hint_for_its_status() {
+    let hint = |status: JobStatus, id: &JobId| match status {
+        JobStatus::Submitting | JobStatus::Running => format!(
+            "the job is still {status}: follow it with `iris jobs status {id}` or `iris jobs wait {id}`; deleting \
+             its local record does not cancel the remote job, which keeps running and is billed; to submit \
+             another paid job, use another label"
+        ),
+        JobStatus::Succeeded => format!(
+            "the job succeeded: save its outputs with `iris jobs download {id}` (or `iris jobs wait {id}`); to \
+             submit another paid job under this label, delete its local record first (`iris jobs delete {id}`), \
+             or use another label"
+        ),
+        JobStatus::SubmissionUnknown => format!(
+            "the provider may have accepted and billed this job's submission, and Iris cannot follow it; check \
+             usage and billing in the provider's console before submitting again, whether after deleting its \
+             local record (`iris jobs delete {id}`) or under another label"
+        ),
+        JobStatus::Failed | JobStatus::Expired => format!(
+            "the job {status}; a new submission is billed: to submit one under this label, delete its local \
+             record first (`iris jobs delete {id}`), or use another label"
+        ),
+    };
+    for status in [
+        JobStatus::Submitting,
+        JobStatus::Running,
+        JobStatus::Succeeded,
+        JobStatus::Failed,
+        JobStatus::SubmissionUnknown,
+        JobStatus::Expired,
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = JobStore::new(dir.path());
+        let first = labeled_in("paper-boat-1", status);
+        store.create(&first).unwrap();
+
+        let second = JobRecord::new(labeled("paper-boat-1"), now()).unwrap();
+        for e in [store.check_label("paper-boat-1").unwrap_err(), store.create(&second).unwrap_err()] {
+            assert_eq!(e.code, ErrorCode::LabelInUse, "{status}");
+            assert_eq!(e.exit_code(), 2);
+            assert_eq!(e.job_id.as_deref(), Some(first.job_id().as_str()), "{status}");
+            assert_eq!(e.job_status, Some(status));
+            assert_eq!(e.details["label"], "paper-boat-1");
+            assert_eq!(e.details["model"], "veo-test");
+            assert_eq!(e.details["created_at"], first.created_at().to_string());
+            assert_eq!(e.hint.as_deref(), Some(hint(status, first.job_id()).as_str()), "{status}");
+        }
+        assert!(!store.record_path(second.job_id()).exists(), "{status}: nothing written");
+
+        // Labels are compared exactly.
+        for other in ["Paper-Boat-1", "paper-boat-2"] {
+            store.create(&JobRecord::new(labeled(other), now()).unwrap()).unwrap();
+        }
+        store.create(&JobRecord::new(new_job(), now()).unwrap()).unwrap();
+        assert_eq!(store.list().unwrap().records.len(), 4);
+    }
+}
+
+/// A record the store cannot read could have the label: while one exists, a
+/// labeled record is refused (`state_invalid`, naming the file), in the check and
+/// in `create`; a record without a label is created as usual.
+#[test]
+fn a_label_is_refused_while_any_record_cannot_be_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    store.create(&JobRecord::new(labeled("boat-old"), now()).unwrap()).unwrap();
+    // A newer Iris's record with the label, and a corrupt one.
+    let newer = JobRecord::new(labeled("boat-new"), now()).unwrap();
+    store.create(&newer).unwrap();
+    let mut value = raw(&store, newer.job_id());
+    value["schema_version"] = 2.into();
+    fs::write(store.record_path(newer.job_id()), serde_json::to_vec(&value).unwrap()).unwrap();
+    let corrupt = store.dir().join(format!("{}.json", JobId::generate()));
+    fs::write(&corrupt, b"{ not json").unwrap();
+    let mut unreadable = vec![store.record_path(newer.job_id()), corrupt.clone()];
+    unreadable.sort();
+
+    let second = JobRecord::new(labeled("boat-new"), now()).unwrap();
+    for e in [store.check_label("boat-new").unwrap_err(), store.create(&second).unwrap_err()] {
+        assert_eq!(e.code, ErrorCode::StateInvalid);
+        assert_eq!(e.retryable, Some(false));
+        assert_eq!(e.details["label"], "boat-new");
+        let mut named: Vec<String> =
+            e.details["unreadable"].as_array().unwrap().iter().map(|p| p.as_str().unwrap().into()).collect();
+        named.sort();
+        assert_eq!(named, unreadable.iter().map(|p| p.display().to_string()).collect::<Vec<_>>());
+        let hint = e.hint.clone().unwrap();
+        assert!(hint.contains("`iris jobs list`") && hint.contains("without --label"), "{hint}");
+    }
+    assert!(!store.record_path(second.job_id()).exists());
+    // A readable record with the label is still reported as such.
+    assert_eq!(store.check_label("boat-old").unwrap_err().code, ErrorCode::LabelInUse);
+    // Unlabeled records are not affected; once the files are gone, labels are free.
+    store.create(&JobRecord::new(new_job(), now()).unwrap()).unwrap();
+    for path in &unreadable {
+        fs::remove_file(path).unwrap();
+    }
+    store.create(&second).unwrap();
+}
+
+/// Deleting the record that has a label frees it.
+#[test]
+fn deleting_the_record_frees_its_label() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let first = labeled_in("paper-boat-1", JobStatus::Failed);
+    store.create(&first).unwrap();
+    store.delete(first.job_id(), false).unwrap();
+    store.check_label("paper-boat-1").unwrap();
+    store.create(&JobRecord::new(labeled("paper-boat-1"), now()).unwrap()).unwrap();
+}
+
+/// The label is stored in the record and shown in its view; a record without one
+/// (written by an older Iris, with no `label` field at all) reads as `null`, keeps
+/// no label after a locked rewrite, and never matches a label.
+#[test]
+fn a_label_is_recorded_and_older_records_have_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let rec = JobRecord::new(labeled("paper-boat-1"), now()).unwrap();
+    store.create(&rec).unwrap();
+    assert_eq!(raw(&store, rec.job_id())["label"], "paper-boat-1");
+    let loaded = store.load(rec.job_id()).unwrap();
+    assert_eq!(loaded.label(), Some("paper-boat-1"));
+    assert_eq!(loaded.to_view().label.as_deref(), Some("paper-boat-1"));
+
+    let old = JobRecord::new(new_job(), now()).unwrap();
+    store.create(&old).unwrap();
+    let mut value = raw(&store, old.job_id());
+    value.as_object_mut().unwrap().remove("label");
+    fs::write(store.record_path(old.job_id()), serde_json::to_vec(&value).unwrap()).unwrap();
+    let loaded = store.load(old.job_id()).unwrap();
+    assert_eq!(loaded.label(), None);
+    assert!(loaded.to_view().label.is_none());
+    increment(&store, old.job_id());
+    assert_eq!(raw(&store, old.job_id())["label"], Value::Null);
+    store.check_label("paper-boat-2").unwrap();
+}
+
+/// The label check and the record are one step under the store lock: of many
+/// threads, each with its own store and its own file handles (the lock excludes
+/// them as it excludes processes), creating a record with one label at the same
+/// moment, exactly one succeeds and every other gets `label_in_use` naming it.
+#[test]
+fn concurrent_creates_with_one_label_leave_one_record() {
+    const THREADS: usize = 8;
+    for round in 0..5 {
+        let dir = tempfile::tempdir().unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(THREADS));
+        let handles: Vec<_> = (0..THREADS)
+            .map(|_| {
+                let store = JobStore::new(dir.path());
+                let barrier = Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let rec = JobRecord::new(labeled("same-label"), now()).unwrap();
+                    barrier.wait();
+                    store.create(&rec).map(|()| rec.job_id().clone())
+                })
+            })
+            .collect();
+        let results: Vec<Result<JobId, IrisError>> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let created: Vec<&JobId> = results.iter().filter_map(|r| r.as_ref().ok()).collect();
+        assert_eq!(created.len(), 1, "round {round}: {results:?}");
+        for e in results.iter().filter_map(|r| r.as_ref().err()) {
+            assert_eq!(e.code, ErrorCode::LabelInUse, "round {round}: {e:?}");
+            assert_eq!(e.job_id.as_deref(), Some(created[0].as_str()));
+        }
+        let store = JobStore::new(dir.path());
+        let listing = store.list().unwrap();
+        assert_eq!(listing.records.len(), 1, "round {round}");
+        assert_eq!(listing.records[0].label(), Some("same-label"));
+    }
 }

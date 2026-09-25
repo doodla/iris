@@ -197,8 +197,9 @@ another origin. The adapter only decides which output URIs Iris may fetch at all
   never resent by Iris.
 - **"Persisted state survives a crash and a concurrent process."** `jobs::JobStore` writes go
   through a temp file in the same directory, `sync_all`, then an atomic rename; a per-job lock
-  (`.lock`, held only for the read-modify-write) serializes concurrent updates; `jobs list` reads
-  without locking so it can never block on a stuck writer.
+  (`.lock`, held only for the read-modify-write) serializes concurrent updates; the store lock
+  (`labels.lock`) makes the check that no record has a new record's label and its creation one
+  step; `jobs list` reads without locking so it can never block on a stuck writer.
 
 ## Extending Iris
 

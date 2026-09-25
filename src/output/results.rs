@@ -48,6 +48,9 @@ pub struct JobOutputView {
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct JobView {
     pub job_id: String,
+    /// The label the job was submitted with (`video generate --label`), unique among
+    /// the local job records; null without one.
+    pub label: Option<String>,
     pub remote_operation_id: Option<String>,
     pub provider: ProviderId,
     pub model: String,
@@ -493,6 +496,9 @@ pub struct PlanResult {
     /// True if `--detach` was given: the real run would return right after the
     /// submission instead of waiting. Always false for synchronous commands.
     pub detach: bool,
+    /// The label the real run would record the job with (`video generate --label`);
+    /// null without one, and for the synchronous commands.
+    pub label: Option<String>,
     /// How the real run would wait for its job; null when it does not wait
     /// (`--detach`, and the synchronous commands).
     pub wait: Option<PlanWait>,

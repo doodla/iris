@@ -45,7 +45,9 @@ file, `<jobs_dir>/<job_id>.json`, plus two 0-byte lock files: `<job_id>.lock` (e
 `flock` held for the whole download of that job, so two concurrent `jobs download` calls for the
 same job cannot race). It is the **lock** that is held only transiently — the lock *files*
 themselves are created on first use and stay on disk (0 bytes, harmless) until `iris jobs delete`
-removes them along with the record.
+removes them along with the record. One more lock file, `<jobs_dir>/labels.lock`, is the store's
+own: its `flock` is held while a job with a `--label` is recorded (see
+[Labels](#labels-find-a-job-and-never-submit-it-twice)), and the file stays.
 
 `<state_dir>/unsaved/` may hold paid images Iris could not save where you asked, and returned
 content that was not a valid image, kept as received as `.bin` (warning `output_saved_elsewhere`,
@@ -57,9 +59,10 @@ directory.
 A job record holds enough to resume, diagnose, and download the job, and deliberately little
 else:
 
-- Local and remote identifiers, provider, model, where the model came from (`model_source`:
-  `flag` or `config`; `null` in a record that does not say), operation, every timestamp, and
-  normalized status.
+- Local and remote identifiers, the caller's `label` (`null` without one, and in records from
+  older versions), provider, model, where the model came from (`model_source`: `flag` or
+  `config`; `null` in a record that does not say), operation, every timestamp, and normalized
+  status.
 - Resolved *non-secret* request options (e.g. `duration`, `resolution`) and input **counts**
   (`first_frame`, `last_frame`, `reference`) — never input file paths or bytes.
 - The prompt is stored as `{ "sha256", "chars", "text": null }` — a hash and a character count,
@@ -84,7 +87,7 @@ written with sorted keys:
 ```json
 {
   "schema_version": 1,
-  "job_id": "job_01m3asyx4dya3grvdg4b28g2ms",
+  "job_id": "job_01m3asyx4dya3grvdg4b28g2ms", "label": null,
   "provider": "gemini", "model": "veo-3.1-fast-generate-preview", "model_source": "flag",
   "operation": "video.generate", "status": "succeeded",
   "created_at": "2026-09-24T22:53:12Z", "submitted_at": "2026-09-24T22:53:12Z",
@@ -224,7 +227,59 @@ c039da7d465dad0428a4cc4af986569874d79ecb6ff0233b454c7b154d587745  -
 
 Such a record has no operation id, so no command can finish it: check the provider console for
 the request, then remove the record with `iris jobs delete <id> --force` (see [Local deletion vs.
-remote state](#local-deletion-vs-remote-state)).
+remote state](#local-deletion-vs-remote-state)). A job submitted with a label is simpler to find:
+see the next section.
+
+### Labels: find a job, and never submit it twice
+
+`video generate --label <LABEL>` records a label of your choosing with the job, before the paid
+submission: 1 to 64 letters, digits, `.`, `_`, or `-`, starting with a letter or digit, compared
+exactly. The label is stored and shown as written (unlike the prompt, which the record keeps only
+as a fingerprint), so it should not contain anything secret. No two local job records in the state
+directory share a label. When a record with the label exists, in any status (`failed` and
+`submission_unknown` included), the command fails with `label_in_use` (exit 2) before anything is
+sent, naming that job and its status; `--dry-run` refuses the same way, and a dry run that passes
+shows the label in its plan. The hint depends on that job's status:
+
+| status | the hint says |
+|---|---|
+| `submitting`, `running` | follow it with `iris jobs status <id>` or `iris jobs wait <id>`; deleting its local record does not cancel the remote job, which keeps running and is billed; to submit another paid job, use another label |
+| `succeeded` | save its outputs with `iris jobs download <id>` (or `iris jobs wait <id>`); to submit another paid job under the label, delete its local record first (`iris jobs delete <id>`), or use another label |
+| `submission_unknown` | the provider may have accepted and billed the submission, and Iris cannot follow it: check usage and billing in the provider's console before submitting again, whether after deleting its record or under another label |
+| `failed`, `expired` | a new submission is billed: delete its local record first (`iris jobs delete <id>`), or use another label |
+
+```json
+{"code":"label_in_use","category":"conflict",
+ "message":"label 'paper-boat-1' is already used by job job_01m3a59a5syx5aex0a0qv8qc3x (running, created 2026-09-24T16:55:15Z)",
+ "hint":"the job is still running: follow it with `iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x` or `iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x`; deleting its local record does not cancel the remote job, which keeps running and is billed; to submit another paid job, use another label",
+ "job_id":"job_01m3a59a5syx5aex0a0qv8qc3x","job_status":"running","provider":"gemini",
+ "details":{"label":"paper-boat-1","model":"veo-3.1-lite-generate-preview","created_at":"2026-09-24T16:55:15Z"},
+ "retryable":false,"provider_status":null,"...":"other Error fields omitted for brevity"}
+```
+
+So a script that gives the same label to the same intended video can run the same command again
+after a crash, a timeout, or a lost terminal without paying twice: a job the first run recorded
+stops the second, and the job is found by its label. `iris jobs list --label <LABEL>` lists it
+(the job view's `label`; a labeled job that is still active also has that command among its
+`next_steps`):
+
+```console
+$ iris video generate -m veo-lite "a paper boat drifting on a pond" --duration 4 --label paper-boat-1 --detach --json
+$ iris jobs list --label paper-boat-1 --json
+```
+
+The check and the record are one step: the record is written under the store's lock
+(`labels.lock`), which is taken before the labels of the other records are read and held until the
+new record is on disk. Of two processes submitting with one label at the same time, the second
+waits for the first, then finds its record and stops with `label_in_use`; only one submits. A
+record Iris cannot read (`job_record_unreadable`: corrupt, or written by a newer Iris) could have
+the label, so while one exists a labeled submission is refused with `state_invalid` (exit 1,
+nothing sent), naming the records in `details.unreadable`: inspect them with `iris jobs list`,
+remove them with `iris jobs delete <id> --force` once you have checked them, or submit without
+`--label`. Submissions without a label are not affected. To submit a new paid job under a label,
+delete the old record first (`iris jobs delete <id>`, which keeps a job that is active or has
+outputs to download unless given `--force`), or choose another label. Image commands take no
+`--label`: they create no job record, and `output_exists` guards their outputs.
 
 ### Waiting, `--timeout`, Ctrl-C, and other signals
 

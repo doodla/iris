@@ -49,6 +49,7 @@ pub enum ErrorCode {
     CostLimitExceeded,
     ConfigInvalid,
     OutputExists,
+    LabelInUse,
     JobNotFound,
     MissingCredentials,
     AuthenticationFailed,
@@ -111,6 +112,7 @@ impl ErrorCode {
         ErrorCode::CostLimitExceeded,
         ErrorCode::ConfigInvalid,
         ErrorCode::OutputExists,
+        ErrorCode::LabelInUse,
         ErrorCode::JobNotFound,
         ErrorCode::MissingCredentials,
         ErrorCode::AuthenticationFailed,
@@ -149,6 +151,7 @@ impl ErrorCode {
             CostLimitExceeded => "cost_limit_exceeded",
             ConfigInvalid => "config_invalid",
             OutputExists => "output_exists",
+            LabelInUse => "label_in_use",
             JobNotFound => "job_not_found",
             MissingCredentials => "missing_credentials",
             AuthenticationFailed => "authentication_failed",
@@ -182,7 +185,7 @@ impl ErrorCode {
             InvalidArgument | UnsupportedOperation | UnsupportedOption | UnknownModel | UnknownProvider
             | InputFileInvalid | CostLimitExceeded => C::Validation,
             ConfigInvalid => C::Config,
-            OutputExists => C::Conflict,
+            OutputExists | LabelInUse => C::Conflict,
             JobNotFound => C::NotFound,
             MissingCredentials | AuthenticationFailed => C::Auth,
             PermissionDenied => C::Access,
@@ -313,6 +316,11 @@ pub struct ErrorData {
     pub job_status: Option<JobStatus>,
     /// Extra structured details (e.g. `provider_message`, `charge_possible`, `path`).
     pub details: serde_json::Map<String, serde_json::Value>,
+    /// The model this error is about, as its message names it (`model '<id>'`), set
+    /// with [`IrisError::about_model`] where the error is raised. A generation
+    /// command then says where that model came from (flag or config file). Not
+    /// part of the JSON error object.
+    pub about_model: Option<String>,
 }
 
 /// The single error type flowing through Iris. Rendered by `output` into the
@@ -351,6 +359,7 @@ impl IrisError {
             remote_operation_id: None,
             job_status: None,
             details: serde_json::Map::new(),
+            about_model: None,
         }))
     }
 
@@ -420,6 +429,13 @@ impl IrisError {
         self
     }
 
+    /// Mark the error as about the model `id`, which its message names as
+    /// `model '<id>'`.
+    pub fn about_model(mut self, id: impl Into<String>) -> Self {
+        self.about_model = Some(id.into());
+        self
+    }
+
     pub fn with_detail(mut self, key: &str, value: impl Into<serde_json::Value>) -> Self {
         self.details.insert(key.to_string(), value.into());
         self
@@ -472,6 +488,7 @@ mod tests {
         assert_eq!(ErrorCode::UsageError.exit_code(), 2);
         assert_eq!(ErrorCode::UnsupportedOption.exit_code(), 2);
         assert_eq!(ErrorCode::OutputExists.exit_code(), 2);
+        assert_eq!(ErrorCode::LabelInUse.exit_code(), 2);
         assert_eq!(ErrorCode::CostLimitExceeded.exit_code(), 2);
         assert_eq!(ErrorCode::JobNotFound.exit_code(), 2);
         assert_eq!(ErrorCode::MissingCredentials.exit_code(), 3);

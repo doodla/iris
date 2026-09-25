@@ -28,6 +28,7 @@ use crate::catalog::{OptionSource, RawOption};
 use crate::config::{self, CliOverrides, EnvSnapshot, Settings};
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
+use crate::jobs::JobLabel;
 use crate::output::results::{CompletionsResult, SchemaResult};
 use crate::output::{self, CommandName, Envelope, ErrorBody, ResultPayload, human};
 
@@ -322,11 +323,13 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
                     .map(|p| absolute(&io.env, p))
                     .collect::<Result<_, _>>()?,
                 detach: a.detach,
+                label: a.label.as_deref().map(|l| JobLabel::parse(l, "--label")).transpose()?,
             })
         }
         Command::Jobs(JobsCommand::List(a)) => Request::JobsList(ListFilter {
             status: a.status.as_deref().map(parse_status).transpose()?,
             provider: a.provider.as_deref().map(parse_provider).transpose()?,
+            label: a.label.as_deref().map(|l| JobLabel::parse(l, "--label")).transpose()?,
             limit: a.limit,
         }),
         Command::Jobs(JobsCommand::Status(a)) => {

@@ -196,6 +196,7 @@ async fn run_checked(
             operation: op,
             async_job: false,
             detach: false,
+            label: None,
             wait: None,
             billing: spec.billing,
             options: request::options_view(spec, op, &opts, ctx.settings.store_prompts.value),

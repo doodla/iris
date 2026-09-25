@@ -496,13 +496,17 @@ pub enum VideoCommand {
                       the job id, find the job with `iris jobs list --status submitting --json` \
                       (submission_unknown once the submission budget has passed) by its model, created_at, \
                       and prompt_fingerprint, the prompt's SHA-256 and length, which --dry-run shows \
-                      beforehand (result.prompt_fingerprint).",
+                      beforehand (result.prompt_fingerprint).\n\nWith --label, the command can be run again \
+                      safely: no two local jobs share a label, so a second run with the label is refused \
+                      (label_in_use, naming the job) before anything is sent, and `iris jobs list --label \
+                      <LABEL>` finds the job.",
         after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
                       iris video generate -m veo-lite \"a paper boat\" --detach --json\n  iris video generate \
                       -m veo-lite --image first.png \"the scene comes alive\" --timeout 15m\n  iris video \
                       generate -m veo-lite \"city timelapse\" --dry-run --json\n  iris video generate -m veo-lite \
-                      \"a paper boat\" --duration 4 --max-cost 0.25 --detach\n\nProvider usage is billed by the \
-                      provider.",
+                      \"a paper boat\" --duration 4 --max-cost 0.25 --detach\n  iris video generate -m veo-lite \
+                      \"a paper boat\" --duration 4 --label paper-boat-1 --detach --json\n\nProvider usage is \
+                      billed by the provider.",
         mut_arg("model", |arg| arg.help(VIDEO_MODEL_HELP))
     )]
     Generate(VideoGenerateArgs),
@@ -527,6 +531,18 @@ pub struct VideoGenerateArgs {
     pub options: VideoOptions,
     #[command(flatten)]
     pub output: OutputArgs,
+    /// Label the job: 1-64 letters, digits, '.', '_', '-', starting with a letter or digit; no two
+    /// local jobs share a label
+    ///
+    /// No other local job record may have the label, in any status. A script that gives the same label
+    /// to the same intended video can therefore run again after a crash without paying twice: the
+    /// second run is refused with label_in_use, which names the job and what to do for its status,
+    /// before anything is sent. While a local job record cannot be read, a labeled submission is
+    /// refused (state_invalid), since that record could have the label. Find the job with `iris jobs
+    /// list --label <LABEL>`. The label is stored and shown as written (the prompt is kept only as a
+    /// fingerprint), so it should not contain anything secret.
+    #[arg(long, value_name = "LABEL", help_heading = "Job")]
+    pub label: Option<String>,
     /// Submit, record the job, print its id, and return without waiting
     #[arg(long, conflicts_with_all = ["timeout", "poll_interval"], help_heading = "Waiting")]
     pub detach: bool,
@@ -553,7 +569,7 @@ pub enum JobsCommand {
                       process that was killed is found with --status submitting (submission_unknown once the \
                       submission budget has passed), by model, created_at, and prompt_fingerprint.",
         after_help = "Examples:\n  iris jobs list\n  iris jobs list --status running --json\n  iris jobs list \
-                      --provider gemini --limit 5"
+                      --label paper-boat-1 --json\n  iris jobs list --provider gemini --limit 5"
     )]
     List(JobsListArgs),
     /// Show one job, refreshing its remote status once
@@ -629,6 +645,9 @@ pub struct JobsListArgs {
     /// Only jobs of this provider
     #[arg(long, value_name = "PROVIDER")]
     pub provider: Option<String>,
+    /// Only the job with this label (`video generate --label`)
+    #[arg(long, value_name = "LABEL")]
+    pub label: Option<String>,
     /// At most this many jobs
     #[arg(long, value_name = "N")]
     pub limit: Option<usize>,

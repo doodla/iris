@@ -24,7 +24,7 @@ use crate::config::SettingSource;
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{self, AuthHeader, DownloadError, DownloadRequest};
-use crate::jobs::{self, DeleteRefusal, JobId, JobOutput, JobRecord, PollApplied, RefusalKind};
+use crate::jobs::{self, DeleteRefusal, JobId, JobLabel, JobOutput, JobRecord, PollApplied, RefusalKind};
 use crate::output::ErrorBody;
 use crate::output::results::{JobDeleteResult, JobListResult, JobResult, JobView};
 use crate::providers::VideoProvider;
@@ -36,6 +36,8 @@ use super::context::AppContext;
 pub struct ListFilter {
     pub status: Option<JobStatus>,
     pub provider: Option<ProviderId>,
+    /// Only the job with this label (labels are unique among local records).
+    pub label: Option<JobLabel>,
     pub limit: Option<usize>,
 }
 
@@ -88,6 +90,7 @@ pub fn list(
             .iter()
             .filter(|r| filter.status.is_none_or(|s| r.status() == s))
             .filter(|r| filter.provider.is_none_or(|p| r.provider() == p))
+            .filter(|r| filter.label.as_ref().is_none_or(|l| r.label() == Some(l.as_str())))
             .take(filter.limit.unwrap_or(usize::MAX))
             .map(|r| commands.view(r.to_view()))
             .collect();
@@ -432,15 +435,19 @@ pub(crate) fn job_result(ctx: &AppContext, rec: &JobRecord) -> JobResult {
     JobResult { job: commands.view(rec.to_view()), next_steps: next_steps(&commands, rec) }
 }
 
-/// Suggested follow-up commands for a job in its current state.
+/// Suggested follow-up commands for a job in its current state. A labeled job
+/// that is still active also names the command that finds it by its label, which a
+/// script that reruns after a crash can use instead of the id.
 fn next_steps(commands: &Commands, rec: &JobRecord) -> Vec<String> {
     let id = rec.job_id();
     match rec.status() {
         JobStatus::Submitting | JobStatus::Running => {
-            vec![
+            let mut steps = vec![
                 commands.line(format_args!("jobs status {id}")),
                 commands.line(format_args!("jobs wait {id}")),
-            ]
+            ];
+            steps.extend(rec.label().map(|label| commands.line(format_args!("jobs list --label {label}"))));
+            steps
         }
         JobStatus::Succeeded if has_downloadable(rec) => {
             vec![commands.line(format_args!("jobs download {id}"))]

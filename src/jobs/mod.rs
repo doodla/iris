@@ -8,8 +8,11 @@
 //!   join goes through a `JobId`, so traversal (`../x`) is unrepresentable.
 //! * [`JobRecord`] — the versioned (v1) on-disk record with transition helpers
 //!   that only allow the arrows documented in docs/jobs.md.
+//! * [`JobLabel`] — caller-chosen labels (`--label`), unique among the records of a
+//!   store.
 //! * [`JobStore`] — `<state_dir>/jobs/`: atomic writes, per-job exclusive locks
-//!   for read-modify-write, lock-free listing, local deletion, and download locks.
+//!   for read-modify-write, a store lock under which a labeled record is created,
+//!   lock-free listing, local deletion, and download locks.
 
 mod record;
 mod store;
@@ -108,6 +111,50 @@ impl<'de> Deserialize<'de> for JobId {
     }
 }
 
+/// Longest job label, in characters.
+const LABEL_MAX_CHARS: usize = 64;
+
+/// A caller-chosen job label (`video generate --label`): 1 to 64 characters of
+/// `A-Z a-z 0-9 . _ -`, starting with a letter or digit, compared exactly. No two
+/// local records of a store share a label ([`JobStore::create`]), so a caller that
+/// gives the same label to the same intended job never submits it twice.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct JobLabel(String);
+
+impl JobLabel {
+    /// Validate a label given with `flag` (`--label`). Errors are `invalid_argument`
+    /// with `details.flag`.
+    pub fn parse(raw: &str, flag: &str) -> Result<JobLabel, IrisError> {
+        if Self::is_valid(raw) {
+            Ok(JobLabel(raw.to_string()))
+        } else {
+            Err(IrisError::invalid(format!(
+                "{flag}: '{}' is not a job label: expected 1 to {LABEL_MAX_CHARS} letters, digits, '.', '_', \
+                 or '-', starting with a letter or digit",
+                redact::truncate(raw, LABEL_MAX_CHARS + 8)
+            ))
+            .with_detail("flag", flag))
+        }
+    }
+
+    /// True if `raw` matches `^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`.
+    pub fn is_valid(raw: &str) -> bool {
+        raw.len() <= LABEL_MAX_CHARS
+            && raw.bytes().next().is_some_and(|b| b.is_ascii_alphanumeric())
+            && raw.bytes().all(|b| b.is_ascii_alphanumeric() || b".-_".contains(&b))
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for JobLabel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
 /// The current time truncated to whole seconds (docs/json-contract.md timestamps look like
 /// `2026-09-24T12:34:56Z`). Transition helpers take `now` explicitly; callers
 /// normally pass this.
@@ -119,6 +166,20 @@ pub fn now() -> jiff::Timestamp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn labels_are_letters_digits_dots_underscores_and_dashes() {
+        let longest = "a".repeat(64);
+        for good in ["a", "Z", "7", "boat-1", "Boat_2.final", "2026-09-25.run", longest.as_str()] {
+            assert_eq!(JobLabel::parse(good, "--label").unwrap().as_str(), good);
+        }
+        let too_long = "a".repeat(65);
+        for bad in ["", "-boat", ".boat", "_boat", "boat 1", "boat/1", "bøat", "boat\n", too_long.as_str()] {
+            let e = JobLabel::parse(bad, "--label").unwrap_err();
+            assert_eq!(e.code, crate::error::ErrorCode::InvalidArgument, "{bad:?}");
+            assert_eq!(e.details["flag"], "--label");
+        }
+    }
 
     #[test]
     fn generated_ids_are_valid_and_lowercase() {

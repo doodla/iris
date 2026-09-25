@@ -95,6 +95,12 @@ machine-readable contract for agents.
 - A job records where `video generate` was asked to save (its `-o`, or the output directory in
   effect, and `--overwrite`), shown as `output_plan` in every job view: `jobs wait` and `jobs
   download` save there unless given their own `-o` or `-d`.
+- `video generate --label <LABEL>` records a label no other local job has, checked and written under
+  the job store's lock: a second submission with the label, in any status, is refused with
+  `label_in_use` (exit 2) before anything is sent, a dry run too, with a hint for that job's status,
+  so a script that labels each intended video can rerun after a crash without paying twice. While a
+  local record cannot be read, a labeled submission is refused (`state_invalid`). `jobs list
+  --label` finds the job, and the dry-run plan shows the label.
 - `jobs download` checks a job that still reads `running` once before deciding, and reports a
   failed check (missing key, 401, 403, quota) as that error, not as "not ready".
 - `jobs delete` is all or nothing, deletes only local records, and without `--force` refuses a

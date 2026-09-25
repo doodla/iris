@@ -164,7 +164,7 @@ at its published prices, and a name the real run generates is shown as its patte
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
-{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"detach":false,"dry_run":true,"inputs":[],"max_cost":null,"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"prompt_fingerprint":{"chars":13,"sha256":"1191409152a26c2e3a7b6e7e0fc0f0dbc04a0c2aef096f8e20239abd84a7c3c6"},"provider":"openai","wait":null},"schema_version":1,"warnings":[]}
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"detach":false,"dry_run":true,"inputs":[],"label":null,"max_cost":null,"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"prompt_fingerprint":{"chars":13,"sha256":"1191409152a26c2e3a7b6e7e0fc0f0dbc04a0c2aef096f8e20239abd84a7c3c6"},"provider":"openai","wait":null},"schema_version":1,"warnings":[]}
 ```
 
 To cap what a command may spend, add `--max-cost <USD>`: a request whose pre-call estimate is
@@ -338,7 +338,10 @@ a remote failure, an expired job, or a failed download (`remote_job_failed`, `co
 `succeeded`. A download checks a `running` record's status once first, so a stale local record is
 not a problem; if the job is still running it exits 4 (`job_not_ready`) rather than waiting or
 resubmitting. Every step is idempotent: repeating a download never re-generates the video (see
-[docs/jobs.md](docs/jobs.md)).
+[docs/jobs.md](docs/jobs.md)). To make the submission itself safe to repeat, give it a label that
+names the intended video (`--label paper-boat-1`): no two local jobs share a label, so the same
+command run again after a crash is refused with `label_in_use` (exit 2), naming the job, before
+anything is sent, and `iris jobs list --label paper-boat-1 --json` finds the job.
 
 ## Supported providers and models
 

@@ -1117,6 +1117,262 @@ fn a_record_left_submitting_by_a_killed_process_is_found_by_its_prompt_fingerpri
     veo.assert_no_credential_leaks();
 }
 
+/// `--label` is recorded with the job and shown in every view (JSON and human),
+/// `jobs list --label` finds it, and an active labeled job names that command among
+/// its next steps. The same command run again is refused with `label_in_use`
+/// naming the job, before anything is sent: in a dry run, while the job runs, and
+/// once it has failed or its submission is unknown. Deleting the record frees the
+/// label.
+#[test]
+fn a_label_finds_the_job_and_refuses_to_submit_it_twice() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let label = ["--label", "paper-boat-1"];
+    let id = submit_detached(&sb, &veo, &label);
+    assert_eq!(sb.record(&id)["label"], "paper-boat-1");
+    let v = sb.iris().args(["jobs", "status", &id, "--no-refresh", "--json"]).run().ok();
+    assert_eq!(job_of(&v)["label"], "paper-boat-1");
+    assert_eq!(
+        v["result"]["next_steps"],
+        json!([
+            format!("iris jobs status {id}"),
+            format!("iris jobs wait {id}"),
+            "iris jobs list --label paper-boat-1"
+        ])
+    );
+    let human = sb.iris().args(["jobs", "status", &id, "--no-refresh"]).run();
+    assert!(human.stdout.contains("  label:      paper-boat-1\n"), "{}", human.stdout);
+
+    // Found by its label, compared exactly; an unlabeled job has none.
+    let other = submit_detached(&sb, &veo, &[]);
+    let listed = |label: &str| -> Vec<String> {
+        let v = sb.iris().args(["jobs", "list", "--label", label, "--json"]).run().ok();
+        v["result"]["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|j| j["job_id"].as_str().unwrap().to_string())
+            .collect()
+    };
+    assert_eq!(listed("paper-boat-1"), std::slice::from_ref(&id));
+    assert!(listed("Paper-Boat-1").is_empty() && listed("paper-boat").is_empty());
+    let v = sb.iris().args(["jobs", "list", "--json"]).run().ok();
+    let unlabeled =
+        v["result"]["jobs"].as_array().unwrap().iter().find(|j| j["job_id"] == other.as_str()).unwrap();
+    assert!(unlabeled["label"].is_null(), "{unlabeled}");
+    let table = sb.iris().args(["jobs", "list"]).run().stdout;
+    assert!(table.contains("LABEL") && table.contains("paper-boat-1"), "{table}");
+
+    // Running the same command again, or planning it, sends nothing.
+    let again = |sb: &Sandbox, veo: &VeoMock, extra: &[&str]| {
+        sb.iris()
+            .gemini(&veo.api)
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+            .args(label)
+            .args(extra)
+            .run()
+            .err(2, "label_in_use")
+    };
+    for extra in [&["--dry-run"][..], &[]] {
+        let v = again(&sb, &veo, extra);
+        let error = &v["error"];
+        assert_eq!(error["category"], "conflict");
+        assert!(error["provider_status"].is_null(), "{v}");
+        assert_eq!(error["job_id"], id.as_str());
+        assert_eq!(error["job_status"], "running");
+        assert_eq!(error["provider"], "gemini");
+        assert_eq!(error["remote_operation_id"], veo.op_name.as_str());
+        assert_eq!(error["details"]["label"], "paper-boat-1");
+        assert_eq!(error["details"]["model"], VEO_LITE);
+        assert_eq!(
+            error["hint"],
+            format!(
+                "the job is still running: follow it with `iris jobs status {id}` or `iris jobs wait {id}`; \
+                 deleting its local record does not cancel the remote job, which keeps running and is billed; to \
+                 submit another paid job, use another label"
+            )
+        );
+    }
+    assert_eq!(veo.submits(), 2, "only the two first submissions were sent");
+    assert_eq!(
+        sb.iris().args(["jobs", "list", "--json"]).run().ok()["result"]["jobs"].as_array().unwrap().len(),
+        2
+    );
+
+    // A job that failed, or whose submission is unknown, keeps its label too; the
+    // hint for an unknown submission asks to check the bill before submitting again.
+    for (answer, status, advice) in [
+        (
+            google_error(400, "INVALID_ARGUMENT", "Request contains an invalid argument.", json!([])),
+            "failed",
+            "the job failed; a new submission is billed",
+        ),
+        (
+            google_error(500, "INTERNAL", "An internal error has occurred.", json!([])),
+            "submission_unknown",
+            "the provider may have accepted and billed this job's submission",
+        ),
+    ] {
+        let sb = Sandbox::new();
+        let veo = VeoMock::start();
+        veo.submit.set(answer);
+        let first = sb
+            .iris()
+            .gemini(&veo.api)
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+            .args(label)
+            .run();
+        assert_ne!(first.code, 0, "{first:?}");
+        let v = again(&sb, &veo, &[]);
+        assert_eq!(v["error"]["job_status"], status, "{v}");
+        assert!(v["error"]["hint"].as_str().unwrap().starts_with(advice), "{v}");
+        assert_eq!(veo.submits(), 1, "{status}: sent once");
+
+        // Deleting the record frees the label.
+        let job = v["error"]["job_id"].as_str().unwrap().to_string();
+        sb.iris().args(["jobs", "delete", &job, "--json"]).run().ok();
+        let v = sb
+            .iris()
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--dry-run", "--json"])
+            .args(label)
+            .run()
+            .ok();
+        assert_eq!(v["result"]["label"], "paper-boat-1", "the plan shows the label");
+        let human = sb
+            .iris()
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--dry-run"])
+            .args(label)
+            .run();
+        assert!(human.stdout.contains("  label:      paper-boat-1\n"), "{}", human.stdout);
+    }
+    let v = sb.iris().args(["video", "generate", PROMPT, "-m", VEO_LITE, "--dry-run", "--json"]).run().ok();
+    assert!(v["result"]["label"].is_null(), "{v}");
+    veo.assert_no_credential_leaks();
+}
+
+/// A local record Iris cannot read (corrupt, or written by a newer Iris) could have
+/// the label, so a labeled submission is refused while one exists (`state_invalid`,
+/// exit 1, naming the file), a dry run too, with nothing sent; a submission without a
+/// label is not affected.
+#[test]
+fn a_labeled_submission_waits_for_every_record_to_be_readable() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &["--label", "boat-new"]);
+    let path = sb.record_path(&id);
+    let mut record = sb.record(&id);
+    record["schema_version"] = 2.into();
+    std::fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
+
+    for extra in [&["--dry-run"][..], &[]] {
+        let v = sb
+            .iris()
+            .gemini(&veo.api)
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+            .args(["--label", "boat-new"])
+            .args(extra)
+            .run()
+            .err(1, "state_invalid");
+        let error = &v["error"];
+        assert!(error["provider_status"].is_null(), "{v}");
+        assert_eq!(error["retryable"], false);
+        assert_eq!(error["details"]["unreadable"], json!([path.to_str().unwrap()]));
+        assert_eq!(error["details"]["label"], "boat-new");
+        assert!(error["hint"].as_str().unwrap().contains("without --label"), "{v}");
+    }
+    assert_eq!(veo.submits(), 1);
+    let v = sb.iris().args(["video", "generate", PROMPT, "-m", VEO_LITE, "--dry-run", "--json"]).run().ok();
+    assert_eq!(v["result"]["dry_run"], true);
+}
+
+/// An error that is not about the resolved model is never marked as coming from
+/// the config file, even when it mentions the model's id (here as a label).
+#[test]
+fn only_errors_about_the_model_say_where_it_came_from() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let config = sb.write("team.toml", format!("[video]\nmodel = \"{VEO_LITE}\"\n"));
+    let team = |args: &[&str]| {
+        let mut iris = sb.iris();
+        iris.gemini(&veo.api).arg("--config").arg(&config).args(["video", "generate", PROMPT]).args(args);
+        iris.run()
+    };
+    team(&["--duration", "4", "--detach", "--json", "--label", VEO_LITE]).ok();
+    let v = team(&["--duration", "4", "--dry-run", "--json", "--label", VEO_LITE]).err(2, "label_in_use");
+    assert!(!v["error"]["message"].as_str().unwrap().contains("(config"), "{v}");
+    assert!(v["error"]["details"].get("model_source").is_none(), "{v}");
+    // An error about the model does.
+    let v = team(&["--negative-prompt", "rain", "--dry-run", "--json"]).err(2, "unsupported_option");
+    assert!(
+        v["error"]["message"].as_str().unwrap().contains(&format!("'{VEO_LITE}' (config video.model)")),
+        "{v}"
+    );
+    assert_eq!(v["error"]["details"]["model_source"], "config");
+}
+
+/// A label must be 1 to 64 letters, digits, '.', '_' or '-', starting with a letter
+/// or digit, for `video generate` and `jobs list` alike; image commands take none.
+#[test]
+fn a_label_must_be_a_short_word() {
+    let sb = Sandbox::new();
+    for bad in ["paper boat", "-boat", "boat/1", &"b".repeat(65)] {
+        let v = sb
+            .iris()
+            .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--dry-run", "--json"])
+            .arg(format!("--label={bad}"))
+            .run()
+            .err(2, "invalid_argument");
+        assert_eq!(v["error"]["details"]["flag"], "--label", "{bad:?}");
+        let v = sb
+            .iris()
+            .args(["jobs", "list", "--json"])
+            .arg(format!("--label={bad}"))
+            .run()
+            .err(2, "invalid_argument");
+        assert_eq!(v["error"]["details"]["flag"], "--label", "{bad:?}");
+    }
+    sb.iris()
+        .args(["image", "generate", PROMPT, "-m", "gpt-image-2", "--label", "x", "--json"])
+        .run()
+        .err(2, "usage_error");
+}
+
+/// Two processes submitting with one label at the same time: the label check and
+/// the new record are one step under the job store's lock, so exactly one of them
+/// records and submits the job; the other is refused with `label_in_use` naming it,
+/// and leaves no output directory behind (each run asks for its own).
+#[test]
+fn concurrent_submissions_with_one_label_submit_once() {
+    for _ in 0..3 {
+        let sb = Sandbox::new();
+        let veo = VeoMock::start();
+        veo.submit
+            .set(json_response(200, json!({ "name": veo.op_name })).set_delay(Duration::from_millis(500)));
+        let spawn = |run: usize| {
+            sb.iris()
+                .gemini(&veo.api)
+                .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+                .args(["--label", "same-label", "-o"])
+                .arg(format!("out-{run}/clip.mp4"))
+                .spawn()
+        };
+        let children = [spawn(0), spawn(1), spawn(2)];
+        let outs: Vec<Out> = children.into_iter().map(|c| c.finish()).collect();
+        let submitted: Vec<usize> = (0..outs.len()).filter(|&run| outs[run].code == 0).collect();
+        assert_eq!(submitted.len(), 1, "{outs:?}");
+        let id = job_of(&outs[submitted[0]].json())["job_id"].as_str().unwrap().to_string();
+        for (run, refused) in outs.iter().enumerate().filter(|(_, o)| o.code != 0) {
+            let v = refused.clone().err(2, "label_in_use");
+            assert_eq!(v["error"]["job_id"], id.as_str());
+            assert!(!sb.path(&format!("out-{run}")).exists(), "a refused run leaves no directory");
+        }
+        assert!(sb.path(&format!("out-{}", submitted[0])).is_dir());
+        assert_eq!(veo.submits(), 1);
+        let v = sb.iris().args(["jobs", "list", "--json"]).run().ok();
+        assert_eq!(v["result"]["jobs"].as_array().unwrap().len(), 1);
+    }
+}
+
 // ----- scenario 8: download failure, recovery, expiry --------------------------------------------
 
 #[test]

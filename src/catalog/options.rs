@@ -180,7 +180,8 @@ pub fn validate_request(
         )
         .with_hint(format!(
             "run `iris models list --operation {operation}` to see the models that support it"
-        )));
+        ))
+        .about_model(spec.id));
     }
 
     let mut resolved = ResolvedOptions::new();
@@ -205,6 +206,7 @@ pub fn validate_request(
                 "{}; options supported by this model for {operation}: {list}",
                 where_supported(&describe, operation, &supported_by)
             ))
+            .about_model(spec.id)
             .with_detail("option", opt.name.clone())
             .with_detail("supported_by", supported_by));
         };
@@ -281,6 +283,7 @@ fn validate_inputs(
             format!("model '{}' does not accept {what} for {op}", spec.id),
         )
         .with_hint(where_supported(what, op, &supported_by))
+        .about_model(spec.id)
         .with_detail("option", name)
         .with_detail("supported_by", supported_by)
     };
@@ -301,7 +304,8 @@ fn validate_inputs(
                 return Err(IrisError::invalid(format!(
                     "model '{}' accepts at most {max} input image(s); got {}",
                     spec.id, inputs.images
-                )));
+                ))
+                .about_model(spec.id));
             }
             if inputs.mask && spec.inputs.mask.is_none() {
                 return Err(unsupported("--mask", "mask", |m| m.inputs.mask.is_some()));
@@ -324,7 +328,8 @@ fn validate_inputs(
                 return Err(IrisError::invalid(format!(
                     "model '{}' accepts at most {max} reference image(s); got {}",
                     spec.id, inputs.references
-                )));
+                ))
+                .about_model(spec.id));
             }
         }
     }

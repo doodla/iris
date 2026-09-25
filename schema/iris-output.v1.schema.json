@@ -573,6 +573,25 @@
           "if": {
             "properties": {
               "code": {
+                "const": "label_in_use"
+              }
+            },
+            "required": [
+              "code"
+            ]
+          },
+          "then": {
+            "properties": {
+              "category": {
+                "const": "conflict"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "code": {
                 "const": "job_not_found"
               }
             },
@@ -1140,6 +1159,7 @@
             "cost_limit_exceeded",
             "config_invalid",
             "output_exists",
+            "label_in_use",
             "job_not_found",
             "missing_credentials",
             "authentication_failed",
@@ -1515,6 +1535,13 @@
         "job_id": {
           "type": "string"
         },
+        "label": {
+          "description": "The label the job was submitted with (`video generate --label`), unique among\nthe local job records; null without one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "last_checked_at": {
           "type": [
             "string",
@@ -1598,6 +1625,7 @@
       },
       "required": [
         "job_id",
+        "label",
         "remote_operation_id",
         "provider",
         "model",
@@ -2121,6 +2149,13 @@
           },
           "type": "array"
         },
+        "label": {
+          "description": "The label the real run would record the job with (`video generate --label`);\nnull without one, and for the synchronous commands.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "max_cost": {
           "description": "The spending cap `--max-cost` applied, in US dollars; null without it. A plan\nwith a cap exists only when the request's pre-call estimate is at most the cap.",
           "format": "double",
@@ -2177,6 +2212,7 @@
         "operation",
         "async_job",
         "detach",
+        "label",
         "wait",
         "billing",
         "options",

@@ -171,7 +171,7 @@ fn open_sets_accept_later_values_of_the_documented_form_only() {
             "schema_version": 1, "ok": true, "command": "image.generate", "error": null, "warnings": [],
             "result": {
                 "dry_run": true, "provider": "openai", "model": "m", "model_source": "flag",
-                "operation": "image.generate", "async_job": false, "detach": false, "wait": null,
+                "operation": "image.generate", "async_job": false, "detach": false, "label": null, "wait": null,
                 "billing": billing, "options": {}, "inputs": [], "outputs": [], "credential_present": false,
                 "cost_estimate": null, "max_cost": null, "prompt_fingerprint": { "sha256": "00", "chars": 1 }
             }
@@ -360,7 +360,7 @@ fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
     let plan = serde_json::json!({
         "dry_run": true, "provider": "openai", "model": "m", "model_source": "config",
         "operation": "image.generate",
-        "async_job": false, "detach": false, "wait": null, "billing": "paid", "options": {}, "inputs": [],
+        "async_job": false, "detach": false, "label": null, "wait": null, "billing": "paid", "options": {}, "inputs": [],
         "outputs": [], "credential_present": false, "cost_estimate": null, "max_cost": null,
         "prompt_fingerprint": { "sha256": "00", "chars": 1 }
     });

@@ -2,7 +2,9 @@
 //!
 //! Layout: `<job_id>.json` (record), `<job_id>.lock` (exclusive advisory lock held
 //! only for a read-modify-write), `<job_id>.download.lock` (exclusive lock held for
-//! a whole download). Directories are created 0700 and files 0600.
+//! a whole download), and `labels.lock` (the store's exclusive lock, held while a
+//! labeled record is created: the check that no record has its label and the
+//! write are one step). Directories are created 0700 and files 0600.
 //!
 //! Records are replaced atomically (temp file in the same directory → `sync_all` →
 //! rename → best-effort directory fsync), so lock-free readers never see a partial
@@ -31,6 +33,8 @@ use crate::http::Timeouts;
 
 /// Name of the jobs directory inside the state directory.
 const JOBS_DIR: &str = "jobs";
+/// The store lock taken to create a labeled record, in the jobs directory.
+const LABELS_LOCK: &str = "labels.lock";
 
 /// Attempts of the `PaidSubmit` retry class (see docs/architecture.md "Where
 /// invariants live").
@@ -64,6 +68,9 @@ pub struct JobListing {
     /// jobs directory, with the warning each produced (also in `warnings`): what
     /// `jobs delete --all --force` removes along with the readable records.
     pub unreadable: Vec<UnreadableRecord>,
+    /// The path of every skipped record, whatever it is (each has its warning in
+    /// `warnings`).
+    pub skipped: Vec<PathBuf>,
 }
 
 /// A record file that [`JobStore::list`] could not read.
@@ -119,6 +126,12 @@ impl DownloadLock {
 
 /// Exclusive lock on `<job_id>.lock` for one read-modify-write. Released when dropped.
 struct RecordLock {
+    _file: File,
+}
+
+/// The store's exclusive lock on `labels.lock`, held while a labeled record is
+/// created. Released when dropped.
+struct StoreLock {
     _file: File,
 }
 
@@ -180,8 +193,23 @@ impl JobStore {
 
     /// Persist a new record. Fails (`internal_error`) if a record with this id
     /// already exists; never overwrites.
+    ///
+    /// A labeled record is created under the store's exclusive lock
+    /// (`labels.lock`), taken before [`JobStore::check_label`] and held until the
+    /// record is written, so of two processes creating records with one label, the
+    /// second waits for the first and then fails with `label_in_use`: only one of
+    /// them goes on to submit. While a record cannot be read, a labeled record is
+    /// not created (`state_invalid`).
     pub fn create(&self, record: &JobRecord) -> Result<(), IrisError> {
         self.ensure_dir()?;
+        let _labels = match record.label() {
+            Some(label) => {
+                let lock = self.lock_labels()?;
+                self.check_label(label)?;
+                Some(lock)
+            }
+            None => None,
+        };
         let path = self.record_path(record.job_id());
         // Later processes judge a stale `submitting` record by at least this
         // process's submit budget (its timeouts may be longer than theirs).
@@ -195,6 +223,22 @@ impl JobStore {
                 IrisError::io(format_args!("cannot write job record {}", path.display()), &e)
             }
         })
+    }
+
+    /// `label_in_use` when a record has the label `label` (in any status), naming
+    /// that job, its status, and what to do for that status; `state_invalid` when a
+    /// record cannot be read, since it could have the label (the refusal names the
+    /// records). Without the store lock, so a caller can refuse early (a dry run
+    /// refuses the same way); [`JobStore::create`] checks again under the lock.
+    pub fn check_label(&self, label: &str) -> Result<(), IrisError> {
+        let listing = self.list()?;
+        if let Some(existing) = listing.records.iter().find(|r| r.label() == Some(label)) {
+            return Err(label_in_use(label, existing));
+        }
+        if !listing.skipped.is_empty() {
+            return Err(label_unverifiable(label, &listing.skipped, &self.dir));
+        }
+        Ok(())
     }
 
     /// Read one record (without locking). A `submitting` record past the stale
@@ -269,6 +313,7 @@ impl JobStore {
                     if fs::symlink_metadata(entry.path()).is_ok_and(|m| m.file_type().is_file()) {
                         listing.unreadable.push(UnreadableRecord { id, warning: warning.clone() });
                     }
+                    listing.skipped.push(entry.path());
                     listing.warnings.push(warning);
                 }
             }
@@ -472,6 +517,24 @@ impl JobStore {
             .map_err(|e| IrisError::io(format_args!("cannot write job record {}", path.display()), &e))
     }
 
+    /// Take the store's exclusive lock (`labels.lock`, created 0600 if needed),
+    /// waiting for another process that holds it. The directory must exist.
+    fn lock_labels(&self) -> Result<StoreLock, IrisError> {
+        let path = self.dir.join(LABELS_LOCK);
+        let mut options = OpenOptions::new();
+        options.read(true).write(true).create(true).truncate(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let file = options
+            .open(&path)
+            .map_err(|e| IrisError::io(format_args!("cannot open lock file {}", path.display()), &e))?;
+        file.lock().map_err(|e| IrisError::io(format_args!("cannot lock {}", path.display()), &e))?;
+        Ok(StoreLock { _file: file })
+    }
+
     fn lock_record(&self, id: &JobId) -> Result<RecordLock, IrisError> {
         let path = self.lock_path(id);
         let file = self.open_lock(id, &path)?;
@@ -522,6 +585,71 @@ impl JobStore {
             IrisError::io(format_args!("cannot create job directory {}", self.dir.display()), &e)
         })
     }
+}
+
+/// `label_in_use`: the record `existing` has the label `label` already. The hint
+/// says what to do with that job for its status, and what submitting again costs.
+fn label_in_use(label: &str, existing: &JobRecord) -> IrisError {
+    let id = existing.job_id();
+    let status = existing.status();
+    let hint = match status {
+        JobStatus::Submitting | JobStatus::Running => format!(
+            "the job is still {status}: follow it with `iris jobs status {id}` or `iris jobs wait {id}`; deleting \
+             its local record does not cancel the remote job, which keeps running and is billed; to submit \
+             another paid job, use another label"
+        ),
+        JobStatus::Succeeded => format!(
+            "the job succeeded: save its outputs with `iris jobs download {id}` (or `iris jobs wait {id}`); to \
+             submit another paid job under this label, delete its local record first (`iris jobs delete {id}`), \
+             or use another label"
+        ),
+        JobStatus::SubmissionUnknown => format!(
+            "the provider may have accepted and billed this job's submission, and Iris cannot follow it; check \
+             usage and billing in the provider's console before submitting again, whether after deleting its \
+             local record (`iris jobs delete {id}`) or under another label"
+        ),
+        JobStatus::Failed | JobStatus::Expired => format!(
+            "the job {status}; a new submission is billed: to submit one under this label, delete its local \
+             record first (`iris jobs delete {id}`), or use another label"
+        ),
+    };
+    let mut e = IrisError::new(
+        ErrorCode::LabelInUse,
+        format!("label '{label}' is already used by job {id} ({status}, created {})", existing.created_at()),
+    )
+    .with_hint(hint)
+    .with_job(id.to_string(), Some(status))
+    .with_provider(existing.provider())
+    .with_detail("label", label)
+    .with_detail("model", existing.model())
+    .with_detail("created_at", existing.created_at().to_string());
+    if let Some(remote) = existing.remote_operation_id() {
+        e = e.with_remote_operation(remote);
+    }
+    e
+}
+
+/// `state_invalid`: the records at `skipped` in `dir` cannot be read, so whether one
+/// of them has the label `label` cannot be checked, and the labeled job is not
+/// submitted.
+fn label_unverifiable(label: &str, skipped: &[PathBuf], dir: &Path) -> IrisError {
+    let paths: Vec<String> = skipped.iter().map(|p| p.display().to_string()).collect();
+    IrisError::new(
+        ErrorCode::StateInvalid,
+        format!(
+            "cannot check that no local job has the label '{label}': {} job record(s) in {} cannot be read",
+            paths.len(),
+            dir.display()
+        ),
+    )
+    .with_retryable(Some(false))
+    .with_hint(
+        "inspect them with `iris jobs list`, which reports each as job_record_unreadable; after checking them, \
+         remove them with `iris jobs delete <JOB_ID> --force` (or `iris jobs delete --all --force`), or submit \
+         without --label",
+    )
+    .with_detail("label", label)
+    .with_detail("unreadable", paths)
 }
 
 fn not_found(id: &JobId, dir: &Path) -> IrisError {

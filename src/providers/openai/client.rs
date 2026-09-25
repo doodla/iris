@@ -250,6 +250,7 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
                     "model '{model}' is not available to this API key or project (HTTP 404){provider_says}"
                 ),
             )
+            .about_model(model)
             .with_hint(
                 "check the project's model permissions and that the organization is verified for GPT \
                  Image models; `iris models show <MODEL> --check-access` checks availability for free",
@@ -463,10 +464,13 @@ fn classify_read(resp: &HttpResponse, model: &str) -> Verdict {
             )
             .with_hint("check that OPENAI_API_KEY holds a valid API key"),
         ),
-        404 => Verdict::Final(err(
-            ErrorCode::PermissionDenied,
-            format!("model '{model}' is not available to this API key or project (HTTP 404)"),
-        )),
+        404 => Verdict::Final(
+            err(
+                ErrorCode::PermissionDenied,
+                format!("model '{model}' is not available to this API key or project (HTTP 404)"),
+            )
+            .about_model(model),
+        ),
         429 if is_quota(&wire) => Verdict::Final(quota_error(resp, &wire)),
         429 => Verdict::RetryableRejection {
             error: err(ErrorCode::RateLimited, "OpenAI is rate limiting requests (HTTP 429)".to_string()),

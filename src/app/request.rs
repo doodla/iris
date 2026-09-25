@@ -96,6 +96,7 @@ pub(crate) fn resolve_model(
                     ),
                 )
                 .with_hint(format!("run `iris models list --operation {op}` and pass -m <MODEL>"))
+                .about_model(resolved.spec.id)
                 .with_detail("operation", op.as_str())
                 .with_detail("candidates", ctx.catalog.candidates(Some(op))));
             }
@@ -148,28 +149,30 @@ pub(crate) fn resolve_model(
 }
 
 /// An error of a generation command whose model is `model`, from `source`: when the
-/// error names the model, its message says after that mention that the config file
-/// chose it (`model 'gemini-3.1-flash-image' (config image.model) does not support
-/// --size …`), and `details.model_source` says where it came from (`flag` or
-/// `config`). The workflows apply this once to every error raised after the model
-/// is resolved; an error that does not name the model is returned as it is.
+/// error is about that model (marked where it is raised, [`IrisError::about_model`]),
+/// its message says after the model's name that the config file chose it (`model
+/// 'gemini-3.1-flash-image' (config image.model) does not support --size …`), and
+/// `details.model_source` says where it came from (`flag` or `config`). The
+/// workflows apply this once to every error raised after the model is resolved; any
+/// other error is returned as it is.
 pub(crate) fn with_model_source(
     mut error: IrisError,
     model: &ResolvedModel,
     source: ModelSource,
     op: Operation,
 ) -> IrisError {
-    let quoted = [format!("'{}'", model.id), format!("'{}'", model.spec.id)];
-    let plain = [model.id.clone(), model.spec.id.to_string()];
-    let Some(end) =
-        quoted.iter().chain(&plain).find_map(|m| error.message.find(m.as_str()).map(|at| at + m.len()))
-    else {
+    let Some(named) = error.about_model.clone().filter(|id| *id == model.id || id == model.spec.id) else {
         return error;
     };
     let source = match source {
         ModelSource::Flag => "flag",
         ModelSource::Config => {
-            error.message.insert_str(end, &format!(" (config {})", op.model_config_key()));
+            let mention = format!("model '{named}'");
+            let note = format!(" (config {})", op.model_config_key());
+            match error.message.find(&mention) {
+                Some(at) => error.message.insert_str(at + mention.len(), &note),
+                None => error.message.push_str(&note),
+            }
             "config"
         }
     };
@@ -246,6 +249,7 @@ pub(crate) fn check_prompt(spec: &ModelSpec, prompt: &str) -> Result<(), IrisErr
                 "the prompt is {chars} characters long; model '{}' accepts at most {max}",
                 spec.id
             ))
+            .about_model(spec.id)
             .with_detail("prompt_chars", chars as u64)
             .with_detail("max_prompt_chars", max as u64));
         }
