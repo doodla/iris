@@ -752,6 +752,47 @@ fn a_file_host_403_is_retryable_before_the_retention_period_ends_and_expired_aft
     veo.assert_no_credential_leaks();
 }
 
+/// An ISO-BMFF box with a 32-bit size.
+fn mp4_box(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
+    let mut out = ((8 + payload.len()) as u32).to_be_bytes().to_vec();
+    out.extend_from_slice(kind);
+    out.extend_from_slice(payload);
+    out
+}
+
+/// An `ftyp` box with the `isom` brand.
+fn mp4_ftyp() -> Vec<u8> {
+    mp4_box(b"ftyp", b"isom\0\0\0\0isomiso2mp41")
+}
+
+#[test]
+fn a_crafted_64_bit_box_size_in_a_downloaded_video_never_crashes_iris() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    veo.succeed();
+    // Inside moov, after a free box: a box whose 64-bit size is 2^64 - 8, so any
+    // unchecked `offset + size` wraps around (a debug build panicked, a release
+    // build looped forever while ignoring Ctrl-C).
+    let mut crafted_child = 1u32.to_be_bytes().to_vec();
+    crafted_child.extend_from_slice(b"mvhd");
+    crafted_child.extend_from_slice(&(u64::MAX - 7).to_be_bytes());
+    crafted_child.extend_from_slice(&[0u8; 24]);
+    let moov = mp4_box(b"moov", &[mp4_box(b"free", &[]), crafted_child].concat());
+    let video = [mp4_ftyp(), moov, mp4_box(b"mdat", &[0x5A; 512])].concat();
+    veo.file.set(wiremock::ResponseTemplate::new(200).set_body_raw(video.clone(), "video/mp4"));
+
+    let out = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run();
+    assert!(!out.stderr.contains("panicked"), "{}", out.stderr);
+    let v = out.ok();
+    let art = &job_of(&v)["artifacts"][0];
+    assert_eq!(art["bytes"], video.len() as u64);
+    assert!(art["duration_seconds"].is_null(), "an unreadable movie header means an unknown duration: {art}");
+    assert_eq!(std::fs::read(sb.path(&format!("{id}.mp4"))).unwrap(), video);
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
 // ----- scenario 9: concurrent waits --------------------------------------------------------------
 
 #[test]

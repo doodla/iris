@@ -389,3 +389,64 @@ fn heic_structure_is_walked_and_needs_image_items() {
         media::inspect_heif(&mut Cursor::new(&video)).unwrap_err().contains("not a HEIC/HEIF image brand")
     );
 }
+
+/// A box header with a 64-bit `largesize` of `size` (whatever the payload).
+fn crafted_large_bx(kind: &[u8; 4], size: u64, payload: &[u8]) -> Vec<u8> {
+    let mut out = 1u32.to_be_bytes().to_vec();
+    out.extend_from_slice(kind);
+    out.extend_from_slice(&size.to_be_bytes());
+    out.extend_from_slice(payload);
+    out
+}
+
+#[test]
+fn crafted_box_sizes_never_overflow_panic_or_loop() {
+    // Sizes whose sum with any offset overflows u64 (and usize), placed where the
+    // walker reads them: at top level, and inside moov, trak, and mdia (also as the
+    // mvhd, tkhd, and hdlr boxes themselves, which are sliced when found).
+    let huge = [u64::MAX, u64::MAX - 7, u64::MAX - 15, 1 << 63];
+    for size in huge {
+        let top = [ftyp(b"isom", &[]), crafted_large_bx(b"free", size, &[0u8; 16])].concat();
+        let why = inspect_iso_bmff(&mut Cursor::new(&top)).unwrap_err();
+        assert!(why.contains("needs") && why.contains("remain"), "{size}: {why}");
+        assert_eq!(media::validate_bytes(&top, &[]).unwrap_err().code, ErrorCode::InvalidMedia);
+
+        for kind in [b"free", b"mvhd", b"trak"] {
+            let moov = bx(b"moov", &[bx(b"free", &[]), crafted_large_bx(kind, size, &[0u8; 32])].concat());
+            let file = [ftyp(b"isom", &[]), moov, bx(b"mdat", &[1u8; 16])].concat();
+            let info = inspect_iso_bmff(&mut Cursor::new(&file)).unwrap();
+            assert_eq!(info.duration_seconds, None, "{size} {kind:?}");
+            assert_eq!((info.width, info.height), (None, None));
+        }
+
+        // Inside a trak (next to its tkhd) and inside its mdia (next to the hdlr).
+        let mut hdlr = vec![0u8; 8];
+        hdlr.extend_from_slice(b"vide");
+        hdlr.extend_from_slice(&[0u8; 13]);
+        let mut tkhd = vec![0u8; 76];
+        tkhd.extend_from_slice(&(640u32 << 16).to_be_bytes());
+        tkhd.extend_from_slice(&(360u32 << 16).to_be_bytes());
+        let traks = [
+            bx(b"trak", &[crafted_large_bx(b"tkhd", size, &tkhd)].concat()),
+            bx(b"trak", &[bx(b"tkhd", &tkhd), crafted_large_bx(b"mdia", size, &bx(b"hdlr", &hdlr))].concat()),
+            bx(b"trak", &[bx(b"tkhd", &tkhd), bx(b"mdia", &crafted_large_bx(b"hdlr", size, &hdlr))].concat()),
+        ];
+        for trak in traks {
+            let moov = bx(b"moov", &[mvhd_v0(1000, 4000), trak].concat());
+            let file = [ftyp(b"isom", &[]), moov, bx(b"mdat", &[1u8; 16])].concat();
+            let info = inspect_iso_bmff(&mut Cursor::new(&file)).unwrap();
+            assert_eq!(info.duration_seconds, Some(4.0), "the mvhd before the crafted box still counts");
+            assert_eq!((info.width, info.height), (None, None), "no size is read from a malformed track");
+            // The same through the file-based path the downloader uses.
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("crafted.mp4");
+            std::fs::write(&path, &file).unwrap();
+            assert_eq!(media::validate_file(&path, &["video/mp4"]).unwrap().duration_seconds, Some(4.0));
+        }
+    }
+
+    // A well-formed 64-bit child header is still understood.
+    let moov = bx(b"moov", &large_bx(b"mvhd", &mvhd_v0(1000, 3000)[8..]));
+    let file = [ftyp(b"isom", &[]), moov, bx(b"mdat", &[1u8; 16])].concat();
+    assert_eq!(inspect_iso_bmff(&mut Cursor::new(&file)).unwrap().duration_seconds, Some(3.0));
+}

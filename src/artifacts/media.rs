@@ -19,6 +19,9 @@
 //! `moov`/`meta` presence, `mvhd` duration) and a truncation check. Existing
 //! crates are either unmaintained (`mp4`), MPL-licensed (`mp4parse`), or bind to
 //! native FFmpeg; ~100 lines of bounds-checked parsing are simpler to audit.
+//! Every size and offset read from a file is compared with what is left before it
+//! is used, so a crafted size (a 64-bit `largesize` near `u64::MAX`, say) is an
+//! error or ends the walk, never an overflow, a panic, or an endless loop.
 
 use std::fs::File;
 use std::io::{self, BufReader, Cursor, Read, Seek, SeekFrom};
@@ -481,7 +484,9 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
                 dimensions = video_dimensions(&payload);
             }
         }
-        pos += header.size;
+        // `read_box_header` guarantees the box ends inside the file (and after its
+        // header), so this always moves forward and never past `len`.
+        pos = header.end();
         reader.seek(SeekFrom::Start(pos)).map_err(io)?;
     }
     let (media_type, major_brand) = ftyp.ok_or("no 'ftyp' box")?;
@@ -506,6 +511,8 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
     })
 }
 
+/// A validated box header: `header_len <= size` and `offset + size` is inside the
+/// file, so none of the accessors below can overflow.
 struct BoxHeader {
     kind: [u8; 4],
     /// Offset of the box in the file.
@@ -517,7 +524,17 @@ struct BoxHeader {
 
 impl BoxHeader {
     fn payload_len(&self) -> u64 {
-        self.size - self.header_len
+        self.size.saturating_sub(self.header_len)
+    }
+
+    /// Offset of the first payload byte.
+    fn payload_start(&self) -> u64 {
+        self.offset.saturating_add(self.header_len)
+    }
+
+    /// Offset just past the box.
+    fn end(&self) -> u64 {
+        self.offset.saturating_add(self.size)
     }
 
     fn kind_str(&self) -> String {
@@ -525,8 +542,13 @@ impl BoxHeader {
     }
 }
 
+/// Read and check the box header at `pos` (the reader is positioned there). Every
+/// size comes from the file, so all arithmetic is checked: a size that does not
+/// cover its own header, or that reaches past the end of the file (including
+/// 64-bit sizes near `u64::MAX`), is an error.
 fn read_box_header<R: Read + Seek>(reader: &mut R, pos: u64, len: u64) -> Result<BoxHeader, String> {
-    let remaining = len - pos;
+    let remaining =
+        len.checked_sub(pos).ok_or_else(|| format!("box offset {pos} is past the end of the file"))?;
     if remaining < 8 {
         return Err(format!("truncated box header at offset {pos} ({remaining} trailing bytes)"));
     }
@@ -562,12 +584,12 @@ fn read_box_header<R: Read + Seek>(reader: &mut R, pos: u64, len: u64) -> Result
     Ok(header)
 }
 
-/// Read up to `max` bytes of a box's payload (the reader is positioned after the header).
+/// Read up to `max` bytes of a box's payload.
 fn read_payload<R: Read + Seek>(reader: &mut R, header: &BoxHeader, max: u64) -> Result<Vec<u8>, String> {
     let want = header.payload_len().min(max);
-    let mut payload = Vec::with_capacity(want as usize);
+    let mut payload = Vec::with_capacity(usize::try_from(want).unwrap_or(0));
     reader
-        .seek(SeekFrom::Start(header.offset + header.header_len))
+        .seek(SeekFrom::Start(header.payload_start()))
         .and_then(|_| reader.take(want).read_to_end(&mut payload))
         .map_err(|e| format!("read error in box '{}': {e}", header.kind_str()))?;
     if (payload.len() as u64) < want {
@@ -578,28 +600,32 @@ fn read_payload<R: Read + Seek>(reader: &mut R, header: &BoxHeader, max: u64) ->
 
 /// Direct child boxes of a box payload as `(type, body)`; stops at the first
 /// malformed header (callers treat missing data as "unknown").
+///
+/// Sizes come from the file: each one is compared with what is left of the
+/// payload before anything is sliced, so no size (a 64-bit `largesize` near
+/// `u64::MAX` included) can overflow an offset, and every step consumes at least
+/// one header, so the walk always ends.
 fn child_boxes(payload: &[u8]) -> Vec<([u8; 4], &[u8])> {
     let mut out = Vec::new();
-    let mut pos = 0usize;
-    while pos + 8 <= payload.len() {
-        let size32 = u32::from_be_bytes([payload[pos], payload[pos + 1], payload[pos + 2], payload[pos + 3]]);
-        let kind = [payload[pos + 4], payload[pos + 5], payload[pos + 6], payload[pos + 7]];
+    let mut rest = payload;
+    while let Some(head) = rest.get(..8) {
+        let size32 = u32::from_be_bytes([head[0], head[1], head[2], head[3]]);
+        let kind = [head[4], head[5], head[6], head[7]];
         let (header_len, size) = match size32 {
-            0 => (8usize, payload.len() - pos),
-            1 => match payload.get(pos + 8..pos + 16).and_then(|b| b.try_into().ok()) {
-                Some(large) => match usize::try_from(u64::from_be_bytes(large)) {
-                    Ok(n) => (16, n),
-                    Err(_) => break,
-                },
+            0 => (8usize, rest.len() as u64),
+            1 => match rest.get(8..16).and_then(|b| <[u8; 8]>::try_from(b).ok()) {
+                Some(large) => (16, u64::from_be_bytes(large)),
                 None => break,
             },
-            n => (8, n as usize),
+            n => (8, u64::from(n)),
         };
-        if size < header_len || pos + size > payload.len() {
+        let Ok(size) = usize::try_from(size) else { break };
+        if size < header_len || size > rest.len() {
             break;
         }
-        out.push((kind, &payload[pos + header_len..pos + size]));
-        pos += size;
+        let (this, next) = rest.split_at(size);
+        out.push((kind, &this[header_len..]));
+        rest = next;
     }
     out
 }
@@ -628,42 +654,22 @@ fn video_dimensions(moov: &[u8]) -> Option<(u32, u32)> {
 
 /// Duration from the `mvhd` child of a `moov` payload, if present and meaningful.
 fn mvhd_duration(moov: &[u8]) -> Option<f64> {
-    let mut pos = 0usize;
-    while pos + 8 <= moov.len() {
-        let size32 = u32::from_be_bytes(moov[pos..pos + 4].try_into().ok()?) as u64;
-        let kind = &moov[pos + 4..pos + 8];
-        let (header_len, size) = match size32 {
-            0 => (8u64, (moov.len() - pos) as u64),
-            1 => {
-                let large = moov.get(pos + 8..pos + 16)?;
-                (16, u64::from_be_bytes(large.try_into().ok()?))
-            }
-            n => (8, n),
-        };
-        if size < header_len || pos as u64 + size > moov.len() as u64 {
-            return None;
-        }
-        if kind == b"mvhd" {
-            let body = &moov[pos + header_len as usize..pos + size as usize];
-            let version = *body.first()?;
-            let (timescale, duration) = if version == 1 {
-                let ts = u32::from_be_bytes(body.get(20..24)?.try_into().ok()?);
-                let d = u64::from_be_bytes(body.get(24..32)?.try_into().ok()?);
-                (ts, if d == u64::MAX { return None } else { d })
-            } else {
-                let ts = u32::from_be_bytes(body.get(12..16)?.try_into().ok()?);
-                let d = u32::from_be_bytes(body.get(16..20)?.try_into().ok()?);
-                (ts, if d == u32::MAX { return None } else { u64::from(d) })
-            };
-            // Fragmented MP4s leave the movie duration 0 (their length lives in the
-            // fragments): that is "unknown", not a zero-second video.
-            if timescale == 0 || duration == 0 {
-                return None;
-            }
-            let seconds = duration as f64 / f64::from(timescale);
-            return Some((seconds * 1000.0).round() / 1000.0);
-        }
-        pos += size as usize;
+    let (_, body) = child_boxes(moov).into_iter().find(|(kind, _)| kind == b"mvhd")?;
+    let version = *body.first()?;
+    let (timescale, duration) = if version == 1 {
+        let ts = u32::from_be_bytes(body.get(20..24)?.try_into().ok()?);
+        let d = u64::from_be_bytes(body.get(24..32)?.try_into().ok()?);
+        (ts, if d == u64::MAX { return None } else { d })
+    } else {
+        let ts = u32::from_be_bytes(body.get(12..16)?.try_into().ok()?);
+        let d = u32::from_be_bytes(body.get(16..20)?.try_into().ok()?);
+        (ts, if d == u32::MAX { return None } else { u64::from(d) })
+    };
+    // Fragmented MP4s leave the movie duration 0 (their length lives in the
+    // fragments): that is "unknown", not a zero-second video.
+    if timescale == 0 || duration == 0 {
+        return None;
     }
-    None
+    let seconds = duration as f64 / f64::from(timescale);
+    Some((seconds * 1000.0).round() / 1000.0)
 }
