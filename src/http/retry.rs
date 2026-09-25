@@ -288,7 +288,7 @@ pub struct Call {
     pub class: RetryClass,
     /// Time limit of one attempt, from connecting until the body is read
     /// (`Timeouts::generate` / `submit` / `poll`), before the executor adds the
-    /// request body's [`upload_allowance`](super::upload_allowance).
+    /// request body's [`upload_allowance`].
     pub timeout: Duration,
     /// Response header carrying the provider's request id (e.g. `x-request-id`).
     pub request_id_header: Option<&'static str>,
@@ -599,7 +599,7 @@ impl HttpClient {
     /// * `build` is called once per attempt with the shared reqwest client and must
     ///   return a fresh request (bodies are rebuilt, never reused). The executor sets
     ///   the per-attempt time limit: `call.timeout` plus the request body's
-    ///   [`upload_allowance`](super::upload_allowance).
+    ///   [`upload_allowance`].
     /// * `classify` is called for every non-2xx response and returns a [`Verdict`].
     /// * `Retry-After` (seconds or HTTP-date) and `retry-after-ms` headers, and a
     ///   verdict's own `retry_after`, are honored up to
