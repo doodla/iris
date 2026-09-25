@@ -76,6 +76,22 @@ pub struct JobView {
     /// Where `jobs wait` and `jobs download` save the outputs when given neither
     /// `-o` nor `-d`: the target `video generate` recorded when it submitted the job.
     pub output_plan: OutputPlanView,
+    /// The fingerprint of the prompt the job was submitted with, never its text (not
+    /// even when `jobs.store_prompts` keeps the text in the record): enough to tell
+    /// which request created a job, such as one left `submitting` by a process that
+    /// was killed.
+    pub prompt_fingerprint: PromptFingerprint,
+}
+
+/// A prompt's SHA-256 and length: enough to match a job to a prompt one has, not to
+/// recover the prompt.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PromptFingerprint {
+    /// Lowercase hex SHA-256 of the prompt as sent, encoded as UTF-8 (a
+    /// `--prompt-file` or `--prompt-stdin` prompt without its trailing whitespace).
+    pub sha256: String,
+    /// The prompt's length in characters (Unicode scalar values).
+    pub chars: u64,
 }
 
 /// The save target a job recorded when it was submitted.

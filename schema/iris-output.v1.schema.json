@@ -1528,6 +1528,10 @@
           },
           "type": "array"
         },
+        "prompt_fingerprint": {
+          "$ref": "#/$defs/PromptFingerprint",
+          "description": "The fingerprint of the prompt the job was submitted with, never its text (not\neven when `jobs.store_prompts` keeps the text in the record): enough to tell\nwhich request created a job, such as one left `submitting` by a process that\nwas killed."
+        },
         "provider": {
           "$ref": "#/$defs/ProviderId"
         },
@@ -1592,7 +1596,8 @@
         "usage",
         "cost_estimate",
         "request",
-        "output_plan"
+        "output_plan",
+        "prompt_fingerprint"
       ],
       "type": "object"
     },
@@ -2212,6 +2217,26 @@
         "usd",
         "source_url",
         "as_of"
+      ],
+      "type": "object"
+    },
+    "PromptFingerprint": {
+      "description": "A prompt's SHA-256 and length: enough to match a job to a prompt one has, not to\nrecover the prompt.",
+      "properties": {
+        "chars": {
+          "description": "The prompt's length in characters (Unicode scalar values).",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sha256": {
+          "description": "Lowercase hex SHA-256 of the prompt as sent, encoded as UTF-8 (a\n`--prompt-file` or `--prompt-stdin` prompt without its trailing whitespace).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "sha256",
+        "chars"
       ],
       "type": "object"
     },

@@ -189,6 +189,8 @@ fn job_block(j: &JobView) -> String {
     field("status", j.status.as_str());
     field("provider", j.provider.as_str());
     field("model", &model_with_source(&j.model, j.model_source, j.operation));
+    let prompt = &j.prompt_fingerprint;
+    field("prompt", &format!("{} characters, sha256 {}", prompt.chars, prompt.sha256));
     field("created", &j.created_at);
     if let Some(t) = &j.submitted_at {
         field("submitted", t);

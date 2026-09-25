@@ -1047,6 +1047,65 @@ fn sigterm_or_sighup_during_a_paid_submit_is_deferred_until_the_operation_id_is_
     }
 }
 
+/// A process killed (SIGKILL) during a paid submission prints nothing and leaves its
+/// record `submitting`. Its caller finds it with `jobs list --status submitting` by
+/// model, creation time, and the prompt fingerprint every job view carries: the
+/// SHA-256 of the prompt as sent and its length, never the text, even when
+/// `jobs.store_prompts` keeps the text in the record.
+#[test]
+fn a_record_left_submitting_by_a_killed_process_is_found_by_its_prompt_fingerprint() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let other = submit_detached(&sb, &veo, &[]);
+    let prompt = "a lantern floating over a night market, ünïcode";
+    veo.submit.set(json_response(200, json!({ "name": veo.op_name })).set_delay(Duration::from_secs(60)));
+    let child = sb
+        .iris()
+        .gemini(&veo.api)
+        .env("IRIS_STORE_PROMPTS", "true")
+        .args(["video", "generate", prompt, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+        .spawn();
+    veo.api.wait_for("POST", &veo_submit_path(VEO_LITE), 2, Duration::from_secs(30));
+    send_signal(&child, "KILL");
+    let out = child.finish();
+    assert!(out.stdout.is_empty(), "a killed process prints no envelope: {out:?}");
+
+    let v = sb.iris().args(["jobs", "list", "--status", "submitting", "--json"]).run().ok();
+    let jobs = v["result"]["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 1, "{v}");
+    let job = &jobs[0];
+    assert_ne!(job["job_id"], other.as_str());
+    assert_eq!(job["model"], VEO_LITE);
+    assert_eq!(
+        job["prompt_fingerprint"],
+        json!({ "sha256": sha256_hex(prompt.as_bytes()), "chars": prompt.chars().count() })
+    );
+    let listed = sb.iris().args(["jobs", "list", "--json"]).run().ok();
+    let theirs = listed["result"]["jobs"].as_array().unwrap().iter().find(|j| j["job_id"] == other.as_str());
+    assert_eq!(theirs.unwrap()["prompt_fingerprint"]["sha256"], sha256_hex(PROMPT.as_bytes()));
+
+    // The record keeps the text (store_prompts); no view shows it.
+    let id = job["job_id"].as_str().unwrap();
+    assert_eq!(sb.record(id)["prompt"]["text"], prompt);
+    for args in [&["jobs", "list", "--json"][..], &["jobs", "status", id, "--json"], &["jobs", "status", id]]
+    {
+        let out = sb.iris().args(args).run();
+        assert_eq!(out.code, 0, "{out:?}");
+        assert!(
+            !out.stdout.contains("lantern") && !out.stderr.contains("lantern"),
+            "prompt printed: {out:?}"
+        );
+    }
+    let human = sb.iris().args(["jobs", "status", id]).run();
+    let line = format!(
+        "prompt:     {} characters, sha256 {}",
+        prompt.chars().count(),
+        sha256_hex(prompt.as_bytes())
+    );
+    assert!(human.stdout.contains(&line), "{}", human.stdout);
+    veo.assert_no_credential_leaks();
+}
+
 // ----- scenario 8: download failure, recovery, expiry --------------------------------------------
 
 #[test]

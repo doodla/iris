@@ -152,7 +152,8 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
                       "source_url": "https://ai.google.dev/gemini-api/docs/pricing", "as_of": "2026-09-24" },
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": 4, "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
-  "output_plan": { "dir": "/home/you", "path": null, "overwrite": false }
+  "output_plan": { "dir": "/home/you", "path": null, "overwrite": false },
+  "prompt_fingerprint": { "sha256": "c039da7d...", "chars": 31 }
 }
 ```
 
@@ -165,6 +166,13 @@ job record that does not say where its model came from.
 submitted the job, and whether it was given `--overwrite` (see [jobs.md](jobs.md#downloads)). With
 several outputs an `-o` path is saved as `<stem>-<i>.<ext>` with `i` from 1, while
 `outputs[].index` and `artifacts[].index` count from 0.
+
+`prompt_fingerprint` identifies the prompt the job was submitted with, never its text (not even
+when `jobs.store_prompts` keeps the text in the record): `sha256` is the lowercase hex SHA-256 of
+the prompt as sent, encoded as UTF-8 (a `--prompt-file` or `--prompt-stdin` prompt without its
+trailing whitespace), and `chars` its length in characters (Unicode scalar values). It is how a
+caller finds a job whose submitting process was killed before printing anything (see
+[jobs.md](jobs.md#finding-a-job-whose-submitting-process-was-killed)).
 
 ### `jobs.list` → `{ "jobs": [Job] }`
 

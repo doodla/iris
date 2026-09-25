@@ -66,7 +66,8 @@ else:
   never the text itself, **unless** you opt in with config `jobs.store_prompts = true`
   (env `IRIS_STORE_PROMPTS`; default `false`). This is deliberate: prompts and reference-image
   content can be sensitive, and Iris's default is to keep the minimum needed to show you *which*
-  job is which, not what you asked for.
+  job is which, not what you asked for. Job views show only the hash and the count
+  (`prompt_fingerprint`), never the text, even when it is stored.
 - Output plan (directory/path/overwrite) and, once known, each output's remote URI, media type,
   download state, local path, size, and hash.
 
@@ -203,6 +204,26 @@ Note the `preview_model` warning is still there even though the request itself f
 collected while resolving the model (before the paid call) are not discarded just because the
 call that followed them didn't succeed.
 
+### Finding a job whose submitting process was killed
+
+A process killed during the paid submission (SIGKILL, a crash) prints nothing, so its caller never
+learns the job id. Every job view carries the prompt's fingerprint, `prompt_fingerprint`: the
+lowercase hex SHA-256 of the prompt as sent, encoded as UTF-8 (a `--prompt-file` or
+`--prompt-stdin` prompt without its trailing whitespace), and its length in characters; never the
+text, even with `jobs.store_prompts`. To find the record, list the jobs still submitting (`--status
+submission_unknown` once the submission budget has passed) and match `model`, `created_at` (written
+just before the request was sent), and `prompt_fingerprint` against your own request:
+
+```console
+$ iris jobs list --status submitting --json
+$ printf %s "a paper boat drifting on a pond" | sha256sum
+c039da7d465dad0428a4cc4af986569874d79ecb6ff0233b454c7b154d587745  -
+```
+
+Such a record has no operation id, so no command can finish it: check the provider console for
+the request, then remove the record with `iris jobs delete <id> --force` (see [Local deletion vs.
+remote state](#local-deletion-vs-remote-state)).
+
 ### Waiting, `--timeout`, Ctrl-C, and other signals
 
 `iris video generate` (without `--detach`) and `iris jobs wait` poll until the job reaches a
@@ -337,7 +358,8 @@ carries a final name, but these may remain:
   files;
 - a record still `submitting` if the process died during the paid submission (reported as
   `submission_unknown` once the submission budget has passed, see
-  [Lifecycle states and transitions](#lifecycle-states-and-transitions)).
+  [Lifecycle states and transitions](#lifecycle-states-and-transitions)); see [Finding a job whose
+  submitting process was killed](#finding-a-job-whose-submitting-process-was-killed).
 
 Real end-to-end sequence against a local mock server standing in for the Gemini API, run as four
 **separate process invocations** against the same job:
@@ -357,6 +379,7 @@ job_01m3a5ffjkdnar227bba60tfa2
   status:     running
   provider:   gemini
   model:      veo-3.1-lite-generate-preview
+  prompt:     22 characters, sha256 4361ec097391bc0ddd4ccebabdac8ebe543cc7169e2e401d74f1ed867a04b1a5
   created:    2026-09-24T16:55:15Z
   submitted:  2026-09-24T16:55:15Z
   checked:    2026-09-24T16:55:21Z

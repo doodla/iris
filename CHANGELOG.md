@@ -81,6 +81,9 @@ machine-readable contract for agents.
   longer validates is fetched again. Temporary files are locked while written, downloads are
   capped at 4 GiB, and videos are validated structurally (media data present, chunk offsets inside
   the file, overflow-safe box parsing).
+- Every job view carries the prompt's fingerprint (`prompt_fingerprint`: its SHA-256 and length,
+  never its text), so a job whose submitting process was killed can be found with `jobs list
+  --status submitting` by model, creation time and prompt.
 - A job records where `video generate` was asked to save (its `-o`, or the output directory in
   effect, and `--overwrite`), shown as `output_plan` in every job view: `jobs wait` and `jobs
   download` save there unless given their own `-o` or `-d`.
