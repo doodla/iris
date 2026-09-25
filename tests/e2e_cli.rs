@@ -1332,6 +1332,21 @@ fn a_refused_option_names_the_models_and_values_that_work() {
         .err(2, "invalid_argument");
     assert_eq!(v["error"]["details"]["option"], "duration");
     assert_eq!(v["error"]["details"]["allowed"], serde_json::json!([4, 6, 8]));
+    // A value that differs from a listed one only in case is refused, and named.
+    let v = sb
+        .iris()
+        .args(["image", "generate", "x", "-m", "nano-banana-2", "--resolution", "4k", "--dry-run", "--json"])
+        .run()
+        .err(2, "invalid_argument");
+    assert_eq!(v["error"]["hint"], "did you mean 4K? values are matched exactly, case included");
+    assert_eq!(v["error"]["details"]["suggestions"], serde_json::json!(["4K"]));
+    assert_eq!(v["error"]["details"]["allowed"], serde_json::json!(["512", "1K", "2K", "4K"]));
+    let v = sb
+        .iris()
+        .args(["image", "generate", "x", "-m", "nano-banana-2", "--resolution", "8K", "--dry-run", "--json"])
+        .run()
+        .err(2, "invalid_argument");
+    assert!(v["error"]["hint"].is_null() && v["error"]["details"].get("suggestions").is_none(), "{v}");
     assert_eq!(api.total(), 0, "nothing was sent");
 }
 

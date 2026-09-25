@@ -213,8 +213,16 @@ pub fn validate_request(
                 .with_detail("option", opt.name.clone()));
         }
         let value = OptionValue::parse(&option.kind, &opt.value).map_err(|why| {
-            let e = IrisError::invalid(format!("invalid value '{}' for {describe}: {why}", opt.value))
+            let mut e = IrisError::invalid(format!("invalid value '{}' for {describe}: {why}", opt.value))
                 .with_detail("option", opt.name.clone());
+            // Values are matched exactly; one that differs only in case is named, not taken.
+            if let OptionKind::Enum(values) = option.kind
+                && let Some(value) = values.iter().find(|v| v.eq_ignore_ascii_case(opt.value.trim()))
+            {
+                e = e
+                    .with_hint(format!("did you mean {value}? values are matched exactly, case included"))
+                    .with_detail("suggestions", vec![*value]);
+            }
             match option.kind.values().and_then(|values| serde_json::to_value(values).ok()) {
                 Some(allowed) => e.with_detail("allowed", allowed),
                 None => e,

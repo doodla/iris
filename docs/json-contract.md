@@ -486,10 +486,13 @@ operation (possibly empty), which the hint names:
  "...":"other Error fields omitted for brevity"}
 ```
 
-A value that is not one of an option's listed values is `invalid_argument` with `details.option`
-and `details.allowed`, the values the model accepts, typed like them (`--quality ultra` on
+A value that is not one of an option's listed values is `invalid_argument` with `details.option` and
+`details.allowed`, the values the model accepts, typed like them (`--quality ultra` on
 `gpt-image-2`: `"allowed": ["low", "medium", "high", "auto"]`; `--duration 5` on a Veo model:
-`"allowed": [4, 6, 8]`).
+`"allowed": [4, 6, 8]`). Values are matched exactly: one that differs from a listed value only in
+case is refused too, and its hint and `details.suggestions` name the listed value (`--resolution 4k`
+on `nano-banana-2`: `"hint":"did you mean 4K? values are matched exactly, case included"`,
+`"suggestions": ["4K"]`).
 
 A model that does not implement the command's operation (`image generate -m veo-lite`) is
 `unsupported_operation` with `details.operation` and, as for `unknown_model`, `details.candidates`,
