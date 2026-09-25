@@ -359,7 +359,8 @@ credential each provider reads and whether it's set.
   uninstall
 - [docs/live-testing.md](docs/live-testing.md) — opt-in, paid live verification: what it checks
   and how to run it by hand
-- [CONTRIBUTING.md](CONTRIBUTING.md), [SECURITY.md](SECURITY.md), [CHANGELOG.md](CHANGELOG.md)
+- [CONTRIBUTING.md](https://github.com/doodla/iris/blob/main/CONTRIBUTING.md),
+  [SECURITY.md](https://github.com/doodla/iris/blob/main/SECURITY.md), [CHANGELOG.md](CHANGELOG.md)
 
 ## License
 
