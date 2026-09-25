@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::domain::{JobStatus, ProviderId, Warning, WarningCode};
+use crate::domain::{Billing, JobStatus, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCategory, ErrorCode, IrisError};
 use crate::redact;
 
@@ -260,9 +260,10 @@ pub fn schema() -> serde_json::Value {
 /// * an error's `category` is the one of its `code` (an error read back from a job
 ///   record written by a newer Iris shows an unknown code as `internal_error` with
 ///   category `internal`, keeping the original in `details.recorded_code`);
-/// * error codes, commands, warning codes, and provider ids are open sets (see [`open_set`]):
-///   adding a value is an additive change, which a consumer validating with this
-///   version's schema keeps accepting; the rules above apply to the known values.
+/// * error codes, commands, warning codes, provider ids, and billing values are open
+///   sets (see [`open_set`]): adding a value is an additive change, which a consumer
+///   validating with this version's schema keeps accepting; the rules above apply to
+///   the known values.
 fn add_contract_rules(schema: &mut serde_json::Value) {
     use serde_json::json;
     let def = |name: &str| json!({ "$ref": format!("#/$defs/{name}") });
@@ -325,6 +326,17 @@ fn add_contract_rules(schema: &mut serde_json::Value) {
         "Provider identifier: one of the listed providers, or a provider a later version of this schema_version \
          adds.",
         &providers,
+        CODE_PATTERN,
+    );
+    let billing: Vec<&str> = Billing::ALL.iter().map(|b| b.as_str()).collect();
+    let meanings: Vec<String> = Billing::ALL.iter().map(|b| format!("{b}: {}", b.description())).collect();
+    schema["$defs"][Billing::schema_name().as_ref()] = open_set(
+        &format!(
+            "Whether a model's requests cost money: one of the listed values ({}), or a value a later version of \
+             this schema_version adds. Read a value you do not know as: requests may cost money.",
+            meanings.join("; ")
+        ),
+        &billing,
         CODE_PATTERN,
     );
     let warnings: Vec<&str> = WarningCode::ALL.iter().map(|c| c.as_str()).collect();

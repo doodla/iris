@@ -21,7 +21,7 @@
 //!   says "For new integrations, use one of the GPT Image 2.5 models", so its summary
 //!   gives that advice and the documented differences.
 
-use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage};
 use crate::error::IrisError;
 
 use super::options::OptionValue;
@@ -243,6 +243,7 @@ pub static MODELS: &[ModelSpec] = &[
         summary: "OpenAI's most capable image model, for workflows where editing precision matters most",
         aliases: &["gpt-image-2.5-sunburst-2026-09-08"],
         lifecycle: Lifecycle::Ga,
+        billing: Billing::Paid,
         operations: BOTH,
         inputs: INPUTS,
         options: OPTIONS_2_5,
@@ -263,6 +264,7 @@ pub static MODELS: &[ModelSpec] = &[
                   rates as Sunburst",
         aliases: &["gpt-image-2.5-flare-2026-09-08"],
         lifecycle: Lifecycle::Ga,
+        billing: Billing::Paid,
         operations: BOTH,
         inputs: INPUTS,
         options: OPTIONS_2_5,
@@ -284,6 +286,7 @@ pub static MODELS: &[ModelSpec] = &[
                   indicative for 2.5)",
         aliases: &["gpt-image-2-2026-04-21"],
         lifecycle: Lifecycle::Ga,
+        billing: Billing::Paid,
         operations: BOTH,
         inputs: INPUTS,
         options: OPTIONS_2,
@@ -411,19 +414,21 @@ fn estimate_with(
     note: &str,
     spec: &ModelSpec,
     input: &EstimateInput<'_>,
-) -> Option<CostEstimate> {
-    let quality = spec.effective(input.options, "quality")?;
-    let size = spec.effective(input.options, "size")?;
-    let (quality, size) = (quality.as_str()?, size.as_str()?);
+) -> Result<CostEstimate, String> {
+    let value = |name: &str| spec.effective(input.options, name).and_then(|v| v.as_str().map(str::to_string));
+    let (quality, size) = (value("quality").unwrap_or_default(), value("size").unwrap_or_default());
     // `auto` quality or size: the cost depends on the model's choice, so there is no
-    // point estimate (the caller reports `cost_estimate_unavailable`).
-    let base = calculator_base(table, quality)?;
-    let (w, h) = parse_size(size)?;
+    // point estimate.
+    let base = calculator_base(table, &quality);
+    let dimensions = parse_size(&size);
+    let (Some(base), Some((w, h))) = (base, dimensions) else {
+        return Err(chosen_by_the_model(spec, table, base.is_none(), dimensions.is_none()));
+    };
     let tokens = estimated_output_tokens(base, w, h);
     let count = input.count.max(1);
     let amount = round_usd(tokens as f64 * f64::from(count) * IMAGE_OUTPUT_USD_PER_M / 1e6);
     let noun = if count == 1 { "image" } else { "images" };
-    Some(CostEstimate::usd(
+    Ok(CostEstimate::usd(
         amount,
         format!(
             "estimate: {count} {noun} × {tokens} output tokens × ${IMAGE_OUTPUT_USD_PER_M:.2}/1M ({}, {quality}, \
@@ -435,14 +440,35 @@ fn estimate_with(
     ))
 }
 
-/// Pre-call estimate for the GPT Image 2.5 models (Sunburst and Flare share it).
-/// `None` when the effective quality or size is `auto`.
-pub fn estimate_gpt_image_2_5(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEstimate> {
+/// Why there is no pre-call estimate when the model chooses the quality or the size
+/// (`auto`), naming only the options to pass for one.
+fn chosen_by_the_model(spec: &ModelSpec, table: &[(&str, u32)], quality: bool, size: bool) -> String {
+    let flag =
+        |name: &str| spec.option(name).and_then(|o| o.flag).map_or(format!("-O {name}=…"), str::to_string);
+    let qualities: Vec<&str> = table.iter().map(|(q, _)| *q).collect();
+    let (last, rest) = qualities.split_last().unwrap_or((&"", &[]));
+    let pass_quality = format!("{} ({}, or {last})", flag("quality"), rest.join(", "));
+    let pass_size = format!("{} WIDTHxHEIGHT (such as 1024x1024)", flag("size"));
+    let (what, pass) = match (quality, size) {
+        (true, true) => (
+            "quality and size are auto, so the model chooses them",
+            format!("{pass_quality} and {pass_size}"),
+        ),
+        (true, false) => ("quality is auto, so the model chooses it", pass_quality),
+        (false, _) => ("size is auto, so the model chooses it", pass_size),
+    };
+    format!("{what} and the cost is unknown before the call; pass {pass} for an estimate")
+}
+
+/// Pre-call estimate for the GPT Image 2.5 models (Sunburst and Flare share it), or,
+/// when the effective quality or size is `auto`, why there is none.
+pub fn estimate_gpt_image_2_5(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
     estimate_with(CALCULATOR_BASE_2_5, " (indicative for GPT Image 2.5)", spec, input)
 }
 
-/// Pre-call estimate for GPT Image 2. `None` when the effective quality or size is `auto`.
-pub fn estimate_gpt_image_2(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEstimate> {
+/// Pre-call estimate for GPT Image 2, or, when the effective quality or size is
+/// `auto`, why there is none.
+pub fn estimate_gpt_image_2(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
     estimate_with(CALCULATOR_BASE_2, "", spec, input)
 }
 

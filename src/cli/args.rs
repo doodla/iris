@@ -629,11 +629,11 @@ pub enum ModelsCommand {
     List(ModelsListArgs),
     /// Show one model's capabilities, options, and prices
     #[command(
-        long_about = "Show one model's summary and declared capabilities: operations, inputs, options (with \
-                      the typed flag or -O key and the default of each), output types, limits, published \
-                      prices, its cheapest single-output request with that request's estimated cost, and \
-                      documented access requirements. Without --check-access it reads only the catalog and \
-                      whether the API key is set, so it runs even when the config file is invalid. \
+        long_about = "Show one model's summary, billing, and declared capabilities: operations, inputs, \
+                      options (with the typed flag or -O key and the default of each), output types, limits, \
+                      published prices, its cheapest single-output request with that request's estimated \
+                      cost, and documented access requirements. Without --check-access it reads only the \
+                      catalog and whether the API key is set, so it runs even when the config file is invalid. \
                       --check-access also asks the provider with a free metadata call whether the model is \
                       visible to your key; billing tier, prepaid credit, and organization verification are \
                       not checked.",

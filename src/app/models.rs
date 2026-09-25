@@ -43,6 +43,7 @@ fn summary(m: &ModelSpec) -> ModelSummary {
         summary: m.summary.to_string(),
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
+        billing: m.billing,
         operations: m.operations.to_vec(),
         lowest_estimate: lowest_estimate(m),
     }
@@ -118,6 +119,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
         summary: m.summary.to_string(),
         aliases: m.aliases.iter().map(|a| a.to_string()).collect(),
         lifecycle: m.lifecycle,
+        billing: m.billing,
         operations: m.operations.to_vec(),
         inputs: InputsView {
             max_input_images: m.inputs.max_input_images,

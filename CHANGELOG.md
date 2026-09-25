@@ -38,8 +38,11 @@ machine-readable contract for agents.
   refused, since Iris writes files and prints their paths. When the provider chooses the image
   type, `-o` gets an `output_extension_may_change` warning.
 - **Cost estimates**, always labeled as estimates: before the call where supportable, from the
-  reported usage afterwards. Models resolved with `--capabilities-from` get none, since the
-  template model's prices are not assumed.
+  reported usage afterwards. Without one, `cost_estimate_unavailable` says why and which options
+  to pass for one (on OpenAI, `--quality` and `--size`, naming only those that are `auto`).
+  Models resolved with `--capabilities-from` get none, since the template model's prices are not
+  assumed. Every model reports its `billing` (`paid`) in `models list`, `models show`, and
+  dry-run plans.
 
 **Paid requests are never retried or discarded behind your back**
 
@@ -86,8 +89,8 @@ machine-readable contract for agents.
 
 - `--json` prints exactly one envelope per command. The published JSON Schema (`iris schema`,
   with `$id` and `schema_version` 1) requires every always-present key, ties `result` to
-  `command` and each known error code to its category, and keeps error codes, commands and
-  warning codes open to later additions.
+  `command` and each known error code to its category, and keeps error codes, commands, warning
+  codes, provider ids and billing values open to later additions.
 - A stable error taxonomy with documented exit codes (0, 1, 2, 3, 4, 5, 130) and a registry of
   warning codes; tests check the documented tables and every help example against the code.
 - `iris models list`/`show`: a one-line summary of what each model is for, the estimate of its

@@ -8,7 +8,7 @@
 //! generation guide's description of each model (checked 2026-09-25) and the
 //! published per-image prices.
 
-use crate::domain::{CostEstimate, Operation, ProviderId, Usage};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage};
 
 use super::types::{
     EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
@@ -247,6 +247,7 @@ pub static MODELS: &[ModelSpec] = &[
                   rendering; good with multiple reference images",
         aliases: &["nano-banana-2"],
         lifecycle: Lifecycle::Ga,
+        billing: Billing::Paid,
         operations: BOTH,
         inputs: INPUTS,
         options: FLASH_OPTIONS,
@@ -267,6 +268,7 @@ pub static MODELS: &[ModelSpec] = &[
                   images or multi-turn editing",
         aliases: &["nano-banana-2-lite"],
         lifecycle: Lifecycle::Ga,
+        billing: Billing::Paid,
         operations: BOTH,
         inputs: INPUTS,
         options: LITE_OPTIONS,
@@ -291,6 +293,7 @@ pub static MODELS: &[ModelSpec] = &[
                   highest per-image price at each resolution",
         aliases: &["nano-banana-pro"],
         lifecycle: Lifecycle::Ga,
+        billing: Billing::Paid,
         operations: BOTH,
         inputs: INPUTS,
         options: PRO_OPTIONS,
@@ -312,13 +315,17 @@ fn rates_for(model: &str) -> Option<&'static Rates> {
 /// Pre-call estimate: the published per-image price for the effective resolution,
 /// times the number of images. Input and thinking tokens are not included (the
 /// basis says so), because they are only known after the call.
-fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEstimate> {
-    let rates = rates_for(spec.id)?;
-    let resolution = spec.effective(input.options, "resolution")?;
-    let resolution = resolution.as_str()?;
-    let (_, per_image) = rates.per_image.iter().find(|(r, _)| *r == resolution)?;
+fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
+    let resolution = spec.effective(input.options, "resolution").and_then(|v| v.as_str().map(str::to_string));
+    let price = rates_for(spec.id)
+        .zip(resolution.as_deref())
+        .and_then(|(rates, resolution)| rates.per_image.iter().find(|(r, _)| *r == resolution));
+    let (Some(resolution), Some((_, per_image))) = (resolution, price) else {
+        // Unreachable for the catalog: a test checks a price for every declared resolution.
+        return Err(format!("Iris has no published per-image price of {} for this request", spec.id));
+    };
     let count = input.count.max(1);
-    Some(CostEstimate::usd(
+    Ok(CostEstimate::usd(
         round_usd(f64::from(count) * per_image),
         format!(
             "{count} image × ${per_image} ({}, {resolution}); input and thinking tokens not included",

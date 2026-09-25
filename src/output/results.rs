@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::catalog::{Lifecycle, OptionValue};
 use crate::domain::{
-    Artifact, CostEstimate, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage,
+    Artifact, Billing, CostEstimate, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage,
 };
 use crate::providers::AccountAccess;
 
@@ -109,6 +109,8 @@ pub struct ModelSummary {
     pub summary: String,
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
+    /// Whether the model's requests cost money.
+    pub billing: Billing,
     pub operations: Vec<Operation>,
     /// The estimate of the model's cheapest single-output request; null when Iris
     /// cannot estimate the model's cost before a call.
@@ -241,6 +243,8 @@ pub struct ModelCapabilities {
     pub summary: String,
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
+    /// Whether the model's requests cost money.
+    pub billing: Billing,
     pub operations: Vec<Operation>,
     pub inputs: InputsView,
     pub options: Vec<OptionView>,
@@ -396,6 +400,8 @@ pub struct PlanResult {
     pub operation: Operation,
     /// True if the real command would create a provider-native async job.
     pub async_job: bool,
+    /// The model's billing: whether the real run costs money.
+    pub billing: Billing,
     pub options: serde_json::Map<String, serde_json::Value>,
     pub inputs: Vec<PlanInput>,
     pub outputs: Vec<String>,

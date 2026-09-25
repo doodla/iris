@@ -76,8 +76,15 @@ async fn image_generate_json_prints_exactly_one_envelope_and_progress_on_stderr(
     assert_eq!(v["result"]["status"], "succeeded");
     assert_eq!(v["result"]["model"], "fake-image-1");
     assert_eq!(paths_of(&v), vec![out.to_str().unwrap().to_string()]);
-    assert!(v["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "cost_estimate_unavailable"));
+    let unavailable =
+        v["warnings"].as_array().unwrap().iter().find(|w| w["code"] == "cost_estimate_unavailable");
+    assert_eq!(
+        unavailable.unwrap()["message"],
+        format!("no cost estimate: {FAKE_AUTO_QUALITY}"),
+        "the estimator's own reason: {v}"
+    );
     assert!(run.stderr.contains("Requesting 1 image from openai"), "{}", run.stderr);
+    assert!(run.stderr.contains("; this is a paid request"), "{}", run.stderr);
     assert!(out.is_file());
 }
 
@@ -509,16 +516,16 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     assert_eq!(models[0]["lowest_estimate"]["cost_estimate"]["amount"], 0.01);
     assert!(models[1]["lowest_estimate"].is_null(), "{}", models[1]);
     assert_eq!(models[2]["lowest_estimate"]["options"], serde_json::json!({"duration": "4"}));
-    // The estimate always comes with the options that give it.
+    // The billing, and the estimate always with the options that give it.
     let table = f.run(&["models", "list"]).await.stdout;
     let lines: Vec<&str> = table.lines().collect();
     assert!(lines[0].starts_with("MODEL ") && lines[0].ends_with(" ALIASES"), "{table}");
     assert!(lines[1].starts_with("fake-image-1 "), "{table}");
     assert_eq!(lines[2], format!("  {}", FAKE_IMAGE_MODEL.summary));
-    assert_eq!(lines[3], "  cheapest single-output request: ~$0.0100 with quality=low");
+    assert_eq!(lines[3], "  paid; cheapest single-output request: ~$0.0100 with quality=low");
     assert!(lines[4].starts_with("fake-gemini-image "), "{table}");
-    assert_eq!(lines[6], "  no estimate before the call");
-    assert_eq!(lines.last().unwrap(), &"  cheapest single-output request: ~$0.4000 with duration=4");
+    assert_eq!(lines[6], "  paid; no estimate before the call");
+    assert_eq!(lines.last().unwrap(), &"  paid; cheapest single-output request: ~$0.4000 with duration=4");
     let v = f.run(&["models", "list", "--operation", "video.generate", "--json"]).await.json();
     assert_eq!(v["result"]["models"].as_array().unwrap().len(), 1);
     let v = f.run(&["models", "list", "--provider", "gemini", "--json"]).await.json();
@@ -582,6 +589,18 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
         "{}",
         run.stdout
     );
+    assert!(
+        run.stdout.contains(
+            "\n  billing:     paid (requests are billed to the provider account at its published prices; no free \
+             tier)\n"
+        ),
+        "{}",
+        run.stdout
+    );
+    let v = f.run(&["models", "show", "fake-img", "--json"]).await.json();
+    assert_eq!(v["result"]["model"]["billing"], "paid");
+    let v = f.run(&["models", "list", "--json"]).await.json();
+    assert!(v["result"]["models"].as_array().unwrap().iter().all(|m| m["billing"] == "paid"), "{v}");
 
     let run = f.run(&["providers", "list", "--json"]).await;
     let v = run.json();
@@ -814,6 +833,8 @@ async fn borrowed_capabilities_come_without_the_templates_prices() {
     assert!(v["result"]["cost_estimate"].is_null(), "{v}");
     let message = borrowed_warning(&v);
     assert!(message.contains("'fake-image-1'") && message.contains("prices are not assumed"), "{message}");
+    // Its billing is the template's: the safe assumption that its requests cost money too.
+    assert_eq!(v["result"]["billing"], FAKE_IMAGE_MODEL.billing.as_str(), "{v}");
 
     // After the call too, even when the provider reports usage the template would price.
     let mut output = image_output(vec![png(8, 8)]);

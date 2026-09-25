@@ -2,7 +2,7 @@
 //! [`ModelSpec`]; validation, `models show`, option defaults, and cost estimates all
 //! read from these declarations, so they must match the provider's documentation.
 
-use crate::domain::{CostEstimate, Operation, ProviderId};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId};
 use crate::error::IrisError;
 
 use super::options::{OptionValue, ResolvedOptions};
@@ -226,8 +226,10 @@ pub struct RequestRules {
     pub check: RequestValidator,
 }
 
-/// Cost estimator hook (before the call, from options).
-pub type CostEstimator = fn(&ModelSpec, &EstimateInput<'_>) -> Option<CostEstimate>;
+/// Cost estimator hook (before the call, from options). Without an estimate it
+/// returns why, and what to pass to get one: the message of the
+/// `cost_estimate_unavailable` warning.
+pub type CostEstimator = fn(&ModelSpec, &EstimateInput<'_>) -> Result<CostEstimate, String>;
 
 /// A model's pre-call cost estimate: the estimator, and the request it estimates
 /// lowest.
@@ -279,6 +281,8 @@ pub struct ModelSpec {
     /// Alternative names accepted by `--model` (e.g. "nano-banana-2").
     pub aliases: &'static [&'static str],
     pub lifecycle: Lifecycle,
+    /// Whether requests cost money, as the provider documents it.
+    pub billing: Billing,
     pub operations: &'static [Operation],
     pub inputs: InputSpec,
     pub options: &'static [OptionSpec],
@@ -329,7 +333,8 @@ impl ModelSpec {
             options.insert(*name, OptionValue::parse(&self.option(name)?.kind, value).ok()?);
         }
         let operation = *self.operations.first()?;
-        let estimate = (estimator.estimate)(self, &EstimateInput { operation, options: &options, count: 1 })?;
+        let estimate =
+            (estimator.estimate)(self, &EstimateInput { operation, options: &options, count: 1 }).ok()?;
         Some((options, estimate))
     }
 }

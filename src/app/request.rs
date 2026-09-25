@@ -71,8 +71,7 @@ pub enum GenerationOutcome<T> {
 ///
 /// A model resolved with `--capabilities-from` runs against the template's
 /// capabilities but not its prices: [`estimate`] and [`estimate_from_usage`] give
-/// it no cost estimate (before or after the call), and [`cost_unavailable`] says
-/// why.
+/// it no cost estimate (before or after the call), and [`estimate`] says why.
 pub(crate) fn resolve_model(
     ctx: &AppContext,
     op: Operation,
@@ -262,7 +261,9 @@ pub(crate) fn effective_count(spec: &ModelSpec, op: Operation, opts: &ResolvedOp
         .unwrap_or(1)
 }
 
-/// The model's cost estimate for this request, if it can support one. A model
+/// The model's cost estimate for this request, or why there is none and how to get
+/// one (the model's own estimator says which options to pass), as the
+/// `cost_estimate_unavailable` warning reports it ([`cost_unavailable`]). A model
 /// resolved with `--capabilities-from` has none: it borrows the template's
 /// capabilities, not its prices.
 pub(crate) fn estimate(
@@ -270,9 +271,21 @@ pub(crate) fn estimate(
     op: Operation,
     opts: &ResolvedOptions,
     count: u32,
-) -> Option<CostEstimate> {
-    let spec = priced(model)?;
-    spec.estimate.and_then(|e| (e.estimate)(spec, &EstimateInput { operation: op, options: opts, count }))
+) -> Result<CostEstimate, String> {
+    if let CapabilitySource::Borrowed { from } = model.source {
+        return Err(format!(
+            "the model was given the capabilities of '{from}' with --capabilities-from, and that model's prices \
+             are not assumed to apply to it; check the provider's published prices"
+        ));
+    }
+    let spec = model.spec;
+    let Some(estimator) = spec.estimate else {
+        return Err(format!(
+            "Iris cannot estimate the cost of {} before the call; `iris models show {}` lists its published prices",
+            spec.id, spec.id
+        ));
+    };
+    (estimator.estimate)(spec, &EstimateInput { operation: op, options: opts, count })
 }
 
 /// The cost estimate from the usage a provider reported for a completed call (it
@@ -292,19 +305,9 @@ fn priced(model: &ResolvedModel) -> Option<&'static ModelSpec> {
     }
 }
 
-/// Warning `cost_estimate_unavailable`.
-pub(crate) fn cost_unavailable(model: &ResolvedModel) -> Warning {
-    let message = match model.source {
-        CapabilitySource::Borrowed { from } => format!(
-            "no cost estimate: the model was given the capabilities of '{from}' with --capabilities-from, and \
-             that model's prices are not assumed to apply to it; check the provider's published prices"
-        ),
-        CapabilitySource::Catalog => format!(
-            "no cost estimate is available for this request; see `iris models show {}` for the published prices",
-            model.spec.id
-        ),
-    };
-    Warning::new(WarningCode::CostEstimateUnavailable, message)
+/// Warning `cost_estimate_unavailable`, with the reason [`estimate`] gave.
+pub(crate) fn cost_unavailable(reason: &str) -> Warning {
+    Warning::new(WarningCode::CostEstimateUnavailable, format!("no cost estimate: {reason}"))
 }
 
 /// The options a request runs with: every explicit value, plus the declared

@@ -7,7 +7,8 @@ use iris::catalog::{
     ResolvedOptions,
 };
 use iris::domain::{
-    Artifact, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage, Warning, WarningCode,
+    Artifact, Billing, DownloadState, JobStatus, ModelSource, Operation, ProviderId, Usage, Warning,
+    WarningCode,
 };
 use iris::error::{ErrorCode, IrisError};
 use iris::jobs::{JobId, JobRecord, NewJob, OutputPlan, PollApplied, PromptRecord, request_metadata};
@@ -748,6 +749,7 @@ static TEST_SPEC: ModelSpec = ModelSpec {
     summary: "A test video model",
     aliases: &[],
     lifecycle: Lifecycle::Preview,
+    billing: Billing::Paid,
     operations: &[Operation::VideoGenerate],
     inputs: InputSpec::NONE,
     options: TEST_OPTIONS,

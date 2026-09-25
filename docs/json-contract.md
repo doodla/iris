@@ -33,12 +33,12 @@ The schema encodes the contract, not only the shapes of the types:
   generation command's `--dry-run`, the help result for `command: null`);
 - an error's `category` must be the one its `code` maps to (table below) for every code the
   schema lists, `internal_error` included;
-- error `code`, `command`, warning `code`, and provider ids are **open sets**: the schema lists the
-  known values (`anyOf` an `enum` of them) and also accepts any other value of the same form, a
-  snake_case code (`^[a-z][a-z0-9_]*$`) or, for `command`, snake_case codes joined by dots. Adding
-  a value (a new provider included) is an additive change (below), so an envelope from a later Iris
-  with the same `schema_version` still validates against this file. Every other enumeration
-  (`category`, statuses, operations, ...) is closed.
+- error `code`, `command`, warning `code`, provider ids, and `billing` are **open sets**: the
+  schema lists the known values (`anyOf` an `enum` of them) and also accepts any other value of
+  the same form, a snake_case code (`^[a-z][a-z0-9_]*$`) or, for `command`, snake_case codes
+  joined by dots. Adding a value (a new provider included) is an additive change (below), so an
+  envelope from a later Iris with the same `schema_version` still validates against this file.
+  Every other enumeration (`category`, statuses, operations, ...) is closed.
 
 ### Schema versioning policy
 
@@ -192,12 +192,14 @@ if a record changes between the check and its deletion can the command stop part
 `details.deleted` then lists what it deleted (see
 [jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
-### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "operations": [], "lowest_estimate" } ] }`
+### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "billing", "operations": [], "lowest_estimate" } ] }`
 
-`summary` is one line on what the model is for and its trade-off, from the provider's
-documentation. `lowest_estimate` is the model's cheapest single-output request, as its own
-pre-call estimator prices it (the same estimate a `--dry-run` of that request gives), or `null`
-when Iris cannot estimate the model's cost before a call:
+`summary` is one line on what the model is for and its trade-off, from the provider's documentation.
+`billing` says whether the model's requests cost money: `paid` (requests are billed to the provider
+account at its published prices; no free tier) for every model today. It is an open set, so read a
+value you do not know as "requests may cost money". `lowest_estimate` is the model's cheapest
+single-output request, as its own pre-call estimator prices it (the same estimate a `--dry-run` of
+that request gives), or `null` when Iris cannot estimate the model's cost before a call:
 
 ```json
 "lowest_estimate": {
@@ -220,7 +222,7 @@ smaller square one.
 {
   "id": "gpt-image-2.5-sunburst", "provider": "openai", "display_name": "GPT Image 2.5 Sunburst",
   "summary": "OpenAI's most capable image model, for workflows where editing precision matters most",
-  "aliases": ["gpt-image-2.5-sunburst-2026-09-08"], "lifecycle": "ga",
+  "aliases": ["gpt-image-2.5-sunburst-2026-09-08"], "lifecycle": "ga", "billing": "paid",
   "operations": ["image.generate", "image.edit"],
   "inputs": { "max_input_images": 16, "input_media_types": ["image/png","image/jpeg","image/webp"],
               "max_input_bytes": 15700000, "mask": true,
@@ -249,11 +251,12 @@ smaller square one.
 }
 ```
 
-`summary` and `lowest_estimate` are the ones `models.list` reports. Each option's `type` is
-`enum` (its `values` listed), `integer` (`min`..=`max`), `boolean`, or `string`: a pattern
-described by `syntax`, or free text at most `max_chars` characters long (`max_chars` is `null`
-for every other option). `default` is the value in effect when the option is omitted, typed like
-the option's values (`"auto"`, `1`, `true`), or `null` when the provider documents none.
+`summary`, `billing`, and `lowest_estimate` are the ones `models.list` reports. Each option's
+`type` is `enum` (its `values` listed), `integer` (`min`..=`max`), `boolean`, or `string`: a
+pattern described by `syntax`, or free text at most `max_chars` characters long (`max_chars` is
+`null` for every other option). `default` is the value in effect when the option is omitted,
+typed like the option's values (`"auto"`, `1`, `true`), or `null` when the provider documents
+none.
 
 `constraints` lists the rules that relate several options or inputs (e.g. Veo's
 `high_resolution_requires_duration_8`, `references_exclude_frames`,
@@ -324,7 +327,7 @@ writable, which a dry run does not do because it writes nothing.
 ```json
 {
   "dry_run": true, "provider": "gemini", "model": "veo-3.1-fast-generate-preview",
-  "model_source": "config", "operation": "video.generate", "async_job": true,
+  "model_source": "config", "operation": "video.generate", "async_job": true, "billing": "paid",
   "options": { "aspect_ratio": "16:9", "count": 1, "duration": "8", "resolution": "720p" },
   "inputs": [ { "role": "first_frame", "path": "/home/you/fox.png", "media_type": "image/png", "bytes": 75 } ],
   "outputs": [ "/home/you/<job_id>.mp4" ],
@@ -333,11 +336,14 @@ writable, which a dry run does not do because it writes nothing.
 }
 ```
 
-`outputs` are absolute paths, and every planned path is lexically normalized (`.` and `..`
-removed without resolving symbolic links), exactly as the real run writes it. Default names are
-indicative: image names contain an id generated for each plan (`iris-<ulid>.png`), so the real run
-picks a new one, and video plans show a `<job_id>` placeholder because the job id is assigned when
-the real run records the job.
+`billing` is the model's, as `models.list` reports it: `paid` means the real run is billed to the
+provider account at its published prices. A plan for a model resolved with `--capabilities-from`
+reports the template model's `billing`, the safe assumption that the unknown model's requests cost
+money too, while it gives no cost estimate. `outputs` are absolute paths, and every planned path is
+lexically normalized (`.` and `..` removed without resolving symbolic links), exactly as the real
+run writes it. Default names are indicative: image names contain an id generated for each plan
+(`iris-<ulid>.png`), so the real run picks a new one, and video plans show a `<job_id>` placeholder
+because the job id is assigned when the real run records the job.
 
 ### Shared objects
 
@@ -348,9 +354,12 @@ the real run records the job.
 - **`CostEstimate`**: `{ "estimated": true, "currency": "USD", "amount", "basis" (human string
   explaining the math), "source_url", "as_of" }` — **always** labeled an estimate. When no point
   estimate is supportable (e.g. `quality=auto` or `size=auto` on OpenAI), the field is `null` and
-  a `cost_estimate_unavailable` warning is emitted instead of a guess. A model resolved with
-  `--capabilities-from` never gets an estimate (before or after the call): it borrows the known
-  model's capabilities, not its prices, and the warning says so.
+  a `cost_estimate_unavailable` warning is emitted instead of a guess. Its message comes from the
+  model's own estimator and says how to get an estimate: on OpenAI, that the model chooses the
+  quality or size, so the cost is unknown before the call, and to pass `--quality` or `--size`
+  (naming only the ones that are `auto`, with the qualities the model accepts). A model resolved
+  with `--capabilities-from` never gets an estimate (before or after the call): it borrows the
+  known model's capabilities, not its prices, and the warning says so.
 
 ## Error object
 
@@ -597,7 +606,7 @@ the code's registry); the `message` says what happened in the case at hand:
 | `output_extension_adjusted` | an output file's extension was added (an `-o` path without one) or changed to match the type actually returned |
 | `output_renamed` | a different file appeared at the target meanwhile; the output was saved as `<stem>.<n>.<ext>` so nothing is overwritten |
 | `output_format_mismatch` | a valid image came back as another type than requested or labeled; it is kept under its real type |
-| `cost_estimate_unavailable` | no cost estimate could be made for this request (the message says why) |
+| `cost_estimate_unavailable` | no cost estimate could be made for this request (the message says why, and which options to pass for one) |
 | `job_record_unreadable` | a local job record could not be read and was skipped |
 | `provider_text_output` | the model returned text too; it is in the result's `text` |
 | `already_downloaded` | an identical file is already at the target; nothing was written |

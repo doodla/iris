@@ -126,9 +126,10 @@ async fn generate(
         .video()
         .ok_or_else(|| IrisError::internal(format!("provider '{provider}' has no video adapter")))?;
     let estimate = request::estimate(&resolved, op, &opts, count);
-    if estimate.is_none() {
-        warnings.push(request::cost_unavailable(&resolved));
+    if let Err(reason) = &estimate {
+        warnings.push(request::cost_unavailable(reason));
     }
+    let estimate = estimate.ok();
     let store_prompts = ctx.settings.store_prompts.value;
 
     if common.dry_run {
@@ -150,6 +151,7 @@ async fn generate(
             model_source,
             operation: op,
             async_job: true,
+            billing: spec.billing,
             options: request::options_view(spec, op, &opts, store_prompts),
             inputs,
             outputs,
@@ -206,8 +208,9 @@ async fn generate(
     ctx.store.create(&record)?;
 
     ctx.progress.line(format!(
-        "Submitting job {job_id} to {provider} ({}); this is a paid request",
-        request::progress_model(&resolved, model_source, op)
+        "Submitting job {job_id} to {provider} ({}); this is a {} request",
+        request::progress_model(&resolved, model_source, op),
+        spec.billing
     ));
     // One that arrived before the request is sent (while the record was written or
     // the line printed) stops here, without sending it. `count()` would miss it: the

@@ -251,6 +251,7 @@ Dry run: nothing was sent and nothing was charged.
   provider:   gemini
   model:      gemini-3.1-flash-image (config image.model)
   async job:  no
+  billing:    paid (requests are billed to the provider account at its published prices; no free tier)
   options:    count=1 resolution=1K thinking_level=minimal
   output:     /home/you/iris-01m3bwvc3g3y5b4zpybvy0gkr5.jpg
   credential: GEMINI_API_KEY is NOT set (required for the real run)

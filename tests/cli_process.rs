@@ -561,16 +561,18 @@ fn models_list_is_consistent_with_the_catalog() {
         v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     let expected: Vec<&str> = iris::catalog::all().map(|m| m.id).collect();
     assert_eq!(ids, expected);
-    // What each model is for, and its cheapest request as its own estimator prices it,
-    // in the list and in `models show`.
+    // What each model is for, whether it costs money, and its cheapest request as its
+    // own estimator prices it, in the list and in `models show`.
     let listed = v["result"]["models"].as_array().unwrap().clone();
     for (m, spec) in listed.iter().zip(iris::catalog::all()) {
         let (options, estimate) = spec.lowest_estimate().expect("every catalog model has an estimator");
         let lowest = serde_json::json!({ "options": options, "cost_estimate": estimate });
         assert_eq!(m["summary"], spec.summary, "{}", spec.id);
+        assert_eq!(m["billing"], spec.billing.as_str(), "{}", spec.id);
         assert_eq!(m["lowest_estimate"], lowest, "{}", spec.id);
         let shown = run(iris(&sandbox).args(["models", "show", spec.id, "--json"])).json();
         assert_eq!(shown["result"]["model"]["summary"], spec.summary, "{}", spec.id);
+        assert_eq!(shown["result"]["model"]["billing"], spec.billing.as_str(), "{}", spec.id);
         assert_eq!(shown["result"]["model"]["lowest_estimate"], lowest, "{}", spec.id);
     }
     // In human output too, each estimate comes with the options that give it, and the

@@ -106,6 +106,20 @@
       ],
       "type": "object"
     },
+    "Billing": {
+      "anyOf": [
+        {
+          "enum": [
+            "paid"
+          ]
+        },
+        {
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      ],
+      "description": "Whether a model's requests cost money: one of the listed values (paid: requests are billed to the provider account at its published prices; no free tier), or a value a later version of this schema_version adds. Read a value you do not know as: requests may cost money.",
+      "type": "string"
+    },
     "CheckStatus": {
       "enum": [
         "ok",
@@ -255,7 +269,7 @@
           "type": "string"
         },
         "basis": {
-          "description": "Human-readable basis, e.g. \"1 image x $0.011 (gpt-image-1, low, 1024x1024)\".",
+          "description": "Human-readable basis, e.g. \"1 image × $0.067 (gemini-3.1-flash-image, 1K); input\nand thinking tokens not included\".",
           "type": "string"
         },
         "currency": {
@@ -1666,6 +1680,10 @@
           },
           "type": "array"
         },
+        "billing": {
+          "$ref": "#/$defs/Billing",
+          "description": "Whether the model's requests cost money."
+        },
         "capabilities_source": {
           "description": "`catalog` (declared by Iris, checked on `catalog_as_of`).",
           "type": "string"
@@ -1745,6 +1763,7 @@
         "summary",
         "aliases",
         "lifecycle",
+        "billing",
         "operations",
         "inputs",
         "options",
@@ -1810,6 +1829,10 @@
           },
           "type": "array"
         },
+        "billing": {
+          "$ref": "#/$defs/Billing",
+          "description": "Whether the model's requests cost money."
+        },
         "display_name": {
           "type": "string"
         },
@@ -1851,6 +1874,7 @@
         "summary",
         "aliases",
         "lifecycle",
+        "billing",
         "operations",
         "lowest_estimate"
       ],
@@ -2024,6 +2048,10 @@
           "description": "True if the real command would create a provider-native async job.",
           "type": "boolean"
         },
+        "billing": {
+          "$ref": "#/$defs/Billing",
+          "description": "The model's billing: whether the real run costs money."
+        },
         "cost_estimate": {
           "anyOf": [
             {
@@ -2078,6 +2106,7 @@
         "model_source",
         "operation",
         "async_job",
+        "billing",
         "options",
         "inputs",
         "outputs",

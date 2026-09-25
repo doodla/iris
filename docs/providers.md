@@ -126,6 +126,7 @@ pub static MODELS: &[ModelSpec] = &[
         summary: "…",                                 // what it is for and its trade-off, in one line
         aliases: &[],                                 // e.g. dated-snapshot aliases
         lifecycle: Lifecycle::Preview,                 // ga | preview | deprecated, as documented
+        billing: Billing::Paid,                        // billed at the provider's published prices
         operations: &[Operation::VideoGenerate],
         inputs: InputSpec { /* image counts, media types, sizes, mask rules, frames, references,
                                inline request cap */ },
@@ -200,12 +201,14 @@ Then:
    rather than marketing.
 7. If the model's prices support an estimate before the call, set `estimate` to an `Estimator`: the
    estimate function, and in `lowest` the option values of the model's cheapest single-output
-   request. `models list` and `models show` report that request's estimate as `lowest_estimate`,
-   computed by the same function, and so do the `model_required` candidates. Call
-   `catalog_support::assert_lowest_estimate_is_the_cheapest` from your catalog tests: it validates
-   the declared options and fails if any valid combination of declared values is estimated lower
-   (try the values of a pattern option, such as OpenAI's `size`, in your own test, as
-   `tests/openai_catalog.rs` does).
+   request. When the function cannot estimate a request (OpenAI's `auto` quality or size), it
+   returns why and which options to pass for an estimate; that is the message of the
+   `cost_estimate_unavailable` warning. `models list` and `models show` report the cheapest
+   request's estimate as `lowest_estimate`, computed by the same function, and so do the
+   `model_required` candidates. Call `catalog_support::assert_lowest_estimate_is_the_cheapest` from
+   your catalog tests: it validates the declared options and fails if any valid combination of
+   declared values is estimated lower (try the values of a pattern option, such as OpenAI's `size`,
+   in your own test, as `tests/openai_catalog.rs` does).
 
 ## 4. Register the adapter
 
@@ -236,8 +239,9 @@ Mirror the existing per-provider test files (`tests/openai_catalog.rs` /
 
 - **Catalog tests**: every declared option round-trips through validation with its documented
   default, min/max, and enum values; the typed-flag mapping table is respected; pricing/estimate
-  functions return sane, labeled-as-estimate values (or `None` with `cost_estimate_unavailable`
-  when a point estimate is not supportable, e.g. an `auto` quality).
+  functions return sane, labeled-as-estimate values (or, when a point estimate is not
+  supportable, e.g. an `auto` quality, the reason and the options to pass, which
+  `cost_estimate_unavailable` reports).
 - **Adapter tests**: request encoding matches the documented wire shape exactly (a snapshot or
   field-by-field assertion against a built request, not just "it doesn't panic"); response
   parsing handles the documented success shape *and* the provider's error shapes (auth failure,

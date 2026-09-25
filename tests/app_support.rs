@@ -22,7 +22,7 @@ use iris::catalog::{
     OptionSpec, OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
 use iris::config::{CliOverrides, EnvSnapshot, Platform, Resolved, SettingSource, Settings};
-use iris::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
+use iris::domain::{Billing, CostEstimate, Operation, ProviderId, Usage, Warning};
 use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy};
 use iris::providers::{
@@ -95,13 +95,16 @@ pub static FAKE_IMAGE_OPTIONS: &[OptionSpec] = &[
     },
 ];
 
+/// Why the fake image model has no estimate when its quality is `auto`.
+pub const FAKE_AUTO_QUALITY: &str = "quality is auto (fake); pass --quality for an estimate";
+
 /// $0.01 per image, only when quality is explicit (like OpenAI's `auto` rule).
-fn fake_image_estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEstimate> {
-    let quality = spec.effective(input.options, "quality")?;
-    if quality.as_str() == Some("auto") {
-        return None;
+fn fake_image_estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
+    let quality = spec.effective(input.options, "quality");
+    if quality.as_ref().and_then(|q| q.as_str()) == Some("auto") {
+        return Err(FAKE_AUTO_QUALITY.to_string());
     }
-    Some(CostEstimate::usd(
+    Ok(CostEstimate::usd(
         0.01 * f64::from(input.count),
         format!("{} image(s) x $0.01 (fake)", input.count),
         "https://example.invalid/pricing",
@@ -127,6 +130,7 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     summary: "A fake OpenAI-like image model with a mask and an estimator",
     aliases: &["fake-img"],
     lifecycle: Lifecycle::Ga,
+    billing: Billing::Paid,
     operations: IMAGE_OPS,
     inputs: InputSpec {
         max_input_images: 2,
@@ -192,6 +196,7 @@ pub static FAKE_GEMINI_IMAGE: ModelSpec = ModelSpec {
     summary: "A fake Gemini-like image model without an estimator",
     aliases: &[],
     lifecycle: Lifecycle::Ga,
+    billing: Billing::Paid,
     operations: IMAGE_OPS,
     inputs: InputSpec {
         max_input_images: 3,
@@ -266,9 +271,10 @@ fn fake_video_rules(v: &ValidationInput<'_>) -> Result<(), IrisError> {
 }
 
 /// $0.10 per second of video.
-fn fake_video_estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEstimate> {
-    let seconds: f64 = spec.effective(input.options, "duration")?.as_str()?.parse().ok()?;
-    Some(CostEstimate::usd(
+fn fake_video_estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
+    let seconds = spec.effective(input.options, "duration").and_then(|d| d.as_str()?.parse::<f64>().ok());
+    let seconds = seconds.ok_or("no duration (fake)")?;
+    Ok(CostEstimate::usd(
         seconds * 0.10,
         format!("{seconds} s x $0.10 (fake; estimate)"),
         "https://example.invalid/pricing",
@@ -283,6 +289,7 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
     summary: "A fake Veo-like video model",
     aliases: &["fake-vid"],
     lifecycle: Lifecycle::Preview,
+    billing: Billing::Paid,
     operations: VIDEO_OPS,
     inputs: InputSpec {
         max_input_images: 0,

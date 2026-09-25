@@ -39,7 +39,7 @@ fn validate(
     catalog::validate_request(model(id), op, &raw(pairs), inputs)
 }
 
-fn estimate(id: &str, pairs: &[(&str, &str)], count: u32) -> Option<iris::domain::CostEstimate> {
+fn estimate(id: &str, pairs: &[(&str, &str)], count: u32) -> Result<iris::domain::CostEstimate, String> {
     let spec = model(id);
     let options = validate(id, Operation::ImageGenerate, pairs).unwrap();
     (spec.estimate.unwrap().estimate)(
@@ -374,14 +374,34 @@ fn estimator_uses_the_calculator_formula_for_explicit_quality_and_size() {
     }
 }
 
+/// With `auto` quality or size the model chooses, so there is no estimate; the
+/// reason names only the options that are `auto`, with the values that give one.
 #[test]
-fn estimator_returns_none_when_quality_or_size_is_auto() {
+fn estimator_names_the_auto_options_to_pass_for_an_estimate() {
     for id in IDS {
-        assert!(estimate(id, &[], 1).is_none(), "{id}: defaults are auto");
-        assert!(estimate(id, &[("quality", "low")], 1).is_none(), "{id}: size auto");
-        assert!(estimate(id, &[("size", "1024x1024")], 1).is_none(), "{id}: quality auto");
-        assert!(estimate(id, &[("quality", "auto"), ("size", "1024x1024")], 1).is_none());
-        assert!(estimate(id, &[("quality", "low"), ("size", "auto")], 1).is_none());
+        let qualities =
+            if id == "gpt-image-2" { "low, medium, or high" } else { "low, medium, high, xhigh, or max" };
+        let quality = format!("--quality ({qualities})");
+        let size = "--size WIDTHxHEIGHT (such as 1024x1024)";
+        let unknown = "and the cost is unknown before the call";
+        let both = format!(
+            "quality and size are auto, so the model chooses them {unknown}; pass {quality} and {size} for an \
+             estimate"
+        );
+        assert_eq!(estimate(id, &[], 1).unwrap_err(), both, "{id}: the defaults are auto");
+        assert_eq!(estimate(id, &[("quality", "auto"), ("size", "auto")], 1).unwrap_err(), both, "{id}");
+        let size_auto =
+            format!("size is auto, so the model chooses it {unknown}; pass {size} for an estimate");
+        assert_eq!(estimate(id, &[("quality", "low")], 1).unwrap_err(), size_auto, "{id}");
+        assert_eq!(estimate(id, &[("quality", "low"), ("size", "auto")], 1).unwrap_err(), size_auto, "{id}");
+        let quality_auto =
+            format!("quality is auto, so the model chooses it {unknown}; pass {quality} for an estimate");
+        assert_eq!(estimate(id, &[("size", "1024x1024")], 1).unwrap_err(), quality_auto, "{id}");
+        assert_eq!(
+            estimate(id, &[("quality", "auto"), ("size", "1024x1024")], 1).unwrap_err(),
+            quality_auto,
+            "{id}"
+        );
     }
 }
 
@@ -417,7 +437,7 @@ fn the_cheapest_request_is_low_quality_at_the_cheapest_valid_size() {
                             .unwrap_or_else(|e| panic!("{quality} {size}: {}", e.message));
                     let input =
                         EstimateInput { operation: Operation::ImageGenerate, options: &options, count: 1 };
-                    if let Some(e) = (m.estimate.unwrap().estimate)(m, &input) {
+                    if let Ok(e) = (m.estimate.unwrap().estimate)(m, &input) {
                         assert!(e.amount >= lowest.amount, "{} {quality} {size}: {}", m.id, e.basis);
                     }
                 }

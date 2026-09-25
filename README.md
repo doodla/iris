@@ -153,11 +153,13 @@ Estimated cost: ~$0.0060 USD (estimate from reported usage (gpt-image-2.5-sunbur
 
 Validate a request locally, with no charge and no credentials required, before spending money.
 With an explicit size and quality the plan carries a pre-call estimate (with `auto`, the default,
-it is `null` and a `cost_estimate_unavailable` warning says so):
+the model chooses them, so it is `null` and a `cost_estimate_unavailable` warning names the
+options to pass for one). `billing: "paid"` says the real run is billed to your provider account
+at its published prices:
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
-{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-01m3at0b4p5p26d7c3c6jftqz7.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"dry_run":true,"inputs":[],"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-01m3at0b4p5p26d7c3c6jftqz7.png"],"provider":"openai"},"schema_version":1,"warnings":[]}
 ```
 
 ## More examples
@@ -325,43 +327,44 @@ $ iris models list
 MODEL                          PROVIDER  LIFECYCLE  OPERATIONS                  ALIASES
 gpt-image-2.5-sunburst         openai    ga         image.generate, image.edit  gpt-image-2.5-sunburst-2026-09-08
   OpenAI's most capable image model, for workflows where editing precision matters most
-  cheapest single-output request: ~$0.0016 with quality=low size=1440x480
+  paid; cheapest single-output request: ~$0.0016 with quality=low size=1440x480
 gpt-image-2.5-flare            openai    ga         image.generate, image.edit  gpt-image-2.5-flare-2026-09-08
   OpenAI's fastest image model, for fast, high-quality everyday generation, at the same token rates
   as Sunburst
-  cheapest single-output request: ~$0.0016 with quality=low size=1440x480
+  paid; cheapest single-output request: ~$0.0016 with quality=low size=1440x480
 gpt-image-2                    openai    ga         image.generate, image.edit  gpt-image-2-2026-04-21
   The earlier GPT Image model; OpenAI says to use a 2.5 model for new integrations. Quality up to
   high, and at medium and high about 4x the 2.5 models' output tokens (OpenAI's calculator,
   indicative for 2.5)
-  cheapest single-output request: ~$0.0016 with quality=low size=1440x480
+  paid; cheapest single-output request: ~$0.0016 with quality=low size=1440x480
 gemini-3.1-flash-image         gemini    ga         image.generate, image.edit  nano-banana-2
   Google's most versatile image model, balancing speed with 4K output, world knowledge and text
   rendering; good with multiple reference images
-  cheapest single-output request: ~$0.0450 with resolution=512
+  paid; cheapest single-output request: ~$0.0450 with resolution=512
 gemini-3.1-flash-lite-image    gemini    ga         image.generate, image.edit  nano-banana-2-lite
   Google's fastest and cheapest image model: 1K only, and not optimized for multiple reference
   images or multi-turn editing
-  cheapest single-output request: ~$0.0336 with resolution=1K
+  paid; cheapest single-output request: ~$0.0336 with resolution=1K
 gemini-3-pro-image             gemini    ga         image.generate, image.edit  nano-banana-pro
   Google's premium image model for the most complex visual tasks and professional assets; the
   highest per-image price at each resolution
-  cheapest single-output request: ~$0.1340 with resolution=1K
+  paid; cheapest single-output request: ~$0.1340 with resolution=1K
 veo-3.1-fast-generate-preview  gemini    preview    video.generate              veo-fast
   Veo 3.1 optimized for speed: every Veo option Iris offers, 4k and reference images included, at a
   lower per-second price than Veo 3.1 Standard
-  cheapest single-output request: ~$0.4000 with duration=4 resolution=720p
+  paid; cheapest single-output request: ~$0.4000 with duration=4 resolution=720p
 veo-3.1-generate-preview       gemini    preview    video.generate              veo
   Veo 3.1 Standard, which Google calls best for professional-grade 4K output and complex camera
   movements; every Veo option Iris offers, at the highest per-second price
-  cheapest single-output request: ~$1.6000 with duration=4 resolution=720p
+  paid; cheapest single-output request: ~$1.6000 with duration=4 resolution=720p
 veo-3.1-lite-generate-preview  gemini    preview    video.generate              veo-lite
   The lowest-priced Veo model: up to 1080p, with no 4k, no reference images, and no negative prompt
-  cheapest single-output request: ~$0.2000 with duration=4 resolution=720p
+  paid; cheapest single-output request: ~$0.2000 with duration=4 resolution=720p
 ```
 
 Each model's row is followed by its summary (what it is for and its trade-off, from the
-provider's documentation) and the estimate of its cheapest single-output request with the options
+provider's documentation), its billing (`paid`: requests are billed to your provider account at
+its published prices), and the estimate of its cheapest single-output request with the options
 that give it, computed by the same estimator as a real request's (`lowest_estimate` with
 `--json`). For the OpenAI models that request is 1440x480 at low quality, a 3:1 size: by
 OpenAI's published calculator formula a non-square size never needs more output tokens than a

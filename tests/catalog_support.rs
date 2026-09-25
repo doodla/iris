@@ -209,7 +209,7 @@ pub fn assert_lowest_estimate_is_the_cheapest(spec: &ModelSpec) {
             .unwrap_or_else(|e| panic!("{} {op}: the cheapest request is invalid: {}", spec.id, e.message));
         assert_eq!(resolved, options, "{} {op}", spec.id);
         assert_eq!(output_count(spec, op, &resolved), 1, "{} {op}: one output", spec.id);
-        assert_eq!(estimate(op, &resolved).as_ref(), Some(&lowest), "{} {op}", spec.id);
+        assert_eq!(estimate(op, &resolved).as_ref(), Ok(&lowest), "{} {op}", spec.id);
 
         for raw in option_combinations(spec, op, estimator.lowest) {
             for counts in input_combinations(spec, op) {
@@ -218,7 +218,7 @@ pub fn assert_lowest_estimate_is_the_cheapest(spec: &ModelSpec) {
                     continue;
                 }
                 tried += 1;
-                if let Some(e) = estimate(op, &options) {
+                if let Ok(e) = estimate(op, &options) {
                     assert!(
                         e.amount >= lowest.amount,
                         "{} {op}: {raw:?} is estimated at {} (below the declared cheapest request, {}): {}",

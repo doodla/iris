@@ -294,7 +294,12 @@ async fn output_extension_selects_the_format_and_a_different_returned_type_is_ke
     assert_eq!(res.artifacts[0].path, f.sandbox.path("gem.jpg").to_str().unwrap());
     assert_eq!(res.artifacts[0].media_type, "image/jpeg");
     assert!(has_warning(&warnings, "output_extension_adjusted"));
-    assert!(has_warning(&warnings, "cost_estimate_unavailable"), "the model has no estimator");
+    let unavailable = warnings.iter().find(|w| w.code == "cost_estimate_unavailable").expect("no estimator");
+    assert_eq!(
+        unavailable.message,
+        "no cost estimate: Iris cannot estimate the cost of fake-gemini-image before the call; `iris models show \
+         fake-gemini-image` lists its published prices"
+    );
     assert!(!f.sandbox.path("gem.png").exists());
 
     // Contradicting -o and --format is refused locally.

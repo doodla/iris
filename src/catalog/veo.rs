@@ -10,7 +10,7 @@
 //! the parameter table's per-model options, checked 2026-09-25), and the published
 //! per-second prices, where Google calls the model Veo 3.1 Standard.
 
-use crate::domain::{CostEstimate, Operation, ProviderId};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId};
 use crate::error::IrisError;
 
 use super::types::{
@@ -204,6 +204,7 @@ pub static MODELS: &[ModelSpec] = &[
                   at a lower per-second price than Veo 3.1 Standard",
         aliases: &["veo-fast"],
         lifecycle: Lifecycle::Preview,
+        billing: Billing::Paid,
         operations: VIDEO,
         inputs: inputs(3),
         options: FULL_OPTIONS,
@@ -237,6 +238,7 @@ pub static MODELS: &[ModelSpec] = &[
                   movements; every Veo option Iris offers, at the highest per-second price",
         aliases: &["veo"],
         lifecycle: Lifecycle::Preview,
+        billing: Billing::Paid,
         operations: VIDEO,
         inputs: inputs(3),
         options: FULL_OPTIONS,
@@ -270,6 +272,7 @@ pub static MODELS: &[ModelSpec] = &[
                   prompt",
         aliases: &["veo-lite"],
         lifecycle: Lifecycle::Preview,
+        billing: Billing::Paid,
         operations: VIDEO,
         inputs: inputs(0),
         options: LITE_OPTIONS,
@@ -426,15 +429,18 @@ pub fn rate_per_second(model: &str, resolution: &str) -> Option<f64> {
 }
 
 /// Estimate: effective duration × published rate for the effective resolution.
-fn estimate_video(spec: &ModelSpec, input: &EstimateInput<'_>) -> Option<CostEstimate> {
-    let duration = spec.effective(input.options, "duration")?;
-    let seconds: u32 = duration.as_str()?.parse().ok()?;
-    let resolution = spec.effective(input.options, "resolution")?;
-    let resolution = resolution.as_str()?;
-    let rate = rate_per_second(spec.id, resolution)?;
+fn estimate_video(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
+    let value = |name: &str| spec.effective(input.options, name).and_then(|v| v.as_str().map(str::to_string));
+    let seconds: Option<u32> = value("duration").and_then(|d| d.parse().ok());
+    let resolution = value("resolution");
+    let rate = resolution.as_deref().and_then(|resolution| rate_per_second(spec.id, resolution));
+    let (Some(seconds), Some(resolution), Some(rate)) = (seconds, resolution, rate) else {
+        // Unreachable for the catalog: a test checks a rate for every declared resolution.
+        return Err(format!("Iris has no published per-second price of {} for this request", spec.id));
+    };
     let videos = input.count.max(1);
     let amount = f64::from(seconds) * rate * f64::from(videos);
-    Some(CostEstimate::usd(
+    Ok(CostEstimate::usd(
         round_usd(amount),
         format!(
             "{seconds} s × ${rate}/s ({}, {resolution}, audio included); estimate; blocked videos are not \

@@ -242,6 +242,8 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
             let p = v["result"].clone();
             assert_eq!(p["dry_run"], true, "{v}");
             assert_eq!(p["credential_present"], with_keys, "{v}");
+            let spec = iris::catalog::find(p["model"].as_str().unwrap()).unwrap();
+            assert_eq!(p["billing"], spec.billing.as_str(), "{v}");
             for out in p["outputs"].as_array().unwrap() {
                 assert!(out.as_str().unwrap().starts_with(sb.work().to_str().unwrap()), "{v}");
             }
@@ -296,6 +298,48 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
         let out =
             base.clone().args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run"]).run();
         assert!(out.human().starts_with("Dry run: nothing was sent"), "{}", out.stdout);
+        assert!(
+            out.human().contains(
+                "\n  billing:    paid (requests are billed to the provider account at its published prices; no \
+                 free tier)\n"
+            ),
+            "{}",
+            out.stdout
+        );
+        assert!(
+            out.stderr
+                .contains("warning[cost_estimate_unavailable]: no cost estimate: quality and size are auto"),
+            "{}",
+            out.stderr
+        );
+
+        // While the model chooses the quality or the size there is no estimate, and the
+        // warning names only the options to pass for one.
+        let unavailable = |args: &[&str]| {
+            let mut iris = base.clone();
+            iris.args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run", "--json"])
+                .args(args);
+            let v = iris.run().ok();
+            assert!(v["result"]["cost_estimate"].is_null(), "{v}");
+            let warnings = v["warnings"].as_array().unwrap();
+            let w = warnings.iter().find(|w| w["code"] == "cost_estimate_unavailable").expect("the warning");
+            w["message"].as_str().unwrap().to_string()
+        };
+        let both = unavailable(&[]);
+        assert!(
+            both.starts_with("no cost estimate: quality and size are auto, so the model chooses them"),
+            "{both}"
+        );
+        assert!(
+            both.contains("pass --quality (low, ") && both.contains(" and --size WIDTHxHEIGHT"),
+            "{both}"
+        );
+        let quality = unavailable(&["--size", "1024x1024"]);
+        assert!(quality.starts_with("no cost estimate: quality is auto"), "{quality}");
+        assert!(quality.contains("pass --quality (") && !quality.contains("--size"), "{quality}");
+        let size = unavailable(&["--quality", "low"]);
+        assert!(size.starts_with("no cost estimate: size is auto"), "{size}");
+        assert!(size.contains("pass --size WIDTHxHEIGHT") && !size.contains("--quality"), "{size}");
     }
     assert_eq!(api.total(), 0, "a dry run never contacts a provider");
     assert_eq!(files_in(&sb.work()), ["a.png", "mask.png"], "nothing was written");

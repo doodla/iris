@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use iris::domain::WarningCode;
+use iris::domain::{Billing, WarningCode};
 use iris::error::{ErrorCategory, ErrorCode};
 use iris::output::{SCHEMA_VERSION, envelope, human};
 use serde_json::Value;
@@ -108,6 +108,14 @@ fn the_schema_is_valid_and_enumerates_the_stable_codes() {
     );
     let warnings: BTreeSet<String> = WarningCode::ALL.iter().map(|c| c.as_str().to_string()).collect();
     assert_eq!(known_values(&schema["$defs"]["Warning"]["properties"]["code"]), warnings);
+    let billing: BTreeSet<String> = Billing::ALL.iter().map(|b| b.as_str().to_string()).collect();
+    assert_eq!(known_values(&schema["$defs"]["Billing"]), billing);
+    // The meaning of each billing value, and how to read one this schema does not list.
+    let described = schema["$defs"]["Billing"]["description"].as_str().unwrap();
+    for b in Billing::ALL {
+        assert!(described.contains(&format!("{}: {}", b.as_str(), b.description())), "{described}");
+    }
+    assert!(described.contains("Read a value you do not know as: requests may cost money."), "{described}");
 }
 
 /// The known values of an open set: `anyOf: [{enum: [...]}, {pattern}]`.
@@ -118,10 +126,10 @@ fn known_values(open_set: &Value) -> BTreeSet<String> {
     branches[0]["enum"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect()
 }
 
-/// Error codes, commands, warning codes, and provider ids are open sets, so adding one stays an
-/// additive change: an envelope of a later 1.x Iris with a value this schema does
-/// not list still validates, as long as it has the documented form. Everything else
-/// stays closed: a malformed value and another `schema_version` are rejected.
+/// Error codes, commands, warning codes, provider ids, and billing values are open sets, so
+/// adding one stays an additive change: an envelope of a later 1.x Iris with a value this
+/// schema does not list still validates, as long as it has the documented form. Everything
+/// else stays closed: a malformed value and another `schema_version` are rejected.
 #[test]
 fn open_sets_accept_later_values_of_the_documented_form_only() {
     let validator = jsonschema::validator_for(committed_schema()).expect("valid schema");
@@ -157,6 +165,20 @@ fn open_sets_accept_later_values_of_the_documented_form_only() {
     assert!(validator.is_valid(&failure("jobs.list".into(), later_provider.clone(), "preview_model")));
     later_provider["provider"] = "Seedance".into();
     assert!(!validator.is_valid(&failure("jobs.list".into(), later_provider, "preview_model")));
+    // A later billing value, in a dry-run plan.
+    let plan = |billing: &str| {
+        serde_json::json!({
+            "schema_version": 1, "ok": true, "command": "image.generate", "error": null, "warnings": [],
+            "result": {
+                "dry_run": true, "provider": "openai", "model": "m", "model_source": "flag",
+                "operation": "image.generate", "async_job": false, "billing": billing, "options": {},
+                "inputs": [], "outputs": [], "credential_present": false, "cost_estimate": null
+            }
+        })
+    };
+    assert!(validator.is_valid(&plan("paid")));
+    assert!(validator.is_valid(&plan("free")));
+    assert!(!validator.is_valid(&plan("Free")));
 
     for malformed in ["", "Quota", "a-b", "1st", "a b", "a.b"] {
         let v = failure("jobs.list".into(), error(malformed, "quota"), "preview_model");
@@ -337,8 +359,8 @@ fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
     let plan = serde_json::json!({
         "dry_run": true, "provider": "openai", "model": "m", "model_source": "config",
         "operation": "image.generate",
-        "async_job": false, "options": {}, "inputs": [], "outputs": [], "credential_present": false,
-        "cost_estimate": null
+        "async_job": false, "billing": "paid", "options": {}, "inputs": [], "outputs": [],
+        "credential_present": false, "cost_estimate": null
     });
     let envelope = |ok: bool, command: Value, result: Value, error: Value| {
         serde_json::json!({

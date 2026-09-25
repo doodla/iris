@@ -9,7 +9,9 @@ use std::fmt::Write as _;
 
 use serde_json::Value;
 
-use crate::domain::{Artifact, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode};
+use crate::domain::{
+    Artifact, Billing, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode,
+};
 use crate::providers::AccountAccess;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
@@ -303,9 +305,9 @@ fn lifecycle<T: serde::Serialize>(l: &T) -> String {
     serde_json::to_value(l).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
-/// One row per model, each followed by its summary and the estimate of its cheapest
-/// single-output request with the options that give it, indented and wrapped at
-/// [`NOTE_WIDTH`] columns.
+/// One row per model, each followed by its summary, its billing, and the estimate of
+/// its cheapest single-output request with the options that give it, indented and
+/// wrapped at [`NOTE_WIDTH`] columns.
 fn model_list(res: &ModelListResult) -> String {
     if res.models.is_empty() {
         return "No models in the catalog.\n".to_string();
@@ -338,7 +340,7 @@ fn model_list(res: &ModelListResult) -> String {
         };
         let _ = writeln!(out, "{line}");
         out.push_str(&wrapped(&m.summary, "  ", NOTE_WIDTH));
-        out.push_str(&wrapped(&cost, "  ", NOTE_WIDTH));
+        out.push_str(&wrapped(&format!("{}; {cost}", m.billing), "  ", NOTE_WIDTH));
     }
     out
 }
@@ -378,6 +380,7 @@ fn model_show(m: &ModelCapabilities) -> String {
         field("aliases", join(&m.aliases));
     }
     field("operations", ops(&m.operations));
+    field("billing", billing(m.billing));
     let i = &m.inputs;
     if i.max_input_images > 0 || i.first_frame || i.last_frame || i.max_reference_images > 0 {
         field(
@@ -492,6 +495,11 @@ fn model_show(m: &ModelCapabilities) -> String {
     out
 }
 
+/// A model's billing and what it means: `paid (requests are billed ...)`.
+fn billing(b: Billing) -> String {
+    format!("{b} ({})", b.description())
+}
+
 fn yes_no(b: bool) -> &'static str {
     if b { "yes" } else { "no" }
 }
@@ -566,6 +574,7 @@ fn plan(res: &PlanResult) -> String {
     field("provider", res.provider.as_str().to_string());
     field("model", model_with_source(&res.model, Some(res.model_source), res.operation));
     field("async job", yes_no(res.async_job).to_string());
+    field("billing", billing(res.billing));
     let options: Vec<String> = res.options.iter().map(|(k, v)| format!("{k}={}", value_text(v))).collect();
     // Explicit values plus declared defaults (the values the request runs with).
     field("options", if options.is_empty() { "(none)".into() } else { options.join(" ") });

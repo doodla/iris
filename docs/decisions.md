@@ -447,7 +447,12 @@ set). `--check-access` makes one free model-metadata read and reports that a mod
 the key, not that the account can use it. Cost figures are estimates from the providers'
 published prices (before a call) or from the usage the provider reports (after one), labeled as
 estimates with their source and date; when no point estimate is supportable (for example an
-`auto` size or quality on OpenAI), Iris says so instead of guessing.
+`auto` size or quality on OpenAI), Iris says so instead of guessing, and the model's estimator
+names the options to pass for one. Every model declares its `billing`, reported by `models
+list`, `models show` and dry-run plans: `paid` for every model today, since requests are billed
+to the provider account at its published prices and neither provider has a free tier for these
+models (not every request is billed: Google does not charge for a video it blocks). Human output
+derives its "this is a paid request" wording from that value.
 
 **Why.** Consumer subscriptions do not grant API access: Google states that Google AI plan
 benefits apply only in the AI Studio web interface and that API use is billed separately
@@ -457,7 +462,10 @@ silently pick the key. Gemini image and Veo models have no free tier, and Google
 API keys will be rejected from September 2026 (no exact day given), so the access notes
 recommend an auth key. OpenAI may require API Organization Verification for GPT Image models;
 neither that nor a billing tier is visible to a metadata read, which is why the check claims only
-visibility.
+visibility. An agent needs whether a request costs money, and what to change to learn how much,
+as data it can act on rather than prose: `billing` is a value (an open set, so a later free model
+needs no special case), and the estimator that cannot price a request knows which of its options
+made it unknowable.
 
 **Sources.** [Google AI plans and the Gemini API](https://ai.google.dev/gemini-api/docs/google-ai-plans) ·
 [Gemini API keys](https://ai.google.dev/gemini-api/docs/api-key) ·

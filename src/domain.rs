@@ -167,6 +167,46 @@ pub enum ModelSource {
     Config,
 }
 
+/// Whether a model's requests cost money, as the catalog declares it. An open set
+/// (docs/json-contract.md): a later Iris may add a value, and human output uses each
+/// value as the adjective for a request ("this is a paid request").
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Billing {
+    /// Requests are billed to the provider account at its published prices; the
+    /// provider offers no free tier.
+    Paid,
+}
+
+impl Billing {
+    /// Every value, in the documented order. The compiler does not check that it is
+    /// complete; the `billing_values_are_distinct_snake_case_names` test compares it
+    /// with the enum's variants.
+    pub const ALL: &'static [Billing] = &[Billing::Paid];
+
+    /// The serialized value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Billing::Paid => "paid",
+        }
+    }
+
+    /// What the value means, for human output and the published schema.
+    pub const fn description(self) -> &'static str {
+        match self {
+            Billing::Paid => {
+                "requests are billed to the provider account at its published prices; no free tier"
+            }
+        }
+    }
+}
+
+impl fmt::Display for Billing {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 /// Normalized status of a persisted provider-native job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -252,7 +292,8 @@ pub enum WarningCode {
     OutputRenamed,
     /// A valid image of another type than requested or labeled; kept as it is.
     OutputFormatMismatch,
-    /// No cost estimate could be made (the message says why).
+    /// No cost estimate could be made (the message says why, and which options to
+    /// pass for one).
     CostEstimateUnavailable,
     /// A job record could not be read and was skipped.
     JobRecordUnreadable,
@@ -373,7 +414,8 @@ pub struct CostEstimate {
     pub estimated: bool,
     pub currency: String,
     pub amount: f64,
-    /// Human-readable basis, e.g. "1 image x $0.011 (gpt-image-1, low, 1024x1024)".
+    /// Human-readable basis, e.g. "1 image × $0.067 (gemini-3.1-flash-image, 1K); input
+    /// and thinking tokens not included".
     pub basis: String,
     pub source_url: String,
     /// Date (YYYY-MM-DD) the price table was checked.
@@ -485,6 +527,20 @@ mod tests {
                     && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
                 "{name}"
             );
+        }
+    }
+
+    #[test]
+    fn billing_values_are_distinct_snake_case_names() {
+        use super::Billing;
+        let names: BTreeSet<&str> = Billing::ALL.iter().map(|b| b.as_str()).collect();
+        assert_eq!(names.len(), Billing::ALL.len(), "duplicate billing value");
+        let declared = declared_names_of(schemars::schema_for!(Billing));
+        let declared: BTreeSet<&str> = declared.iter().map(String::as_str).collect();
+        assert_eq!(declared, names, "Billing::ALL must list every variant");
+        for b in Billing::ALL {
+            assert_eq!(serde_json::to_value(b).unwrap(), Value::from(b.as_str()));
+            assert_eq!(b.to_string(), b.as_str());
         }
     }
 
