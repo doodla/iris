@@ -280,7 +280,8 @@ The progress line of a real run names it the same way: `Requesting 1 image from 
 
 Each request Iris sends has its own time limit, per attempt (a retried request gets a fresh one).
 None of them is the caller's wait limit: that is `video.wait_timeout` (`--timeout`), and when it
-passes, the remote job continues (see [jobs.md](jobs.md)).
+passes, the remote job continues (see [jobs.md](jobs.md)). A dry run of `video generate` shows
+the wait limit and poll interval it would use, with the source of each.
 
 | time limit | covers | default | setting |
 |---|---|---|---|

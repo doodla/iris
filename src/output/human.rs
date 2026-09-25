@@ -565,6 +565,18 @@ fn doctor(res: &DoctorResult) -> String {
     out
 }
 
+/// A wait setting's value and, unless it is the built-in value, where it came from:
+/// `20m (config video.wait_timeout)`.
+fn wait_setting(s: &WaitSetting) -> String {
+    let value = humantime::format_duration(std::time::Duration::from_secs_f64(s.seconds));
+    match s.source {
+        SettingSource::Default => value.to_string(),
+        SettingSource::Flag => format!("{value} ({})", s.flag),
+        SettingSource::Env => format!("{value} (env {})", s.env_var),
+        SettingSource::File => format!("{value} (config {})", s.key),
+    }
+}
+
 fn plan(res: &PlanResult) -> String {
     let mut out = String::from("Dry run: nothing was sent and nothing was charged.\n");
     let mut field = |label: &str, value: String| {
@@ -576,6 +588,16 @@ fn plan(res: &PlanResult) -> String {
     field("async job", yes_no(res.async_job).to_string());
     if res.async_job {
         field("detach", yes_no(res.detach).to_string());
+    }
+    if let Some(wait) = &res.wait {
+        field(
+            "wait",
+            format!(
+                "up to {}, polling every {}",
+                wait_setting(&wait.timeout),
+                wait_setting(&wait.poll_interval)
+            ),
+        );
     }
     field("billing", billing(res.billing));
     let options: Vec<String> = res.options.iter().map(|(k, v)| format!("{k}={}", value_text(v))).collect();

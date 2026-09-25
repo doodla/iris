@@ -331,7 +331,11 @@ creates and removes at once, a dry run proves the nearest existing directory wri
 ```json
 {
   "dry_run": true, "provider": "gemini", "model": "veo-3.1-fast-generate-preview",
-  "model_source": "config", "operation": "video.generate", "async_job": true, "detach": true,
+  "model_source": "config", "operation": "video.generate", "async_job": true, "detach": false,
+  "wait": { "timeout": { "seconds": 1200.0, "source": "file", "flag": "--timeout",
+                         "env_var": "IRIS_WAIT_TIMEOUT", "key": "video.wait_timeout" },
+            "poll_interval": { "seconds": 10.0, "source": "default", "flag": "--poll-interval",
+                               "env_var": "IRIS_POLL_INTERVAL", "key": "video.poll_interval" } },
   "billing": "paid",
   "options": { "aspect_ratio": "16:9", "count": 1, "duration": 8, "resolution": "720p" },
   "inputs": [ { "role": "first_frame", "path": "/home/you/fox.png", "media_type": "image/png", "bytes": 75 } ],
@@ -346,12 +350,18 @@ provider account at its published prices. A plan for a model resolved with `--ca
 reports the template model's `billing`, the safe assumption that the unknown model's requests cost
 money too, while it gives no cost estimate. `detach` is `true` when `--detach` was given, so the
 real run would return right after the submission; it is `false` for a synchronous image command.
-`outputs` are absolute paths, and every planned path is lexically normalized (`.` and `..` removed
-without resolving symbolic links), exactly as the real run writes it. A name the real run
-generates is shown as its pattern, since the real run generates its own: `iris-<ulid>.<ext>` for
-an image (the real run's ULID) and `<job_id>.<ext>` for a video (the id of the job the real run
-records), with `-<i>` before the extension when there are several (`iris-<ulid>-1.png`). A name
-given with `-o` is shown as it will be written.
+`wait` says how the real run of `video generate` would wait for its job: the caller wait limit
+(`timeout`: when it passes, the real run stops waiting and exits 4, `wait_timeout`, while the job
+continues remotely) and the time between status checks (`poll_interval`), each in `seconds`, with
+the `source` of the value (`flag`, `env`, `file`, or `default`, as `config show` reports it) and the
+`flag`, `env_var`, and config file `key` that set it. It is `null` when the real run does not wait:
+with `--detach`, and for the synchronous image commands. `outputs` are absolute paths, and every
+planned path is lexically normalized (`.` and `..` removed without resolving symbolic links),
+exactly as the real run writes it. A name the real run generates is shown as its pattern, since the
+real run generates its own: `iris-<ulid>.<ext>` for an image (the real run's ULID) and
+`<job_id>.<ext>` for a video (the id of the job the real run records), with `-<i>` before the
+extension when there are several (`iris-<ulid>-1.png`). A name given with `-o` is shown as it will
+be written.
 
 ### Shared objects
 

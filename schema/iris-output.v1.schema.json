@@ -2105,6 +2105,17 @@
         },
         "provider": {
           "$ref": "#/$defs/ProviderId"
+        },
+        "wait": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PlanWait"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "How the real run would wait for its job; null when it does not wait\n(`--detach`, and the synchronous commands)."
         }
       },
       "required": [
@@ -2115,12 +2126,30 @@
         "operation",
         "async_job",
         "detach",
+        "wait",
         "billing",
         "options",
         "inputs",
         "outputs",
         "credential_present",
         "cost_estimate"
+      ],
+      "type": "object"
+    },
+    "PlanWait": {
+      "description": "How the real run of `video generate` waits for its job: the caller wait limit\nand the time between status checks.",
+      "properties": {
+        "poll_interval": {
+          "$ref": "#/$defs/WaitSetting"
+        },
+        "timeout": {
+          "$ref": "#/$defs/WaitSetting",
+          "description": "When it passes, the real run stops waiting and exits 4 (`wait_timeout`); the\njob continues remotely."
+        }
+      },
+      "required": [
+        "timeout",
+        "poll_interval"
       ],
       "type": "object"
     },
@@ -2382,6 +2411,39 @@
         "schema_version",
         "target",
         "git_commit"
+      ],
+      "type": "object"
+    },
+    "WaitSetting": {
+      "description": "One wait setting of a plan: its value, where the value came from (as `config\nshow` reports it), and the ways to set it.",
+      "properties": {
+        "env_var": {
+          "description": "The environment variable that sets it.",
+          "type": "string"
+        },
+        "flag": {
+          "description": "The command-line flag that sets it.",
+          "type": "string"
+        },
+        "key": {
+          "description": "The config file key that sets it, as `config show` names the setting.",
+          "type": "string"
+        },
+        "seconds": {
+          "format": "double",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/SettingSource",
+          "description": "`flag`, `env`, `file`, or `default` (the built-in value)."
+        }
+      },
+      "required": [
+        "seconds",
+        "source",
+        "flag",
+        "env_var",
+        "key"
       ],
       "type": "object"
     },

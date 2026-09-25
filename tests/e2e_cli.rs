@@ -346,6 +346,75 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
     assert!(!sb.jobs_dir().exists(), "no job record");
 }
 
+/// A video plan that waits says how long the real run waits (it exits 4,
+/// `wait_timeout`, when the limit passes) and how often it checks, each with where
+/// the value came from and the names `config show` gives the setting; a plan that
+/// does not wait (`--detach`, an image command) has none.
+#[test]
+fn a_video_plan_says_how_long_the_real_run_waits_and_why() {
+    let sb = Sandbox::new();
+    let config = sb.write("team.toml", "[video]\nwait_timeout = \"20m\"\n");
+    let config = config.to_str().unwrap();
+    let plan = |env: &[(&str, &str)], args: &[&str]| {
+        let mut iris = sb.iris();
+        for (key, value) in env {
+            iris.env(key, value);
+        }
+        iris.args(["video", "generate", "-m", VEO_LITE, "waves", "--dry-run"]).args(args);
+        let v = iris.clone().arg("--json").run().ok();
+        (v["result"]["wait"].clone(), iris.run().human().to_string())
+    };
+    let wait = |seconds: f64, source: &str, poll: f64, poll_source: &str| {
+        serde_json::json!({
+            "timeout": { "seconds": seconds, "source": source, "flag": "--timeout",
+                         "env_var": "IRIS_WAIT_TIMEOUT", "key": "video.wait_timeout" },
+            "poll_interval": { "seconds": poll, "source": poll_source, "flag": "--poll-interval",
+                               "env_var": "IRIS_POLL_INTERVAL", "key": "video.poll_interval" },
+        })
+    };
+    let line = |human: &str| human.lines().find(|l| l.starts_with("  wait:")).unwrap_or_default().to_string();
+
+    let (json, human) = plan(&[], &[]);
+    assert_eq!(json, wait(600.0, "default", 10.0, "default"));
+    assert_eq!(line(&human), "  wait:       up to 10m, polling every 10s", "{human}");
+
+    let (json, human) = plan(&[("IRIS_CONFIG", config)], &[]);
+    assert_eq!(json, wait(1200.0, "file", 10.0, "default"));
+    assert_eq!(line(&human), "  wait:       up to 20m (config video.wait_timeout), polling every 10s");
+
+    let (json, human) = plan(&[("IRIS_WAIT_TIMEOUT", "90s")], &["--poll-interval", "5s"]);
+    assert_eq!(json, wait(90.0, "env", 5.0, "flag"));
+    assert_eq!(
+        line(&human),
+        "  wait:       up to 1m 30s (env IRIS_WAIT_TIMEOUT), polling every 5s (--poll-interval)"
+    );
+
+    let (json, human) = plan(&[("IRIS_CONFIG", config)], &["--timeout", "1ms"]);
+    assert_eq!(json, wait(0.001, "flag", 10.0, "default"));
+    assert_eq!(line(&human), "  wait:       up to 1ms (--timeout), polling every 10s");
+
+    // The names are the ones `config show` reports for the settings the plan used.
+    let shown = sb.iris().env("IRIS_CONFIG", config).args(["config", "show", "--json"]).run().ok();
+    for (key, env_var) in
+        [("video.wait_timeout", "IRIS_WAIT_TIMEOUT"), ("video.poll_interval", "IRIS_POLL_INTERVAL")]
+    {
+        let rows = shown["result"]["settings"].as_array().unwrap();
+        let row = rows.iter().find(|r| r["key"] == key).unwrap();
+        assert_eq!(row["env_var"], env_var, "{row}");
+    }
+    assert_eq!(setting(&shown, "video.wait_timeout"), ("20m".into(), "file".into()));
+
+    let (json, human) = plan(&[("IRIS_CONFIG", config)], &["--detach"]);
+    assert!(json.is_null(), "a detached run does not wait: {json}");
+    assert_eq!(line(&human), "", "{human}");
+    let v = sb
+        .iris()
+        .args(["image", "generate", "-m", GEMINI_IMAGE_MODEL, "x", "--dry-run", "--json"])
+        .run()
+        .ok();
+    assert!(v["result"]["wait"].is_null(), "an image command does not wait: {v}");
+}
+
 // ----- local validation parity: a dry run rejects what the real run would -------------------------
 
 /// Unknown ids given with `--capabilities-from` must satisfy the id syntax of the

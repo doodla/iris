@@ -39,8 +39,9 @@ machine-readable contract for agents.
   creates and removes one check file); `-o -` and the names of standard streams are refused, since
   Iris writes files and prints their paths. When the provider chooses the image
   type, `-o` gets an `output_extension_may_change` warning. A dry-run plan shows a name the real run
-  generates as its pattern (`iris-<ulid>.png`, `<job_id>.mp4`) and says whether the real run would
-  detach (`detach`).
+  generates as its pattern (`iris-<ulid>.png`, `<job_id>.mp4`), says whether the real run would
+  detach (`detach`), and, for a video run that waits, the wait limit and poll interval it would use
+  and where each came from (`wait`).
 - **Cost estimates**, always labeled as estimates: before the call where supportable, from the
   reported usage afterwards. Without one, `cost_estimate_unavailable` says why and which options
   to pass for one (on OpenAI, `--quality` and `--size`, naming only those that are `auto`).

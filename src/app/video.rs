@@ -22,15 +22,17 @@
 //! whether the provider accepted the job.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde_json::json;
 
 use crate::artifacts::{self, Naming, PathRequest};
 use crate::catalog::{self, InputCounts};
+use crate::config::{ENV_POLL_INTERVAL, ENV_WAIT_TIMEOUT, KEY_POLL_INTERVAL, KEY_WAIT_TIMEOUT, Resolved};
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
 use crate::jobs::{self, JobId, JobRecord, NewJob, OutputPlan, PromptRecord};
-use crate::output::results::{JobResult, PlanResult};
+use crate::output::results::{JobResult, PlanResult, PlanWait, WaitSetting};
 use crate::providers::{InputRole, VideoRequest};
 
 use super::context::AppContext;
@@ -147,6 +149,7 @@ async fn generate(
             operation: op,
             async_job: true,
             detach: args.detach,
+            wait: (!args.detach).then(|| plan_wait(ctx)),
             billing: spec.billing,
             options: request::options_view(spec, op, &opts, store_prompts),
             inputs,
@@ -329,6 +332,27 @@ async fn generate(
                 Err(store_error) => Err(e.with_detail("record_error", record_error(&store_error))),
             }
         }
+    }
+}
+
+/// How the real run would wait for the job (as `jobs wait` does): the resolved
+/// wait limit and poll interval, each with where it came from and what sets it.
+fn plan_wait(ctx: &AppContext) -> PlanWait {
+    let setting = |value: &Resolved<Duration>, flag: &str, env_var: &str, key: &str| WaitSetting {
+        seconds: value.value.as_secs_f64(),
+        source: value.source.clone(),
+        flag: flag.to_string(),
+        env_var: env_var.to_string(),
+        key: key.to_string(),
+    };
+    PlanWait {
+        timeout: setting(&ctx.settings.wait_timeout, "--timeout", ENV_WAIT_TIMEOUT, KEY_WAIT_TIMEOUT),
+        poll_interval: setting(
+            &ctx.settings.poll_interval,
+            "--poll-interval",
+            ENV_POLL_INTERVAL,
+            KEY_POLL_INTERVAL,
+        ),
     }
 }
 

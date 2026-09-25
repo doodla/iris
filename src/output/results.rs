@@ -393,6 +393,31 @@ pub struct PlanInput {
     pub bytes: u64,
 }
 
+/// How the real run of `video generate` waits for its job: the caller wait limit
+/// and the time between status checks.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct PlanWait {
+    /// When it passes, the real run stops waiting and exits 4 (`wait_timeout`); the
+    /// job continues remotely.
+    pub timeout: WaitSetting,
+    pub poll_interval: WaitSetting,
+}
+
+/// One wait setting of a plan: its value, where the value came from (as `config
+/// show` reports it), and the ways to set it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct WaitSetting {
+    pub seconds: f64,
+    /// `flag`, `env`, `file`, or `default` (the built-in value).
+    pub source: SettingSource,
+    /// The command-line flag that sets it.
+    pub flag: String,
+    /// The environment variable that sets it.
+    pub env_var: String,
+    /// The config file key that sets it, as `config show` names the setting.
+    pub key: String,
+}
+
 /// `--dry-run` of any generation command.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct PlanResult {
@@ -409,6 +434,9 @@ pub struct PlanResult {
     /// True if `--detach` was given: the real run would return right after the
     /// submission instead of waiting. Always false for synchronous commands.
     pub detach: bool,
+    /// How the real run would wait for its job; null when it does not wait
+    /// (`--detach`, and the synchronous commands).
+    pub wait: Option<PlanWait>,
     /// The model's billing: whether the real run costs money.
     pub billing: Billing,
     pub options: serde_json::Map<String, serde_json::Value>,

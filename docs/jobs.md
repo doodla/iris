@@ -207,7 +207,9 @@ call that followed them didn't succeed.
 
 `iris video generate` (without `--detach`) and `iris jobs wait` poll until the job reaches a
 terminal status, the caller's `--timeout` passes, or you press Ctrl-C. Either of the latter two
-**only stops waiting** — never fails the job:
+**only stops waiting** — never fails the job. A dry run of `video generate` shows the wait limit
+and poll interval the real run would use, and where each came from (the plan's `wait`; in human
+output, e.g. `wait: up to 20m (config video.wait_timeout), polling every 10s`):
 
 ```console
 $ iris jobs wait job_01m3a3g5wb5mkqg2whke2e4k3q --timeout 1ms --poll-interval 10s

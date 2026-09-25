@@ -56,6 +56,12 @@ use crate::output::results::{ConfigPathResult, ConfigShowResult, CredentialView,
 use crate::redact;
 use crate::secret::Secret;
 
+/// Config file key of the caller wait limit for video jobs (`wait_timeout` in the
+/// `[video]` table), as `config show` names the setting.
+pub const KEY_WAIT_TIMEOUT: &str = "video.wait_timeout";
+/// Config file key of the poll interval for video jobs, like [`KEY_WAIT_TIMEOUT`].
+pub const KEY_POLL_INTERVAL: &str = "video.poll_interval";
+
 /// Default caller wait limit for video jobs.
 pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 /// Default poll interval for video jobs.
@@ -204,7 +210,7 @@ impl Settings {
             cfg.video
                 .wait_timeout
                 .as_ref()
-                .map(|v| file_duration(path, "video.wait_timeout", v, positive))
+                .map(|v| file_duration(path, KEY_WAIT_TIMEOUT, v, positive))
                 .transpose()?,
             || Ok(DEFAULT_WAIT_TIMEOUT),
         )?;
@@ -216,7 +222,7 @@ impl Settings {
             cfg.video
                 .poll_interval
                 .as_ref()
-                .map(|v| file_duration(path, "video.poll_interval", v, min_poll))
+                .map(|v| file_duration(path, KEY_POLL_INTERVAL, v, min_poll))
                 .transpose()?,
             || Ok(DEFAULT_POLL_INTERVAL),
         )?;
@@ -366,13 +372,13 @@ impl Settings {
                 None,
             ),
             row(
-                "video.wait_timeout",
+                KEY_WAIT_TIMEOUT,
                 dur(self.wait_timeout.value),
                 &self.wait_timeout.source,
                 Some(ENV_WAIT_TIMEOUT),
             ),
             row(
-                "video.poll_interval",
+                KEY_POLL_INTERVAL,
                 dur(self.poll_interval.value),
                 &self.poll_interval.source,
                 Some(ENV_POLL_INTERVAL),
