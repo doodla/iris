@@ -30,10 +30,10 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const BIN: &str = env!("CARGO_BIN_EXE_iris");
 
-/// Variables that must not leak from the developer's environment into a test.
+/// Variables that must not leak from the developer's environment into a test, besides
+/// each provider's credential and base-URL variables, which `configure` handles for
+/// every provider in `ProviderId::ALL` (so a new provider needs no edit here).
 const SCRUBBED: &[&str] = &[
-    "OPENAI_API_KEY",
-    "GEMINI_API_KEY",
     "GOOGLE_API_KEY",
     "IRIS_CONFIG",
     "IRIS_OUTPUT_DIR",
@@ -42,8 +42,6 @@ const SCRUBBED: &[&str] = &[
     "IRIS_WAIT_TIMEOUT",
     "IRIS_POLL_INTERVAL",
     "IRIS_STORE_PROMPTS",
-    "IRIS_OPENAI_BASE_URL",
-    "IRIS_GEMINI_BASE_URL",
     "IRIS_LOG",
     "XDG_CONFIG_HOME",
     "XDG_STATE_HOME",
@@ -60,18 +58,27 @@ fn unused_port() -> u16 {
     TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
 }
 
+/// `provider`'s default base URL moved to `origin`, keeping its path (`/v1` for
+/// OpenAI, none for the Gemini origin), so the adapter builds the paths it expects.
+fn base_url_at(provider: ProviderId, origin: &str) -> String {
+    let default = url::Url::parse(provider.default_base_url()).unwrap();
+    format!("{origin}{}", default.path().trim_end_matches('/'))
+}
+
 fn configure(cmd: &mut std::process::Command, sandbox: &Sandbox) {
     for var in SCRUBBED {
         cmd.env_remove(var);
     }
-    let port = unused_port();
+    let origin = format!("http://127.0.0.1:{}", unused_port());
+    for &provider in ProviderId::ALL {
+        cmd.env_remove(provider.credential_env())
+            .env(provider.base_url_env(), base_url_at(provider, &origin));
+    }
     cmd.current_dir(sandbox.work())
         .env("HOME", sandbox.home())
         .env("IRIS_STATE_DIR", sandbox.state())
         .env("NO_PROXY", "127.0.0.1,localhost")
-        .env("no_proxy", "127.0.0.1,localhost")
-        .env("IRIS_OPENAI_BASE_URL", format!("http://127.0.0.1:{port}/v1"))
-        .env("IRIS_GEMINI_BASE_URL", format!("http://127.0.0.1:{port}"));
+        .env("no_proxy", "127.0.0.1,localhost");
 }
 
 /// `iris` in the sandbox with no credentials and unreachable providers.
@@ -233,11 +240,11 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
     let sandbox = Sandbox::new();
     let top = run(iris(&sandbox).arg("--help"));
     assert_eq!(top.code, 0);
+    // The help names the only variables credentials are read from: every provider's.
+    let credential_vars = ProviderId::ALL.iter().map(|p| p.credential_env());
     for needle in [
         "Examples:",
         "billed by the provider",
-        "OPENAI_API_KEY",
-        "GEMINI_API_KEY",
         "Exit codes:",
         "image ",
         "video ",
@@ -249,7 +256,10 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
         "schema ",
         "completions ",
         "version ",
-    ] {
+    ]
+    .into_iter()
+    .chain(credential_vars)
+    {
         assert!(top.stdout.contains(needle), "top-level help lacks {needle:?}:\n{}", top.stdout);
     }
     // Exit 2 also covers a provider's outright rejection, so the help must not claim that
@@ -446,6 +456,26 @@ fn completions_are_generated_for_each_supported_shell() {
 }
 
 #[test]
+fn every_provider_starts_without_a_key_and_with_an_unreachable_base_url() {
+    // Whatever the developer's environment holds, each provider's credential is removed
+    // and its base URL overridden, for every provider `ProviderId::ALL` lists.
+    let sandbox = Sandbox::new();
+    let v = run(iris(&sandbox).args(["config", "show", "--json"])).json();
+    let credentials = v["result"]["credentials"].as_array().unwrap();
+    let settings = v["result"]["settings"].as_array().unwrap();
+    for &provider in ProviderId::ALL {
+        let env = provider.credential_env();
+        let credential = credentials.iter().find(|c| c["env"] == env);
+        assert_eq!(credential.map(|c| &c["present"]), Some(&Value::Bool(false)), "{env}: {v}");
+        let key = format!("providers.{provider}.base_url");
+        let row = settings.iter().find(|r| r["key"] == key.as_str()).unwrap_or_else(|| panic!("{key}: {v}"));
+        assert_eq!(row["source"], "env", "{key}: {v}");
+        assert_eq!(row["env_var"], provider.base_url_env(), "{key}: {v}");
+        assert!(row["value"].as_str().unwrap().starts_with("http://127.0.0.1:"), "{key}: {v}");
+    }
+}
+
+#[test]
 fn providers_config_and_doctor_report_presence_but_never_key_values() {
     let sandbox = Sandbox::new();
     let out = run(iris(&sandbox).args(["providers", "list", "--json"]).env("OPENAI_API_KEY", OPENAI_KEY));
@@ -461,7 +491,11 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
     let out = run(iris(&sandbox).args(["config", "show", "--json"]).env("GEMINI_API_KEY", GEMINI_KEY));
     let v = out.json();
     let warnings = v["warnings"].as_array().unwrap();
-    assert_eq!(warnings.iter().filter(|w| w["code"] == "non_default_base_url").count(), 2, "{v}");
+    assert_eq!(
+        warnings.iter().filter(|w| w["code"] == "non_default_base_url").count(),
+        ProviderId::ALL.len(),
+        "{v}"
+    );
     let creds = v["result"]["credentials"].as_array().unwrap();
     assert!(creds.iter().any(|c| c["env"] == "GEMINI_API_KEY" && c["present"] == true));
     assert!(!out.stdout.contains(GEMINI_KEY));

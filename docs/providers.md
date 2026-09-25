@@ -241,7 +241,11 @@ others (`base_url`, `image_model`, `video_model`, `request_timeout`); the `IRIS_
 override; its rows in `config show`; the `non_default_base_url` warning; `doctor`'s
 `credentials.seedance`, `base_url.seedance`, and `access.seedance.<model>` checks; the
 `providers list` entry; redaction of its key from every message; and the config file's refusal of
-credential-like keys, whose message lists every provider's variable.
+credential-like keys, whose message lists every provider's variable. The offline test harness
+follows `ProviderId::ALL` as well: every `iris` process that `cargo test` starts has each
+provider's credential variable removed and its base URL pointed at a dead local port (`configure`
+in `tests/cli_process.rs`; `Iris::new` and `credential_vars` in `tests/support/process.rs`), so a
+developer's real key for the new provider never reaches the offline suite.
 
 **Contract, help text, package metadata, and documents that name providers, updated by hand:**
 
@@ -254,7 +258,8 @@ credential-like keys, whose message lists every provider's variable.
   `ABOUT` ("…with OpenAI and Google Gemini/Veo"), `LONG_ABOUT` (its first paragraph names each
   provider's image and video products, and "Credentials are read only from the OPENAI_API_KEY and
   GEMINI_API_KEY environment variables"), `--provider`'s "Provider: openai or gemini", and the
-  `providers list` description (its credential and `IRIS_*_BASE_URL` variables).
+  `providers list` description (its credential and `IRIS_*_BASE_URL` variables). A test in
+  `tests/cli_process.rs` fails until the top-level help names the new credential variable.
 - Package metadata in `Cargo.toml`: `description` (names OpenAI and Google Gemini/Veo) and
   `keywords` (`openai`, `gemini`; crates.io allows at most five).
 - The default video provider. A video command without `--provider` or `--model` uses the provider

@@ -8,6 +8,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
+use iris::domain::ProviderId;
 use serde_json::Value;
 
 use super::mock::MockApi;
@@ -22,8 +23,18 @@ pub const OPENAI_KEY: &str = "fake-openai-key-e2e-5b1f0c7d";
 pub const GEMINI_KEY: &str = "fake-gemini-key-e2e-93ad7e21";
 
 /// Credential variables that must never reach a child from the developer's
-/// environment (the child starts from an empty environment anyway).
-pub const CREDENTIAL_VARS: &[&str] = &["OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"];
+/// environment (the child starts from an empty environment anyway): every
+/// provider's, from `ProviderId::ALL`, and `GOOGLE_API_KEY`, which Iris ignores.
+pub fn credential_vars() -> impl Iterator<Item = &'static str> {
+    ProviderId::ALL.iter().map(|p| p.credential_env()).chain(["GOOGLE_API_KEY"])
+}
+
+/// `provider`'s default base URL moved to `origin`, keeping its path (`/v1` for
+/// OpenAI, none for the Gemini origin), so the adapter builds the paths it expects.
+pub fn base_url_at(provider: ProviderId, origin: &str) -> String {
+    let default = url::Url::parse(provider.default_base_url()).unwrap();
+    format!("{origin}{}", default.path().trim_end_matches('/'))
+}
 
 /// Upper bound for one `iris` invocation; the slowest scenario takes a few seconds.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(90);
@@ -163,8 +174,9 @@ impl Iris {
         };
         set("HOME", sandbox.home().as_os_str());
         set("IRIS_STATE_DIR", sandbox.state().as_os_str());
-        set("IRIS_OPENAI_BASE_URL", OsStr::new(&format!("{dead}/v1")));
-        set("IRIS_GEMINI_BASE_URL", OsStr::new(dead));
+        for &provider in ProviderId::ALL {
+            set(provider.base_url_env(), OsStr::new(&base_url_at(provider, dead)));
+        }
         // Safety net: any https request (a real provider) goes to a dead proxy;
         // plain-http 127.0.0.1 mock traffic is exempt.
         set("HTTPS_PROXY", OsStr::new(dead));
@@ -228,7 +240,7 @@ impl Iris {
     fn command(&self) -> Command {
         let mut cmd = Command::new(BIN);
         cmd.env_clear();
-        for var in CREDENTIAL_VARS {
+        for var in credential_vars() {
             cmd.env_remove(var);
         }
         cmd.envs(&self.env).args(&self.args).current_dir(&self.cwd);

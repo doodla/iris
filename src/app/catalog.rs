@@ -102,7 +102,7 @@ mod tests {
             catalog::all().flat_map(|m| std::iter::once(m.id).chain(m.aliases.iter().copied())).collect();
         for id in ids.iter().copied().chain(["no-such-model", "bad id!", ""]) {
             for caps in [None, Some("no-such-template")].into_iter().chain(ids.iter().copied().map(Some)) {
-                for p in [None, Some(ProviderId::OpenAi), Some(ProviderId::Gemini)] {
+                for p in std::iter::once(None).chain(ProviderId::ALL.iter().copied().map(Some)) {
                     inputs.push((id.to_string(), caps.map(str::to_string), p));
                 }
             }

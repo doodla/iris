@@ -501,3 +501,20 @@ fn doctor_checks_access_to_the_configured_default_model() {
     assert_eq!(api.total(), 1, "the catalog default was not checked: {:?}", api.requests());
     api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {OPENAI_KEY}"))));
 }
+
+// ----- the harness: no provider is reachable or keyed unless a test says so ------------------------
+
+#[test]
+fn every_provider_starts_without_a_key_and_with_an_unreachable_base_url() {
+    let sb = Sandbox::new();
+    let v = sb.iris().args(["config", "show", "--json"]).run().ok();
+    let credentials = v["result"]["credentials"].as_array().unwrap();
+    for &provider in iris::domain::ProviderId::ALL {
+        let env = provider.credential_env();
+        let credential = credentials.iter().find(|c| c["env"] == env);
+        assert_eq!(credential.map(|c| &c["present"]), Some(&Value::Bool(false)), "{env}: {v}");
+        let (value, source) = setting(&v, &format!("providers.{provider}.base_url"));
+        assert_eq!(source, "env", "{provider}: {v}");
+        assert!(value.as_str().unwrap().starts_with(DEAD_URL), "{provider}: {v}");
+    }
+}
