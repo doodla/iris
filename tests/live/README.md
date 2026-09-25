@@ -206,7 +206,7 @@ on `127.0.0.1` and runs the script under `env -i` with fake keys:
 
 ```sh
 cargo build --locked
-sh tests/live/mock-run.sh target/debug/iris   # or the path of another iris build
+sh tests/live/mock-run.sh   # the debug build (honors CARGO_TARGET_DIR), or pass another iris
 ```
 
 The offline process tests are the free way to check the same behavior against

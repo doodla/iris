@@ -42,7 +42,7 @@ If you touched `install.sh`, `scripts/`, `tests/installer/`, or `tests/live/`, a
 $ shellcheck -s sh install.sh
 $ shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh
 $ sh tests/installer/run.sh
-$ cargo build --locked && sh tests/live/mock-run.sh target/debug/iris
+$ cargo build --locked && sh tests/live/mock-run.sh
 ```
 
 If you changed anything that appears in `--json` output (the result and error types the schema is
