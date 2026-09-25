@@ -101,6 +101,12 @@ $ iris --json version
 { "job": Job, "next_steps": ["iris jobs wait job_..."] }
 ```
 
+`next_steps`, and the hints and warnings that name `iris` commands, are meant to be run as given
+in the same environment (the same `IRIS_STATE_DIR`, base URL variables, and keys). When the
+config file was chosen explicitly (`--config`, or `IRIS_CONFIG`), they also name it:
+`iris --config <absolute path> jobs wait job_...`, shell-quoted when the path needs it, so a later
+command finds the same jobs even without that variable. Nothing else is added to them.
+
 `Job` (real record, captured from a mock-server run — see
 [live-testing.md](live-testing.md) for how live runs differ):
 

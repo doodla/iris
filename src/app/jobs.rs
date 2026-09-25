@@ -24,7 +24,7 @@ use crate::error::{ErrorCode, IrisError};
 use crate::http::{self, AuthHeader, DownloadError, DownloadRequest};
 use crate::jobs::{self, DeleteRefusal, JobId, JobOutput, JobRecord, PollApplied, RefusalKind};
 use crate::output::ErrorBody;
-use crate::output::results::{JobDeleteResult, JobListResult, JobResult};
+use crate::output::results::{JobDeleteResult, JobListResult, JobResult, JobView};
 use crate::providers::VideoProvider;
 
 use super::context::AppContext;
@@ -77,17 +77,21 @@ pub fn list(
     filter: &ListFilter,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobListResult, IrisError> {
-    let listing = ctx.store.list()?;
-    warnings.extend(listing.warnings);
-    let jobs = listing
-        .records
-        .iter()
-        .filter(|r| filter.status.is_none_or(|s| r.status() == s))
-        .filter(|r| filter.provider.is_none_or(|p| r.provider() == p))
-        .take(filter.limit.unwrap_or(usize::MAX))
-        .map(JobRecord::to_view)
-        .collect();
-    Ok(JobListResult { jobs })
+    let commands = Commands::of(ctx);
+    let start = warnings.len();
+    let result = ctx.store.list().map(|listing| {
+        warnings.extend(listing.warnings);
+        let jobs = listing
+            .records
+            .iter()
+            .filter(|r| filter.status.is_none_or(|s| r.status() == s))
+            .filter(|r| filter.provider.is_none_or(|p| r.provider() == p))
+            .take(filter.limit.unwrap_or(usize::MAX))
+            .map(|r| commands.view(r.to_view()))
+            .collect();
+        JobListResult { jobs }
+    });
+    commands.finish(result, warnings, start)
 }
 
 /// `jobs status`: the local record, refreshed once from the provider when the job
@@ -99,13 +103,18 @@ pub async fn status(
     refresh: bool,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
-    let id = JobId::parse(job_id)?;
-    let mut rec = ctx.store.load(&id)?;
-    if refresh {
-        rec = refresh_running(ctx, rec, warnings).await?;
+    let start = warnings.len();
+    let result = async {
+        let id = JobId::parse(job_id)?;
+        let mut rec = ctx.store.load(&id)?;
+        if refresh {
+            rec = refresh_running(ctx, rec, warnings).await?;
+        }
+        warnings.extend(retention_warning(&rec, ctx.now()));
+        Ok(job_result(ctx, &rec))
     }
-    warnings.extend(retention_warning(&rec, ctx.now()));
-    Ok(job_result(&rec))
+    .await;
+    Commands::of(ctx).finish(result, warnings, start)
 }
 
 /// Refresh a `running` record once from the provider (a free status read) and
@@ -155,8 +164,12 @@ pub async fn wait(
     args: &WaitArgs,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
-    let id = JobId::parse(job_id)?;
-    wait_parsed(ctx, &id, args, SaveMode::Download, warnings).await
+    let start = warnings.len();
+    let result = match JobId::parse(job_id) {
+        Ok(id) => wait_parsed(ctx, &id, args, SaveMode::Download, warnings).await,
+        Err(e) => Err(e),
+    };
+    Commands::of(ctx).finish(result, warnings, start)
 }
 
 /// `jobs download`: download the outputs of a succeeded job. Never resubmits.
@@ -171,6 +184,17 @@ pub async fn wait(
 /// rejected credentials, no access, quota, configuration) is the command's error,
 /// with the job's context, as in `jobs wait`.
 pub async fn download(
+    ctx: &AppContext,
+    job_id: &str,
+    target: &Target,
+    warnings: &mut Vec<Warning>,
+) -> Result<JobResult, IrisError> {
+    let start = warnings.len();
+    let result = download_parsed(ctx, job_id, target, warnings).await;
+    Commands::of(ctx).finish(result, warnings, start)
+}
+
+async fn download_parsed(
     ctx: &AppContext,
     job_id: &str,
     target: &Target,
@@ -191,7 +215,7 @@ pub async fn download(
         Err(e) => return Err(e),
     }
     match download_outputs(ctx, &id, target, SaveMode::Download, warnings).await {
-        Ok(rec) => Ok(job_result(&rec)),
+        Ok(rec) => Ok(job_result(ctx, &rec)),
         Err(e) if e.code == ErrorCode::JobNotReady && !status_checked => {
             let status = e.job_status.map_or_else(|| "running".to_string(), |s| s.to_string());
             let checked = rec.last_checked_at().map(|t| format!(" (last checked {t})")).unwrap_or_default();
@@ -225,6 +249,18 @@ pub async fn download(
 /// A record that changes between the check and its deletion can still make a
 /// later one fail; the error then lists what was deleted in `details.deleted`.
 pub fn delete(
+    ctx: &AppContext,
+    job_ids: &[String],
+    all: bool,
+    force: bool,
+    warnings: &mut Vec<Warning>,
+) -> Result<JobDeleteResult, IrisError> {
+    let start = warnings.len();
+    let result = delete_records(ctx, job_ids, all, force, warnings);
+    Commands::of(ctx).finish(result, warnings, start)
+}
+
+fn delete_records(
     ctx: &AppContext,
     job_ids: &[String],
     all: bool,
@@ -347,31 +383,140 @@ pub(crate) async fn wait_parsed(
     match rec.status() {
         JobStatus::Succeeded if args.download => {
             let rec = download_outputs(ctx, id, &args.target, save, warnings).await?;
-            Ok(job_result(&rec))
+            Ok(job_result(ctx, &rec))
         }
         JobStatus::Succeeded => {
             warnings.extend(retention_warning(&rec, ctx.now()));
-            Ok(job_result(&rec))
+            Ok(job_result(ctx, &rec))
         }
         _ => Err(job_error(&rec)),
     }
 }
 
 /// The `{job, next_steps}` result for a record.
-pub(crate) fn job_result(rec: &JobRecord) -> JobResult {
-    JobResult { job: rec.to_view(), next_steps: next_steps(rec) }
+pub(crate) fn job_result(ctx: &AppContext, rec: &JobRecord) -> JobResult {
+    let commands = Commands::of(ctx);
+    JobResult { job: commands.view(rec.to_view()), next_steps: next_steps(&commands, rec) }
 }
 
 /// Suggested follow-up commands for a job in its current state.
-pub(crate) fn next_steps(rec: &JobRecord) -> Vec<String> {
+fn next_steps(commands: &Commands, rec: &JobRecord) -> Vec<String> {
     let id = rec.job_id();
     match rec.status() {
         JobStatus::Submitting | JobStatus::Running => {
-            vec![format!("iris jobs status {id}"), format!("iris jobs wait {id}")]
+            vec![
+                commands.line(format_args!("jobs status {id}")),
+                commands.line(format_args!("jobs wait {id}")),
+            ]
         }
-        JobStatus::Succeeded if has_downloadable(rec) => vec![format!("iris jobs download {id}")],
+        JobStatus::Succeeded if has_downloadable(rec) => {
+            vec![commands.line(format_args!("jobs download {id}"))]
+        }
         _ => Vec::new(),
     }
+}
+
+/// How the hints, warnings, and next steps of this invocation name `iris`
+/// commands. They assume the environment of this invocation (the same state
+/// directory variables, for one), with one exception: when the config file was
+/// chosen explicitly (`--config`, or `IRIS_CONFIG`), every command names it with
+/// `--config <absolute path>`, since the config file can decide where the jobs
+/// live (`state_dir`) and which base URL is used. Nothing else is added.
+pub(crate) struct Commands {
+    /// `--config <shell-quoted absolute path>`, if needed.
+    config: Option<String>,
+}
+
+impl Commands {
+    pub(crate) fn of(ctx: &AppContext) -> Commands {
+        let file = &ctx.settings.config_file;
+        let config = (file.source != SettingSource::Default)
+            .then(|| format!("--config {}", shell_quote(&file.value.to_string_lossy())));
+        Commands { config }
+    }
+
+    /// `iris <args>` as a command line.
+    fn line(&self, args: std::fmt::Arguments<'_>) -> String {
+        match &self.config {
+            Some(config) => format!("iris {config} {args}"),
+            None => format!("iris {args}"),
+        }
+    }
+
+    /// `text` with every command it names (`` `iris …` ``) naming the config file.
+    fn text(&self, text: &str) -> String {
+        match &self.config {
+            Some(config) => with_config_arg(text, config),
+            None => text.to_string(),
+        }
+    }
+
+    fn body(&self, body: &mut ErrorBody) {
+        body.message = self.text(&body.message);
+        body.hint = body.hint.as_deref().map(|h| self.text(h));
+    }
+
+    /// A job view whose recorded errors name commands as this invocation must.
+    fn view(&self, mut view: JobView) -> JobView {
+        if self.config.is_some() {
+            if let Some(error) = &mut view.error {
+                self.body(error);
+            }
+            for error in view.outputs.iter_mut().filter_map(|o| o.last_error.as_mut()) {
+                self.body(error);
+            }
+        }
+        view
+    }
+
+    /// `result` and the warnings added since `start`, naming commands as this
+    /// invocation must.
+    pub(crate) fn finish<T>(
+        &self,
+        result: Result<T, IrisError>,
+        warnings: &mut [Warning],
+        start: usize,
+    ) -> Result<T, IrisError> {
+        if self.config.is_none() {
+            return result;
+        }
+        for warning in warnings.iter_mut().skip(start) {
+            warning.message = self.text(&warning.message);
+        }
+        result.map_err(|mut e| {
+            e.message = self.text(&e.message);
+            e.hint = e.hint.as_deref().map(|h| self.text(h));
+            e
+        })
+    }
+}
+
+/// `text` with `config` (e.g. `--config /x.toml`) inserted after the `iris` of
+/// every `` `iris …` `` command that does not name a config file yet.
+fn with_config_arg(text: &str, config: &str) -> String {
+    const COMMAND: &str = "`iris ";
+    let mut out = String::with_capacity(text.len() + config.len());
+    let mut rest = text;
+    while let Some(at) = rest.find(COMMAND) {
+        let (before, after) = rest.split_at(at + COMMAND.len());
+        out.push_str(before);
+        if !after.starts_with("--config ") {
+            out.push_str(config);
+            out.push(' ');
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `value` as one POSIX shell word: as is when it holds only characters no shell
+/// treats specially, otherwise single-quoted (a `'` becomes `'\''`). Hand-rolled:
+/// the rule is two lines, and the crate that implements it is not a dependency.
+fn shell_quote(value: &str) -> String {
+    let plain =
+        !value.is_empty() && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"/._-+,:@%=".contains(&b));
+    if plain { value.to_string() } else { format!("'{}'", value.replace('\'', "'\\''")) }
 }
 
 /// Outputs a download may still get (`pending` or `failed`, with a usable URI).
@@ -1049,5 +1194,37 @@ async fn fetch(
             Err(FetchFailure::Local(e.into_iris()))
         }
         Err(e) => Err(FetchFailure::Remote(e.into_iris())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn commands_in_text_name_the_config_file_once() {
+        let config = "--config '/tmp/my config.toml'";
+        assert_eq!(
+            with_config_arg(
+                "resume with `iris jobs wait job_x` (or check with `iris jobs status job_x`)",
+                config
+            ),
+            "resume with `iris --config '/tmp/my config.toml' jobs wait job_x` (or check with `iris --config \
+             '/tmp/my config.toml' jobs status job_x`)"
+        );
+        // Already named (e.g. a hint rebuilt from a recorded one): unchanged.
+        let named = "retry with `iris --config /a.toml jobs download job_x`";
+        assert_eq!(with_config_arg(named, config), named);
+        // Text that names no command, or names iris outside a command, is unchanged.
+        assert_eq!(with_config_arg("the iris job is running", config), "the iris job is running");
+    }
+
+    #[test]
+    fn paths_are_quoted_for_the_shell_only_when_needed() {
+        assert_eq!(shell_quote("/home/you/.config/iris/work.toml"), "/home/you/.config/iris/work.toml");
+        assert_eq!(shell_quote("/tmp/my config.toml"), "'/tmp/my config.toml'");
+        assert_eq!(shell_quote("/tmp/it's.toml"), "'/tmp/it'\\''s.toml'");
+        assert_eq!(shell_quote("/tmp/$HOME;rm"), "'/tmp/$HOME;rm'");
+        assert_eq!(shell_quote(""), "''");
     }
 }

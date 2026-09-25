@@ -346,6 +346,12 @@ warning[already_downloaded]: an identical file is already at /home/you/job_01m3a
 Saved /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4
 ```
 
+The follow-up commands Iris suggests (`next_steps`, and hints such as ``resume with `iris jobs
+wait <id>` ``) assume the environment they were printed in, in particular the same state
+directory. When you chose the config file explicitly (`--config`, or `IRIS_CONFIG`), they name
+it — `iris --config '/home/you/my config.toml' jobs wait <id>` — because it can decide where jobs
+live (`state_dir`); nothing else is added.
+
 `iris jobs download` on a job whose record still says `running` first checks its status once
 (a free status read, as `jobs status` does), because the local record may be stale: if the
 provider has finished meanwhile, it downloads right away. If the job is still running it exits

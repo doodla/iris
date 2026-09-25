@@ -163,6 +163,110 @@ fn a_veo_job_is_followed_across_processes_and_downloaded_through_a_redirect() {
     veo.assert_no_credential_leaks();
 }
 
+/// Run `line` (a command Iris suggested, starting with `iris`) through `sh`, as a
+/// user would paste it, with `iris` on PATH and the environment of a new shell
+/// session: the fake key and the mock base URL, but no state directory variable.
+fn run_suggested(sb: &Sandbox, veo: &VeoMock, line: &str) -> Out {
+    let bin_dir = sb.root().join("bin");
+    std::fs::create_dir_all(&bin_dir).unwrap();
+    let link = bin_dir.join("iris");
+    if !link.exists() {
+        std::os::unix::fs::symlink(BIN, &link).unwrap();
+    }
+    let started = std::time::Instant::now();
+    let mut cmd = std::process::Command::new("sh");
+    cmd.env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", bin_dir.display()))
+        .env("HOME", sb.home())
+        .env("IRIS_GEMINI_BASE_URL", veo.api.uri())
+        .env("GEMINI_API_KEY", GEMINI_KEY)
+        .env("HTTPS_PROXY", DEAD_URL)
+        .env("NO_PROXY", "127.0.0.1,localhost")
+        .current_dir(sb.work())
+        .args(["-c", line]);
+    let output = cmd.output().unwrap();
+    Out {
+        args: vec![line.to_string()],
+        code: output.status.code().unwrap_or(-1),
+        stdout: String::from_utf8(output.stdout).unwrap(),
+        stderr: String::from_utf8(output.stderr).unwrap(),
+        elapsed: started.elapsed(),
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn follow_up_commands_name_a_config_file_that_was_chosen_explicitly() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    // The config file decides where jobs live; its path needs shell quoting.
+    let state = sb.root().join("alt state");
+    let config = sb.config("my config.toml", &format!("state_dir = \"{}\"\n", state.display()));
+    let quoted = format!("'{}'", config.display());
+    let v = sb
+        .iris()
+        .env_remove("IRIS_STATE_DIR")
+        .gemini(&veo.api)
+        .arg("--config")
+        .arg(&config)
+        .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+        .run()
+        .ok();
+    let id = job_of(&v)["job_id"].as_str().unwrap().to_string();
+    assert!(state.join("jobs").join(format!("{id}.json")).is_file());
+    let steps: Vec<String> = v["result"]["next_steps"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        steps,
+        [
+            format!("iris --config {quoted} jobs status {id}"),
+            format!("iris --config {quoted} jobs wait {id}")
+        ]
+    );
+
+    // Each suggested command works as given, in a new shell.
+    let v = run_suggested(&sb, &veo, &format!("{} --json", steps[0])).ok();
+    assert_eq!(job_of(&v)["job_id"], id.as_str());
+    // Hints name it too.
+    let v = run_suggested(&sb, &veo, &format!("iris --config {quoted} jobs download {id} --json"))
+        .err(4, "job_not_ready");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains(&format!("`iris --config {quoted} jobs wait {id}`")), "{hint}");
+    veo.succeed();
+    let v = run_suggested(&sb, &veo, &format!("{} --no-download --json", steps[1])).ok();
+    assert_eq!(v["result"]["next_steps"], json!([format!("iris --config {quoted} jobs download {id}")]));
+    let retention =
+        v["warnings"].as_array().unwrap().iter().find(|w| w["code"] == "retention_limited").unwrap();
+    assert!(
+        retention["message"].as_str().unwrap().contains(&format!("`iris --config {quoted} jobs download"))
+    );
+
+    // IRIS_CONFIG chooses the config file just as explicitly.
+    let v = sb
+        .iris()
+        .env_remove("IRIS_STATE_DIR")
+        .env("IRIS_CONFIG", &config)
+        .gemini(&veo.api)
+        .args(["jobs", "status", &id, "--json"])
+        .run()
+        .ok();
+    assert_eq!(v["result"]["next_steps"], json!([format!("iris --config {quoted} jobs download {id}")]));
+    // Without an explicit config file, commands stay as they were.
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--detach", "--json"])
+        .run()
+        .ok();
+    let other = job_of(&v)["job_id"].as_str().unwrap();
+    assert_eq!(v["result"]["next_steps"][0], format!("iris jobs status {other}"));
+    veo.assert_no_credential_leaks();
+}
+
 #[test]
 fn jobs_download_checks_a_running_record_once_and_downloads_a_job_that_finished_meanwhile() {
     let sb = Sandbox::new();

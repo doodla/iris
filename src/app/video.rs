@@ -35,7 +35,7 @@ use crate::providers::{InputRole, VideoRequest};
 
 use super::context::AppContext;
 use super::jobs::{
-    SaveMode, Target, WaitArgs, job_result, submission_unknown_at, wait_parsed, with_job_context,
+    Commands, SaveMode, Target, WaitArgs, job_result, submission_unknown_at, wait_parsed, with_job_context,
 };
 use super::request::{self, GenerationArgs, GenerationOutcome};
 
@@ -53,8 +53,19 @@ pub struct VideoArgs {
     pub detach: bool,
 }
 
-/// Run `video generate`.
+/// Run `video generate`. Hints and next steps that name `iris` commands name the
+/// config file too when it was chosen explicitly (see `Commands`).
 pub async fn run(
+    ctx: &AppContext,
+    args: VideoArgs,
+    warnings: &mut Vec<Warning>,
+) -> Result<GenerationOutcome<JobResult>, IrisError> {
+    let start = warnings.len();
+    let result = generate(ctx, args, warnings).await;
+    Commands::of(ctx).finish(result, warnings, start)
+}
+
+async fn generate(
     ctx: &AppContext,
     args: VideoArgs,
     warnings: &mut Vec<Warning>,
@@ -283,7 +294,7 @@ pub async fn run(
                 ));
             }
             if args.detach {
-                return Ok(GenerationOutcome::Completed(job_result(&record)));
+                return Ok(GenerationOutcome::Completed(job_result(ctx, &record)));
             }
             // Save where this command was asked to (its own -o/-d/--overwrite).
             let wait = WaitArgs {
