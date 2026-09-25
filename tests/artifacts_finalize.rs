@@ -8,7 +8,7 @@ use std::path::Path;
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage};
 use iris::artifacts::{
     DownloadDecision, FinalizeMode, PartFile, RecordedFile, SaveOutcome, copy_local, decide_download,
-    finalize_download, save_image, sha256_bytes, sha256_file,
+    finalize_download, is_intact, save_image, sha256_bytes, sha256_file,
 };
 use iris::error::ErrorCode;
 
@@ -334,22 +334,45 @@ fn download_decisions() {
         media_type: Some("video/mp4"),
     };
 
-    assert_eq!(decide_download(None, &recorded), DownloadDecision::Fetch);
-    assert_eq!(decide_download(Some(rec), &recorded), DownloadDecision::AlreadyDownloaded);
+    assert_eq!(decide_download(None, &recorded, false), DownloadDecision::Fetch);
+    assert_eq!(decide_download(Some(rec), &recorded, false), DownloadDecision::AlreadyDownloaded);
     // Same file through a different spelling.
     let dotted = dir.path().join(".").join("job_x.mp4");
-    assert_eq!(decide_download(Some(rec), &dotted), DownloadDecision::AlreadyDownloaded);
-    assert_eq!(decide_download(Some(rec), &dir.path().join("elsewhere.mp4")), DownloadDecision::CopyLocal);
+    assert_eq!(decide_download(Some(rec), &dotted, false), DownloadDecision::AlreadyDownloaded);
+    assert_eq!(
+        decide_download(Some(rec), &dir.path().join("elsewhere.mp4"), false),
+        DownloadDecision::CopyLocal
+    );
 
     let wrong_size = RecordedFile { bytes: 1, ..rec };
-    assert_eq!(decide_download(Some(wrong_size), &recorded), DownloadDecision::Fetch);
+    assert_eq!(decide_download(Some(wrong_size), &recorded, false), DownloadDecision::Fetch);
     let wrong_hash = RecordedFile { sha256: "00", ..rec };
-    assert_eq!(decide_download(Some(wrong_hash), &recorded), DownloadDecision::Fetch);
+    assert_eq!(decide_download(Some(wrong_hash), &recorded, false), DownloadDecision::Fetch);
+
+    // A fresh copy was asked for (--overwrite): never reused, replaced in place
+    // when it is the target.
+    assert_eq!(decide_download(Some(rec), &recorded, true), DownloadDecision::Refetch);
+    assert_eq!(decide_download(Some(rec), &dotted, true), DownloadDecision::Refetch);
+    assert_eq!(decide_download(Some(rec), &dir.path().join("elsewhere.mp4"), true), DownloadDecision::Fetch);
 
     fs::write(&recorded, mp4(9000)).unwrap(); // same size, different content
-    assert_eq!(decide_download(Some(rec), &recorded), DownloadDecision::Fetch);
+    assert_eq!(decide_download(Some(rec), &recorded, false), DownloadDecision::Fetch);
     fs::remove_file(&recorded).unwrap();
-    assert_eq!(decide_download(Some(rec), &recorded), DownloadDecision::Fetch);
+    assert_eq!(decide_download(Some(rec), &recorded, false), DownloadDecision::Fetch);
+
+    // The recorded file is intact (size and hash match the record) but is not
+    // valid media, as a file saved by an Iris that checked less could be: it is
+    // fetched again, replacing it in place, and never copied elsewhere.
+    let cut = content[..content.len() - 520].to_vec(); // ftyp + moov, no media data
+    fs::write(&recorded, &cut).unwrap();
+    let cut_sha = sha256_bytes(&cut);
+    let broken = RecordedFile { bytes: cut.len() as u64, sha256: &cut_sha, ..rec };
+    assert!(is_intact(&broken));
+    assert_eq!(decide_download(Some(broken), &recorded, false), DownloadDecision::Refetch);
+    assert_eq!(
+        decide_download(Some(broken), &dir.path().join("elsewhere.mp4"), false),
+        DownloadDecision::Fetch
+    );
 }
 
 #[test]
@@ -367,12 +390,12 @@ fn repeat_downloads_recognize_a_file_saved_under_an_adjusted_extension() {
         media_type: Some("video/quicktime"),
     };
     let planned = dir.path().join("job_x.mp4");
-    assert_eq!(decide_download(Some(rec), &planned), DownloadDecision::AlreadyDownloaded);
-    assert_eq!(decide_download(Some(rec), &saved), DownloadDecision::AlreadyDownloaded);
-    assert_eq!(decide_download(Some(rec), &dir.path().join("other.mp4")), DownloadDecision::CopyLocal);
+    assert_eq!(decide_download(Some(rec), &planned, false), DownloadDecision::AlreadyDownloaded);
+    assert_eq!(decide_download(Some(rec), &saved, false), DownloadDecision::AlreadyDownloaded);
+    assert_eq!(decide_download(Some(rec), &dir.path().join("other.mp4"), false), DownloadDecision::CopyLocal);
     // Without the media type Iris cannot know the adjusted name: copy (still no network).
     let untyped = RecordedFile { media_type: None, ..rec };
-    assert_eq!(decide_download(Some(untyped), &planned), DownloadDecision::CopyLocal);
+    assert_eq!(decide_download(Some(untyped), &planned, false), DownloadDecision::CopyLocal);
 }
 
 #[test]

@@ -241,11 +241,19 @@ anything — it only ever reads the job's already-recorded remote reference and 
 Order of decision for each output, under the job's download lock:
 
 1. If it is already `downloaded`, the recorded file still exists with the recorded size and hash,
-   and the requested target path equals the recorded one → skip; warn `already_downloaded`. Safe
-   to run any number of times.
-2. If the recorded local file is intact but you asked for a *different* target path → copy it
-   locally (no network call). If that file changes or disappears while it is being copied, it is
-   no copy of the output any more, so Iris goes on to step 3 and fetches the output instead.
+   still validates as media (see step 3), and the requested target path equals the recorded one
+   → skip; warn `already_downloaded`. Safe to run any number of times.
+2. If the recorded local file is intact and valid but you asked for a *different* target path →
+   copy it locally (no network call). If that file changes or disappears while it is being
+   copied, it is no copy of the output any more, so Iris goes on to step 3 and fetches the output
+   instead.
+
+   The local copy is never reused when `jobs download` (or `jobs wait`) is given `--overwrite`,
+   which asks for a fresh copy, or when the recorded file no longer validates as media (for
+   example a video an older Iris saved from a host that stopped after the metadata): the output
+   is fetched again (step 3), and when the recorded file is the target, the new download
+   atomically replaces it. If that fetch fails, the file saved earlier stays as it was and stays
+   recorded (the error's hint names it).
 3. Otherwise, check that Iris may fetch the recorded URI with the configuration of *this*
    invocation (for Veo: a Files API download URL under the configured Gemini base URL; see
    [configuration.md](configuration.md#base-url-overrides) for proxies). A refused URI fails that

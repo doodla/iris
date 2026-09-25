@@ -711,6 +711,81 @@ fn a_video_cut_off_after_its_metadata_is_invalid_media_and_downloaded_again_late
     veo.assert_no_credential_leaks();
 }
 
+#[test]
+fn overwrite_or_a_recorded_file_that_no_longer_validates_fetches_the_output_again() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    veo.succeed();
+    sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().ok();
+    let target = sb.path(&format!("{id}.mp4"));
+    assert_eq!(veo.file_fetches(), 1);
+
+    // --overwrite asks for a fresh copy: fetched again and replaced atomically,
+    // never reported as already downloaded.
+    let fresh = mp4(5);
+    veo.file.set(wiremock::ResponseTemplate::new(200).set_body_raw(fresh.clone(), "video/mp4"));
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--overwrite", "--json"]).run().ok();
+    assert!(!warning_codes(&v).contains(&"already_downloaded".to_string()), "{v}");
+    assert_eq!(veo.file_fetches(), 2);
+    assert_eq!(std::fs::read(&target).unwrap(), fresh);
+    let art = &job_of(&v)["artifacts"][0];
+    assert_eq!((art["bytes"].as_u64(), &art["duration_seconds"]), (Some(fresh.len() as u64), &json!(5.0)));
+    assert_eq!(sb.record(&id)["outputs"][0]["sha256"], sha256_hex(&fresh));
+    assert_eq!(files_in(&sb.work()), [format!("{id}.mp4")], "no temp files are left");
+
+    // A file recorded as downloaded that is not valid media (what an Iris that
+    // did not check for media data could save from a host that stopped after the
+    // metadata): the record matches the file, but it is fetched again.
+    let cut = fresh[..fresh.len() - 2056].to_vec();
+    assert!(!cut.windows(4).any(|w| w == b"mdat"), "ftyp + moov only");
+    std::fs::write(&target, &cut).unwrap();
+    let mut rec = sb.record(&id);
+    rec["outputs"][0]["bytes"] = json!(cut.len());
+    rec["outputs"][0]["sha256"] = json!(sha256_hex(&cut));
+    std::fs::write(sb.record_path(&id), serde_json::to_vec_pretty(&rec).unwrap()).unwrap();
+
+    // Copying it elsewhere would copy the broken file: the output is fetched instead.
+    let out = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "-o", "copy.mp4", "--json"]).run();
+    let v = out.ok();
+    assert_eq!(std::fs::read(sb.path("copy.mp4")).unwrap(), fresh);
+    assert_eq!(job_of(&v)["artifacts"][0]["path"], sb.path("copy.mp4").to_str().unwrap());
+    assert_eq!(veo.file_fetches(), 3);
+
+    // Recorded at its own target again (by hand, as an older Iris left it): a plain
+    // download replaces it in place.
+    std::fs::remove_file(sb.path("copy.mp4")).unwrap();
+    std::fs::write(sb.record_path(&id), serde_json::to_vec_pretty(&rec).unwrap()).unwrap();
+    let out = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run();
+    let v = out.ok();
+    assert!(out.stderr.contains("not a complete, valid media file"), "{}", out.stderr);
+    assert!(!warning_codes(&v).contains(&"already_downloaded".to_string()), "{v}");
+    assert_eq!(std::fs::read(&target).unwrap(), fresh);
+    assert_eq!(sb.record(&id)["outputs"][0]["bytes"], fresh.len() as u64);
+    assert_eq!(veo.file_fetches(), 4);
+
+    // Now intact and valid: a repeat is a no-op again.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert!(warning_codes(&v).contains(&"already_downloaded".to_string()), "{v}");
+    assert_eq!(veo.file_fetches(), 4);
+
+    // A fresh copy that fails leaves the saved file alone, and says so.
+    veo.file.set(json_response(410, json!({ "error": "gone" })));
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["jobs", "download", &id, "--overwrite", "--json"])
+        .run()
+        .err(1, "artifact_expired");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains(target.to_str().unwrap()) && hint.contains("unchanged"), "{hint}");
+    assert_eq!(std::fs::read(&target).unwrap(), fresh);
+    let rec = sb.record(&id);
+    assert_eq!(rec["outputs"][0]["download_state"], "downloaded", "a saved file is never forgotten");
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
 /// Shift every `*_at` timestamp of a job record back by `days`, as if the job had
 /// been submitted (and finished) that long ago (the retention clock counts from
 /// `submitted_at`).

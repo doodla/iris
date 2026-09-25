@@ -4,9 +4,11 @@
 //! Invariants:
 //! * Ctrl-C, wait limits, poll failures, and download failures never change a
 //!   `running` or `succeeded` job to `failed`; only provider answers do.
-//! * Downloads never resubmit anything, and are safe to repeat: an intact file at
-//!   the target is reported as `already_downloaded`, an intact file elsewhere is
-//!   copied locally (and fetched again if it changes while being copied).
+//! * Downloads never resubmit anything, and are safe to repeat: an intact, valid
+//!   file at the target is reported as `already_downloaded`, one elsewhere is
+//!   copied locally (and fetched again if it changes while being copied). A
+//!   recorded file that no longer validates as media, or any file with
+//!   `--overwrite`, is fetched again and atomically replaced.
 //! * Deletion is local only; remote jobs and downloaded media are never touched.
 
 use std::path::{Path, PathBuf};
@@ -633,16 +635,20 @@ async fn download_outputs(
     let provider = rec.provider();
     let video = video_adapter(ctx, provider).map_err(|e| with_job_context(e, &rec))?;
     let base_url = ctx.settings.provider(provider).base_url.value.clone();
+    // `--overwrite` given to this command asks for a fresh copy of every output,
+    // so a file saved earlier is never reused as is (the recorded plan's
+    // overwrite only decides how a file in the way is treated).
+    let refetch = target.overwrite;
     let decisions: Vec<DownloadDecision> = rec
         .outputs()
         .iter()
         .zip(&plan.paths)
-        .map(|(out, path)| artifacts::decide_download(out.recorded_file(), path))
+        .map(|(out, path)| artifacts::decide_download(out.recorded_file(), path, refetch))
         .collect();
     // A fetch from the provider's own origin needs the credential: check that it
     // is present before any output directory is created.
     let needs_credential = rec.outputs().iter().zip(&decisions).any(|(out, decision)| {
-        *decision == DownloadDecision::Fetch
+        matches!(decision, DownloadDecision::Fetch | DownloadDecision::Refetch)
             && Url::parse(&out.remote_uri).is_ok_and(|u| http::same_origin(&u, &base_url))
     });
     if needs_credential {
@@ -663,8 +669,16 @@ async fn download_outputs(
     };
 
     let mut remote_failure: Option<IrisError> = None;
-    for ((out, path), &decision) in rec.outputs().iter().zip(&plan.paths).zip(&decisions) {
+    for ((out, planned), &decision) in rec.outputs().iter().zip(&plan.paths).zip(&decisions) {
         let recorded = out.recorded_file();
+        // Where a fetch saves the output: the planned target, or, to replace the
+        // file saved earlier, its recorded path (which may carry an adjusted
+        // extension).
+        let (path, mode) = match (decision, recorded) {
+            (DownloadDecision::Refetch, Some(file)) => (file.path.to_path_buf(), FinalizeMode::Overwrite),
+            _ => (planned.clone(), access.mode),
+        };
+        let path = path.as_path();
         if decision != DownloadDecision::AlreadyDownloaded {
             // Partial files of this target left by a killed earlier run (this
             // process holds the job's download lock, so none is in use).
@@ -695,6 +709,11 @@ async fn download_outputs(
                     Err(e) => return Err(with_job_context(e, &rec)),
                 }
             }
+            (DownloadDecision::Refetch, Some(file)) if !refetch => ctx.progress.line(format!(
+                "{} is not a complete, valid media file; downloading output {} of job {id} again to replace it",
+                file.path.display(),
+                out.index
+            )),
             _ => {}
         }
 
@@ -714,7 +733,7 @@ async fn download_outputs(
             continue;
         }
         ctx.progress.line(format!("Downloading output {} of job {id}", out.index));
-        match fetch(ctx, out, path, &access).await {
+        match fetch(ctx, out, path, mode, &access).await {
             Ok(saved) => record_saved(ctx, id, out.index, saved, warnings)?,
             Err(FetchFailure::Interrupted) => return Err(interrupted_download(&rec)),
             Err(FetchFailure::Local(e)) => return Err(with_job_context(e, &rec)),
@@ -724,6 +743,23 @@ async fn download_outputs(
                 // a video, a truncated file) is worth downloading again.
                 let e = if e.code == ErrorCode::InvalidMedia { e.with_retryable(Some(true)) } else { e };
                 let e = refused_or_gone(e, &rec, now);
+                let e = if e.code == ErrorCode::ArtifactExpired || e.hint.is_some() {
+                    e
+                } else {
+                    e.with_hint(format!(
+                        "the job itself succeeded; retry the download with `iris jobs download {id}` (nothing \
+                         is regenerated)"
+                    ))
+                };
+                // A file saved earlier stays the output's artifact (see
+                // `JobRecord::mark_output_failed`); say so when a fresh copy failed.
+                let e = match (recorded, e.hint.clone()) {
+                    (Some(file), hint) => {
+                        let kept = format!("the file saved earlier, {}, is unchanged", file.path.display());
+                        e.with_hint(hint.map_or(kept.clone(), |h| format!("{h}; {kept}")))
+                    }
+                    (None, _) => e,
+                };
                 if e.code == ErrorCode::ArtifactExpired {
                     ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;
                 } else {
@@ -734,18 +770,10 @@ async fn download_outputs(
         }
     }
     let rec = ctx.store.load(id)?;
-    if let Some(e) = remote_failure {
-        let e = if e.code == ErrorCode::ArtifactExpired || e.hint.is_some() {
-            e
-        } else {
-            e.with_hint(format!(
-                "the job itself succeeded; retry the download with `iris jobs download {id}` (nothing is \
-                 regenerated)"
-            ))
-        };
-        return Err(with_job_context(e, &rec));
+    match remote_failure {
+        Some(e) => Err(with_job_context(e, &rec)),
+        None => Ok(rec),
     }
-    Ok(rec)
 }
 
 fn record_saved(
@@ -841,11 +869,13 @@ fn auth_for(
     Ok(Some(AuthHeader::new(header.name, header.prefix, &secret)?))
 }
 
-/// Stream one output into a temp file next to `path`, validate, and finalize.
+/// Stream one output into a temp file next to `path`, validate, and finalize with
+/// `mode`.
 async fn fetch(
     ctx: &AppContext,
     out: &JobOutput,
     path: &Path,
+    mode: FinalizeMode,
     access: &Access<'_>,
 ) -> Result<SavedArtifact, FetchFailure> {
     let auth =
@@ -867,15 +897,9 @@ async fn fetch(
         }
     };
     match result {
-        Ok(_) => {
-            artifacts::finalize_download(part, out.index, access.media_types, access.mode).map_err(|e| {
-                if e.code == ErrorCode::InvalidMedia {
-                    FetchFailure::Remote(e)
-                } else {
-                    FetchFailure::Local(e)
-                }
-            })
-        }
+        Ok(_) => artifacts::finalize_download(part, out.index, access.media_types, mode).map_err(|e| {
+            if e.code == ErrorCode::InvalidMedia { FetchFailure::Remote(e) } else { FetchFailure::Local(e) }
+        }),
         Err(e @ (DownloadError::Io { .. } | DownloadError::Internal { .. })) => {
             Err(FetchFailure::Local(e.into_iris()))
         }

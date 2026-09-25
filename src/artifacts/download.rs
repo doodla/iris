@@ -1,6 +1,8 @@
 //! Local side of job downloads (docs/jobs.md "Downloads" steps 1–2): decide whether an output
 //! needs the network at all, and copy an already-downloaded file to a new target
-//! without touching the network.
+//! without touching the network. A recorded file counts only while it is intact
+//! (recorded size and hash) and still validates as media, so a file saved before
+//! Iris checked as much (a video cut off after its metadata, say) is fetched again.
 //!
 //! The network fetch itself (`crate::http::download`) streams into a
 //! [`PartFile`](super::PartFile) through its open handle;
@@ -15,7 +17,7 @@ use sha2::{Digest, Sha256};
 use crate::error::{ErrorCode, IrisError};
 
 use super::finalize::{FinalizeMode, PartFile, SavedArtifact};
-use super::{finalize, paths};
+use super::{finalize, media, paths};
 
 /// What the job record says about a previously downloaded output (see
 /// `JobOutput::recorded_file`).
@@ -34,38 +36,51 @@ pub struct RecordedFile<'a> {
 /// How to obtain one output at `target`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DownloadDecision {
-    /// The recorded file is intact and is the target: nothing to do (report
-    /// warning `already_downloaded`; safe to repeat).
+    /// The recorded file is intact, valid, and is the target: nothing to do
+    /// (report warning `already_downloaded`; safe to repeat).
     AlreadyDownloaded,
-    /// The recorded file is intact but the target differs: [`copy_local`] (no network).
+    /// The recorded file is intact and valid but the target differs:
+    /// [`copy_local`] (no network).
     CopyLocal,
-    /// No intact local copy: download from the remote URI.
+    /// No usable local copy for this target: download from the remote URI to the
+    /// target.
     Fetch,
+    /// The recorded file is the target, but it must be fetched again: it no
+    /// longer validates as media, or a fresh copy was asked for (`--overwrite`).
+    /// Download to the recorded path and atomically replace the file there (it is
+    /// the file Iris saved: its size and hash match the record).
+    Refetch,
 }
 
 /// Decide per docs/jobs.md: `AlreadyDownloaded` if the recorded file exists with the
-/// recorded size and SHA-256 and is the file `target` would become; `CopyLocal` if
-/// it is intact but `target` differs; otherwise `Fetch`.
+/// recorded size and SHA-256, still validates as media, and is the file `target`
+/// would become; `CopyLocal` if it is intact and valid but `target` differs;
+/// otherwise `Fetch`. With `refetch` (`--overwrite`), or when the recorded file no
+/// longer validates, the local copy is never reused: `Refetch` when it is the
+/// target, `Fetch` otherwise.
 ///
 /// "The file `target` would become" is `target` itself or, when the recorded media
 /// type needs another extension, `target` with that extension: a MOV planned as
 /// `job.mp4` was saved as `job.mov`, and repeating the download must not copy it.
 /// Report the `already_downloaded` warning with the recorded path.
-pub fn decide_download(recorded: Option<RecordedFile<'_>>, target: &Path) -> DownloadDecision {
+pub fn decide_download(recorded: Option<RecordedFile<'_>>, target: &Path, refetch: bool) -> DownloadDecision {
     let Some(rec) = recorded else {
         return DownloadDecision::Fetch;
     };
     if !is_intact(&rec) {
         return DownloadDecision::Fetch;
     }
+    let reusable = !refetch && media::validate_file(rec.path, &[]).is_ok();
     let adjusted_target = rec.media_type.and_then(|t| match paths::adjust_extension(target, t) {
         (adjusted, Some(_)) => Some(adjusted),
         (_, None) => None,
     });
-    if same_path(rec.path, target) || adjusted_target.is_some_and(|t| same_path(rec.path, &t)) {
-        DownloadDecision::AlreadyDownloaded
-    } else {
-        DownloadDecision::CopyLocal
+    let is_target = same_path(rec.path, target) || adjusted_target.is_some_and(|t| same_path(rec.path, &t));
+    match (is_target, reusable) {
+        (true, true) => DownloadDecision::AlreadyDownloaded,
+        (true, false) => DownloadDecision::Refetch,
+        (false, true) => DownloadDecision::CopyLocal,
+        (false, false) => DownloadDecision::Fetch,
     }
 }
 
