@@ -138,7 +138,7 @@ standard keys from September 2026 (no exact day given). Run `iris models show <m
 model's exact, current access notes rather than assuming these generalize.
 
 Non-secret settings (output directory, timeouts, a config file) follow
-`flag > environment variable > config file > built-in default`; see
+`flag > environment variable > config file > default`; see
 [docs/configuration.md](docs/configuration.md). Iris has no default model: every generation
 command names one with `-m`, or uses the one the config file names (see
 [Prompts, models, and output files](#prompts-models-and-output-files)).
@@ -155,16 +155,18 @@ Saved /home/you/bike.png
 Estimated cost: ~$0.00595 USD (estimate from reported usage (gpt-image-2.5-sunburst): 14 text input tokens × $5.00/1M + 0 image input tokens × $8.00/1M + 196 output tokens × $30.00/1M; cached-input discounts not reported)
 ```
 
-Validate a request locally, with no charge and no credentials required, before spending money.
-With an explicit size and quality the plan carries a pre-call estimate (with `auto`, the default,
-the model chooses them, so it is `null` and a `cost_estimate_unavailable` warning names the
-options to pass for one). `billing: "paid"` says the real run is billed to your provider account
-at its published prices, and a name the real run generates is shown as its pattern
-(`iris-<ulid>.png`):
+Validate a request locally, with no charge and no credentials required, before spending money:
+`--dry-run` makes every local check the real run makes (model, options, input files, output
+paths) and prints the plan instead of sending anything. With an explicit size and quality the plan
+carries a pre-call estimate (with `auto`, the default, the model chooses them, so it is `null` and
+a `cost_estimate_unavailable` warning names the options to pass for one). `billing: "paid"` says
+the real run is billed to your provider account at its published prices, and a name the real run
+generates is shown as its pattern (`iris-<ulid>.png`). The other fields are described under
+[`plan`](docs/json-contract.md#plan-any-generation-command-run-with---dry-run):
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
-{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":true,"detach":false,"dry_run":true,"inputs":[],"label":null,"max_cost":null,"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"prompt_fingerprint":{"chars":13,"sha256":"1191409152a26c2e3a7b6e7e0fc0f0dbc04a0c2aef096f8e20239abd84a7c3c6"},"provider":"openai","wait":null},"schema_version":1,"warnings":[]}
+{"command":"image.generate","error":null,"ok":true,"result":{"async_job":false,"billing":"paid","cost_estimate":{"amount":0.00588,"as_of":"2026-09-24","basis":"estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included","currency":"USD","estimated":true,"source_url":"https://developers.openai.com/api/docs/pricing"},"credential_present":false,"detach":false,"dry_run":true,"inputs":[],"label":null,"max_cost":null,"model":"gpt-image-2.5-sunburst","model_source":"flag","operation":"image.generate","options":{"background":"auto","compression":100,"count":1,"format":"png","moderation":"auto","quality":"low","size":"1024x1024"},"outputs":["/home/you/iris-<ulid>.png"],"prompt_fingerprint":{"chars":13,"sha256":"1191409152a26c2e3a7b6e7e0fc0f0dbc04a0c2aef096f8e20239abd84a7c3c6"},"provider":"openai","wait":null},"schema_version":1,"warnings":[]}
 ```
 
 To cap what a command may spend, add `--max-cost <USD>`: a request whose pre-call estimate is
@@ -233,34 +235,46 @@ $ echo $?
 
 ## Prompts, models, and output files
 
+### Prompt
+
 A prompt comes from exactly one of three mutually exclusive sources — Iris rejects two at once
 with a clear `usage_error`: inline text (`iris image generate -m <MODEL> "a fox" ...`), a UTF-8
 file (`-f/--prompt-file PATH`, trailing whitespace trimmed), or standard input (`--prompt-stdin`,
 which must not be a terminal).
 
+### Model
+
 Every generation command names its model. `-m`/`--model` takes a model id or alias (`iris models
 list` shows every one Iris knows); without it, the command uses the model the config file names for
 its kind (`[image] model`, `[video] model`). Iris never picks one for you: with neither, the
 command fails with `model_required` (exit 2) before anything is sent, and the error lists the
-models that support the command (see
-[docs/configuration.md](docs/configuration.md#choosing-the-model)). A model Iris does not know is
-`unknown_model` with the same list. A near miss, such as `gpt-image-2.5`, `veo-3.1-lite`, or
-`Nano-Banana-2`, also asks "did you mean …?" naming the models it nearly names; a name Iris
-declines, such as `dall-e-3`, `veo-3`, or the bare `nano-banana` (Google's Nano Banana is
-`gemini-2.5-flash-image`), says why and what to use instead. An option the model does not take is
-refused naming the models that take it. The provider is the model's; results say which of the two
-named it (`model_source`: `flag` or `config`). For a model Iris doesn't know yet,
-`--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a known model's capabilities
-(sent to the provider as given, validated as that known model, and flagged with an
-`unverified_model_capabilities` warning, which also asks "did you mean -m …?" when the id nearly
-names a catalog model) rather than refusing outright. Iris makes no cost estimate for such a model,
-since the known model's prices may not apply, and the id must use characters the provider's API
-accepts in a model id (for Gemini and Veo: letters, digits, `.`, `_`, and `-`), checked before
-anything is sent. Any option a model accepts but has no typed flag for is reachable through `-O
-key=value` (repeatable); `iris models show <model>` lists every option, typed or `-O`-only.
+models that support the command, each with its summary and `standard_cost`
+(`error.details.candidates`; see [docs/configuration.md](docs/configuration.md#choosing-the-model)).
+A model Iris does not know is `unknown_model` with the same list. A near miss, such as
+`gpt-image-2.5`, `veo-3.1-lite`, or `Nano-Banana-2`, also asks "did you mean …?" naming the models
+it nearly names (`details.suggestions`); a name Iris declines, such as `dall-e-3`, `veo-3`, or the
+bare `nano-banana` (Google's Nano Banana is `gemini-2.5-flash-image`), says why and what to use
+instead (also as `details.suggestions`). An option or input the model does not take is
+`unsupported_option` naming the models that take it (`details.supported_by`), and a value outside
+an option's listed values is `invalid_argument` listing them (`details.allowed`). The provider is
+the model's; results say which of the two named it (`model_source`: `flag` or `config`). For a
+model Iris doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
+known model's capabilities (sent to the provider as given, validated as that known model, and
+flagged with an `unverified_model_capabilities` warning, which also asks "did you mean -m …?" when
+the id nearly names a catalog model) rather than refusing outright. Iris makes no cost estimate
+for such a model, since the known model's prices may not apply, and the id must use characters the
+provider's API accepts in a model id (for Gemini and Veo: letters, digits, `.`, `_`, and `-`),
+checked before anything is sent. Any option a model accepts but has no typed flag for is reachable
+through `-O key=value` (repeatable); `iris models show <model>` lists every option, typed or
+`-O`-only. A mistyped flag is a `usage_error` whose hint asks "did you mean …?" too
+(`details.suggestions`), and such an option given as a flag (`--background`) is pointed at its `-O`
+form.
 
-Without `-o`/`-d`, Iris saves to the current directory under a predictable name: images as
-`iris-<ulid>.<ext>` (the extension follows the actual returned media type), and video job outputs
+### Output files
+
+Without `-o`/`-d`, Iris saves to the output directory (`IRIS_OUTPUT_DIR`, config `output_dir`, or
+else the current directory) under a predictable name: images as `iris-<ulid>.<ext>` (the
+extension follows the actual returned media type), and video job outputs
 as `<job_id>.mp4`. `-o/--output PATH` names an exact file (with several outputs: `<stem>-<i>.<ext>`
 with `i` from 1, so `-n 3 -o p.png` saves `p-1.png` to `p-3.png`, while `artifacts[].index` counts
 from 0); `-d/--out-dir DIR` picks a directory and keeps the default naming. A video job records
@@ -271,9 +285,9 @@ file), and a device such as `/dev/null` are refused, and the saved paths are wha
 (`result.artifacts[].path` with `--json`). An existing file at the target path is refused as
 `output_exists` unless `--overwrite` is passed — Iris never silently replaces a file. A paid image
 is never thrown away either: if it cannot be written where you asked after the request was made
-(say the disk filled up or the directory was removed), Iris saves it under `<state dir>/unsaved/`
-instead and reports the path (`iris config path` shows the state dir). Returned content that is not
-a valid image is kept there too, as received (`.bin`).
+(say the disk filled up or the directory was deleted), Iris saves it under `<state_dir>/unsaved/`
+instead and reports the path (`iris config path` shows the state directory). Returned content that
+is not a valid image is kept there too, as received (`.bin`).
 
 The extension of `-o` also picks the image type for models that take a format (OpenAI's `-o
 fox.jpg` requests JPEG). Gemini image models take none: the provider chooses the type (live runs
@@ -307,7 +321,8 @@ $ iris schema > iris-output.v1.schema.json
 ```
 
 Exit codes are a stable, documented contract — an agent can branch on them without parsing text
-(full table in [docs/json-contract.md](docs/json-contract.md)):
+(the exit code of every error code is in
+[docs/json-contract.md](docs/json-contract.md#stable-codes-categories-exit-codes-and-default-retryability)):
 
 | exit | meaning |
 |---|---|
@@ -321,27 +336,32 @@ Exit codes are a stable, documented contract — an agent can branch on them wit
 
 Exit 2 covers both local validation (nothing was sent) and a definite provider rejection of a
 malformed request (e.g. an OpenAI HTTP 400) — the request itself was bad either way. Tell them
-apart from `error.provider_status`: `null` means nothing was sent (full table in
-[docs/json-contract.md](docs/json-contract.md)).
+apart from `error.provider_status`: `null` means nothing was sent.
 
-The video **recovery flow** an agent should implement: `--detach` to get a `job_id` immediately,
-then, from any process that uses the same state directory, poll with `iris jobs status <id>
---json`, which exits **0** and reports the job's state in `result.job.status` (`submitting`,
-`running`, `succeeded`, `failed`, `expired`, or `submission_unknown`) — branch on that field, not
-on the exit code. `iris jobs wait <id> --timeout <D> --json` is a convenient alternative that an
-agent can loop on: it exits **4** (`wait_timeout`) while the job is still running and **0** once
-the job has succeeded and its outputs are saved (with `--no-download`, once it has succeeded).
-Otherwise it exits with the code of the error it reports, as in the table above: usually **1** for
-a remote failure, an expired job, or a failed download (`remote_job_failed`, `content_blocked`,
-`artifact_expired`, `download_failed`), and **5** when the submission's outcome is unknown
-(`submission_uncertain`). Either way, finish with `iris jobs download <id>` once the job reports
-`succeeded`. A download checks a `running` record's status once first, so a stale local record is
-not a problem; if the job is still running it exits 4 (`job_not_ready`) rather than waiting or
-resubmitting. Every step is idempotent: repeating a download never re-generates the video (see
-[docs/jobs.md](docs/jobs.md)). To make the submission itself safe to repeat, give it a label that
-names the intended video (`--label paper-boat-1`): no two local jobs share a label, so the same
-command run again after a crash is refused with `label_in_use` (exit 2), naming the job, before
-anything is sent, and `iris jobs list --label paper-boat-1 --json` finds the job.
+The video **recovery flow** an agent should implement, from any process that uses the same state
+directory:
+
+1. **Submit** with `--detach` and a `--label` that names the intended video (`iris video generate
+   -m veo-lite "a paper boat" --label paper-boat-1 --detach --json`); `result.job.job_id` is the
+   job. No two local jobs share a label, so the same command run again after a crash is refused
+   with `label_in_use` (exit 2), naming the job, before anything is sent, and `iris jobs list
+   --label paper-boat-1 --json` finds the job.
+2. **Follow** it with `iris jobs status <id> --json`, which exits **0** and reports the job's state
+   in `result.job.status` (`submitting`, `running`, `succeeded`, `failed`, `expired`, or
+   `submission_unknown`): branch on that field, not on the exit code. Or loop on `iris jobs wait
+   <id> --timeout <D> --json`: it exits **4** (`wait_timeout`) while the job is still running and
+   **0** once the job has succeeded and its outputs are saved (with `--no-download`, once it has
+   succeeded). Otherwise it exits with the code of the error it reports, as in the table above:
+   usually **1** for a remote failure, an expired job, or a failed download (`remote_job_failed`,
+   `content_blocked`, `artifact_expired`, `download_failed`), and **5** when the submission's
+   outcome is unknown (`submission_uncertain`).
+3. **Download** with `iris jobs download <id> --json` once the job reports `succeeded` (`jobs wait`
+   without `--no-download` has already done it). A download checks a `running` record's status
+   once first, so a stale local record is not a problem; if the job is still running it exits
+   **4** (`job_not_ready`) rather than waiting or resubmitting.
+
+Every step is idempotent: repeating a download never re-generates the video (see
+[docs/jobs.md](docs/jobs.md)).
 
 ## Supported providers and models
 
