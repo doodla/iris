@@ -3,7 +3,7 @@
 Iris persists **provider-native asynchronous jobs** — today, that means `video.generate` (Google
 Veo) — as local job records, so a job survives the process that submitted it: Ctrl-C, a wait
 timeout, a closed terminal, or a crash all leave the job resumable from any later `iris`
-invocation, on the same machine.
+invocation that uses the same state directory (see [Where state lives](#where-state-lives)).
 
 ## Why synchronous calls have no job record
 
@@ -34,6 +34,11 @@ jobs dir:    /home/you/.local/state/iris/jobs
 
 The state directory is `IRIS_STATE_DIR` > config `state_dir` > the platform default (Linux:
 `$XDG_STATE_HOME/iris`, else `~/.local/state/iris`; macOS: `~/Library/Application Support/iris`).
+Resuming a job needs its record, so only an `iris` process that uses the same state directory can
+follow, wait for, or download the job: another machine, a fresh container, or a different
+`HOME`, `XDG_STATE_HOME`, `IRIS_STATE_DIR`, or `state_dir` sees no such job (`job_not_found`),
+even though the provider still has it. Keep the state directory where later commands will find it,
+for example on a persistent volume, or set `IRIS_STATE_DIR` the same way for every command.
 Directories are created mode `0700`, record files mode `0600` (Unix permissions). Each job is one
 file, `<jobs_dir>/<job_id>.json`, plus two 0-byte lock files: `<job_id>.lock` (exclusive, its
 `flock` held only for one short read-modify-write) and `<job_id>.download.lock` (exclusive, its

@@ -407,6 +407,10 @@ fn provider_side_outcomes_of_a_running_job_are_reported_by_later_processes() {
     assert_eq!(v["error"]["job_status"], "failed");
     assert_eq!(v["error"]["provider_code"], "INTERNAL");
     assert_eq!(sb.record(&id)["status"], "failed");
+    // `jobs status` reads the job whatever its state: exit 0, the state in the result.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "status", &id, "--json"]).run().ok();
+    assert_eq!(job_of(&v)["status"], "failed");
+    assert_eq!(job_of(&v)["error"]["code"], "remote_job_failed");
     let v = sb
         .iris()
         .gemini(&veo.api)
@@ -817,6 +821,61 @@ fn an_uncertain_veo_submission_is_recorded_and_never_resubmitted() {
         assert!(files_in(&sb.work()).is_empty());
         veo.assert_no_credential_leaks();
     }
+}
+
+/// `jobs status --help` and `jobs wait --help` state the exit codes the tests here
+/// check (status: 0 for a job in any state; wait: 4 `wait_timeout` while the job runs,
+/// the recorded error's code once it ended without success), and `video generate
+/// --help` says that resuming needs the same state directory, which holds: another
+/// state directory has no record of the job.
+#[test]
+fn job_help_states_the_exit_codes_and_the_state_directory_rule() {
+    let sb = Sandbox::new();
+    let help = |args: &[&str]| {
+        let out = sb.iris().args(args).arg("--help").run();
+        assert_eq!(out.code, 0, "{args:?}");
+        out.stdout.split_whitespace().collect::<Vec<_>>().join(" ")
+    };
+    let status = help(&["jobs", "status"]);
+    for needle in [
+        "Exit status: 0 whenever the job's record could be read, whatever the job's state: branch on \
+         result.job.status",
+        "not on the exit code",
+        "status_refresh_failed warning",
+    ] {
+        assert!(status.contains(needle), "{needle:?} in {status}");
+    }
+    let wait = help(&["jobs", "wait"]);
+    for needle in [
+        "Exit status: 0 once the job has succeeded and its outputs are saved",
+        "4 (wait_timeout) when the wait limit passes while the job continues remotely",
+        "130 when interrupted",
+        "exits with the code of its recorded error",
+        "5 (submission_uncertain) when it is unknown whether the provider accepted it",
+        "any process that uses the same state directory",
+    ] {
+        assert!(wait.contains(needle), "{needle:?} in {wait}");
+    }
+    // The rule holds: a process with another state directory has no record of the job.
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .env("IRIS_STATE_DIR", sb.path("other-state"))
+        .args(["jobs", "status", &id, "--json"])
+        .run()
+        .err(2, "job_not_found");
+    assert!(v["error"]["message"].as_str().unwrap().contains("other-state"), "{v}");
+    sb.iris().gemini(&veo.api).args(["jobs", "status", &id, "--json"]).run().ok();
+
+    let video = help(&["video", "generate"]);
+    assert!(
+        video.contains(
+            "resume with `iris jobs wait <JOB_ID>` from any later process that uses the same state directory"
+        ),
+        "{video}"
+    );
 }
 
 // ----- scenario 7: wait limit and Ctrl-C ---------------------------------------------------------

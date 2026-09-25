@@ -31,7 +31,7 @@ models it knows, what each is for, and the estimated cost of its cheapest reques
 Image commands are synchronous: the image is saved before the command returns. Video generation \
 is a provider-native job: Iris records it locally, waits, and saves the video; with --detach it \
 returns a job id that later commands (iris jobs status/wait/download) resume, even from another \
-process.
+process that uses the same state directory (`iris config path`).
 
 Credentials are read only from the OPENAI_API_KEY and GEMINI_API_KEY environment variables. \
 Provider usage is billed by the provider to your API account; Iris reports cost estimates only.
@@ -151,8 +151,9 @@ pub enum Command {
     Config(ConfigCommand),
     /// Check credentials, configuration, and directories
     #[command(
-        long_about = "Check credential presence (never values), configuration validity, state and output \
-                      directory writability, and base URL overrides. --check-access additionally makes free \
+        long_about = "Check credential presence (never values; no provider key at all is an error, since every \
+                      generation command would fail), configuration validity, state and output directory \
+                      writability, and base URL overrides. --check-access additionally makes free \
                       metadata calls to see whether every catalog model of each provider whose API key is set \
                       is visible to your key; they do not check billing tier, prepaid credit, or organization \
                       verification, so a paid request can still be refused.\n\nExit status: \
@@ -448,7 +449,9 @@ pub enum VideoCommand {
         long_about = "Generate a video as a provider-native asynchronous job. Iris writes a local job record \
                       before submitting, then waits for the job and saves the video. With --detach it \
                       returns right after submission; resume with `iris jobs wait <JOB_ID>` from any later \
-                      process.\n\nIf the caller's wait limit (--timeout) passes or you press Ctrl-C, the job \
+                      process that uses the same state directory (`iris config path` shows it): the job \
+                      record lives there, so another machine, container, or state directory cannot resume \
+                      the job.\n\nIf the caller's wait limit (--timeout) passes or you press Ctrl-C, the job \
                       keeps running remotely and stays resumable (exit 4 or 130). If the outcome of the \
                       submission itself is uncertain, Iris exits 5 and never resubmits automatically.",
         after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
@@ -509,7 +512,13 @@ pub enum JobsCommand {
     /// Show one job, refreshing its remote status once
     #[command(
         long_about = "Show one job. A running job's remote status is checked once (a free status call) and \
-                      recorded, unless --no-refresh is given.",
+                      recorded, unless --no-refresh is given.\n\nExit status: 0 whenever the job's record \
+                      could be read, whatever the job's state: branch on result.job.status (submitting, \
+                      submission_unknown, running, succeeded, failed, expired), not on the exit code. A status \
+                      check that fails is a status_refresh_failed warning, and the last known status is shown. \
+                      The command fails only when it cannot show the job, with that error's code (e.g. 2 \
+                      job_not_found for an unknown id, 1 state_invalid for an unreadable record, 130 when \
+                      interrupted).",
         after_help = "Examples:\n  iris jobs status job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs status \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-refresh --json"
     )]
@@ -517,9 +526,17 @@ pub enum JobsCommand {
     /// Wait for a job to finish, then download its outputs
     #[command(
         long_about = "Wait for a job to finish, then download its outputs (unless --no-download). Works from \
-                      any process: the job is resumed from its local record. The wait limit and Ctrl-C only \
-                      stop waiting; the job keeps running remotely (exit 4 or 130). With --overwrite, \
-                      outputs downloaded earlier are fetched again and replace the saved files.",
+                      any process that uses the same state directory: the job is resumed from its local \
+                      record. The wait limit and Ctrl-C only stop waiting; the job keeps running remotely. \
+                      With --overwrite, outputs downloaded earlier are fetched again and replace the saved \
+                      files.\n\nExit status: 0 once the job has succeeded and its outputs are saved (with \
+                      --no-download, once it has succeeded); 4 (wait_timeout) when the wait limit passes while \
+                      the job continues remotely; 130 when interrupted, the job continuing too. A job that \
+                      ended without success exits with the code of its recorded error, such as 1 for a remote \
+                      failure, a blocked video, or an expired job (remote_job_failed, content_blocked, \
+                      artifact_expired), or 5 (submission_uncertain) when it is unknown whether the provider \
+                      accepted it. Other errors keep their own codes (e.g. 1 download_failed, 2 output_exists, \
+                      3 missing_credentials).",
         after_help = "Examples:\n  iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs wait \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --timeout 30m -d videos/ --json\n  iris jobs wait \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download"

@@ -32,8 +32,9 @@ pub enum DoctorTarget<'a> {
     Invalid { error: &'a IrisError, env: &'a EnvSnapshot },
 }
 
-/// Run every check. `healthy` is false if any check has status `error`; the
-/// command itself still succeeds, since the diagnostics ran.
+/// Run every check. `healthy` is false if any check has status `error`, which
+/// includes having no provider API key at all (a missing key while another is set
+/// is a warning); the command itself still succeeds, since the diagnostics ran.
 pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec<Warning>) -> DoctorResult {
     let mut checks = Vec::new();
     let settings: Option<&Settings> = match &target {
@@ -56,11 +57,13 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
         _ => {}
     }
 
+    let mut any_key = false;
     for provider in ProviderId::ALL {
         let present = match &target {
             DoctorTarget::Loaded(ctx) => ctx.settings.credential_present(*provider),
             DoctorTarget::Invalid { env, .. } => env.credential(*provider).is_some(),
         };
+        any_key |= present;
         let var = provider.credential_env();
         let id = format!("credentials.{provider}");
         checks.push(if present {
@@ -72,6 +75,18 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
                 format!("{var} is not set; {provider} commands will fail with missing_credentials"),
             )
         });
+    }
+    // One provider's key is enough for its models; with none, nothing can be generated.
+    if !any_key {
+        let vars: Vec<&str> = ProviderId::ALL.iter().map(|p| p.credential_env()).collect();
+        checks.push(check(
+            "credentials",
+            CheckStatus::Error,
+            format!(
+                "no provider API key is set ({}): every generation command would fail with missing_credentials",
+                vars.join(", ")
+            ),
+        ));
     }
     if args.google_api_key_present {
         checks.push(check(

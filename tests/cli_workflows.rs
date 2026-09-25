@@ -662,17 +662,55 @@ async fn invalid_configuration_is_config_invalid_but_doctor_still_reports() {
     assert_eq!(find("credentials.openai")["status"], "ok");
     assert_eq!(find("credentials.google_api_key")["status"], "warning");
 
-    let setup = CliSetup::new(f.sandbox.env_without_keys(), vec![f.openai.clone(), f.gemini.clone()]);
-    let run = run_cli(setup, &["doctor"]).await;
-    assert_eq!(run.code, 0);
-    assert!(run.stdout.contains("[warning] credentials.openai: OPENAI_API_KEY is not set"), "{}", run.stdout);
-    assert!(run.stdout.contains("[ok]      state_dir"), "{}", run.stdout);
-    assert!(run.stdout.ends_with("Healthy.\n"));
-
     let v = f.run(&["doctor", "--check-access", "--json"]).await.json();
     let checks = v["result"]["checks"].as_array().unwrap();
     assert!(checks.iter().any(|c| c["id"] == "access.openai.fake-image-1" && c["status"] == "ok"), "{v}");
     assert!(f.openai.access_calls.load(Ordering::SeqCst) >= 1);
+}
+
+/// With no provider key at all, every generation command would fail with
+/// `missing_credentials`, so doctor is unhealthy (a `credentials` error, still exit
+/// 0), with the configuration valid or not. One key is enough: the other provider's
+/// missing key stays a warning.
+#[tokio::test]
+async fn doctor_is_unhealthy_without_any_provider_key() {
+    let f = Fixture::new();
+    let invalid = f.sandbox.path("invalid.toml");
+    std::fs::write(&invalid, "api_key = \"nope\"\n").unwrap();
+    let doctor = |env, args: &[&str]| {
+        let setup = CliSetup::new(env, vec![f.openai.clone(), f.gemini.clone()]);
+        let args: Vec<String> = args.iter().map(|a| a.to_string()).collect();
+        async move { run_cli(setup, &args.iter().map(String::as_str).collect::<Vec<_>>()).await }
+    };
+    for args in [&["doctor", "--json"][..], &["doctor", "--config", invalid.to_str().unwrap(), "--json"]] {
+        let run = doctor(f.sandbox.env_without_keys(), args).await;
+        assert_eq!(run.code, 0);
+        let v = run.json();
+        assert_eq!(v["result"]["healthy"], false, "{v}");
+        let checks = v["result"]["checks"].as_array().unwrap();
+        let find = |id: &str| checks.iter().find(|c| c["id"] == id).unwrap_or_else(|| panic!("{id}: {v}"));
+        assert_eq!(find("credentials.openai")["status"], "warning");
+        assert_eq!(find("credentials.gemini")["status"], "warning");
+        assert_eq!(find("credentials")["status"], "error");
+        assert_eq!(
+            find("credentials")["message"],
+            "no provider API key is set (OPENAI_API_KEY, GEMINI_API_KEY): every generation command would fail \
+             with missing_credentials"
+        );
+    }
+    let human = doctor(f.sandbox.env_without_keys(), &["doctor"]).await;
+    assert_eq!(human.code, 0);
+    assert!(human.stdout.contains("[error]   credentials: no provider API key is set"), "{}", human.stdout);
+    assert!(human.stdout.ends_with("Problems found (see [error] lines).\n"), "{}", human.stdout);
+
+    let v =
+        doctor(f.sandbox.env_without_keys().with_var("GEMINI_API_KEY", GEMINI_KEY), &["doctor", "--json"])
+            .await
+            .json();
+    assert_eq!(v["result"]["healthy"], true, "{v}");
+    let checks = v["result"]["checks"].as_array().unwrap();
+    assert!(checks.iter().all(|c| c["id"] != "credentials"), "{v}");
+    assert!(checks.iter().any(|c| c["id"] == "credentials.openai" && c["status"] == "warning"), "{v}");
 }
 
 #[tokio::test]

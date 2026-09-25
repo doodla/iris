@@ -45,7 +45,8 @@ prices before a call or from the provider's own reported usage after one — see
   on OpenAI, a mask. Both are synchronous: the image is saved before the command returns.
 - **Video generation** on Google Veo, a provider-native *asynchronous* job. Iris writes a local
   job record before submitting, so a job survives Ctrl-C, a wait timeout, or the process exiting:
-  resume it later with `iris jobs status|wait|download <JOB_ID>`, even from a different process.
+  resume it later with `iris jobs status|wait|download <JOB_ID>`, even from a different process
+  that uses the same state directory.
 - **Reference-image inputs** where a provider supports them (edit images, Veo first/last frame
   and reference images).
 - **Machine-readable everything**: a versioned `--json` envelope, a published JSON Schema
@@ -126,7 +127,10 @@ is visible to your key, not just that a key is present. That read does not check
 prepaid credit, or OpenAI organization verification, so a paid request can still be refused.
 
 `iris doctor` exits 0 whenever its checks ran, even when it finds problems: scripts should read
-`healthy` (`result.healthy` with `--json`) or look for `[error]` lines, not the exit code.
+`healthy` (`result.healthy` with `--json`) or look for `[error]` lines, not the exit code. A key
+that is not set is a warning while another provider's key is set; with no key set at all, the
+`credentials` check is an error, since every generation command would fail with
+`missing_credentials`.
 
 Gemini image and Veo models have **no free tier**: the key's project needs a paid-tier billing plan
 (on Prepay, a positive credit balance). Use an auth API key: Google says the Gemini API will reject
@@ -183,8 +187,9 @@ Generate a video and wait for it (the default: wait, then save):
 $ iris video generate -m veo-lite "waves crashing at dusk, slow motion" --duration 4 -o waves.mp4
 ```
 
-Submit and come back later — from any process, even after the terminal closed (output from a
-local mock server standing in for the Gemini API):
+Submit and come back later — from any process that uses the same state directory (`iris config
+path`), even after the terminal closed (output from a local mock server standing in for the Gemini
+API):
 
 ```console
 $ iris video generate -m veo-lite "a paper boat drifting on a pond" --duration 4 --detach
@@ -299,19 +304,19 @@ apart from `error.provider_status`: `null` means nothing was sent (full table in
 [docs/json-contract.md](docs/json-contract.md)).
 
 The video **recovery flow** an agent should implement: `--detach` to get a `job_id` immediately,
-then poll with `iris jobs status <id> --json`, which exits **0** and reports the job's state in
-`result.job.status` (`submitting`, `running`, `succeeded`, `failed`, `expired`, or
-`submission_unknown`) — branch on that field, not on the exit code. `iris jobs wait <id>
---timeout <D> --json` is a convenient alternative that an agent can loop on: it exits **4**
-(`wait_timeout`) while the job is still running and **0** once the job has succeeded and its
-outputs are saved (with `--no-download`, once it has succeeded). Otherwise it exits with the code
-of the error it reports, as in the table above: usually **1** for a remote failure, an expired
-job, or a failed download (`remote_job_failed`, `content_blocked`, `artifact_expired`,
-`download_failed`), and **5** when the submission's outcome is unknown (`submission_uncertain`).
-Either way, finish with `iris jobs download <id>` once the job reports `succeeded`. A download
-checks a `running` record's status once first, so a stale local record is not a problem; if the
-job is still running it exits 4 (`job_not_ready`) rather than waiting or resubmitting. Every step
-is idempotent: repeating a download never re-generates the video (see
+then, from any process that uses the same state directory, poll with `iris jobs status <id>
+--json`, which exits **0** and reports the job's state in `result.job.status` (`submitting`,
+`running`, `succeeded`, `failed`, `expired`, or `submission_unknown`) — branch on that field, not
+on the exit code. `iris jobs wait <id> --timeout <D> --json` is a convenient alternative that an
+agent can loop on: it exits **4** (`wait_timeout`) while the job is still running and **0** once
+the job has succeeded and its outputs are saved (with `--no-download`, once it has succeeded).
+Otherwise it exits with the code of the error it reports, as in the table above: usually **1** for
+a remote failure, an expired job, or a failed download (`remote_job_failed`, `content_blocked`,
+`artifact_expired`, `download_failed`), and **5** when the submission's outcome is unknown
+(`submission_uncertain`). Either way, finish with `iris jobs download <id>` once the job reports
+`succeeded`. A download checks a `running` record's status once first, so a stale local record is
+not a problem; if the job is still running it exits 4 (`job_not_ready`) rather than waiting or
+resubmitting. Every step is idempotent: repeating a download never re-generates the video (see
 [docs/jobs.md](docs/jobs.md)).
 
 ## Supported providers and models
@@ -323,7 +328,7 @@ Generated from `iris models list` / `iris models show` against Iris's built-in c
 |---|---|---|---|---|---|
 | OpenAI (GPT Image 2.5 Sunburst/Flare, GPT Image 2) | image generate, image edit | up to 16 reference images + optional mask (edit) | no (synchronous) | no — a lost connection after sending is unrecoverable | n/a |
 | Google Gemini (Nano Banana 2, Nano Banana 2 Lite, Nano Banana Pro) | image generate, image edit | up to 14 reference images (edit); no mask | no (synchronous) | no | n/a |
-| Google Veo (3.1, 3.1 Fast, 3.1 Lite — all **preview**) | video generate | first frame, last frame, up to 3 reference images (Standard/Fast) | **yes** — provider-native job | **yes** — durable local job record, resumable from any process | **no** — the provider offers no cancel/delete for Veo operations |
+| Google Veo (3.1, 3.1 Fast, 3.1 Lite — all **preview**) | video generate | first frame, last frame, up to 3 reference images (Standard/Fast) | **yes** — provider-native job | **yes** — durable local job record, resumable from any process that uses the same state directory | **no** — the provider offers no cancel/delete for Veo operations |
 
 ```console
 $ iris models list

@@ -284,23 +284,24 @@ request can still be refused with `permission_denied` or `quota_exceeded`.
 
 ### `doctor` → `{ "healthy": true, "checks": [ { "id", "status": "ok|warning|error", "message" } ] }`
 
-`healthy` is `false` only when a `checks[].status` is `error` — a missing credential is a
-`warning`, not an `error`. With no keys set at all, `doctor` still reports `healthy: true`
-(reproduced): you can run `doctor` and every offline command with neither key set, and the
-missing-credential checks show up as `warning` entries in `checks[]` for you to notice, not as a
-reason `healthy` flips to `false`.
+`healthy` is `false` only when a `checks[].status` is `error`. A provider whose key is not set
+gets a `warning` (`credentials.<provider>`): the other provider's commands still work. With no
+provider key set at all, the `credentials` check is an `error`, since every generation command would
+fail with `missing_credentials`, so `healthy` is `false`; `doctor` and the offline commands still
+run.
 
 **`doctor` exits 0 whenever its checks ran, including when it finds problems** (`ok: true`,
 `healthy: false`): read `result.healthy` and the `checks[]` statuses, not the exit code. A
 non-zero exit means doctor itself could not run (for example a usage error).
 
-Check ids are unique within one result: `config`, `credentials.<provider>`,
-`credentials.google_api_key`, `state_dir`, `output_dir`, `base_url.<provider>`, `jobs`, and with
-`--check-access` one `access.<provider>.<model>` for every catalog model of each provider whose key
-is set, in catalog order. A single `access.<provider>` reports a provider whose models were not
-checked (e.g. its key is not set); `access` reports that the configuration is invalid. An `ok`
-access check means the model is visible to the key (a free metadata read), not that billing tier,
-prepaid credit, or organization verification allow a paid request.
+Check ids are unique within one result: `config`, `credentials.<provider>`, `credentials` (only
+when no provider key is set), `credentials.google_api_key`, `state_dir`, `output_dir`,
+`base_url.<provider>`, `jobs`, and with `--check-access` one `access.<provider>.<model>` for every
+catalog model of each provider whose key is set, in catalog order. A single `access.<provider>`
+reports a provider whose models were not checked (e.g. its key is not set); `access` reports that
+the configuration is invalid. An `ok` access check means the model is visible to the key (a free
+metadata read), not that billing tier, prepaid credit, or organization verification allow a paid
+request.
 
 ### `schema` → `{ "schema": { "...": "the JSON Schema document itself" } }` (without `--json`, the raw schema is printed instead)
 

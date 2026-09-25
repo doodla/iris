@@ -24,7 +24,7 @@ machine-readable contract for agents.
 - **Video generation** on Google Veo (3.1, 3.1 Fast, 3.1 Lite, all preview) as a provider-native
   asynchronous job, with first-frame, last-frame and reference-image inputs where the model
   documents them. `--detach` submits and returns; `jobs status`/`wait`/`download` recover the job
-  from any later process.
+  from any later process that uses the same state directory.
 - **Explicit models.** Every generation command names its model: `-m`/`--model`, or the model
   the config file names (`[image] model`, `[video] model`); Iris never chooses one. Without
   either, the command fails with `model_required` (exit 2) before anything is sent, listing the
@@ -81,6 +81,9 @@ machine-readable contract for agents.
   job that is active or whose outputs were not downloaded while the provider still keeps them.
 - The recorded error of an ended job is shown with `retryable: false`: retrying means a new,
   billed request. `next_steps` and hints repeat `--config` when one was given.
+- `jobs status --help` and `jobs wait --help` state their exit codes: `jobs status` exits 0 for a
+  job in any state (branch on `result.job.status`), `jobs wait` 4 while the job runs on and the
+  recorded error's code once it ended without success.
 - Ctrl-C (SIGINT), SIGTERM and SIGHUP print one `interrupted` envelope and exit 130; during a Veo
   submission the first one is deferred until the operation id is recorded. Neither an interrupt
   nor a `--timeout` ever marks a remote job failed.
@@ -105,8 +108,9 @@ machine-readable contract for agents.
   input requirements, output types, published prices with their source and date, and documented
   access requirements. `--check-access` is a free check of whether a model is visible to your
   key.
-- `iris config show`/`path`, `iris doctor` (exits 0 whenever its checks ran; read `healthy`;
-  `--check-access` checks every model of each provider whose key is set),
+- `iris config show`/`path`, `iris doctor` (exits 0 whenever its checks ran; read `healthy`,
+  which is false when no provider key is set at all; `--check-access` checks every model of each
+  provider whose key is set),
   `iris completions` (bash, zsh, fish, elvish) and `iris version` (`git_commit` is set by release
   and CI builds through `IRIS_GIT_COMMIT`).
 

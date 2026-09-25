@@ -24,6 +24,17 @@ $ iris doctor
 ...
 ```
 
+A key that is not set is a warning while another provider's key is set. With no key set at all,
+`doctor` adds an error, and `healthy` is false:
+
+```console
+$ iris doctor
+...
+[error]   credentials: no provider API key is set (OPENAI_API_KEY, GEMINI_API_KEY): every generation command would fail with missing_credentials
+...
+Problems found (see [error] lines).
+```
+
 A missing key for the provider a command needs is `missing_credentials` (exit 3), checked after
 every other local validation and before any network call — so a bad prompt or an unsupported
 option is still reported as such even with no key set. `video generate`, `jobs wait`, and
