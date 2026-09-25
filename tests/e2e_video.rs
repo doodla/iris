@@ -1103,6 +1103,26 @@ fn overwrite_or_a_recorded_file_that_no_longer_validates_fetches_the_output_agai
     assert_eq!(rec["outputs"][0]["download_state"], "downloaded", "a saved file is never forgotten");
     assert_eq!(veo.file_fetches(), 5);
 
+    // A fetch-again that fails inside the retention period says how to retry it:
+    // with --overwrite, since a plain download reuses the saved file. Once a
+    // plain download confirms that file intact, the stale error goes away.
+    veo.file.set(json_response(404, json!({ "error": "not yet" })));
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["jobs", "download", &id, "--overwrite", "--json"])
+        .run()
+        .err(1, "download_failed");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains(&format!("`iris jobs download {id} --overwrite`")), "{hint}");
+    assert!(sb.record(&id)["outputs"][0]["last_error"].is_object());
+    assert_eq!(veo.file_fetches(), 6);
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert!(warning_codes(&v).contains(&"already_downloaded".to_string()), "{v}");
+    assert!(sb.record(&id)["outputs"][0]["last_error"].is_null(), "the saved file was confirmed intact");
+    assert_eq!(veo.file_fetches(), 6);
+    veo.file.set(json_response(410, json!({ "error": "gone" })));
+
     // Only an intact file is called unchanged. Edited after it was downloaded, it
     // is no copy of the output: the output is fetched for another target instead,
     // and when that fails the hint says the saved file no longer matches.
@@ -1123,7 +1143,7 @@ fn overwrite_or_a_recorded_file_that_no_longer_validates_fetches_the_output_agai
     );
     assert_eq!(std::fs::read(&target).unwrap(), edited, "the fetch never touches the saved file");
     assert!(!sb.path("other.mp4").exists());
-    assert_eq!(veo.file_fetches(), 6);
+    assert_eq!(veo.file_fetches(), 7);
 
     // Deleted: the output is fetched to its recorded path; when the file host fails,
     // the hint says the file saved earlier is gone.

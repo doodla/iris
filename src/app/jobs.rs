@@ -981,6 +981,10 @@ async fn download_outputs(
         match (decision, recorded) {
             (DownloadDecision::AlreadyDownloaded, Some(file)) => {
                 warnings.push(artifacts::already_present_warning(file.path));
+                if out.last_error.is_some() {
+                    let now = ctx.now();
+                    ctx.store.update(id, |r| r.clear_output_error(out.index, now))?;
+                }
                 continue;
             }
             (DownloadDecision::CopyLocal, Some(file)) => {
@@ -1033,13 +1037,19 @@ async fn download_outputs(
                 // Content that is not the expected media (an error page served as
                 // a video, a truncated file) is worth downloading again.
                 let e = if e.code == ErrorCode::InvalidMedia { e.with_retryable(Some(true)) } else { e };
-                let e = refused_or_gone(e, &rec, now);
+                // Fetching an output that is already saved again needs --overwrite;
+                // without it the command reuses the saved file and fetches nothing.
+                let retry = if decision == DownloadDecision::Refetch {
+                    format!("iris jobs download {id} --overwrite")
+                } else {
+                    format!("iris jobs download {id}")
+                };
+                let e = refused_or_gone(e, &rec, now, &retry);
                 let e = if e.code == ErrorCode::ArtifactExpired || e.hint.is_some() {
                     e
                 } else {
                     e.with_hint(format!(
-                        "the job itself succeeded; retry the download with `iris jobs download {id}` (nothing \
-                         is regenerated)"
+                        "the job itself succeeded; retry the download with `{retry}` (nothing is regenerated)"
                     ))
                 };
                 // A file saved earlier stays the output's artifact (see
@@ -1102,7 +1112,7 @@ fn record_saved(
 /// period has passed (`remote_expires_at`): then it is `artifact_expired`. Before
 /// that it stays a retryable `download_failed` (the output is re-downloadable),
 /// with a hint on what to check. 410 is already `artifact_expired`.
-fn refused_or_gone(e: IrisError, rec: &JobRecord, now: Timestamp) -> IrisError {
+fn refused_or_gone(e: IrisError, rec: &JobRecord, now: Timestamp, retry: &str) -> IrisError {
     let status = e.provider_status;
     if e.code != ErrorCode::DownloadFailed || !matches!(status, Some(403 | 404)) {
         return e;
@@ -1139,8 +1149,8 @@ fn refused_or_gone(e: IrisError, rec: &JobRecord, now: Timestamp) -> IrisError {
                 }
             };
             let mut e = e.with_retryable(Some(true)).with_hint(format!(
-                "{why}; retry with `iris jobs download {id}` (nothing is regenerated); if it keeps failing, \
-                 check the API key and the base URL"
+                "{why}; retry with `{retry}` (nothing is regenerated); if it keeps failing, check the API key \
+                 and the base URL"
             ));
             e.message = format!("{}; the output is not treated as expired", e.message);
             e

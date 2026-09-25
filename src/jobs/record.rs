@@ -1017,6 +1017,20 @@ impl JobRecord {
         }
     }
 
+    /// Forget the `last_error` of a `downloaded` output whose saved file was just
+    /// confirmed intact: the error belonged to an earlier failed attempt to fetch
+    /// it again and no longer describes the output. Returns whether anything
+    /// changed; other outputs and states are left alone.
+    pub fn clear_output_error(&mut self, index: u32, now: Timestamp) -> Result<bool, IrisError> {
+        let out = self.output_mut(index)?;
+        if out.download_state != DownloadState::Downloaded || out.last_error.is_none() {
+            return Ok(false);
+        }
+        out.last_error = None;
+        self.updated_at = now;
+        Ok(true)
+    }
+
     fn record_output_problem(
         &mut self,
         index: u32,
