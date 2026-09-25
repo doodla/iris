@@ -294,6 +294,28 @@ async fn clap_usage_errors_become_json_envelopes() {
 
     let run = f.run(&["--json", "image", "generate", "-m", "fake-image-1", "x", "--bogus"]).await;
     assert_eq!(run.error_code(), "usage_error");
+    assert_eq!(run.json()["error"]["hint"], "run the command with --help for usage");
+
+    // A flag, subcommand, or value clap finds similar to a mistyped one is the hint's.
+    for (args, similar) in [
+        (
+            &["image", "generate", "-m", "fake-image-1", "x", "--aspect_ratio", "1:1", "--json"][..],
+            "--aspect-ratio",
+        ),
+        (&["image", "generat", "x", "--json"], "generate"),
+        (&["jobs", "lst", "--json"], "list"),
+        (&["completions", "bsh", "--json"], "bash"),
+    ] {
+        let run = f.run(args).await;
+        assert_eq!(run.error_code(), "usage_error", "{args:?}");
+        let v = run.json();
+        assert_eq!(
+            v["error"]["hint"],
+            format!("did you mean {similar}? run the command with --help for usage"),
+            "{args:?}"
+        );
+        assert!(v["error"]["details"]["usage"].as_str().unwrap().contains(&format!("'{similar}'")), "{v}");
+    }
 
     let run = f.run(&["nonsense", "--json"]).await;
     assert_eq!(run.code, 2);

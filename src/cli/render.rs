@@ -6,7 +6,7 @@ use std::ffi::OsString;
 use std::io::Write;
 use std::sync::{Arc, Mutex};
 
-use clap::error::ErrorKind;
+use clap::error::{ContextKind, ContextValue, ErrorKind};
 
 use crate::app::info;
 use crate::domain::Warning;
@@ -108,6 +108,19 @@ fn clap_message(text: &str) -> String {
     let joined = lines.join(" ");
     let message = joined.strip_prefix("error: ").unwrap_or(&joined).trim();
     if message.is_empty() { "invalid arguments".to_string() } else { message.to_string() }
+}
+
+/// The flags, subcommands, or values clap found similar to a mistyped one (its
+/// "tip: a similar … exists"), in its order; empty when it found none.
+fn clap_suggestions(err: &clap::Error) -> Vec<String> {
+    [ContextKind::SuggestedArg, ContextKind::SuggestedSubcommand, ContextKind::SuggestedValue]
+        .into_iter()
+        .find_map(|kind| match err.get(kind)? {
+            ContextValue::String(one) => Some(vec![one.clone()]),
+            ContextValue::Strings(many) if !many.is_empty() => Some(many.clone()),
+            _ => None,
+        })
+        .unwrap_or_default()
 }
 
 /// Best-effort command name from argv, for envelopes of errors raised before or
@@ -235,8 +248,17 @@ impl Output {
             }
             _ => {
                 if self.json {
+                    let hint = match clap_suggestions(&err).as_slice() {
+                        [] => "run the command with --help for usage".to_string(),
+                        similar => {
+                            format!(
+                                "did you mean {}? run the command with --help for usage",
+                                similar.join(" or ")
+                            )
+                        }
+                    };
                     let error = IrisError::usage(clap_message(&text))
-                        .with_hint("run the command with --help for usage")
+                        .with_hint(hint)
                         .with_detail("usage", text.trim_end().to_string());
                     self.failure(command, &error, Vec::new())
                 } else {

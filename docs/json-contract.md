@@ -498,6 +498,21 @@ of its cheapest single-output request and their estimate, or `null`):
  "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
 ```
 
+A command line that does not parse (an unknown flag or subcommand, a missing or malformed value) is
+`usage_error` (exit 2, category `usage`), with the parser's full text in `details.usage`. When the
+parser finds a flag, subcommand, or value similar to the one given, the hint names it; otherwise it
+is `run the command with --help for usage`:
+
+```console
+$ iris image generate "a fox" -m nano-banana-2 --aspect_ratio 16:9 --json
+```
+```json
+{"code":"usage_error","category":"usage","message":"unexpected argument '--aspect_ratio' found",
+ "hint":"did you mean --aspect-ratio? run the command with --help for usage",
+ "details":{"usage":"error: unexpected argument '--aspect_ratio' found\n\n  tip: a similar argument exists: '--aspect-ratio'\n\n..."},
+ "...":"other Error fields omitted for brevity"}
+```
+
 `provider` names the provider an error concerns: the one that answered, or, for an error while
 following or downloading a job (`wait_timeout`, `interrupted`, `output_exists`, `job_not_ready`, a
 download failure), the job's provider, even when the error itself is local. A refused
