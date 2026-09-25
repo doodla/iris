@@ -117,12 +117,7 @@ async fn refresh_running(
     rec: JobRecord,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobRecord, IrisError> {
-    if rec.status() != JobStatus::Running {
-        return Ok(rec);
-    }
-    ctx.interrupt.arm();
-    let seen = ctx.interrupt.count();
-    match poll_once(ctx, &rec, seen, warnings).await {
+    match refresh_once(ctx, &rec, warnings).await {
         Ok(Some(updated)) => Ok(updated),
         Ok(None) => Ok(rec),
         Err(e) if e.code == ErrorCode::Interrupted => Err(e),
@@ -134,6 +129,22 @@ async fn refresh_running(
             Ok(rec)
         }
     }
+}
+
+/// Poll a `running` record once and persist the answer. `Ok(None)` if nothing was
+/// polled (the record is not `running`, or has no operation id). Errors carry the
+/// job's context.
+async fn refresh_once(
+    ctx: &AppContext,
+    rec: &JobRecord,
+    warnings: &mut Vec<Warning>,
+) -> Result<Option<JobRecord>, IrisError> {
+    if rec.status() != JobStatus::Running {
+        return Ok(None);
+    }
+    ctx.interrupt.arm();
+    let seen = ctx.interrupt.count();
+    poll_once(ctx, rec, seen, warnings).await
 }
 
 /// `jobs wait`: poll until the job is terminal, then download its outputs
@@ -150,7 +161,15 @@ pub async fn wait(
 
 /// `jobs download`: download the outputs of a succeeded job. Never resubmits.
 /// A record that still says `running` may be stale (the job may have finished
-/// since the last check), so it is refreshed once first, as `jobs status` does.
+/// since the last check), so it is refreshed once first.
+///
+/// Unlike `jobs status`, which always shows the last known status, a download
+/// fails anyway when the job is not finished, so only a transient refresh failure
+/// (network, timeout, rate limit, a provider 5xx: `retryable: true`) falls back to
+/// the last known status: `job_not_ready` with `details.status_checked: false`
+/// and warning `status_refresh_failed`. Any other failure (a missing key,
+/// rejected credentials, no access, quota, configuration) is the command's error,
+/// with the job's context, as in `jobs wait`.
 pub async fn download(
     ctx: &AppContext,
     job_id: &str,
@@ -158,9 +177,36 @@ pub async fn download(
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
     let id = JobId::parse(job_id)?;
-    refresh_running(ctx, ctx.store.load(&id)?, warnings).await?;
-    let rec = download_outputs(ctx, &id, target, SaveMode::Download, warnings).await?;
-    Ok(job_result(&rec))
+    let rec = ctx.store.load(&id)?;
+    let mut status_checked = true;
+    match refresh_once(ctx, &rec, warnings).await {
+        Ok(_) => {}
+        Err(e) if e.code != ErrorCode::Interrupted && e.retryable == Some(true) => {
+            status_checked = false;
+            warnings.push(Warning::new(
+                "status_refresh_failed",
+                format!("could not check the remote status ({}); going by the last known status", e.message),
+            ));
+        }
+        Err(e) => return Err(e),
+    }
+    match download_outputs(ctx, &id, target, SaveMode::Download, warnings).await {
+        Ok(rec) => Ok(job_result(&rec)),
+        Err(e) if e.code == ErrorCode::JobNotReady && !status_checked => {
+            let status = e.job_status.map_or_else(|| "running".to_string(), |s| s.to_string());
+            let checked = rec.last_checked_at().map(|t| format!(" (last checked {t})")).unwrap_or_default();
+            let mut e = e.with_detail("status_checked", false).with_hint(format!(
+                "check again with `iris jobs download {id}`, or wait for it with `iris jobs wait {id}`; the \
+                 status_refresh_failed warning says why the check failed"
+            ));
+            e.message = format!(
+                "job {id} was last known to be {status}{checked}; its status could not be checked now, so its \
+                 outputs are not known to be ready"
+            );
+            Err(e)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// `jobs delete`: delete local records only. Active jobs (`submitting`,
@@ -416,15 +462,17 @@ async fn poll_once(
         return Ok(None);
     };
     let provider = rec.provider();
-    let video = video_adapter(ctx, provider)?;
-    let pctx = ctx.provider_context(provider)?;
+    let video = video_adapter(ctx, provider).map_err(|e| with_job_context(e, rec))?;
+    let pctx = ctx.provider_context(provider).map_err(|e| with_job_context(e, rec))?;
     ctx.settings.warn_non_default_base_url(provider, warnings);
     let status = tokio::select! {
-        result = video.poll(remote, &pctx) => result?,
+        result = video.poll(remote, &pctx) => result.map_err(|e| with_job_context(e, rec))?,
         () = ctx.interrupt.after(seen) => return Err(interrupted_wait(ctx, rec)),
     };
-    let (updated, applied) =
-        ctx.store.update(rec.job_id(), |r| r.apply_poll(status, video.output_retention(), ctx.now()))?;
+    let (updated, applied) = ctx
+        .store
+        .update(rec.job_id(), |r| r.apply_poll(status, video.output_retention(), ctx.now()))
+        .map_err(|e| with_job_context(e, rec))?;
     report_poll(ctx, &updated, &applied, warnings);
     Ok(Some(updated))
 }

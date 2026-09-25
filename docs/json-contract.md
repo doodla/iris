@@ -459,6 +459,13 @@ An interrupt that arrives before Iris starts sending a Veo request stops without
 keeps `retryable: true`, names no job, and leaves no job record (see
 [jobs.md](jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
 
+`job_not_ready` (exit 4) from `jobs download` means the job was still `submitting` or `running`
+when the command looked. If the status check that `jobs download` makes first failed transiently,
+the error adds `details.status_checked: false` (the job was only *last known* to be running) next
+to a `status_refresh_failed` warning; a check that failed for any other reason (a missing key,
+rejected credentials, no access, quota) is reported as that error instead, with the job's
+identifiers (see [jobs.md](jobs.md#downloads)).
+
 For job outputs, `artifact_expired` means the output is gone for good: the file host answered 410,
 or 403/404 after the provider's retention period (`job.remote_expires_at`). A 403/404 before that
 is `download_failed` with `retryable: true`, and a status check that finds the operation missing

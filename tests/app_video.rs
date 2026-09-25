@@ -701,13 +701,28 @@ async fn download_refreshes_a_stale_running_record_once_before_deciding() {
     let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
     let v = f.gemini.videos();
 
-    // The refresh fails: the last known status stands, with a warning.
+    // The refresh fails transiently: the last known status stands, with a warning,
+    // and the error says the status was not checked.
     v.push_poll(Err(IrisError::new(ErrorCode::NetworkError, "offline")));
     let mut w = Vec::new();
     let e = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::JobNotReady);
+    assert_eq!(e.details["status_checked"], false);
+    assert!(e.message.contains("last known to be running"), "{}", e.message);
     assert!(has_warning(&w, "status_refresh_failed"), "{w:?}");
     assert_eq!(v.poll_calls.load(Ordering::SeqCst), 1);
+
+    // Any other refresh failure is the download's error, for the job.
+    v.push_poll(Err(IrisError::new(ErrorCode::PermissionDenied, "no access").with_provider_status(403)));
+    let mut w = Vec::new();
+    let e = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::PermissionDenied);
+    assert_eq!(e.exit_code(), 3);
+    assert_eq!(e.job_id.as_deref(), Some(id.as_str()));
+    assert_eq!(e.job_status, Some(JobStatus::Running));
+    assert!(e.remote_operation_id.is_some());
+    assert!(!has_warning(&w, "status_refresh_failed"), "{w:?}");
+    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 2);
 
     // The job finished since the last check: one refresh, then the download.
     f.mount_video(1).await;
@@ -716,11 +731,11 @@ async fn download_refreshes_a_stale_running_record_once_before_deciding() {
     let res = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
     assert_eq!(res.job.status, JobStatus::Succeeded);
     assert_eq!(res.job.outputs[0].download_state, DownloadState::Downloaded);
-    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 3);
 
     // A succeeded record is never polled again.
     jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
-    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(v.poll_calls.load(Ordering::SeqCst), 3);
     assert_eq!(f.submits(), 1);
 }
 

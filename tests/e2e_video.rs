@@ -187,6 +187,66 @@ fn jobs_download_checks_a_running_record_once_and_downloads_a_job_that_finished_
 }
 
 #[test]
+fn jobs_download_reports_a_failed_status_check_unless_it_is_transient() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    let assert_job = |v: &Value| {
+        assert_eq!(v["error"]["job_id"], id.as_str(), "{v}");
+        assert_eq!(v["error"]["job_status"], "running");
+        assert_eq!(v["error"]["provider"], "gemini");
+        assert_eq!(v["error"]["remote_operation_id"], veo.op_name.as_str());
+    };
+
+    // A later process without the key cannot check the job: that is the error
+    // (exit 3), not "the job is still running" (exit 4).
+    let v = sb
+        .iris()
+        .env("IRIS_GEMINI_BASE_URL", veo.api.uri())
+        .args(["jobs", "download", &id, "--json"])
+        .run()
+        .err(3, "missing_credentials");
+    assert_job(&v);
+    assert_eq!(veo.polls(), 0);
+
+    // The provider rejects the key, or denies access: the same errors `jobs wait` reports.
+    for (http, rpc, code) in
+        [(401, "UNAUTHENTICATED", "authentication_failed"), (403, "PERMISSION_DENIED", "permission_denied")]
+    {
+        veo.operation.set(google_error(http, rpc, "The caller does not have permission", json!([])));
+        let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(3, code);
+        assert_job(&v);
+        assert_eq!(v["error"]["provider_status"], http);
+        assert!(!warning_codes(&v).contains(&"status_refresh_failed".to_string()), "{v}");
+        sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(3, code);
+        assert_eq!(sb.record(&id)["status"], "running", "a failed check never changes the job");
+    }
+
+    // A transient failure (retried, then given up): the last known status stands,
+    // and the result says it was not checked.
+    veo.operation.set(
+        google_error(503, "UNAVAILABLE", "The service is currently unavailable.", json!([]))
+            .insert_header("retry-after-ms", "5"),
+    );
+    let v =
+        sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(4, "job_not_ready");
+    assert_job(&v);
+    assert_eq!(v["error"]["details"]["status_checked"], false, "{v}");
+    assert_eq!(v["error"]["retryable"], true);
+    assert!(v["error"]["message"].as_str().unwrap().contains("last known to be running"), "{v}");
+    assert!(warning_codes(&v).contains(&"status_refresh_failed".to_string()), "{v}");
+
+    // A successful check of a job that is still running is plain job_not_ready.
+    veo.operation.set(veo_running(&veo.op_name));
+    let v =
+        sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(4, "job_not_ready");
+    assert!(v["error"]["details"].is_null(), "{v}");
+    assert!(v["error"]["message"].as_str().unwrap().contains("is still running (last checked"), "{v}");
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
+#[test]
 fn video_generate_waits_and_saves_in_one_command() {
     let sb = Sandbox::new();
     let veo = VeoMock::start();

@@ -652,9 +652,15 @@ fn jobs_list_status_delete_on_records_from_the_jobs_api() {
     assert!(v["warnings"].as_array().unwrap().iter().any(|w| w["code"] == "status_refresh_failed"), "{v}");
     assert_eq!(store(&sandbox).load(&running).unwrap().status(), JobStatus::Running);
 
+    // Checking whether the job finished needs the credential: without it the
+    // download reports that, for the job, rather than claiming the job is not ready.
     let out = run(iris(&sandbox).args(["jobs", "download", running.as_str(), "--json"]));
-    assert_eq!(out.code, 4);
-    assert_eq!(out.error_code(), "job_not_ready");
+    assert_eq!(out.code, 3, "{}", out.stdout);
+    assert_eq!(out.error_code(), "missing_credentials");
+    let v = out.json();
+    assert_eq!(v["error"]["job_id"], running.as_str());
+    assert_eq!(v["error"]["job_status"], "running");
+    assert!(v["error"]["remote_operation_id"].is_string(), "{v}");
     let out = run(iris(&sandbox).args(["jobs", "wait", failed.as_str(), "--json"]));
     assert_eq!(out.code, 1);
     let v = out.json();

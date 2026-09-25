@@ -344,8 +344,20 @@ Saved /home/you/job_01m3a5ffjkdnar227bba60tfa2.mp4
 `iris jobs download` on a job whose record still says `running` first checks its status once
 (a free status read, as `jobs status` does), because the local record may be stale: if the
 provider has finished meanwhile, it downloads right away. If the job is still running it exits
-**4** (`job_not_ready`) — it never waits or resubmits. If the check itself fails, the last known
-status stands and a `status_refresh_failed` warning says why. The still-running case, against a
+**4** (`job_not_ready`) — it never waits or resubmits. If the check itself fails:
+
+- for a credential, access, quota, or configuration reason (`missing_credentials`,
+  `authentication_failed`, `permission_denied`, `quota_exceeded`, `config_invalid`, or another
+  error that is not retryable), the download reports that error, with the job's id, status, and
+  remote operation id, exactly as `jobs wait` would (exit 3 for the first four): the job is not
+  known to be unfinished, and retrying without fixing the cause would never succeed;
+- for a transient reason (network, timeout, rate limit, a provider 5xx — errors with
+  `retryable: true`), the last known status stands: `job_not_ready` (exit 4) with
+  `details.status_checked: false`, a message saying the job was *last known* to be running, and a
+  `status_refresh_failed` warning that says why the check failed.
+
+`jobs status` differs on purpose: it always shows the last known status, with a
+`status_refresh_failed` warning, whatever made the check fail. The still-running case, against a
 local mock server standing in for the Gemini API:
 
 ```console
