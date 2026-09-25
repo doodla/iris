@@ -32,7 +32,12 @@ die() {
 command -v python3 >/dev/null 2>&1 || die "python3 is required for the local HTTP server"
 [ -f "$INSTALLER" ] || die "install.sh not found at $INSTALLER"
 
-W=$(mktemp -d "${TMPDIR:-/tmp}/iris-installer-tests.XXXXXX") || die "mktemp failed"
+# W is the physical path of the work directory, so expected paths match the ones the
+# installer resolves: macOS sets TMPDIR with a trailing slash, under /var, a symlink to
+# /private/var.
+tmp_root=${TMPDIR:-/tmp}
+W=$(mktemp -d "${tmp_root%/}/iris-installer-tests.XXXXXX") || die "mktemp failed"
+W=$(cd "$W" && pwd -P) || die "cannot resolve $W"
 SERVER_PID=
 finish() {
   if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2>/dev/null; fi
