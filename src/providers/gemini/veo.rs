@@ -347,10 +347,21 @@ fn progress_percent(metadata: Option<&serde_json::Value>) -> Option<f32> {
 fn operation_error(status: &RpcStatus, remote_id: &str) -> IrisError {
     let code_name = status.code.map(client::rpc_code_name);
     let described = code_name.clone().unwrap_or_else(|| "no code".to_string());
+    // A failure on the provider's side (seen live: INTERNAL, "please try again in a
+    // few minutes") is not the request's fault, and Google charges only for videos
+    // it generated; anything else points at the prompt or inputs.
+    let hint = match code_name.as_deref() {
+        Some("INTERNAL" | "UNAVAILABLE" | "DEADLINE_EXCEEDED") => {
+            "the provider failed on its side and charges only for generated videos; this job cannot be \
+             resumed, but submitting the same request again later may succeed (a new job, billed if it \
+             produces a video)"
+        }
+        _ => "submitting a new job is billed again; check the prompt and inputs first",
+    };
     let mut err = IrisError::new(ErrorCode::RemoteJobFailed, format!("the Veo job failed ({described})"))
         .with_provider(ProviderId::Gemini)
         .with_remote_operation(remote_id)
-        .with_hint("submitting a new job is billed again; check the prompt and inputs first");
+        .with_hint(hint);
     if let Some(name) = code_name {
         err = err.with_provider_code(name);
     }

@@ -622,6 +622,16 @@ async fn an_operation_error_is_a_failed_remote_job() {
     assert_eq!(err.provider_code.as_deref(), Some("INTERNAL"));
     assert_eq!(err.details["provider_message"], "Internal error while generating the video.");
     assert_eq!(err.provider, Some(ProviderId::Gemini));
+    // A provider-side failure says that trying again later may work; a request
+    // the provider refused points at the prompt and inputs.
+    let hint = err.hint.as_deref().unwrap();
+    assert!(hint.contains("failed on its side") && hint.contains("again later may succeed"), "{hint}");
+    let err = failed(
+        poll_json(json!({"name": OPERATION, "done": true, "error": {"code": 3, "message": "bad prompt"}}))
+            .await,
+    );
+    assert_eq!(err.provider_code.as_deref(), Some("INVALID_ARGUMENT"));
+    assert!(err.hint.as_deref().unwrap().contains("check the prompt and inputs"), "{:?}", err.hint);
 }
 
 #[tokio::test]
