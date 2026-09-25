@@ -267,8 +267,8 @@ developer's real key for the new provider never reaches the offline suite.
 **Contract, help text, package metadata, documents, and test and verification tooling that name
 providers, updated by hand:**
 
-- The JSON Schema. `ProviderId` is an enum in the published schema (every `provider` field), so
-  regenerate it with `cargo run -q -- schema > schema/iris-output.v1.schema.json`
+- The JSON Schema. The published schema lists the known provider ids (an open set: a later id
+  still validates), so regenerate it with `cargo run -q -- schema > schema/iris-output.v1.schema.json`
   (`tests/schema_contract.rs` fails until you do). A new provider value is an additive change
   under the [versioning policy](json-contract.md#schema-versioning-policy): no `schema_version`
   bump, but it gets a changelog entry.

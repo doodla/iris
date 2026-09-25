@@ -21,7 +21,10 @@ relevant doc under docs/ was updated to match. If no, say "none." -->
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --all-targets --locked -- -D warnings`
 - [ ] `cargo test --locked`
-- [ ] `sh tests/installer/run.sh` (only if `install.sh` changed)
+- [ ] `sh tests/installer/run.sh` (only if `install.sh` or `tests/installer/` changed)
+- [ ] `shellcheck -s sh install.sh` and `shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh`
+      (only if shell scripts changed)
+- [ ] `sh tests/live/mock-run.sh` (only if `scripts/live-verify.sh` or `tests/live/` changed)
 - [ ] Documented commands were actually run against the built binary (only if `docs/`, `README.md`,
       or `--help` text changed)
 
