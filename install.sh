@@ -18,7 +18,8 @@
 # What it does, in order:
 #   1. Detects the platform: Linux x86_64, macOS x86_64 or macOS arm64 (arm64 is
 #      preferred on Apple silicon even under Rosetta). Anything else fails.
-#   2. Needs curl (or wget), tar, and sha256sum (or shasum).
+#   2. Needs curl (or wget), tar, and sha256sum (or shasum). A wget that says
+#      it does not verify HTTPS certificates (BusyBox's built-in TLS) is refused.
 #   3. Resolves "latest" by following <base>/latest to .../tag/<tag> (no API).
 #   4. Downloads SHA256SUMS and iris-<tag>-<target>.tar.gz into a private
 #      temporary directory, removed on exit or interruption.
@@ -216,12 +217,22 @@ http_get() {
     wget_status=$?
     http_status=
     final_url=$1
-    while read -r field value _; do
+    tls_unverified=no
+    while read -r field value rest; do
       case $field in
         HTTP/*) http_status=$value ;;
         [Ll]ocation:) final_url=$value ;;
       esac
+      case "$field $value $rest" in
+        *"certificate validation not implemented"*) tls_unverified=yes ;;
+      esac
     done <"$tmp_dir/headers"
+    # BusyBox wget built with its own TLS code does not check certificates, and
+    # says so. Without that check anyone on the network path could serve an
+    # archive and a SHA256SUMS that matches it, so nothing it fetched is used.
+    if [ "$tls_unverified" = yes ]; then
+      die "this wget does not verify HTTPS certificates (it says: TLS certificate validation not implemented); install curl, then run the installer again"
+    fi
     # The last status line decides, not wget's exit code: GNU wget exits 8 on
     # an HTTP error status, but BusyBox wget exits 1, as it does on a network
     # failure. An error status is a response for the caller to report; any

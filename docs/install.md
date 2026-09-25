@@ -69,7 +69,12 @@ What it does, in order:
    32-bit system — fails immediately with a message naming what it detected; Iris does not
    support Windows in v1 (no builds, no CI, no installer path).
 2. Requires `curl` (or `wget`), `tar`, and `sha256sum` (or `shasum -a 256`); missing tools are
-   named individually rather than one generic "requirements not met" message.
+   named individually rather than one generic "requirements not met" message. `curl` is used
+   when both are installed. Whether BusyBox `wget` checks HTTPS certificates depends on how
+   BusyBox was built: when `wget` reports that it does not (BusyBox's built-in TLS prints
+   `TLS certificate validation not implemented`), the installer stops before using anything it
+   downloaded, since anyone on the network path could then replace the archive and its checksum
+   together. Install `curl` there.
 3. Resolves `latest` by following `https://github.com/doodla/iris/releases/latest` to its
    redirect target — no GitHub API call, so it works without a token and isn't rate-limited.
 4. Downloads the release archive and its `SHA256SUMS` file into a private `mktemp -d` directory
@@ -240,12 +245,13 @@ It covers platform detection (including unsupported systems and Rosetta), versio
 (`latest`, pinned, pre-release, invalid), network failures (HTTP errors, dropped, truncated, and
 refused connections, a `TERM` mid-download), checksum failures, archive validation (path
 traversal, links and special files, unexpected entries, a binary that does not run), install
-directories, `curl` versus GNU and BusyBox `wget` and `sha256sum` versus `shasum`, never reading
-stdin, `PATH` hints, and upgrades that keep the old `iris` when anything fails. It prints one line
-per case and exits non-zero if any case fails. `INSTALLER_SHELL='bash --posix'` (or `dash`) runs
-the installer under another shell. The BusyBox cases use a `busybox` binary for every tool when
-one is on `PATH` (or named by `BUSYBOX=/path/to/busybox`), as on Alpine; otherwise they run GNU
-`wget` behind a shim with BusyBox's exit codes.
+directories, `curl` versus GNU and BusyBox `wget` (including a `wget` that says it does not verify
+certificates) and `sha256sum` versus `shasum`, never reading stdin, `PATH` hints, and upgrades that
+keep the old `iris` when anything fails. It prints one line per case and exits non-zero if any
+case fails. `INSTALLER_SHELL='bash --posix'` (or `dash`) runs the installer under another shell.
+The BusyBox cases use a `busybox` binary for every tool when one is on `PATH` (or named by
+`BUSYBOX=/path/to/busybox`), as on Alpine; otherwise they run GNU `wget` behind a shim with
+BusyBox's exit codes.
 
 CI also runs the release path itself on every change: it builds the real
 `x86_64-unknown-linux-musl` binary, packages it twice (the two archives must be byte-identical),

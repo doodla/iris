@@ -137,6 +137,15 @@ make_busybox_toolbox() {
     chmod 755 "$tb/wget"
     BUSYBOX_KIND="GNU wget with BusyBox exit codes"
   fi
+  # BusyBox wget built with its own TLS code checks no certificate and prints
+  # this note on every HTTPS connection. The fixtures are served over plain
+  # HTTP, so a wget put in front of the BusyBox toolbox adds the note.
+  if [ -n "$BUSYBOX_KIND" ]; then
+    mkdir -p "$W/tools/tls-unverified"
+    printf '#!/bin/sh\necho "wget: note: TLS certificate validation not implemented" >&2\nexec "%s" "$@"\n' \
+      "$tb/wget" >"$W/tools/tls-unverified/wget"
+    chmod 755 "$W/tools/tls-unverified/wget"
+  fi
 }
 
 start_server() {
@@ -782,6 +791,19 @@ tool_cases() {
     run truncate/good --version v0.1.0
     expect_status 1
     expect_err "network error: could not download $SERVER/truncate/good/download/v0.1.0/$NAME"
+    expect_old_kept "$BIN"
+    end
+
+    # Without certificate checks, whoever is on the network path could serve
+    # an archive and a SHA256SUMS that matches it: stop at the first download.
+    begin "BusyBox wget that does not verify certificates is refused: old iris kept"
+    TOOLS=$W/tools/busybox
+    FRONT_PATH=$W/tools/tls-unverified
+    seed_old "$BIN"
+    run ok/good
+    expect_status 1
+    expect_err "this wget does not verify HTTPS certificates (it says: TLS certificate validation not implemented); install curl"
+    expect_no_out "installing iris"
     expect_old_kept "$BIN"
     end
   else
