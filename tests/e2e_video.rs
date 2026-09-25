@@ -1186,6 +1186,52 @@ fn jobs_delete_checks_every_record_before_deleting_any() {
     veo.assert_no_credential_leaks();
 }
 
+#[test]
+fn deleting_a_succeeded_job_whose_output_was_not_downloaded_needs_force() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    veo.succeed();
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--no-download", "--json"]).run().ok();
+    let until = job_of(&v)["remote_expires_at"].as_str().unwrap().to_string();
+    assert_eq!(job_of(&v)["outputs"][0]["download_state"], "pending");
+
+    // The paid output was never downloaded and the provider still keeps it: the
+    // record is the only reference to it.
+    for args in [vec!["jobs", "delete", id.as_str(), "--json"], vec!["jobs", "delete", "--all", "--json"]] {
+        let v = sb.iris().args(&args).run().err(2, "invalid_argument");
+        let error = &v["error"];
+        let message = error["message"].as_str().unwrap();
+        assert!(message.contains("output(s) 0") && message.contains(&until), "{message}");
+        assert!(error["hint"].as_str().unwrap().contains("iris jobs download"), "{v}");
+        assert!(error["hint"].as_str().unwrap().contains("--force"), "{v}");
+        assert_eq!(error["details"]["deleted"], json!([]));
+        assert!(sb.record_path(&id).is_file(), "nothing was deleted");
+    }
+    let v = sb.iris().args(["jobs", "delete", &id, "--json"]).run().err(2, "invalid_argument");
+    assert_eq!(v["error"]["details"]["outputs_not_downloaded"], json!([0]));
+    assert_eq!(v["error"]["details"]["remote_expires_at"], until.as_str());
+    assert_eq!(v["error"]["job_status"], "succeeded");
+
+    // Once the output is saved, the record may go.
+    sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    let v = sb.iris().args(["jobs", "delete", &id, "--json"]).run().ok();
+    assert_eq!(v["result"]["deleted"], json!([id]));
+    assert!(sb.path(&format!("{id}.mp4")).is_file());
+
+    // Past the retention period the outputs may already be gone: no protection.
+    let old = submit_detached(&sb, &veo, &[]);
+    sb.iris().gemini(&veo.api).args(["jobs", "wait", &old, "--no-download", "--json"]).run().ok();
+    backdate_record(&sb, &old, 3);
+    sb.iris().args(["jobs", "delete", &old, "--json"]).run().ok();
+    // And --force always deletes.
+    let forced = submit_detached(&sb, &veo, &[]);
+    sb.iris().gemini(&veo.api).args(["jobs", "wait", &forced, "--no-download", "--json"]).run().ok();
+    sb.iris().args(["jobs", "delete", &forced, "--force", "--json"]).run().ok();
+    assert_eq!(veo.submits(), 3);
+    veo.assert_no_credential_leaks();
+}
+
 // ----- scenario 9: concurrent waits --------------------------------------------------------------
 
 #[test]

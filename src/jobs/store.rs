@@ -25,7 +25,7 @@ use serde_json::Value;
 
 use super::record::{JOB_RECORD_VERSION, JobRecord};
 use super::{JobId, now};
-use crate::domain::Warning;
+use crate::domain::{JobStatus, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::Timeouts;
 
@@ -88,6 +88,10 @@ pub enum RefusalKind {
     /// `submission_unknown`): the submitter has probably stopped, but a live one
     /// could still record the operation id.
     Abandoned,
+    /// `succeeded`, with outputs not downloaded yet (`pending` or `failed`) while
+    /// the provider still keeps them: the record is the only reference to paid
+    /// outputs that can still be saved.
+    NotDownloaded,
 }
 
 /// A refused deletion: its kind, a short description for lists, and the error
@@ -301,11 +305,48 @@ impl JobStore {
                 });
             }
         };
-        if force || !record.is_active() {
+        if force {
             return Ok(());
         }
         let status = record.status();
-        let refusal = if record.is_stale_submitting(now(), self.submit_budget) {
+        let now = now();
+        let waiting: Vec<u32> = if status == JobStatus::Succeeded && !record.remote_expired(now) {
+            record.outputs().iter().filter(|o| o.awaits_download()).map(|o| o.index).collect()
+        } else {
+            Vec::new()
+        };
+        if !waiting.is_empty() {
+            let listed = waiting.iter().map(u32::to_string).collect::<Vec<_>>().join(", ");
+            let kept = match record.remote_expires_at() {
+                Some(until) => format!("the provider keeps them at least until about {until}"),
+                None => {
+                    "the provider documents no retention period, so they may still be available".to_string()
+                }
+            };
+            let summary = match record.remote_expires_at() {
+                Some(until) => {
+                    format!("succeeded; output(s) {listed} not downloaded, kept until about {until}")
+                }
+                None => format!("succeeded; output(s) {listed} not downloaded"),
+            };
+            let error = IrisError::invalid(format!(
+                "job {id} succeeded, but its output(s) {listed} were not downloaded; {kept}, and deleting the \
+                 local record would lose the only reference to them"
+            ))
+            .with_job(id.to_string(), Some(status))
+            .with_detail("outputs_not_downloaded", waiting)
+            .with_detail("remote_expires_at", record.remote_expires_at().map(|t| t.to_string()))
+            .with_hint(format!(
+                "download them first with `iris jobs download {id}`, or pass --force to delete the local record \
+                 anyway (the outputs stay with the provider until its retention period ends, but Iris can no \
+                 longer fetch them)"
+            ));
+            return Err(DeleteRefusal { kind: RefusalKind::NotDownloaded, summary, error });
+        }
+        if !record.is_active() {
+            return Ok(());
+        }
+        let refusal = if record.is_stale_submitting(now, self.submit_budget) {
             DeleteRefusal {
                 kind: RefusalKind::Abandoned,
                 summary: "submitting; probably abandoned, shown as submission_unknown".into(),
@@ -340,8 +381,10 @@ impl JobStore {
     /// Delete a job's LOCAL record and its lock files (never downloaded media, never
     /// anything remote), under the job's record lock. Refuses what
     /// [`JobStore::check_delete`] refuses: active jobs (`submitting`/`running`,
-    /// which would become unrecoverable) and unreadable records unless `force`, and
-    /// a missing record always (`job_not_found`).
+    /// which would become unrecoverable), succeeded jobs whose outputs are not all
+    /// downloaded while the provider still keeps them (`remote_expires_at` in the
+    /// future, or unknown), and unreadable records unless `force`, and a missing
+    /// record always (`job_not_found`).
     pub fn delete(&self, id: &JobId, force: bool) -> Result<(), IrisError> {
         let _lock = self.lock_record(id)?;
         self.check_delete(id, force).map_err(|refusal| refusal.error)?;

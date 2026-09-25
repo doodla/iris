@@ -589,6 +589,81 @@ fn deletion_can_be_checked_first_with_the_same_rule() {
     assert!(listing.warnings.contains(&listing.unreadable[0].warning));
 }
 
+/// A job that succeeded at `at` with `uris` as outputs, retained for 2 days.
+fn create_succeeded(store: &JobStore, at: Timestamp, uris: &[&str]) -> JobId {
+    use iris::providers::{RemoteArtifact, RemoteStatus};
+    let mut rec = JobRecord::new(new_job(), at).unwrap();
+    rec.mark_submitted(
+        &SubmittedOperation { remote_id: "operations/9".into(), provider_request_id: None },
+        at,
+    )
+    .unwrap();
+    let outputs = uris.iter().map(|u| RemoteArtifact { uri: u.to_string(), media_type: None }).collect();
+    rec.apply_poll(
+        RemoteStatus::Succeeded { outputs, usage: None, warnings: vec![] },
+        Some(Duration::from_secs(2 * 24 * 3600)),
+        at,
+    )
+    .unwrap();
+    store.create(&rec).unwrap();
+    rec.job_id().clone()
+}
+
+#[test]
+fn succeeded_jobs_with_outputs_still_to_download_need_force_while_the_provider_keeps_them() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let good = "https://generativelanguage.googleapis.com/v1beta/files/a:download?alt=media";
+    let id = create_succeeded(&store, ago(60), &[good, good, "not a url"]);
+
+    let refusal = store.check_delete(&id, false).unwrap_err();
+    assert_eq!(refusal.kind, RefusalKind::NotDownloaded);
+    let e = refusal.error;
+    assert_eq!(e.code, ErrorCode::InvalidArgument);
+    assert_eq!(e.job_status, Some(JobStatus::Succeeded));
+    // The unusable output (index 2) can never be downloaded, so it protects nothing.
+    assert_eq!(e.details["outputs_not_downloaded"], json!([0, 1]));
+    let until = store.load(&id).unwrap().remote_expires_at().unwrap().to_string();
+    assert_eq!(e.details["remote_expires_at"], json!(until));
+    assert!(e.message.contains("output(s) 0, 1") && e.message.contains(&until), "{}", e.message);
+    assert!(e.hint.as_deref().unwrap().contains(&format!("iris jobs download {id}")));
+    assert!(store.delete(&id, false).is_err());
+    assert!(store.load(&id).is_ok());
+
+    // A failed download still leaves the output worth protecting; once every
+    // usable output is downloaded (or expired), the record is no longer needed.
+    let artifact = |index| iris::domain::Artifact {
+        index,
+        path: format!("/tmp/out-{index}.mp4"),
+        media_type: "video/mp4".into(),
+        bytes: 1,
+        sha256: "00".into(),
+        width: None,
+        height: None,
+        duration_seconds: None,
+    };
+    store.update(&id, |r| r.mark_output_downloaded(0, &artifact(0), now())).unwrap();
+    store
+        .update(&id, |r| r.mark_output_failed(1, &IrisError::new(ErrorCode::DownloadFailed, "x"), now()))
+        .unwrap();
+    assert_eq!(
+        store.check_delete(&id, false).unwrap_err().error.details["outputs_not_downloaded"],
+        json!([1])
+    );
+    store
+        .update(&id, |r| r.mark_output_expired(1, &IrisError::new(ErrorCode::ArtifactExpired, "gone"), now()))
+        .unwrap();
+    assert!(store.check_delete(&id, false).is_ok());
+
+    // Past the retention period the outputs may be gone: no protection.
+    let old = create_succeeded(&store, ago(3 * 24 * 3600), &[good]);
+    assert!(store.check_delete(&old, false).is_ok());
+    // --force deletes a protected record.
+    let other = create_succeeded(&store, ago(60), &[good]);
+    store.delete(&other, true).unwrap();
+    assert_eq!(store.load(&other).unwrap_err().code, ErrorCode::JobNotFound);
+}
+
 #[test]
 fn download_lock_is_exclusive() {
     let (_dir, store, id) = store_with_running_job();

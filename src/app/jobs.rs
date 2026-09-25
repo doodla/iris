@@ -215,7 +215,8 @@ pub async fn download(
 /// with the store's own rule ([`JobStore::check_delete`](crate::jobs::JobStore::check_delete),
 /// the status on disk) before anything is deleted; if any is refused, nothing is
 /// deleted and the error lists every refusal, with `details.deleted: []`. Without
-/// `force`, active jobs (`submitting`, `running`) and unreadable records are
+/// `force`, active jobs (`submitting`, `running`), succeeded jobs with outputs not
+/// yet downloaded that the provider still keeps, and unreadable records are
 /// refused, and `all` skips unreadable records with a warning. With `all` and
 /// `force`, unreadable record files (regular files named `<job_id>.json` in the
 /// jobs directory, nothing else) are deleted too, listed in `deleted` and named in
@@ -306,6 +307,9 @@ fn refused_deletion(mut refusals: Vec<(JobId, DeleteRefusal)>, requested: usize,
     if kinds.contains(&RefusalKind::Active) {
         steps.push("wait for active jobs to finish (`iris jobs wait <id>`)");
     }
+    if kinds.contains(&RefusalKind::NotDownloaded) {
+        steps.push("download the outputs of succeeded jobs first (`iris jobs download <id>`)");
+    }
     if kinds.contains(&RefusalKind::NotFound) {
         steps.push("check the ids with `iris jobs list`");
     }
@@ -313,8 +317,8 @@ fn refused_deletion(mut refusals: Vec<(JobId, DeleteRefusal)>, requested: usize,
         steps.push("delete the other jobs by id");
     }
     let force = kinds.iter().any(|k| *k != RefusalKind::NotFound).then_some(
-        "pass --force to delete the local records anyway (remote jobs are not cancelled; for a job still \
-         submitting, check the provider console first)",
+        "pass --force to delete the local records anyway (remote jobs are not cancelled, and outputs not \
+         downloaded can no longer be fetched; for a job still submitting, check the provider console first)",
     );
     let hint = match (steps.is_empty(), force) {
         (false, Some(force)) => format!("{}, or {force}", steps.join(", ")),

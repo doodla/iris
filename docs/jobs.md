@@ -454,11 +454,29 @@ error[invalid_argument]: job job_01m39pq2gd0a7w3k5c8e1v6h9n is recorded as submi
   job: job_01m39pq2gd0a7w3k5c8e1v6h9n (status submitting)
 ```
 
+A job that **succeeded** but has outputs not downloaded yet (`pending`, or `failed` and worth
+retrying) is protected the same way while the provider still keeps them — until
+`remote_expires_at`, or indefinitely when the provider documents no retention period: its record
+is the only reference Iris has to those paid outputs. The error names the outputs and the
+retention time (also as `details.outputs_not_downloaded` and `details.remote_expires_at`):
+
+```console
+$ iris jobs delete job_01m3b8r2k7w1x9d4f6g3h5j2qe
+error[invalid_argument]: job job_01m3b8r2k7w1x9d4f6g3h5j2qe succeeded, but its output(s) 0 were not downloaded; the provider keeps them at least until about 2026-09-27T09:00:01Z, and deleting the local record would lose the only reference to them
+  hint: download them first with `iris jobs download job_01m3b8r2k7w1x9d4f6g3h5j2qe`, or pass --force to delete the local record anyway (the outputs stay with the provider until its retention period ends, but Iris can no longer fetch them)
+  job: job_01m3b8r2k7w1x9d4f6g3h5j2qe (status succeeded)
+```
+
+Once every output is downloaded (or `expired`), or once `remote_expires_at` has passed, the record
+can be deleted without `--force`. An output whose URI the provider returned unusable can never be
+downloaded, so it protects nothing.
+
 **Deletion is all or nothing.** Every job named (with `--all`, every record) is checked before
 anything is deleted; if any of them is refused — still active, not found, or unreadable without
-`--force` — nothing is deleted, the error says so, and in `--json` mode `error.details.deleted` is
-`[]`. With several refusals (or any with `--all`), one `invalid_argument` names each job and why,
-and `error.details.refused` lists their ids:
+`--force`, or a succeeded job with outputs still to download — nothing is deleted, the error says
+so, and in `--json` mode `error.details.deleted` is `[]`. With several refusals (or any with
+`--all`), one `invalid_argument` names each job and why, and `error.details.refused` lists their
+ids:
 
 ```console
 $ iris jobs delete --all
