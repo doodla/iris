@@ -34,13 +34,15 @@ $ cargo check --locked --all-targets     # also run on the pinned MSRV toolchain
 $ cargo deny check                        # dependency licenses and advisories
 ```
 
-If you touched `install.sh`, `scripts/`, or `tests/installer/`, also run `shellcheck` and the
-installer's offline test suite:
+If you touched `install.sh`, `scripts/`, `tests/installer/`, or `tests/live/`, also run
+`shellcheck`, the installer's offline test suite, and the offline test of
+`scripts/live-verify.sh` (its `--plan` and its mock mode against a local mock; free, no keys):
 
 ```console
 $ shellcheck -s sh install.sh
-$ shellcheck scripts/*.sh tests/installer/*.sh
+$ shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh
 $ sh tests/installer/run.sh
+$ cargo build --locked && sh tests/live/mock-run.sh target/debug/iris
 ```
 
 If you changed anything that appears in `--json` output (the result and error types the schema is

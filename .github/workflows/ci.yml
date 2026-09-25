@@ -155,8 +155,29 @@ jobs:
           sudo apt-get install -y busybox-static
       # Offline installer tests: fixtures served from 127.0.0.1 only.
       - run: shellcheck -s sh install.sh
-      - run: shellcheck scripts/*.sh tests/installer/*.sh
+      - run: shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh
       - run: sh tests/installer/run.sh
+
+  live-verify-mock:
+    name: live-verify.sh (offline mock)
+    # scripts/live-verify.sh is the opt-in, paid live verification, which CI
+    # never runs. This checks the script itself for free: its --plan (dry runs
+    # only) and a full run in its mock mode against a mock of both APIs on
+    # 127.0.0.1 (tests/live/mock-run.sh), which runs every live-verify.sh under
+    # env -i with fake keys. No key is ever set: the step also unsets both.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo build --locked
+      - name: live-verify.sh --plan and mock mode, offline
+        run: env -u OPENAI_API_KEY -u GEMINI_API_KEY sh tests/live/mock-run.sh target/debug/iris
 
   release-dry-run:
     name: release dry run (x86_64-unknown-linux-musl)

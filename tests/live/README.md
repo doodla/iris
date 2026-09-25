@@ -190,6 +190,24 @@ The Veo marker of a mock run is `iris-live/veo-submitted.mock`, so a mock run
 never blocks a live one. Point `HOME` or `XDG_STATE_HOME` at a temporary
 directory to keep it out of your own state directory.
 
+`tests/live/mock-run.sh` does all of this for you, offline and for free, and CI
+runs it on every change. It serves both APIs from `tests/live/mock_providers.py`
+on `127.0.0.1` and runs the script under `env -i` with fake keys:
+
+- `--plan`, with every proxy variable pointing at the mock so that any request
+  trying to leave the machine would be recorded, must print the five paid
+  estimates and send nothing.
+- A full mock-mode run must pass all eight steps with `mode=MOCK` ledger lines,
+  and the mock must receive exactly one OpenAI generation and one edit, two
+  Gemini `generateContent` calls, one Veo submission, one poll, and one
+  download.
+- Running it again must send no request at all.
+
+```sh
+cargo build --locked
+sh tests/live/mock-run.sh target/debug/iris   # or the path of another iris build
+```
+
 The offline process tests are the free way to check the same behavior against
 mocks:
 
