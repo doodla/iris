@@ -105,11 +105,13 @@ machine-readable contract for agents.
 - A stable error taxonomy with documented exit codes (0, 1, 2, 3, 4, 5, 130) and a registry of
   warning codes; tests check the documented tables and every help example against the code.
 - Errors name the way forward: `unknown_model` lists the models the command can use
-  (`details.candidates`), and a name Iris declines (a deprecated, retired, limited, or
-  served-elsewhere model such as `dall-e-3`, `gpt-image-1`, `imagen-4` or `veo-3`, or the bare
-  `nano-banana`) says why, with the provider's date, and what to use instead. An option or input
-  the model does not take names the models that do (`details.supported_by`), and a value outside
-  an option's listed values lists them (`details.allowed`).
+  (`details.candidates`), a near miss such as `gpt-image-2.5` or `Nano-Banana-2` asks "did you
+  mean …?" with the models it nearly names (`details.suggestions`), and a name Iris declines (a
+  deprecated, retired, limited, or served-elsewhere model such as `dall-e-3`, `gpt-image-1`,
+  `imagen-4` or `veo-3`, or the bare `nano-banana`) says why, with the provider's date, and what
+  to use instead. An option or input the model does not take names the models that do
+  (`details.supported_by`), and a value outside an option's listed values lists them
+  (`details.allowed`).
 - `iris models list`/`show`: a one-line summary of what each model is for, the estimate of its
   cheapest single-output request (`lowest_estimate`, computed by the model's own estimator),
   declared operations, options (typed defaults, `max_chars`), machine-readable `constraints`,

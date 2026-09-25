@@ -10,7 +10,7 @@ mod support;
 
 use std::path::Path;
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use support::*;
 
 /// `(value, source)` of one row of `config show --json`.
@@ -928,6 +928,7 @@ fn an_unknown_model_names_the_models_to_use_instead() {
             assert!(v["error"]["provider_status"].is_null(), "{v}");
             assert_eq!(candidate_ids(&v), catalog_ids(Some(op)), "{model} for {op}");
             assert_eq!(v["error"]["hint"], hint, "{model} for {op}");
+            assert_eq!(v["error"]["details"]["suggestions"], json!([]), "{model} for {op}");
         }
     }
     // A declined template gets the same reason, with the replacements for the operation.
@@ -956,6 +957,109 @@ fn an_unknown_model_names_the_models_to_use_instead() {
             "hint: Google shut down Veo 2.0 and Veo 3.0 on the Gemini API, the last of them on \
                                2026-06-30"
         ),
+        "{}",
+        human.stderr
+    );
+    assert_eq!(api.total(), 0, "nothing was sent");
+}
+
+/// A near miss of a catalog model (another case, a display name, the start of an
+/// id, its words with a slip or a word left out) is refused like any unknown model,
+/// and asks "did you mean …?" with the models of the operation it nearly names
+/// (`details.suggestions`) instead of offering `--capabilities-from`, which would
+/// send a guessed id. A tier or version word it has is never dropped.
+#[test]
+fn a_near_miss_model_asks_did_you_mean() {
+    let sb = Sandbox::new();
+    let api = answering_api();
+    for (args, model, suggestions) in [
+        (
+            &["image", "generate", "a fox"][..],
+            "gpt-image-2.5",
+            &["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"][..],
+        ),
+        (&["image", "generate", "a fox"], "Nano-Banana-2", &["gemini-3.1-flash-image"]),
+        (&["image", "generate", "a fox"], "GPT Image 2.5 Flare", &["gpt-image-2.5-flare"]),
+        (&["video", "generate", "waves"], "veo-3.1-lite", &["veo-3.1-lite-generate-preview"]),
+        (
+            &["video", "generate", "waves"],
+            "veo-3.1",
+            &["veo-3.1-fast-generate-preview", "veo-3.1-generate-preview", "veo-3.1-lite-generate-preview"],
+        ),
+        // A tier or version word is never dropped: Fast is not Standard, 2.5 is not 2.
+        (&["video", "generate", "waves"], "veo3-fast", &["veo-3.1-fast-generate-preview"]),
+        (&["image", "generate", "a fox"], "gpt-image-2.5-flair", &["gpt-image-2.5-flare"]),
+        (
+            &["image", "generate", "a fox"],
+            "gpt-image-2.5-mini",
+            &["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"],
+        ),
+        (&["image", "generate", "a fox"], "flare", &["gpt-image-2.5-flare"]),
+        (&["image", "generate", "a fox"], "sunburst", &["gpt-image-2.5-sunburst"]),
+        (&["image", "generate", "a fox"], "nano-banana-lite", &["gemini-3.1-flash-lite-image"]),
+    ] {
+        let v = sb
+            .iris()
+            .openai(&api)
+            .gemini(&api)
+            .args(args)
+            .args(["-m", model, "--dry-run", "--json"])
+            .run()
+            .err(2, "unknown_model");
+        assert_eq!(v["error"]["details"]["suggestions"], json!(suggestions), "{model}");
+        let hint = v["error"]["hint"].as_str().unwrap();
+        let op = format!("{}.generate", args[0]);
+        assert_eq!(
+            hint,
+            format!(
+                "did you mean {}? otherwise run `iris models list --operation {op}` and pass -m <MODEL>",
+                match suggestions {
+                    [one] => one.to_string(),
+                    [a, b] => format!("{a} or {b}"),
+                    [a, b, c] => format!("{a}, {b}, or {c}"),
+                    _ => unreachable!(),
+                }
+            ),
+            "{model}"
+        );
+        assert!(!hint.contains("--capabilities-from"), "{hint}");
+        assert_eq!(candidate_ids(&v), catalog_ids(Some(&op)), "{model}");
+    }
+    // A near miss of a model of another operation suggests nothing for this one.
+    let v = sb
+        .iris()
+        .args(["image", "generate", "x", "-m", "veo-3.1", "--dry-run", "--json"])
+        .run()
+        .err(2, "unknown_model");
+    assert_eq!(v["error"]["details"]["suggestions"], json!([]));
+    assert!(v["error"]["hint"].as_str().unwrap().contains("--capabilities-from <KNOWN_MODEL>"), "{v}");
+    // `models show` suggests among every model; a template near miss is suggested too.
+    let v = sb.iris().args(["models", "show", "veo-lite-3.1", "--json"]).run().err(2, "unknown_model");
+    assert_eq!(v["error"]["details"]["suggestions"], json!(["veo-3.1-lite-generate-preview"]));
+    let v = sb
+        .iris()
+        .args([
+            "image",
+            "generate",
+            "x",
+            "-m",
+            "my-model",
+            "--capabilities-from",
+            "nano-banana-2-LITE",
+            "--json",
+        ])
+        .run()
+        .err(2, "unknown_model");
+    assert_eq!(v["error"]["details"]["suggestions"], json!(["gemini-3.1-flash-lite-image"]));
+    assert_eq!(
+        v["error"]["hint"],
+        "did you mean gemini-3.1-flash-lite-image? otherwise run `iris models list --operation image.generate` \
+         and pass one of its models to --capabilities-from"
+    );
+    let human = sb.iris().args(["image", "generate", "x", "-m", "gpt-image-2.5", "--dry-run"]).run();
+    assert_eq!(human.code, 2);
+    assert!(
+        human.stderr.contains("hint: did you mean gpt-image-2.5-sunburst or gpt-image-2.5-flare?"),
         "{}",
         human.stderr
     );

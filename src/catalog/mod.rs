@@ -87,25 +87,29 @@ impl DeclinedName {
                 }
             })
             .collect();
-        let instead = match instead.as_slice() {
-            [] => return format!("{}; {otherwise}", self.reason),
-            [one] => one.clone(),
-            [first, second] => format!("{first} or {second}"),
-            [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
-        };
-        format!("{}; use {instead}", self.reason)
+        if instead.is_empty() {
+            return format!("{}; {otherwise}", self.reason);
+        }
+        format!("{}; use {}", self.reason, or_list(&instead))
     }
 }
 
-/// The `unknown_model` error for `name`, which no catalog id or alias names: the
-/// model a command was given (`-m/--model`, or `models show <MODEL>`), or, with
-/// `template`, the `--capabilities-from` model; `op` is the operation of the
+/// The `unknown_model` error for `name`, which no model of `models` (the catalog)
+/// names: the model a command was given (`-m/--model`, or `models show <MODEL>`), or,
+/// with `template`, the `--capabilities-from` model; `op` is the operation of the
 /// generation command given the name, if any. The hint names the command that lists
-/// the models for `op`. For a name Iris declines it first says why and what to use
-/// instead for `op` ([`DeclinedName::hint`]) and never suggests `--capabilities-from`;
-/// for any other `-m` it adds how to use a model Iris does not know yet. The app adds
-/// the models the command can use (`details.candidates`).
-pub fn unknown_model(name: &str, template: bool, op: Option<Operation>) -> IrisError {
+/// the models for `op`, after, for a name Iris declines, why and what to use instead
+/// for `op` ([`DeclinedName::hint`]), and otherwise the models `name` nearly names
+/// ([`suggestions`], also in `details.suggestions`) as "did you mean …?". Only an `-m`
+/// that is neither declined nor close to a model gets the suggestion to use a model
+/// Iris does not know yet with `--capabilities-from`. The app adds the models the
+/// command can use (`details.candidates`).
+pub fn unknown_model(
+    models: &[&'static ModelSpec],
+    name: &str,
+    template: bool,
+    op: Option<Operation>,
+) -> IrisError {
     let message = if template {
         format!("--capabilities-from '{name}' is not a known model")
     } else {
@@ -120,15 +124,132 @@ pub fn unknown_model(name: &str, template: bool, op: Option<Operation>) -> IrisE
         Some(op) => format!("run `iris models list --operation {op}` and pass -m <MODEL>"),
         None => "run `iris models list` to see the models Iris knows".to_string(),
     };
-    let hint = match declined(name) {
-        Some(declined) => declined.hint(op.as_slice(), &listing),
-        None if op.is_some() && !template => format!(
+    let declined = declined(name);
+    let suggested = if declined.is_some() { Vec::new() } else { suggestions(models, name, op) };
+    let hint = match (declined, suggested.as_slice()) {
+        (Some(declined), _) => declined.hint(op.as_slice(), &listing),
+        (None, [_, ..]) => format!("did you mean {}? otherwise {listing}", or_list(&suggested)),
+        (None, []) if op.is_some() && !template => format!(
             "{listing}; to use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> to declare \
              which known model's capabilities it has"
         ),
-        None => listing,
+        (None, []) => listing,
     };
-    IrisError::new(ErrorCode::UnknownModel, message).with_hint(hint)
+    IrisError::new(ErrorCode::UnknownModel, message).with_hint(hint).with_detail("suggestions", suggested)
+}
+
+/// The ids of the models of `models` (those implementing `op`, when there is one)
+/// that `name` nearly names, in catalog order. Ignoring ASCII case, the first of
+/// these rules that finds any model decides:
+///
+/// 1. `name` is an id or alias (`Nano-Banana-2`);
+/// 2. `name` is a display name, or either name of a display name `A (B)`
+///    (`GPT Image 2.5 Flare`, `Gemini 3 Pro Image`);
+/// 3. `name` begins an id or alias (`gpt-image-2.5`, `veo-3.1-lite`);
+/// 4. by [`words`]: every word of `name` that some model of `models` has (in its id,
+///    an alias, or its display name) is a word of the model too, as it is or nearly
+///    ([`word_matches`]); of those models, the ones with the most of these words
+///    as they are (`veo3-fast`, `gpt-image-2.5-flair`, `nano-banana-lite`,
+///    `sunburst`). A tier word such as `fast`, `lite`, `pro`, `flare`, or
+///    `sunburst` is therefore never dropped, and `2.5` never becomes `2`. Words no
+///    model has are ignored, but the words some model has must be more than half of
+///    the name's words and include one of letters (`veo-4-ultra` and `sora-2`
+///    suggest nothing: they may name models Iris does not know yet).
+///
+/// A later rule only runs when the earlier ones find nothing, so a closer match is
+/// never listed next to looser ones.
+pub fn suggestions(models: &[&'static ModelSpec], name: &str, op: Option<Operation>) -> Vec<&'static str> {
+    let wanted = name.trim().to_ascii_lowercase();
+    if wanted.is_empty() {
+        return Vec::new();
+    }
+    let usable: Vec<&'static ModelSpec> =
+        models.iter().copied().filter(|m| op.is_none_or(|op| m.supports(op))).collect();
+    let ids = |m: &ModelSpec| -> Vec<String> {
+        std::iter::once(m.id).chain(m.aliases.iter().copied()).map(str::to_ascii_lowercase).collect()
+    };
+    let display_names = |m: &ModelSpec| -> Vec<String> {
+        let full = m.display_name.to_ascii_lowercase();
+        let parts = full.strip_suffix(')').and_then(|rest| rest.split_once(" (")).map(|(a, b)| [a, b]);
+        let mut all: Vec<String> = parts.into_iter().flatten().map(str::to_string).collect();
+        all.push(full);
+        all
+    };
+    let model_words = |m: &ModelSpec| -> Vec<String> {
+        let mut all: Vec<String> = ids(m).iter().chain(&display_names(m)).flat_map(|n| words(n)).collect();
+        all.sort();
+        all.dedup();
+        all
+    };
+    let mut typed = words(&wanted);
+    typed.sort();
+    typed.dedup();
+    // Rule 4: the words of `name` some catalog model has, each of which a suggestion
+    // must have too; a model's score is how many of them it has as they are.
+    let has = |m: &ModelSpec, word: &str| model_words(m).iter().any(|w| word_matches(word, w));
+    let known: Vec<&String> = typed.iter().filter(|t| models.iter().any(|m| has(m, t))).collect();
+    let exact = |m: &ModelSpec| {
+        let own = model_words(m);
+        known.iter().filter(|t| own.contains(t)).count()
+    };
+    // They must be most of the name, and digits alone name no model: `veo-4-ultra`
+    // and `sora-2` may be models Iris does not know yet.
+    let named =
+        known.len() * 2 > typed.len() && known.iter().any(|t| t.bytes().all(|b| b.is_ascii_alphabetic()));
+    let has_all = |m: &ModelSpec| named && known.iter().all(|t| has(m, t));
+    let best = usable.iter().filter(|m| has_all(m)).map(|m| exact(m)).max();
+    let rules: [&dyn Fn(&ModelSpec) -> bool; 4] = [
+        &|m| ids(m).contains(&wanted),
+        &|m| display_names(m).contains(&wanted),
+        &|m| ids(m).iter().any(|n| n.starts_with(&wanted)),
+        &|m| has_all(m) && Some(exact(m)) == best,
+    ];
+    rules
+        .iter()
+        .map(|rule| usable.iter().filter(|m| rule(m)).map(|m| m.id).collect::<Vec<_>>())
+        .find(|found| !found.is_empty())
+        .unwrap_or_default()
+}
+
+/// The lowercase words of `name`: its runs of ASCII letters and of ASCII digits,
+/// so it is split at every other character and between a letter and a digit
+/// (`veo3-fast` → `veo`, `3`, `fast`; `gpt-image-2.5` → `gpt`, `image`, `2`, `5`).
+fn words(name: &str) -> Vec<String> {
+    let mut words: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for c in name.chars().map(|c| c.to_ascii_lowercase()) {
+        let continues =
+            current.chars().last().is_some_and(|last| last.is_ascii_digit() == c.is_ascii_digit());
+        if !c.is_ascii_alphanumeric() || !continues {
+            words.extend((!current.is_empty()).then(|| std::mem::take(&mut current)));
+        }
+        if c.is_ascii_alphanumeric() {
+            current.push(c);
+        }
+    }
+    words.extend((!current.is_empty()).then_some(current));
+    words
+}
+
+/// Whether the typed word `typed` stands for the catalog word `word`: it is `word`,
+/// or both are words of at least four letters (no digits) whose Jaro-Winkler
+/// similarity is at least 0.9. That takes a slip of a letter or two near the end
+/// of a word (`flair` for `flare`, `sunbrust` for `sunburst`), but not another
+/// word that merely starts the same way (`flash` is not `flare`).
+fn word_matches(typed: &str, word: &str) -> bool {
+    let long = |w: &str| w.len() >= 4 && w.bytes().all(|b| b.is_ascii_alphabetic());
+    typed == word || (long(typed) && long(word) && strsim::jaro_winkler(typed, word) >= 0.9)
+}
+
+/// `a`, `a or b`, `a, b, or c`.
+fn or_list(items: &[impl AsRef<str>]) -> String {
+    let items: Vec<&str> = items.iter().map(AsRef::as_ref).collect();
+    match items.as_slice() {
+        [] => String::new(),
+        [one] => one.to_string(),
+        [first, second] => format!("{first} or {second}"),
+        [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+    }
 }
 
 /// The syntax of model ids `provider`'s adapter can send (checked for unknown ids
@@ -211,10 +332,10 @@ pub fn resolve_in(
     }
 
     let Some(template) = capabilities_from else {
-        return Err(unknown_model(model, false, op));
+        return Err(unknown_model(models, model, false, op));
     };
     let Some(spec) = find(template) else {
-        return Err(unknown_model(template, true, op));
+        return Err(unknown_model(models, template, true, op));
     };
     let syntax = model_id_syntax(spec.provider);
     if !syntax.accepts(model) {
@@ -400,5 +521,94 @@ mod tests {
             "run `iris models list --operation image.generate` and pass one of its models to --capabilities-from"
         );
         assert_eq!(hint("sora-2", None, None), "run `iris models list` to see the models Iris knows");
+    }
+
+    #[test]
+    fn names_split_into_lowercase_words_of_letters_or_digits() {
+        assert_eq!(words("veo3-fast"), ["veo", "3", "fast"]);
+        assert_eq!(words("GPT Image 2.5 Flare"), ["gpt", "image", "2", "5", "flare"]);
+        assert_eq!(words("Nano Banana 2 (Gemini 3.1 Flash Image)")[..4], ["nano", "banana", "2", "gemini"]);
+        assert_eq!(words("--4K__x"), ["4", "k", "x"]);
+        assert!(words(" -. ").is_empty());
+        // A slip near the end of a word of four or more letters, not another word.
+        assert!(word_matches("flair", "flare") && word_matches("sunbrust", "sunburst"));
+        assert!(!word_matches("flash", "flare") && !word_matches("fast", "flash"));
+        assert!(!word_matches("pr0", "pro") && !word_matches("lit", "lite") && !word_matches("2", "25"));
+    }
+
+    /// A name that nearly names models of the operation suggests them by the first
+    /// rule that finds any (case, display name, the start of an id or alias, the
+    /// words), and its hint asks "did you mean …?" instead of offering
+    /// `--capabilities-from`; a declined name suggests nothing. The word rule never
+    /// drops a word some catalog model has: a tier (`fast`, `lite`, `flare`) or a
+    /// version (`2.5`) that no model of the operation has suggests nothing.
+    #[test]
+    fn near_misses_suggest_the_models_they_nearly_name() {
+        let models: Vec<&'static ModelSpec> = all().collect();
+        let image = Some(Operation::ImageGenerate);
+        let video = Some(Operation::VideoGenerate);
+        let veo_3_1 =
+            ["veo-3.1-fast-generate-preview", "veo-3.1-generate-preview", "veo-3.1-lite-generate-preview"];
+        let gpt_image_2_5 = ["gpt-image-2.5-sunburst", "gpt-image-2.5-flare"];
+        for (name, op, expected) in [
+            ("Nano-Banana-2", image, &["gemini-3.1-flash-image"][..]),
+            (" GPT-IMAGE-2 ", image, &["gpt-image-2"]),
+            ("GPT Image 2.5 Flare", image, &["gpt-image-2.5-flare"]),
+            ("gemini 3 pro image", image, &["gemini-3-pro-image"]),
+            ("Nano Banana 2", image, &["gemini-3.1-flash-image"]),
+            ("Veo 3.1", video, &["veo-3.1-generate-preview"]),
+            ("gpt-image-2.5", image, &gpt_image_2_5),
+            ("gpt-image-2.5", None, &gpt_image_2_5),
+            ("veo-3.1-lite", video, &["veo-3.1-lite-generate-preview"]),
+            ("veo-3.1", video, &veo_3_1),
+            ("gpt-image-2.5-flare-latest", image, &["gpt-image-2.5-flare"]),
+            ("veo3", video, &veo_3_1),
+            ("veo3-fast", video, &["veo-3.1-fast-generate-preview"]),
+            ("VEO3-FAST-HD", video, &["veo-3.1-fast-generate-preview"]),
+            ("gpt-image-2.5-flair", image, &["gpt-image-2.5-flare"]),
+            ("gpt-image-2.5-sunbrust", image, &["gpt-image-2.5-sunburst"]),
+            ("gpt-image-2.5-mini", image, &gpt_image_2_5),
+            ("flare", image, &["gpt-image-2.5-flare"]),
+            ("sunburst", image, &["gpt-image-2.5-sunburst"]),
+            ("nano-banana-lite", image, &["gemini-3.1-flash-lite-image"]),
+            ("flash", image, &["gemini-3.1-flash-image", "gemini-3.1-flash-lite-image"]),
+            // A word some model has is never dropped: none of these names a model.
+            ("veo-lite-fast", video, &[]),
+            ("nano-banana-2-pro", image, &[]),
+            ("sora-2", image, &[]),
+            ("model-3.1", video, &[]),
+            ("veo-4-ultra", video, &[]),
+            ("veo-4", video, &[]),
+            // Only the models of the operation are suggested.
+            ("veo-3.1", image, &[]),
+            ("veo3-fast", image, &[]),
+            ("Nano-Banana-2", video, &[]),
+            ("", image, &[]),
+        ] {
+            assert_eq!(suggestions(&models, name, op), expected, "{name:?} for {op:?}");
+        }
+
+        let error =
+            |model: &str, template: Option<&str>| resolve_in(&models, model, template, video).unwrap_err();
+        let err = error("veo-3.1-lite", None);
+        assert_eq!(
+            err.hint.as_deref(),
+            Some(
+                "did you mean veo-3.1-lite-generate-preview? otherwise run `iris models list --operation \
+                 video.generate` and pass -m <MODEL>"
+            )
+        );
+        assert_eq!(err.details["suggestions"], serde_json::json!(["veo-3.1-lite-generate-preview"]));
+        let err = error("my-model", Some("veo-3.1"));
+        assert_eq!(
+            err.hint.as_deref(),
+            Some(
+                "did you mean veo-3.1-fast-generate-preview, veo-3.1-generate-preview, or \
+                 veo-3.1-lite-generate-preview? otherwise run `iris models list --operation video.generate` and \
+                 pass one of its models to --capabilities-from"
+            )
+        );
+        assert_eq!(error("veo-3", None).details["suggestions"], serde_json::json!([]));
+        assert_eq!(error("sora-2", None).details["suggestions"], serde_json::json!([]));
     }
 }

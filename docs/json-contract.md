@@ -410,7 +410,8 @@ $ iris image generate "x" --model does-not-exist --json
  "message":"unknown model 'does-not-exist'",
  "hint":"run `iris models list --operation image.generate` and pass -m <MODEL>; to use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> to declare which known model's capabilities it has",
  "details":{"candidates":[{"model":"gpt-image-2.5-sunburst","provider":"openai","...":"..."},
-                          "...one object per catalog model that supports the operation, as for model_required below"]},
+                          "...one object per catalog model that supports the operation, as for model_required below"],
+            "suggestions":[]},
  "retryable":false,"job_id":null,"job_status":null,"provider":null,"provider_code":null,
  "provider_request_id":null,"provider_status":null,"remote_operation_id":null,
  "retry_after_seconds":null},
@@ -428,6 +429,34 @@ supports the command's operation (when none does, which command lists the ones t
 
 ```json
 "hint":"OpenAI removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12 and recommends a GPT Image 2.5 model for new integrations; use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2"
+```
+
+Any other name that nearly names models the command can use gets their ids in
+`details.suggestions`, in catalog order (the list is empty otherwise, and for a declined name).
+They are found by the first of these rules that finds any, each ignoring case: the name is an id
+or alias; it is a display name, or either name of a display name written `A (B)`; it begins an id
+or alias; or, word by word, it names the model. For the last rule, names are split into words of
+letters or of digits (`veo3-fast` is `veo`, `3`, `fast`; `gpt-image-2.5` is `gpt`, `image`, `2`,
+`5`), and a word of four or more letters also matches one it nearly spells (Jaro-Winkler
+similarity at least 0.9: `flair` matches `flare`, `flash` does not). Every word of the name that
+any catalog model's id, alias, or display name has must be a word of the suggested model, so a
+tier (`fast`, `lite`, `pro`, `flare`, `sunburst`) or a version (`2.5`) is never dropped:
+`veo3-fast` suggests Veo 3.1 Fast only, and `gpt-image-2.5-mini` the two GPT Image 2.5 models,
+never `gpt-image-2`. Words no model has are ignored, but the words some model has must be more
+than half of the name's words and not only digits, so `veo-4-ultra` and `sora-2`, which may be
+models Iris does not know yet, suggest nothing. Of the models left, those matching the most words
+exactly are suggested. With suggestions, the hint asks "did you mean …?" and does not offer
+`--capabilities-from`, which would send the name as given; only a name that is neither declined nor
+close to a model gets the `--capabilities-from` hint shown above:
+
+```console
+$ iris image generate "x" -m gpt-image-2.5 --json
+```
+```json
+{"code":"unknown_model","message":"unknown model 'gpt-image-2.5'",
+ "hint":"did you mean gpt-image-2.5-sunburst or gpt-image-2.5-flare? otherwise run `iris models list --operation image.generate` and pass -m <MODEL>",
+ "details":{"candidates":["..."],"suggestions":["gpt-image-2.5-sunburst","gpt-image-2.5-flare"]},
+ "...":"other Error fields omitted for brevity"}
 ```
 
 An option the model does not take for the operation (a typed flag or `-O name=value`), or an

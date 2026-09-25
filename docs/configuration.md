@@ -241,10 +241,11 @@ With `--json`, the error's `details` hold the `operation`, the `config_key` (`im
 display_name, summary, aliases, lowest_estimate}` object per catalog model that supports the
 operation, in catalog order, with what the model is for and its cheapest single-output request
 with that request's estimated cost (see [json-contract.md](json-contract.md#error-object)). An
-`-m` naming no catalog model is `unknown_model` (exit 2) with the same `candidates`; a name Iris
-declines (a model its provider deprecated, shut down, limited, or serves only elsewhere, such as
-`dall-e-3` or `veo-3`) has a hint that says why and what to use instead (see
-[decisions.md](decisions.md#built-in-models)).
+`-m` naming no catalog model is `unknown_model` (exit 2) with the same `candidates`; a near miss of
+catalog models (`gpt-image-2.5`, `Nano-Banana-2`) has them in `suggestions` and a hint asking "did
+you mean …?", and a name Iris declines (a model its provider deprecated, shut down, limited, or
+serves only elsewhere, such as `dall-e-3` or `veo-3`) has a hint that says why and what to use
+instead (see [decisions.md](decisions.md#built-in-models)).
 
 A configured model must be a catalog id or alias of its table's kind (`image.model` an image
 model, `video.model` a video model); anything else is `config_invalid` naming the key when the

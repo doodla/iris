@@ -240,8 +240,18 @@ gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2", and the same name 
 is `config_invalid` with the same reason. The replacements named are those that support the
 command's operation (for the config file, the key's): a command that none of them fits, such as
 `video generate -m dall-e-3`, gets the reason and the command that lists the models it can use.
-Unlike any other unknown id, a declined name gets no `--capabilities-from` suggestion: it would
-send a model the provider deprecated, shut down, limited, or serves only elsewhere.
+A declined name gets no `--capabilities-from` suggestion: it would send a model the provider
+deprecated, shut down, limited, or serves only elsewhere. Neither does a near miss of registered
+models (`gpt-image-2.5`, `veo-3.1-lite`, `Nano-Banana-2`, `GPT Image 2.5 Flare`), since it would
+send a guessed id: its hint asks "did you mean …?" with the ids it nearly names
+(`details.suggestions`). Near misses are found by four plain rules, tried in order and ignoring
+case: an id or alias; a display name; the start of an id or alias; and the name's words, where
+every word that some registered name has must be the suggested model's too (a word of four or
+more letters may be nearly spelled, by Jaro-Winkler similarity). The last rule is there because
+the registered names differ mostly in their tier and version words, and a suggestion that drops
+one steers to another price: `veo3-fast` must never suggest Veo 3.1, which costs four times as
+much, nor `gpt-image-2.5-flair` the older `gpt-image-2`. Every suggestion can be explained by the
+rule that found it (see [json-contract.md](json-contract.md#error-object)).
 
 **Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
 [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations) ·
@@ -572,7 +582,8 @@ reason.
 - **Everything else** was chosen for maintenance, license, and weight: `clap` and
   `clap_complete` for parsing and completions, `tokio`, `serde`/`schemars` (the published schema
   is generated from the serialized types), `jiff` for timestamps, `tempfile`, `sha2`, `ulid`,
-  `toml`, `tracing`, `signal-hook` for SIGTERM/SIGHUP, and `wiremock`, `assert_cmd`, and
+  `toml`, `tracing`, `signal-hook` for SIGTERM/SIGHUP, `strsim` (which `clap` already links, for
+  its own suggestions) for the words of a near-miss model name, and `wiremock`, `assert_cmd`, and
   `jsonschema` for tests. `cargo deny check` enforces MIT-compatible licenses and no known
   advisories.
 

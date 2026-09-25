@@ -72,7 +72,8 @@ impl Catalog {
     /// The `unknown_model` error of `models show` for `name`, which names no model:
     /// every model is a candidate.
     pub fn unknown(&self, name: &str) -> IrisError {
-        catalog::unknown_model(name, false, None).with_detail("candidates", self.candidates(None))
+        catalog::unknown_model(&self.models(), name, false, None)
+            .with_detail("candidates", self.candidates(None))
     }
 
     /// The models a command for `op` (every model without one) can use, in catalog
