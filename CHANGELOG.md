@@ -30,8 +30,8 @@ machine-readable contract for agents.
   either, the command fails with `model_required` (exit 2) before anything is sent, listing the
   models that support the operation with their summaries and what the same output costs with
   each. The provider is the model's, and results report `model_source` (`flag` or `config`), as
-  do errors that name the model (`details.model_source`, and `(config image.model)` after the
-  name when the config file chose it).
+  do errors about the model's options, inputs, and limits (`details.model_source`, and `(config
+  image.model)` after the model's name when the config file chose it).
 - **Local validation before anything is sent.** Options, inputs and cross-option rules are declared
   per model in the catalog and checked identically by `--dry-run` and a real run (mask rules,
   inline request caps, model-id syntax for `--capabilities-from` models included). The API key is
@@ -84,8 +84,8 @@ machine-readable contract for agents.
   stop serving outputs). A job is `expired` only when Google answers `NOT_FOUND` after that time;
   a download 403/404 before it is a retryable `download_failed`.
 - Downloads are safe to repeat and never re-trigger generation: already-downloaded outputs are
-  reused, `--overwrite` fetches again and replaces the file atomically, and a saved file that no
-  longer validates is fetched again. Temporary files are locked while written, downloads are
+  reused, `--overwrite` fetches again and replaces the file atomically, and a saved file that does
+  not validate as media is fetched again. Temporary files are locked while written, downloads are
   capped at 4 GiB, and videos are validated structurally (media data present, chunk offsets inside
   the file, overflow-safe box parsing).
 - Every job view carries the prompt's fingerprint (`prompt_fingerprint`: its SHA-256 and length,

@@ -59,10 +59,9 @@ directory.
 A job record holds enough to resume, diagnose, and download the job, and deliberately little
 else:
 
-- Local and remote identifiers, the caller's `label` (`null` without one, and in records from
-  older versions), provider, model, where the model came from (`model_source`: `flag` or
-  `config`; `null` in a record that does not say), operation, every timestamp, and normalized
-  status.
+- Local and remote identifiers, the caller's `label` (`null` without one), provider, model,
+  where the model came from (`model_source`: `flag` or `config`; `null` in a record that does not
+  say), operation, every timestamp, and normalized status.
 - Resolved *non-secret* request options (e.g. `duration`, `resolution`) and input **counts**
   (`first_frame`, `last_frame`, `reference`) — never input file paths or bytes.
 - The prompt is stored as `{ "sha256", "chars", "text": null }` — a hash and a character count,
@@ -148,8 +147,8 @@ A record still `submitting` more than (the full paid-submission timeout budget +
 `created_at` is treated as abandoned — the process that submitted it died inside the uncertainty
 window — and is reported as `submission_unknown` the next time anything touches it. The budget is
 the larger of the reading process's and the one the submitting process recorded in
-`submit_budget_seconds` (`null` in records from older versions), so a submitter configured with
-longer timeouts is never declared dead early.
+`submit_budget_seconds`, so a submitter configured with longer timeouts is never declared dead
+early.
 
 A finished operation with output URIs is `succeeded` with every URI recorded (the raw URI only in
 the private record): whether Iris trusts a URI enough to fetch it is a download decision, made anew
@@ -163,7 +162,7 @@ finished operation without any output, or one whose every output URI is unusable
 
 A job that has ended without success keeps its error, and `jobs status`, `jobs wait`, and `jobs
 download` show it with `retryable: false`, whatever the error said when it was recorded: nothing
-about the job can change any more, so the only way to try again is a new, billed submission. The
+about the job can change, so the only way to try again is a new, billed submission. The
 hint says so first, then gives the recorded hint as the one given when the error was recorded, and
 `details.submission_retryable` keeps the recorded `retryable` value (and
 `details.submission_retry_after_seconds` a recorded retry delay).
@@ -248,13 +247,18 @@ shows the label in its plan. The hint depends on that job's status:
 | `submission_unknown` | the provider may have accepted and billed the submission, and Iris cannot follow it: check usage and billing in the provider's console before submitting again, whether after deleting its record or under another label |
 | `failed`, `expired` | a new submission is billed: delete its local record first (`iris jobs delete <id>`), or use another label |
 
-```json
-{"code":"label_in_use","category":"conflict",
- "message":"label 'paper-boat-1' is already used by job job_01m3a59a5syx5aex0a0qv8qc3x (running, created 2026-09-24T16:55:15Z)",
- "hint":"the job is still running: follow it with `iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x` or `iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x`; deleting its local record does not cancel the remote job, which keeps running and is billed; to submit another paid job, use another label",
- "job_id":"job_01m3a59a5syx5aex0a0qv8qc3x","job_status":"running","provider":"gemini",
- "details":{"label":"paper-boat-1","model":"veo-3.1-lite-generate-preview","created_at":"2026-09-24T16:55:15Z"},
- "retryable":false,"provider_status":null,"...":"other Error fields omitted for brevity"}
+In human output (the JSON form of the error is in
+[json-contract.md](json-contract.md#error-object)):
+
+```console
+$ iris video generate -m veo-lite "a paper boat drifting on a pond" --duration 4 --label paper-boat-1 --detach
+warning[preview_model]: veo-3.1-lite-generate-preview is a preview model; its behavior, limits, and availability may change
+error[label_in_use]: label 'paper-boat-1' is already used by job job_01m3a59a5syx5aex0a0qv8qc3x (running, created 2026-09-24T16:55:15Z)
+  hint: the job is still running: follow it with `iris jobs status job_01m3a59a5syx5aex0a0qv8qc3x` or `iris jobs wait job_01m3a59a5syx5aex0a0qv8qc3x`; deleting its local record does not cancel the remote job, which keeps running and is billed; to submit another paid job, use another label
+  job: job_01m3a59a5syx5aex0a0qv8qc3x (status running)
+  remote operation: models/veo-3.1-lite-generate-preview/operations/op_mockjob
+$ echo $?
+2
 ```
 
 So a script that gives the same label to the same intended video can run the same command again
@@ -300,17 +304,17 @@ $ echo $?
 ```
 
 Ctrl-C during a wait exits **130** (`interrupted`) with the same "job stays running, resumable"
-guarantee (real transcript against a local mock server — the job was sent SIGINT about a second
-into a 10-second poll interval):
+guarantee (real transcript against a local mock server — the process got SIGINT, shown as `^C`,
+about a second into a 10-second poll interval):
 
 ```console
 $ iris jobs wait job_01m3a3fznq2sv8nqnqc3h25z4n --timeout 60s --poll-interval 10s
 Job job_01m3a3fznq2sv8nqnqc3h25z4n is running (40% done)
+^C
 error[interrupted]: stopped waiting for job job_01m3a3fznq2sv8nqnqc3h25z4n; it continues remotely
   hint: resume with `iris jobs wait job_01m3a3fznq2sv8nqnqc3h25z4n`
   job: job_01m3a3fznq2sv8nqnqc3h25z4n (status running)
   remote operation: models/veo-3.1-fast-generate-preview/operations/op_mockjob001
-^C
 $ echo $?
 130
 ```
@@ -355,12 +359,11 @@ Order of decision for each output, under the job's download lock:
    → skip; warn `already_downloaded`. Safe to run any number of times.
 2. If the recorded local file is intact and valid but you asked for a *different* target path →
    copy it locally (no network call). If that file changes or disappears while it is being
-   copied, it is no copy of the output any more, so Iris goes on to step 3 and fetches the output
+   copied, it is not a copy of the output, so Iris goes on to step 3 and fetches the output
    instead.
 
    The local copy is never reused when `jobs download` (or `jobs wait`) is given `--overwrite`,
-   which asks for a fresh copy, or when the recorded file no longer validates as media (for
-   example a video an older Iris saved from a host that stopped after the metadata): the output
+   which asks for a fresh copy, or when the recorded file does not validate as media: the output
    is fetched again (step 3), and when the recorded file is the target, the new download
    atomically replaces it. If that fetch fails, the file saved earlier stays as it was and stays
    recorded. Whenever a fetch of an output saved earlier fails, the error's hint names the saved
@@ -539,7 +542,7 @@ by Iris; whether the provider's Files API `delete` method applies to Veo outputs
 generations specifically, so it does not claim the capability).
 
 Deleting a job that is still `submitting` or `running` would make it **unrecoverable** locally
-(you may still be charged for a video Iris can no longer find — Veo bills once per generated
+(you may still be charged for a video Iris has lost track of — Veo bills once per generated
 video, so this is about losing track of what you paid for, not an ongoing charge), so it is
 refused unless you pass `--force`:
 
@@ -594,6 +597,7 @@ ids:
 
 ```console
 $ iris jobs delete --all
+warning[job_record_unreadable]: skipped job record /home/you/.local/state/iris/jobs/job_01m3a3fznq2sv8nqnqc3h25z4n.json: job record /home/you/.local/state/iris/jobs/job_01m3a3fznq2sv8nqnqc3h25z4n.json is unreadable: key must be a string at line 1 column 2
 error[invalid_argument]: 2 of the 3 job(s) cannot be deleted: job_01m3a3eg0fgm3qsnw4eybjd7v5 (running), job_01m39pq2gd0a7w3k5c8e1v6h9n (submitting; probably abandoned, shown as submission_unknown); nothing was deleted
   hint: wait for active jobs to finish (`iris jobs wait <id>`), delete the other jobs by id, or pass --force to delete the local records anyway (remote jobs are not cancelled, and outputs not downloaded can no longer be fetched; for a job still submitting, check the provider console first)
 $ echo $?

@@ -12,9 +12,6 @@ Anything else (Linux arm64, Windows/MSYS/Cygwin, a BSD, a 32-bit system) is not 
 installer fails immediately with a clear message naming what it detected, rather than silently
 installing the wrong archive.
 
-The musl target for Linux is the release target: musl gives a static binary that runs on any
-x86_64 Linux kernel, regardless of the host's glibc version or its absence.
-
 Each archive holds a single directory, `iris-vX.Y.Z-<target>/`, containing the `iris` executable,
 `LICENSE` (Iris's MIT license), `THIRD-PARTY-LICENSES`, `README.md`, `CHANGELOG.md`, and `docs/`
 (this documentation, which the README links to). `THIRD-PARTY-LICENSES` lists the open-source

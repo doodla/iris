@@ -253,6 +253,9 @@ one.
 
 ### `models.show` → `{ "model": ModelCapabilities }`
 
+`iris models show gpt-image-2.5-sunburst --json` with `OPENAI_API_KEY` set; `options`,
+`constraints`, and `pricing` are cut to their first entry:
+
 ```json
 {
   "id": "gpt-image-2.5-sunburst", "provider": "openai", "display_name": "GPT Image 2.5 Sunburst",
@@ -281,7 +284,8 @@ one.
                                       "cost_estimate": { "amount": 0.00588, "...": "..." } },
                                     "...one per quality with an estimate" ] },
   "access": { "credential_env": "OPENAI_API_KEY", "credential_present": true,
-              "requirements": ["API Organization Verification may be required for GPT Image models"],
+              "requirements": ["API Organization Verification may be required for GPT Image models",
+                               "Paid usage tier required (no free-tier limits listed)"],
               "account_access": "not_checked", "checked_at": null },
   "capabilities_source": "catalog", "catalog_as_of": "2026-09-24",
   "docs_url": "https://developers.openai.com/api/docs/guides/image-generation"
@@ -511,7 +515,7 @@ operation (possibly empty), which the hint names:
 ```json
 {"code":"unsupported_option","message":"model 'gpt-image-2.5-sunburst' does not support --aspect-ratio for image.generate",
  "hint":"--aspect-ratio is supported by: gemini-3.1-flash-image, gemini-3.1-flash-lite-image, gemini-3-pro-image; pass -m <MODEL>; options supported by this model for image.generate: --count, --size, --quality, --format, -O compression, -O background, -O moderation",
- "details":{"option":"aspect_ratio","supported_by":["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]},
+ "details":{"model_source":"flag","option":"aspect_ratio","supported_by":["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]},
  "...":"other Error fields omitted for brevity"}
 ```
 
@@ -627,7 +631,9 @@ model does not (or none was given):
 "details":{"suggestions":["-O background=VALUE"],"usage":"..."}
 ```
 
-An error of a generation command that names its model carries `details.model_source` (`flag` or
+An error about the model a generation command resolved — an option or input it does not take
+(`unsupported_option`, as above), more input images or a longer prompt than it accepts, or OpenAI
+answering that the model is not available to the key — carries `details.model_source` (`flag` or
 `config`, as in results), and when the config file chose the model the message says so after the
 model's name: `model 'gemini-3.1-flash-image' (config image.model) does not support --size for
 image.generate`.
@@ -731,8 +737,8 @@ keeps the recorded value and hint.
 | 1 | runtime or provider failure |
 | 2 | the request is invalid or conflicts as given; fix it before running again |
 | 3 | credentials, access, or quota problem |
-| 4 | not finished yet — the job continues remotely |
-| 5 | outcome uncertain — do not blindly resubmit |
+| 4 | not finished yet — the job continues remotely (wait timeout, or outputs not ready) |
+| 5 | outcome uncertain — a paid submission may or may not have gone through; Iris never resubmits automatically |
 | 130 | interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP) |
 
 Exit 2 covers *both* local validation (nothing was sent — the request never left the process) and
@@ -858,12 +864,12 @@ costs the others: a valid image of another type than requested or labeled (or wi
 kept under its real type with `output_format_mismatch`, and a returned item that is not a usable
 image (a URL instead of inline data, missing or invalid base64, content that is not an image) is
 skipped with `output_item_unusable`, whose message names the item and the reason. These messages
-number items by their position in the provider's response ("response item 1"), which is not the
-artifact `index` once an earlier item was skipped; `unexpected_output_count` counts items, usable or
-not. Only a response with no usable image at all fails, as `provider_bad_response` with
-`details.charge_possible: true` and, when the response reported usage, `details.usage` and the
-`details.cost_estimate` computed from it (when Iris can estimate the model's cost). A Gemini one is
-also `details.charged: true` (see
+number items by their position in the provider's response, counting from 0 ("response item 0" is
+the first), which is not the artifact `index` once an earlier item was skipped;
+`unexpected_output_count` counts items, usable or not. Only a response with no usable image at all
+fails, as `provider_bad_response` with `details.charge_possible: true` and, when the response
+reported usage, `details.usage` and the `details.cost_estimate` computed from it (when Iris can
+estimate the model's cost). A Gemini one is also `details.charged: true` (see
 [above](#stable-codes-categories-exit-codes-and-default-retryability)); OpenAI does not document
 whether such a response is billed.
 

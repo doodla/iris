@@ -80,14 +80,16 @@ says so with an `output_extension_adjusted` warning.
 
 ## Last live runs
 
-Every run was done by hand through a release build, following the steps above. Costs are Iris's
-usage-based estimates, not invoices.
+Every run was done by hand through a release build; newest first. Costs are Iris's usage-based
+estimates, not invoices. Not verified live by any of them: reference images on Veo 3.1 Standard,
+OpenAI qualities above `low`, and anything on macOS.
 
-### 2026-09-25, commits e387959 and a8e7884: everything not yet verified live
+### 2026-09-25, commits e387959 and a8e7884: every other model, input, and option
 
-Every model, input kind and option that the earlier runs had not exercised, run by hand through
+Every model, input kind and option that the runs below did not exercise, run by hand through
 release builds of e387959 (the same code as 7209b39) and, for the last video, a8e7884. Four
-requests were refused or failed without being charged; three of them led to fixes.
+requests were refused or failed without being charged; what three of them showed is reflected in
+the catalog and the hints (below).
 
 | Area | Request | Result | Estimated cost |
 |---|---|---|---|
@@ -103,22 +105,22 @@ requests were refused or failed without being charged; three of them led to fixe
 | Veo models | Standard, 4 s, 720p, 9:16, `--negative-prompt`; Fast, 4 s, 720p, `--negative-prompt` | 720×1280 and 1280×720 MP4s, 4.0 s | $2.00 |
 | Veo people | Lite, 6 s, 720p, `-O person_generation=allow_all` | 1280×720 MP4, 6.0 s (the first attempt failed at the provider with INTERNAL and was not charged) | $0.30 |
 
-Findings, fixed in a8e7884 and 345125e:
+What these requests showed, which the catalog and the hints reflect:
 
-- Veo 3.1 Lite refuses `negativePrompt` ("isn't supported by this model"), so Lite no longer
-  declares a negative prompt.
+- Veo 3.1 Lite refuses `negativePrompt` ("isn't supported by this model"), so Lite declares no
+  negative prompt.
 - Veo 3.1 Fast refuses a negative prompt next to a reference image ("not supported in your use
-  case"), although it accepts one for text-to-video. Iris now refuses that combination before
-  sending, on Fast and Standard.
-- A job that failed at the provider with INTERNAL succeeded when resubmitted. Its hint now says
-  so, instead of pointing at the prompt.
+  case"), although it accepts one for text-to-video. Iris refuses that combination before sending,
+  on Fast and Standard.
+- A job that failed at the provider with INTERNAL succeeded when resubmitted, and the hint for such
+  a failure says so.
 
 Estimated spend: about $5.83. No key values were found in any saved output, log, or job record.
 
 ### 2026-09-25, commit 7209b39
 
-Run against the code at commit 7209b39, after the final review fixes. The paid image steps were
-repeated; the Veo steps reused the job from the first run instead of submitting a second video.
+Run against the code at commit 7209b39. The paid image steps were repeated; the Veo steps reused
+the job from the run of 0aff663 instead of submitting a second video.
 
 | Step | Model and settings | Result | Estimated cost |
 |---|---|---|---|
@@ -131,17 +133,16 @@ repeated; the Veo steps reused the job from the first run instead of submitting 
 | 7 Repeat | `jobs download` again, then `-d` to another directory | `already_downloaded` with no request; local copy with no request | free |
 | 8 JSON | all steps in `--json` mode | one envelope per command | — |
 
-A record written by the first build was also read unchanged by this one. Estimated spend: about
-$0.11. No key values were found in any saved output, log, or job record.
+A record written by the build of 0aff663 was also read unchanged by this one. Estimated spend:
+about $0.11. No key values were found in any saved output, log, or job record.
 
 ### 2026-09-25, commit 4e9d568
 
-An intermediate re-run between review rounds, with the same steps and results as the run above
-(estimated spend about $0.11).
+The same steps and results as the run above (estimated spend about $0.11).
 
 ### 2026-09-24, commit 0aff663
 
-The first full run, including the only Veo submission.
+The first full run, including the Veo submission that the runs of 4e9d568 and 7209b39 reused.
 
 | Step | Model and settings | Result | Estimated cost |
 |---|---|---|---|
@@ -159,5 +160,4 @@ Estimated spend: about $0.31. No key values were found in any saved output, log,
 
 Observed facts that the offline tests cannot show: Gemini returned JPEG for every call, Veo honored
 the 4-second duration (so the charge matches the estimate), and the Veo file download was served
-directly by the API host with no redirect. Not verified live: reference images on Veo 3.1
-Standard, OpenAI qualities above `low`, and anything on macOS.
+directly by the API host with no redirect.

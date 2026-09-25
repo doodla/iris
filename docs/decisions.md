@@ -81,7 +81,7 @@ record it.
 `thinkingConfig` only for options the user set, and `store: false` on every request. Input
 images are sent inline. Not used: the Interactions API and `generationConfig.responseFormat`.
 
-**Why.** Google now recommends the Interactions API for new projects but states that
+**Why.** Google recommends the Interactions API for new projects but states that
 `generateContent` "remains fully supported". `generateContent` supports all three Nano Banana
 models Iris ships, whereas the Interactions model table omits the Flash Lite image model; the
 Interactions API also stores requests by default (55 days on the paid tier), and its `v1beta`
@@ -171,7 +171,7 @@ combination was not tried, and the provider documents no support for it.
 or the model the config file names for its operation (`[image] model`, `[video] model`), and
 reports which of the two it used (`model_source`: `flag` or `config`). With neither, it fails with
 `model_required` before anything is sent, and the error lists the catalog models that support the
-operation. There is no built-in default model, no default provider, and no environment variable
+operation. There is no default model, no default provider, and no environment variable
 that names a model; the generation commands take no `--provider`, because the provider is the
 model's.
 
@@ -589,9 +589,9 @@ reason.
 
 - **Minimum Rust version 1.89, edition 2024.** 1.89 is the first release with
   `std::fs::File::lock`, which replaces a locking crate; edition 2024 needs 1.85, and no
-  dependency declares a newer minimum. A CI job type-checks the crate and its tests
-  (`cargo check --all-targets`) with the `rust-version` that `Cargo.toml` declares, so the claim
-  stays true.
+  dependency declares a newer minimum. A CI job checks the crate and its tests and runs the tests
+  (`cargo check --all-targets`, `cargo test`) with the `rust-version` that `Cargo.toml` declares,
+  so the claim stays true.
 - **`dirs` rather than `directories`.** `directories`' GitHub repository is archived and has had
   no release since January 2025; `dirs` is maintained (7.0.0, September 2026) and gives exactly
   the paths Iris documents: XDG config and state directories on Linux (absolute
@@ -661,10 +661,10 @@ and Clippy's lints, under an already-tested commit, and no record would say whic
 an archive; a pinned version makes a release repeatable and its log says what built it. GitHub's
 generated notes list pull requests, not the user-facing changes the changelog records.
 parse-changelog is the established tool for reading one version's section of such a file
-(create-gh-release-action uses it). A hand-written line-based extractor, tried first, stopped
-early at a reference-link definition or at a `## ` line inside a code block and returned the
-shortened section without an error. parse-changelog handles both and rejects a version with two
-headings. Only the release's verify job, which has a read-only token, runs it; it passes the text
+(create-gh-release-action uses it). A simple line-based extractor stops early at a reference-link
+definition or at a `## ` line inside a code block and returns the shortened section without an
+error; parse-changelog handles both and rejects a version with two headings. Only the release's
+verify job, which has a read-only token, runs it; it passes the text
 to the publish job as an artifact. So the job holding the write token runs no extra tool and
 publishes exactly the text that was checked.
 

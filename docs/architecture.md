@@ -31,7 +31,7 @@ domain
 
 | module | depends on |
 |---|---|
-| `cli` | `app`, `config`, `output`, `catalog`, `redact`, `error`, `domain` |
+| `cli` | `app`, `jobs`, `config`, `output`, `catalog`, `redact`, `error`, `domain` |
 | `app` | `jobs`, `config`, `output`, `providers`, `artifacts`, `catalog`, `http`, `redact`, `error`, `domain` |
 | `jobs` | `output`, `providers`, `artifacts`, `catalog`, `http`, `redact`, `error`, `domain` |
 | `config` | `output`, `catalog`, `http`, `redact`, `secret`, `error`, `domain` |
@@ -51,10 +51,10 @@ The edges that are not obvious from the module names, and why they exist:
   inspection) to verify a provider's payload before returning it. Adapters still never touch
   output paths, job state, or the filesystem layout `artifacts` and `jobs` own. Moving
   `InputImage` and `InputRole` into `domain` would remove the cycle.
-- `cli` uses `config`, `catalog`, and `output` directly, not only through `app`: it resolves
-  `Settings` from its flags (`CliOverrides`), turns typed flags and `-O key=value` into the
-  catalog's `RawOption`s, and renders the `output` envelope and human text. Workflow logic stays
-  in `app`.
+- `cli` uses `config`, `catalog`, `jobs`, and `output` directly, not only through `app`: it
+  resolves `Settings` from its flags (`CliOverrides`), turns typed flags and `-O key=value` into
+  the catalog's `RawOption`s, parses `--label` into a `jobs::JobLabel`, and renders the `output`
+  envelope and human text. Workflow logic stays in `app`.
 - `jobs` depends on `providers` for the adapter results a record applies (`RemoteStatus`,
   `SubmittedOperation`), on `output` because a record renders itself as the public `JobView` and
   error body, on `artifacts` for the recorded state of a downloaded file, on `catalog` to persist
