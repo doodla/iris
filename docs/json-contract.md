@@ -205,7 +205,7 @@ otherwise the catalog default.
               "first_frame": false, "last_frame": false, "max_reference_images": 0,
               "max_request_bytes": null },
   "options": [ { "name": "count", "type": "integer", "min": 1, "max": 10, "values": null,
-                 "syntax": null, "default": "1", "flag": "--count",
+                 "syntax": null, "max_chars": null, "default": 1, "flag": "--count",
                  "operations": ["image.generate","image.edit"],
                  "description": "Number of images to produce in one request (sent as `n`)." } ],
   "constraints": [ { "id": "compression_requires_jpeg_or_webp", "options": ["compression", "format"],
@@ -222,6 +222,12 @@ otherwise the catalog default.
   "docs_url": "https://developers.openai.com/api/docs/guides/image-generation"
 }
 ```
+
+Each option's `type` is `enum` (its `values` listed), `integer` (`min`..=`max`), `boolean`, or
+`string`: a pattern described by `syntax`, or free text at most `max_chars` characters long
+(`max_chars` is `null` for every other option). `default` is the value in effect when the option
+is omitted, typed like the option's values (`"auto"`, `1`, `true`), or `null` when the provider
+documents none.
 
 `constraints` lists the rules that relate several options or inputs (e.g. Veo's
 `high_resolution_requires_duration_8`, `references_exclude_frames`,

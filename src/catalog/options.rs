@@ -9,8 +9,9 @@ use super::types::{ModelSpec, OptionKind, ValidationInput};
 use crate::domain::Operation;
 use crate::error::{ErrorCode, IrisError};
 
-/// A typed, validated option value.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// A typed, validated option value. Serialized as the JSON string, integer, or
+/// boolean it is.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum OptionValue {
     Str(String),

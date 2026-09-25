@@ -3,7 +3,7 @@
 //! reported separately and only checked on request (`--check-access`, a free
 //! metadata call).
 
-use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec};
+use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec, OptionValue};
 use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
@@ -180,6 +180,14 @@ pub(crate) fn option_view(o: &OptionSpec) -> OptionView {
         }
         OptionKind::Pattern { syntax, .. } => ("string", None, None, None, Some(syntax.to_string())),
     };
+    let max_chars = match o.kind {
+        OptionKind::Text { max_chars } => Some(max_chars),
+        _ => None,
+    };
+    // Every declared default parses with its option's kind (the catalog tests check
+    // it); the string form is only a fallback that keeps the value visible.
+    let default =
+        o.default.map(|d| OptionValue::parse(&o.kind, d).unwrap_or_else(|_| OptionValue::Str(d.into())));
     OptionView {
         name: o.name.to_string(),
         kind: kind.to_string(),
@@ -187,7 +195,8 @@ pub(crate) fn option_view(o: &OptionSpec) -> OptionView {
         min,
         max,
         syntax,
-        default: o.default.map(str::to_string),
+        max_chars,
+        default,
         flag: o.flag.map(str::to_string),
         operations: o.operations.to_vec(),
         description: o.description.to_string(),

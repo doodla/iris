@@ -217,7 +217,7 @@ mod tests {
 
     /// Lookups return the first match, so a name declared twice, or a second default
     /// for one provider and operation, would be shadowed silently: the whole catalog
-    /// must be unambiguous.
+    /// must be unambiguous. Every declared option default must also be a valid value.
     #[test]
     fn names_are_unique_and_each_provider_has_at_most_one_default_per_operation() {
         let mut names: BTreeMap<String, &str> = BTreeMap::new();
@@ -230,6 +230,12 @@ mod tests {
             }
             for op in m.default_for {
                 assert!(m.supports(*op), "{} is the default for {op}, which it does not support", m.id);
+            }
+            // `models show` publishes each default typed by its option's kind.
+            for o in m.options {
+                if let Some(d) = o.default {
+                    assert!(OptionValue::parse(&o.kind, d).is_ok(), "{}.{}: default {d:?}", m.id, o.name);
+                }
             }
         }
         for &provider in ProviderId::ALL {

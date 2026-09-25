@@ -417,6 +417,23 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     assert_eq!(m["limits"]["max_prompt_chars"], 100);
     assert_eq!(m["capabilities_source"], "catalog");
 
+    // Constraints and defaults are machine-readable: a free-text option's length in
+    // max_chars, and each default typed like the option's values.
+    let option = |m: &Value, name: &str| {
+        m["options"].as_array().unwrap().iter().find(|o| o["name"] == name).unwrap().clone()
+    };
+    let count = option(m, "count");
+    assert_eq!(count["type"], "integer");
+    assert_eq!(count["default"], 1, "an integer default is a JSON number: {count}");
+    assert!(count["max_chars"].is_null());
+    assert!(quality["max_chars"].is_null());
+    let v = f.run(&["models", "show", "fake-video-1", "--json"]).await.json();
+    let negative = option(&v["result"]["model"], "negative_prompt");
+    assert_eq!(negative["type"], "string");
+    assert_eq!(negative["max_chars"], 100, "{negative}");
+    assert!(negative["default"].is_null());
+    assert_eq!(option(&v["result"]["model"], "duration")["default"], "8", "an enum default stays a string");
+
     let v = f.run(&["models", "show", "fake-video-1", "--check-access", "--json"]).await.json();
     assert_eq!(v["result"]["model"]["access"]["account_access"], "available");
     assert!(v["result"]["model"]["access"]["checked_at"].is_string());

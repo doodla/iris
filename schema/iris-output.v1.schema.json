@@ -1775,13 +1775,33 @@
       ],
       "type": "string"
     },
+    "OptionValue": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "format": "int64",
+          "type": "integer"
+        },
+        {
+          "type": "boolean"
+        }
+      ],
+      "description": "A typed, validated option value. Serialized as the JSON string, integer, or\nboolean it is."
+    },
     "OptionView": {
       "properties": {
         "default": {
-          "type": [
-            "string",
-            "null"
-          ]
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OptionValue"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Value in effect when the option is omitted, typed like the option's values\n(a string, an integer, or a boolean); null when the provider documents none."
         },
         "description": {
           "type": "string"
@@ -1795,6 +1815,15 @@
         },
         "max": {
           "format": "int64",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_chars": {
+          "description": "Longest accepted value in characters (Unicode scalar values) of a free-text\noption; null for other options.",
+          "format": "uint",
+          "minimum": 0,
           "type": [
             "integer",
             "null"
@@ -1817,7 +1846,7 @@
           "type": "array"
         },
         "syntax": {
-          "description": "Syntax description for pattern-validated strings.",
+          "description": "Syntax description for pattern-validated and free-text strings.",
           "type": [
             "string",
             "null"
@@ -1844,6 +1873,7 @@
         "min",
         "max",
         "syntax",
+        "max_chars",
         "default",
         "flag",
         "operations",

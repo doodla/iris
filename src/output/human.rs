@@ -373,7 +373,7 @@ fn model_show(m: &ModelCapabilities) -> String {
             (None, _, _, Some(syntax)) => syntax.clone(),
             _ => o.kind.clone(),
         };
-        let default = o.default.as_deref().map(|d| format!(" (default {d})")).unwrap_or_default();
+        let default = o.default.as_ref().map(|d| format!(" (default {d})")).unwrap_or_default();
         let _ = writeln!(out, "    {how}: {values}{default} [{}]", ops(&o.operations));
         if !o.description.is_empty() {
             let _ = writeln!(out, "      {}", o.description);

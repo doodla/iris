@@ -64,7 +64,8 @@ The edges that are not obvious from the module names, and why they exist:
   `output::results` (the `config show` and `config path` results), and on `http` (the HTTP client
   settings and per-provider timeouts it resolves).
 - `output` depends on `providers` and `catalog` only for types that appear in results
-  (`AccountAccess`, `Lifecycle`), so the published schema is generated from the same types.
+  (`AccountAccess`, `Lifecycle`, `OptionValue`), so the published schema is generated from the
+  same types.
 - `providers` and `artifacts` depend on `catalog` for the resolved options an adapter maps onto
   the wire and the input rules (`InputSpec`) a model declares.
 

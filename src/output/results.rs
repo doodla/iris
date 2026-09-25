@@ -4,7 +4,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::catalog::Lifecycle;
+use crate::catalog::{Lifecycle, OptionValue};
 use crate::domain::{Artifact, CostEstimate, DownloadState, JobStatus, Operation, ProviderId, Usage};
 use crate::providers::AccountAccess;
 
@@ -149,9 +149,14 @@ pub struct OptionView {
     pub values: Option<Vec<String>>,
     pub min: Option<i64>,
     pub max: Option<i64>,
-    /// Syntax description for pattern-validated strings.
+    /// Syntax description for pattern-validated and free-text strings.
     pub syntax: Option<String>,
-    pub default: Option<String>,
+    /// Longest accepted value in characters (Unicode scalar values) of a free-text
+    /// option; null for other options.
+    pub max_chars: Option<usize>,
+    /// Value in effect when the option is omitted, typed like the option's values
+    /// (a string, an integer, or a boolean); null when the provider documents none.
+    pub default: Option<OptionValue>,
     /// Typed CLI flag, or null if only settable with `-O name=value`.
     pub flag: Option<String>,
     pub operations: Vec<Operation>,
