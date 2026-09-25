@@ -410,6 +410,7 @@ const RECORD_FIELDS: &[&str] = &[
     "remote_operation_id",
     "provider_request_id",
     "remote_expires_at",
+    "submit_budget_seconds",
     "request",
     "prompt",
     "output_plan",
@@ -443,6 +444,10 @@ pub struct JobRecord {
     remote_operation_id: Option<String>,
     provider_request_id: Option<String>,
     remote_expires_at: Option<Timestamp>,
+    /// The worst-case submit duration of the process that created the record (its
+    /// configured timeouts), so every later process applies the stale-`submitting`
+    /// rule with at least that budget. `null` in records from older versions.
+    submit_budget_seconds: Option<u64>,
     request: Map<String, Value>,
     prompt: PromptRecord,
     output_plan: OutputPlan,
@@ -471,6 +476,7 @@ impl fmt::Debug for JobRecord {
             .field("remote_operation_id", &self.remote_operation_id)
             .field("provider_request_id", &self.provider_request_id)
             .field("remote_expires_at", &self.remote_expires_at)
+            .field("submit_budget_seconds", &self.submit_budget_seconds)
             .field("request", &KeysOnly(&self.request))
             .field("prompt", &self.prompt)
             .field("output_plan", &self.output_plan)
@@ -513,6 +519,7 @@ impl JobRecord {
             remote_operation_id: None,
             provider_request_id: None,
             remote_expires_at: None,
+            submit_budget_seconds: None,
             request: new.request,
             prompt: new.prompt,
             output_plan: new.output_plan,
@@ -722,12 +729,28 @@ impl JobRecord {
     /// uncertainty window. `submit_budget` is the worst-case duration of the submit
     /// call ([`paid_submit_budget`](super::paid_submit_budget)), not the bare
     /// per-request timeout.
+    ///
+    /// The budget used is the larger of `submit_budget` (the reading process's) and
+    /// the one recorded by the process that created the record, so a submitter with
+    /// longer configured timeouts is never declared dead early.
     pub fn is_stale_submitting(&self, now: Timestamp, submit_budget: Duration) -> bool {
         if self.status != JobStatus::Submitting {
             return false;
         }
+        let submit_budget = self.effective_submit_budget(submit_budget);
         let limit = submit_budget.saturating_add(SUBMIT_GRACE).as_secs().min(i64::MAX as u64) as i64;
         now.as_second().saturating_sub(self.created_at.as_second()) > limit
+    }
+
+    /// Record the creating process's submit budget (see `submit_budget_seconds`);
+    /// a budget already recorded is kept.
+    pub fn record_submit_budget(&mut self, submit_budget: Duration) {
+        self.submit_budget_seconds.get_or_insert(submit_budget.as_secs());
+    }
+
+    /// The larger of `local` and the recorded submit budget.
+    pub fn effective_submit_budget(&self, local: Duration) -> Duration {
+        self.submit_budget_seconds.map_or(local, |s| local.max(Duration::from_secs(s)))
     }
 
     /// Apply the stale-`submitting` rule: rewrite such a record as
@@ -742,7 +765,7 @@ impl JobRecord {
         if !self.is_stale_submitting(now, submit_budget) {
             return false;
         }
-        let deadline = submit_budget.saturating_add(SUBMIT_GRACE);
+        let deadline = self.effective_submit_budget(submit_budget).saturating_add(SUBMIT_GRACE);
         let became_stale = self.created_at.checked_add(deadline).ok().filter(|t| *t <= now).unwrap_or(now);
         let error = IrisError::new(
             ErrorCode::SubmissionUncertain,

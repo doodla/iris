@@ -232,7 +232,9 @@ uplink is slower than that, raise `request_timeout` or `submit_timeout` rather t
 A job record still `submitting` is only declared abandoned once no live submitter could still be
 waiting for its answer: three attempts, each allowed the connect time limit plus `submit_timeout`
 plus the largest upload allowance, plus up to a minute of waiting between attempts, plus a minute
-of grace — about 37 minutes with the defaults (see [jobs.md](jobs.md)).
+of grace — about 37 minutes with the defaults (see [jobs.md](jobs.md)). The submitting process
+records its own budget in the job record, so a later process with shorter timeouts still waits at
+least that long.
 
 ## Base URL overrides
 

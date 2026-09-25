@@ -96,6 +96,7 @@ fn new_record_matches_the_v1_schema_shape() {
         "remote_operation_id",
         "provider_request_id",
         "remote_expires_at",
+        "submit_budget_seconds",
         "request",
         "prompt",
         "output_plan",

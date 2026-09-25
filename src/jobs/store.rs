@@ -183,7 +183,11 @@ impl JobStore {
     pub fn create(&self, record: &JobRecord) -> Result<(), IrisError> {
         self.ensure_dir()?;
         let path = self.record_path(record.job_id());
-        let bytes = encode(record)?;
+        // Later processes judge a stale `submitting` record by at least this
+        // process's submit budget (its timeouts may be longer than theirs).
+        let mut record = record.clone();
+        record.record_submit_budget(self.submit_budget);
+        let bytes = encode(&record)?;
         write_atomic(&path, &bytes, Replace::No, &mut |_| Ok(())).map_err(|e| {
             if e.kind() == io::ErrorKind::AlreadyExists {
                 IrisError::internal(format!("job record {} already exists", path.display()))

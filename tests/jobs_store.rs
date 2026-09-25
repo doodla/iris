@@ -83,7 +83,10 @@ fn create_and_load_round_trip_with_private_permissions() {
     let path = store.record_path(rec.job_id());
     assert_eq!(path, state.join("jobs").join(format!("{}.json", rec.job_id())));
     let loaded = store.load(rec.job_id()).unwrap();
-    assert_eq!(serde_json::to_value(&loaded).unwrap(), serde_json::to_value(&rec).unwrap());
+    // As created, plus the store's submit budget (see the stale-submitting rule).
+    let mut expected = serde_json::to_value(&rec).unwrap();
+    expected["submit_budget_seconds"] = store.submit_budget().as_secs().into();
+    assert_eq!(serde_json::to_value(&loaded).unwrap(), expected);
 
     #[cfg(unix)]
     {
@@ -445,6 +448,26 @@ fn stale_submitting_records_are_reported_and_rewritten_as_submission_unknown() {
     let another = JobRecord::new(new_job(), ago(3600)).unwrap();
     patient.create(&another).unwrap();
     assert_eq!(patient.load(another.job_id()).unwrap().status(), JobStatus::Submitting);
+    // The creating process records its budget, so a process with the default
+    // (shorter) budget does not declare that submitter dead early either...
+    assert_eq!(raw(&store, another.job_id())["submit_budget_seconds"], 7200);
+    assert_eq!(store.load(another.job_id()).unwrap().status(), JobStatus::Submitting);
+    assert!(
+        store
+            .list()
+            .unwrap()
+            .records
+            .iter()
+            .any(|r| r.job_id() == another.job_id() && r.status() == JobStatus::Submitting)
+    );
+    // ...but once that budget has passed too, it is stale for everyone.
+    let long_dead = JobRecord::new(new_job(), ago(7200 + 61)).unwrap();
+    patient.create(&long_dead).unwrap();
+    assert_eq!(store.load(long_dead.job_id()).unwrap().status(), JobStatus::SubmissionUnknown);
+}
+
+fn raw(store: &JobStore, id: &JobId) -> Value {
+    serde_json::from_slice(&fs::read(store.record_path(id)).unwrap()).unwrap()
 }
 
 #[test]

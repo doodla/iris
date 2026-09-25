@@ -85,7 +85,7 @@ written with sorted keys:
   "last_checked_at": "2026-09-24T22:53:12Z",
   "remote_operation_id": "models/veo-3.1-fast-generate-preview/operations/op_mockjob001",
   "provider_request_id": null,
-  "remote_expires_at": "2026-09-26T22:53:12Z",
+  "remote_expires_at": "2026-09-26T22:53:12Z", "submit_budget_seconds": 2145,
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": "4", "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
   "prompt": { "sha256": "c039da7d...", "chars": 31, "text": null },
@@ -136,7 +136,10 @@ an interrupt that arrives before Iris starts sending the request (see
 
 A record still `submitting` more than (the full paid-submission timeout budget + 60 seconds) after
 `created_at` is treated as abandoned — the process that submitted it died inside the uncertainty
-window — and is reported as `submission_unknown` the next time anything touches it.
+window — and is reported as `submission_unknown` the next time anything touches it. The budget is
+the larger of the reading process's and the one the submitting process recorded in
+`submit_budget_seconds` (`null` in records from older versions), so a submitter configured with
+longer timeouts is never declared dead early.
 
 A finished operation with output URIs is `succeeded` with every URI recorded (the raw URI only in
 the private record): whether Iris trusts a URI enough to fetch it is a download decision, made anew
