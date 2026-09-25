@@ -66,7 +66,10 @@ enum Reply {
 }
 
 /// One scripted exchange per connection. The request body is read in `read_chunk`
-/// pieces with `pause` after each (a slow upload), then the reply is written.
+/// pieces with `pause` after each (a slow upload), then the reply is written. The
+/// pauses follow a fixed schedule from the start of the body, so a sleep that wakes late
+/// (common on a busy CI runner) does not add to the next: `n` pieces take `n * pause`,
+/// not `n` times the worst wake-up delay.
 struct Script {
     reply: Reply,
     read_chunk: usize,
@@ -112,6 +115,8 @@ fn raw_server(scripts: Vec<Script>) -> Server {
             }
             let mut left = content_length;
             let mut buf = vec![0u8; script.read_chunk];
+            let started = Instant::now();
+            let mut pieces = 0u32;
             while left > 0 {
                 let want = left.min(script.read_chunk);
                 if reader.read_exact(&mut buf[..want]).is_err() {
@@ -119,7 +124,11 @@ fn raw_server(scripts: Vec<Script>) -> Server {
                 }
                 left -= want;
                 got.fetch_add(want, Ordering::SeqCst);
-                std::thread::sleep(script.pause);
+                pieces += 1;
+                let wait = (started + script.pause * pieces).saturating_duration_since(Instant::now());
+                if !wait.is_zero() {
+                    std::thread::sleep(wait);
+                }
             }
             let mut stream = stream;
             match script.reply {
