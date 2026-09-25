@@ -397,7 +397,7 @@ written; the job record keeps the original code and any unknown fields untouched
 | `quota_exceeded` | quota | 3 | false |
 | `rate_limited` | rate_limit | 1 | true |
 | `content_blocked` | content | 1 | false |
-| `provider_error` | provider | 1 | true for 5xx, otherwise unspecified |
+| `provider_error` | provider | 1 | unspecified (true for a 5xx) |
 | `provider_bad_response` | provider | 1 | unspecified |
 | `remote_job_failed` | provider | 1 | false |
 | `network_error` | network | 1 | true |
@@ -413,8 +413,9 @@ written; the job record keeps the original code and any unknown fields untouched
 | `submission_uncertain` | uncertain | 5 | false |
 | `interrupted` | interrupted | 130 | true (false while a paid image request was in flight) |
 
-"Retryable" here is the *default* Iris reports for that code; a specific error can override it
-(e.g. `provider_error` is `true` for a 5xx it classified as transient). `retryable` describes
+"Retryable" here is the *default* Iris reports for that code (the first word of the cell; a test
+compares every row with the code's definition); a specific error can override it (e.g.
+`provider_error` is `true` for a 5xx it classified as transient). `retryable` describes
 whether *retrying the same request* might help — it is never an instruction to retry a paid
 submission automatically; see [jobs.md](jobs.md#submission-uncertainty) for why Iris never
 resubmits a paid request whose outcome it cannot prove. An image-command error whose

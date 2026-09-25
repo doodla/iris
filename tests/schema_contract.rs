@@ -472,3 +472,32 @@ fn warnings_are_only_built_from_the_registry() {
         );
     }
 }
+
+/// docs/json-contract.md's table of stable codes and ErrorCode agree both ways:
+/// every code is documented once, every row is a code, and each row's category,
+/// exit code, and default retryability (the first word of its cell) are the code's.
+#[test]
+fn the_documented_error_table_is_the_error_codes() {
+    let rows = contract_table("## Stable codes, categories, exit codes, and default retryability");
+    let documented: Vec<&str> = rows.iter().map(|row| row[0].as_str()).collect();
+    let unique: BTreeSet<&str> = documented.iter().copied().collect();
+    assert_eq!(unique.len(), documented.len(), "a code is documented twice: {documented:?}");
+    let codes: BTreeSet<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
+    assert_eq!(unique, codes, "docs/json-contract.md error table vs ErrorCode::ALL");
+    for row in &rows {
+        assert_eq!(row.len(), 4, "{row:?}");
+        let code = *ErrorCode::ALL.iter().find(|c| c.as_str() == row[0]).unwrap();
+        let category = serde_json::to_value(code.category()).unwrap();
+        assert_eq!(row[1], category.as_str().unwrap(), "category of {code}");
+        assert_eq!(row[2], code.exit_code().to_string(), "exit code of {code}");
+        let default = match row[3].split([' ', '(']).next().unwrap() {
+            "true" => Some(true),
+            "false" => Some(false),
+            "unspecified" => None,
+            other => {
+                panic!("{code}: the retryable cell must start with true, false, or unspecified: {other:?}")
+            }
+        };
+        assert_eq!(default, code.default_retryable(), "default retryability of {code}");
+    }
+}

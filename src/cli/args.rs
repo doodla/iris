@@ -733,4 +733,89 @@ mod tests {
     fn command_definition_is_consistent() {
         Cli::command().debug_assert();
     }
+
+    /// The command lines of an "Examples:" section: the indented lines after it, up
+    /// to the first blank line.
+    fn examples(help: &str) -> Vec<String> {
+        help.split_once("Examples:\n")
+            .map(|(_, rest)| {
+                rest.lines().take_while(|l| !l.trim().is_empty()).map(|l| l.trim().to_string()).collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Split a command line into words the way a POSIX shell would for these
+    /// examples: whitespace separates words, and single or double quotes (with `\"`
+    /// inside double quotes) group them.
+    fn shell_words(line: &str) -> Vec<String> {
+        let (mut words, mut word, mut quote, mut in_word) = (Vec::new(), String::new(), None, false);
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            match (quote, c) {
+                (None, c) if c.is_whitespace() => {
+                    if in_word {
+                        words.push(std::mem::take(&mut word));
+                        in_word = false;
+                    }
+                }
+                (None, '"' | '\'') => (quote, in_word) = (Some(c), true),
+                (Some(q), c) if c == q => quote = None,
+                (Some('"'), '\\') => word.extend(chars.next()),
+                (_, c) => {
+                    word.push(c);
+                    in_word = true;
+                }
+            }
+        }
+        assert!(quote.is_none(), "unbalanced quotes in {line:?}");
+        if in_word {
+            words.push(word);
+        }
+        words
+    }
+
+    /// Every help page's examples parse: each command line (the part after the last
+    /// `|`, without shell redirections) is accepted by the command-line parser.
+    #[test]
+    fn every_help_example_parses() {
+        fn collect(cmd: &clap::Command, page: &str, out: &mut Vec<(String, String)>) {
+            for help in [cmd.get_after_help(), cmd.get_after_long_help()].into_iter().flatten() {
+                out.extend(examples(&help.to_string()).into_iter().map(|e| (page.to_string(), e)));
+            }
+            for sub in cmd.get_subcommands() {
+                collect(sub, &format!("{page} {}", sub.get_name()), out);
+            }
+        }
+        let mut all = Vec::new();
+        collect(&Cli::command(), "iris", &mut all);
+        assert!(all.len() >= 40, "found only {} examples", all.len());
+        for (page, line) in all {
+            let words = shell_words(&line);
+            let words = match words.iter().rposition(|w| w == "|") {
+                Some(pipe) => words[pipe + 1..].to_vec(),
+                None => words,
+            };
+            let mut argv: Vec<String> = Vec::new();
+            let mut words = words.into_iter();
+            while let Some(word) = words.next() {
+                match word.as_str() {
+                    ">" | ">>" | "<" | "2>" => {
+                        words.next();
+                    }
+                    w if w.starts_with('>') || w.starts_with("2>") => {}
+                    _ => argv.push(word),
+                }
+            }
+            assert_eq!(argv.first().map(String::as_str), Some("iris"), "{page}: {line}");
+            if let Err(e) = Cli::try_parse_from(&argv) {
+                panic!("the example of `{page}` does not parse: {line}\n{e}");
+            }
+        }
+    }
+
+    #[test]
+    fn shell_words_follow_quotes() {
+        assert_eq!(shell_words(r#"iris a "b c" 'd e' "f\"g" h"#), ["iris", "a", "b c", "d e", "f\"g", "h"]);
+        assert_eq!(shell_words(r#"x > "${fpath[1]}/_iris""#), ["x", ">", "${fpath[1]}/_iris"]);
+    }
 }
