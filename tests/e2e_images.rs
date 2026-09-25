@@ -432,6 +432,45 @@ fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory(
     assert_eq!(std::fs::read(sb.path("out")).unwrap(), b"in the way", "the file in the way is untouched");
 }
 
+/// Gemini image models take no output format, so an `-o` extension cannot be
+/// requested: the plan says the provider chooses the type (dry run and real run),
+/// and when it returns JPEG for `-o g.png` the image is saved as `g.jpg`.
+#[test]
+fn a_gemini_output_extension_is_flagged_as_the_providers_choice() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let image = jpeg(16, 16);
+    let part = serde_json::json!([inline_part("image/jpeg", &image)]);
+    api.on("POST", &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL), gemini_parts(part));
+    let run = |dry: bool| {
+        let mut iris = sb.iris();
+        iris.gemini(&api).args([
+            "image",
+            "generate",
+            PROMPT,
+            "--provider",
+            "gemini",
+            "-o",
+            "g.png",
+            "--json",
+        ]);
+        if dry {
+            iris.arg("--dry-run");
+        }
+        iris.run().ok()
+    };
+    let v = run(true);
+    assert_eq!(v["result"]["outputs"][0], sb.work().join("g.png").to_str().unwrap());
+    assert!(warning_codes(&v).contains(&"output_extension_may_change".to_string()), "{v}");
+    assert_eq!(api.total(), 0);
+
+    let v = run(false);
+    assert_eq!(v["result"]["artifacts"][0]["path"], sb.work().join("g.jpg").to_str().unwrap());
+    let codes = warning_codes(&v);
+    assert!(codes.contains(&"output_extension_may_change".to_string()), "{v}");
+    assert!(codes.contains(&"output_extension_adjusted".to_string()), "{v}");
+}
+
 /// The bare `nano-banana` nickname is refused everywhere a model is named, with a
 /// hint at the names Iris does register, before anything is sent.
 #[test]

@@ -543,6 +543,7 @@ the code's registry); the `message` says what happened in the case at hand:
 | `status_refresh_failed` | the job's remote status could not be refreshed; the last known status is shown |
 | `output_item_unusable` | a returned item is not a usable image and was skipped; every usable image was kept |
 | `output_saved_elsewhere` | paid output could not be saved where it was requested and was saved in the state directory instead |
+| `output_extension_may_change` | (plan time, dry run and real run) the model has no `format` option, so the provider chooses the image type: the `-o` extension may be replaced by the returned type's (then reported with `output_extension_adjusted`) |
 
 Paid image output is judged by its bytes, never by the provider's label, and one bad item never
 costs the others: a valid image of another type than requested or labeled (or with no label) is

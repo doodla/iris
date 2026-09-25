@@ -114,6 +114,24 @@ async fn run_checked(
         opts = catalog::validate_request(spec, op, &raw, counts)?;
     }
     warnings.extend(plan.warnings.iter().cloned());
+    if let Some(output) = output_path
+        && !spec.options_for(op).any(|o| o.name == "format")
+        && media_types.len() > 1
+    {
+        warnings.push(Warning::new(
+            WarningCode::OutputExtensionMayChange,
+            format!(
+                "{} takes no output format: the provider chooses the image type ({}), so the image may be \
+                 saved with another extension than {} (reported with output_extension_adjusted)",
+                resolved.id,
+                media_types.join(", "),
+                match plan.paths.as_slice() {
+                    [one] => one.display().to_string(),
+                    _ => format!("the paths planned from {}", output.display()),
+                }
+            ),
+        ));
+    }
     artifacts::preflight(&plan.paths, common.overwrite)?;
     // Check the output directories without creating anything yet: a real run
     // creates them only once the credential is known to be present.

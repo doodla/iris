@@ -2244,7 +2244,8 @@
                 "unexpected_output_count",
                 "status_refresh_failed",
                 "output_item_unusable",
-                "output_saved_elsewhere"
+                "output_saved_elsewhere",
+                "output_extension_may_change"
               ]
             },
             {

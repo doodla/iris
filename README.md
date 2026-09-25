@@ -241,6 +241,14 @@ you asked after the request was made (say the disk filled up or the directory wa
 saves it under `<state dir>/unsaved/` instead and reports the path (`iris config path` shows the
 state dir).
 
+The extension of `-o` also picks the image type for models that take a format (OpenAI's `-o
+fox.jpg` requests JPEG). Gemini image models take none: the provider chooses the type (live runs
+returned JPEG), so the extension only names the file. The plan warns about it up front
+(`output_extension_may_change`, in dry runs too), and if another type comes back Iris keeps the
+stem and saves under the right extension (`-o fox.png` becomes `fox.jpg`, with
+`output_extension_adjusted`). `--overwrite` covers only the path you named: an existing file under
+the adjusted name is never replaced (the image goes to `<stem>.<n>.<ext>`, `output_renamed`).
+
 ## Agent usage (JSON mode)
 
 With `--json`, every command prints **exactly one JSON document on stdout**; all progress and

@@ -298,6 +298,53 @@ async fn output_extension_selects_the_format_and_a_different_returned_type_is_ke
     assert_eq!(err_code(r), ErrorCode::InvalidArgument);
 }
 
+/// A model without a `format` option cannot be asked for the type an `-o`
+/// extension names: the plan warns that the provider chooses the type and the
+/// extension may change, in a dry run and a real run alike. A model with `format`,
+/// or a run without `-o`, gets no such warning.
+#[tokio::test]
+async fn an_extension_the_model_cannot_be_asked_for_is_flagged_at_plan_time() {
+    let f = Fixture::new();
+    let request = |provider: ProviderId, output: Option<&str>, dry_run: bool| {
+        let mut a = args("x");
+        a.common.provider = Some(provider);
+        a.common.output = output.map(|o| f.sandbox.path(o));
+        a.common.dry_run = dry_run;
+        a
+    };
+    let may_change = |warnings: &[Warning]| {
+        warnings.iter().filter(|w| w.is(WarningCode::OutputExtensionMayChange)).cloned().collect::<Vec<_>>()
+    };
+
+    let (r, warnings) =
+        f.run(Operation::ImageGenerate, request(ProviderId::Gemini, Some("g.png"), true)).await;
+    let plan = planned(r.unwrap());
+    assert_eq!(plan.outputs, [f.sandbox.path("g.png").to_str().unwrap()]);
+    let flagged = may_change(&warnings);
+    assert_eq!(flagged.len(), 1, "{warnings:?}");
+    assert!(flagged[0].message.contains("fake-gemini-image"), "{}", flagged[0].message);
+    assert!(flagged[0].message.contains("image/png, image/jpeg"), "{}", flagged[0].message);
+    assert!(flagged[0].message.contains(f.sandbox.path("g.png").to_str().unwrap()), "{}", flagged[0].message);
+
+    f.gemini.images().push(Ok(image_output(vec![jpeg(8, 8)])));
+    let (r, warnings) =
+        f.run(Operation::ImageGenerate, request(ProviderId::Gemini, Some("g.png"), false)).await;
+    let res = completed(r.unwrap());
+    assert_eq!(res.artifacts[0].path, f.sandbox.path("g.jpg").to_str().unwrap());
+    assert_eq!(may_change(&warnings).len(), 1, "{warnings:?}");
+    assert!(has_warning(&warnings, "output_extension_adjusted"));
+
+    // Without an extension the plan picks one, which may change too.
+    let (_, warnings) = f.run(Operation::ImageGenerate, request(ProviderId::Gemini, Some("g2"), true)).await;
+    assert_eq!(may_change(&warnings).len(), 1, "{warnings:?}");
+    // No -o, or a model that takes the format from the extension: nothing to flag.
+    let (_, warnings) = f.run(Operation::ImageGenerate, request(ProviderId::Gemini, None, true)).await;
+    assert!(may_change(&warnings).is_empty(), "{warnings:?}");
+    let (_, warnings) =
+        f.run(Operation::ImageGenerate, request(ProviderId::OpenAi, Some("o.png"), true)).await;
+    assert!(may_change(&warnings).is_empty(), "{warnings:?}");
+}
+
 #[tokio::test]
 async fn extra_images_text_and_provider_warnings_are_all_kept() {
     let f = Fixture::new();

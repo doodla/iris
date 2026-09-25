@@ -255,6 +255,9 @@ pub enum WarningCode {
     OutputItemUnusable,
     /// Paid output could not be saved where requested and went to the state directory.
     OutputSavedElsewhere,
+    /// The model takes no output format: the provider picks the image type, so an
+    /// `-o` extension may be changed when the image is saved.
+    OutputExtensionMayChange,
 }
 
 impl WarningCode {
@@ -278,6 +281,7 @@ impl WarningCode {
         WarningCode::StatusRefreshFailed,
         WarningCode::OutputItemUnusable,
         WarningCode::OutputSavedElsewhere,
+        WarningCode::OutputExtensionMayChange,
     ];
 
     /// The public snake_case code.
@@ -299,6 +303,7 @@ impl WarningCode {
             WarningCode::StatusRefreshFailed => "status_refresh_failed",
             WarningCode::OutputItemUnusable => "output_item_unusable",
             WarningCode::OutputSavedElsewhere => "output_saved_elsewhere",
+            WarningCode::OutputExtensionMayChange => "output_extension_may_change",
         }
     }
 }
