@@ -218,13 +218,23 @@ const PRO_PRICING: &[PriceRule] = &[
     price("Text and thinking output tokens", "1M tokens", 12.00),
 ];
 
+/// Names Iris deliberately accepts for no model, each with what to use instead.
+/// Google's "Nano Banana" is `gemini-2.5-flash-image`, which Iris does not register,
+/// so accepting the bare nickname for another model (it once named Nano Banana 2)
+/// would silently run a differently branded model than the one asked for.
+pub const DECLINED_NAMES: &[(&str, &str)] = &[(
+    "nano-banana",
+    "Google's \"Nano Banana\" is gemini-2.5-flash-image, which Iris does not register; use nano-banana-2 \
+     (gemini-3.1-flash-image) or nano-banana-pro (gemini-3-pro-image)",
+)];
+
 /// Built-in Gemini image models.
 pub static MODELS: &[ModelSpec] = &[
     ModelSpec {
         id: "gemini-3.1-flash-image",
         provider: ProviderId::Gemini,
         display_name: "Nano Banana 2 (Gemini 3.1 Flash Image)",
-        aliases: &["nano-banana-2", "nano-banana"],
+        aliases: &["nano-banana-2"],
         lifecycle: Lifecycle::Ga,
         operations: BOTH,
         default_for: BOTH,

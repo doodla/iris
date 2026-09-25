@@ -260,7 +260,7 @@ pub struct ModelSpec {
     pub id: &'static str,
     pub provider: ProviderId,
     pub display_name: &'static str,
-    /// Alternative names accepted by `--model` (e.g. "nano-banana").
+    /// Alternative names accepted by `--model` (e.g. "nano-banana-2").
     pub aliases: &'static [&'static str],
     pub lifecycle: Lifecycle,
     pub operations: &'static [Operation],

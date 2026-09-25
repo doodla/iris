@@ -310,7 +310,7 @@ MODEL                          PROVIDER  LIFECYCLE  OPERATIONS                  
 gpt-image-2.5-sunburst         openai    ga         image.generate, image.edit  image.generate, image.edit  gpt-image-2.5-sunburst-2026-09-08
 gpt-image-2.5-flare            openai    ga         image.generate, image.edit  -                           gpt-image-2.5-flare-2026-09-08
 gpt-image-2                    openai    ga         image.generate, image.edit  -                           gpt-image-2-2026-04-21
-gemini-3.1-flash-image         gemini    ga         image.generate, image.edit  image.generate, image.edit  nano-banana-2, nano-banana
+gemini-3.1-flash-image         gemini    ga         image.generate, image.edit  image.generate, image.edit  nano-banana-2
 gemini-3.1-flash-lite-image    gemini    ga         image.generate, image.edit  -                           nano-banana-2-lite
 gemini-3-pro-image             gemini    ga         image.generate, image.edit  -                           nano-banana-pro
 veo-3.1-fast-generate-preview  gemini    preview    video.generate              video.generate              veo-fast

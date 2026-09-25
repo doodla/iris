@@ -77,7 +77,6 @@ fn the_three_nano_banana_models_are_declared_with_ids_names_and_aliases() {
     assert_eq!(spec(FLASH).display_name, "Nano Banana 2 (Gemini 3.1 Flash Image)");
     assert_eq!(spec(LITE).display_name, "Nano Banana 2 Lite (Gemini 3.1 Flash Lite Image)");
     assert_eq!(spec(PRO).display_name, "Nano Banana Pro (Gemini 3 Pro Image)");
-    assert_eq!(spec("nano-banana").id, FLASH);
     assert_eq!(spec("nano-banana-2").id, FLASH);
     assert_eq!(spec("nano-banana-2-lite").id, LITE);
     assert_eq!(spec("nano-banana-pro").id, PRO);
@@ -118,11 +117,38 @@ fn flash_is_the_gemini_default_for_generate_and_edit() {
     assert_eq!(catalog::default_model(ProviderId::Gemini, Operation::ImageEdit).unwrap().id, FLASH);
     let resolved = catalog::resolve("nano-banana-pro", None, Some(ProviderId::Gemini)).unwrap();
     assert_eq!(resolved.id, PRO);
-    let err = catalog::resolve("nano-banana", None, Some(ProviderId::OpenAi)).unwrap_err();
+    let err = catalog::resolve("nano-banana-2", None, Some(ProviderId::OpenAi)).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);
     for gone in ["gemini-2.5-flash-image", "gemini-3-pro-image-preview", "imagen-4.0-generate-001"] {
         assert_eq!(catalog::resolve(gone, None, None).unwrap_err().code, ErrorCode::UnknownModel, "{gone}");
     }
+}
+
+/// Google's "Nano Banana" is gemini-2.5-flash-image, which Iris does not register, so
+/// the bare nickname names no model (it must not silently run Nano Banana 2); the
+/// error says which names to use instead, and other unknown names keep the usual hint.
+#[test]
+fn the_bare_nano_banana_nickname_names_no_model() {
+    assert!(catalog::find("nano-banana").is_none());
+    let names_the_alternatives = |hint: Option<&str>| {
+        let hint = hint.unwrap_or_default();
+        assert!(
+            hint.contains("gemini-2.5-flash-image")
+                && hint.contains("nano-banana-2")
+                && hint.contains("nano-banana-pro"),
+            "{hint}"
+        );
+    };
+    for name in ["nano-banana", "Nano-Banana"] {
+        let err = catalog::resolve(name, None, None).unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnknownModel, "{name}");
+        names_the_alternatives(err.hint.as_deref());
+    }
+    let err = catalog::resolve("gemini-9-image", Some("nano-banana"), None).unwrap_err();
+    assert_eq!(err.code, ErrorCode::UnknownModel);
+    names_the_alternatives(err.hint.as_deref());
+    let err = catalog::resolve("banana", None, None).unwrap_err();
+    assert!(err.hint.as_deref().unwrap().starts_with("known models: "), "{:?}", err.hint);
 }
 
 #[test]

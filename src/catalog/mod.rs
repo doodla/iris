@@ -59,6 +59,16 @@ pub fn default_model_in(
     models.into_iter().find(|m| m.provider == provider && m.default_for.contains(&op))
 }
 
+/// What to use instead of `name` when it is a name Iris deliberately gives no model
+/// (such as a nickname of a model Iris does not register), if it is one. Matched
+/// case-insensitively; shown as the hint of the `unknown_model` error.
+pub fn declined_name_hint(name: &str) -> Option<&'static str> {
+    gemini::DECLINED_NAMES
+        .iter()
+        .find(|(declined, _)| declined.eq_ignore_ascii_case(name))
+        .map(|(_, hint)| *hint)
+}
+
 /// The syntax of model ids `provider`'s adapter can send (checked for unknown ids
 /// given with `--capabilities-from`; every catalog id satisfies it).
 pub fn model_id_syntax(provider: ProviderId) -> ModelIdSyntax {
@@ -160,19 +170,23 @@ pub fn resolve_in(
 
     let Some(template) = capabilities_from else {
         let known: Vec<&str> = models.iter().map(|m| m.id).collect();
-        return Err(IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'"))
-            .with_hint(format!(
+        let hint = declined_name_hint(model).map(str::to_string).unwrap_or_else(|| {
+            format!(
                 "known models: {}. To use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> \
                  to declare which known model's capabilities it has",
                 known.join(", ")
-            )));
+            )
+        });
+        return Err(
+            IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'")).with_hint(hint)
+        );
     };
     let Some(spec) = find(template) else {
         return Err(IrisError::new(
             ErrorCode::UnknownModel,
             format!("--capabilities-from '{template}' is not a known model"),
         )
-        .with_hint("run `iris models list`"));
+        .with_hint(declined_name_hint(template).unwrap_or("run `iris models list`")));
     };
     if let Some(p) = provider
         && p != spec.provider
@@ -243,12 +257,12 @@ mod tests {
     fn unknown_ids_follow_the_syntax_of_the_templates_provider() {
         let gemini = ["gemini-9.9-flash-image", "veo_4.0-x", "A1", &"a".repeat(128)];
         for id in gemini {
-            assert!(resolve(id, Some("nano-banana"), None).is_ok(), "{id}");
+            assert!(resolve(id, Some("nano-banana-2"), None).is_ok(), "{id}");
             assert!(resolve(id, Some("veo"), None).is_ok(), "{id}");
         }
         for id in ["a:b", "bad/../id", "-lead", ".hidden", "a b", "a?b", "a%2Fb", "é", "", &"a".repeat(129)]
         {
-            for template in ["nano-banana", "veo"] {
+            for template in ["nano-banana-2", "veo"] {
                 let err = resolve(id, Some(template), None).unwrap_err();
                 assert_eq!(err.code, ErrorCode::InvalidArgument, "{id} {template}");
             }

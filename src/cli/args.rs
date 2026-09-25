@@ -125,7 +125,7 @@ pub enum Command {
         subcommand,
         long_about = "List the models Iris knows and inspect their declared capabilities, options, defaults, \
                       and published prices.",
-        after_help = "Examples:\n  iris models list\n  iris models show nano-banana --json"
+        after_help = "Examples:\n  iris models list\n  iris models show nano-banana-2 --json"
     )]
     Models(ModelsCommand),
     /// List providers, credential variables, and whether they are set
@@ -618,7 +618,7 @@ pub enum ModelsCommand {
                       documented access requirements. --check-access asks the provider with a free \
                       metadata call whether the model is visible to your key; billing tier, prepaid credit, \
                       and organization verification are not checked.",
-        after_help = "Examples:\n  iris models show nano-banana\n  iris models show gpt-image-2 --json\n  iris \
+        after_help = "Examples:\n  iris models show nano-banana-2\n  iris models show gpt-image-2 --json\n  iris \
                       models show veo-fast --check-access"
     )]
     Show(ModelsShowArgs),

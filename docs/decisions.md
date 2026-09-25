@@ -190,6 +190,12 @@ A model id Iris does not know is refused unless `--capabilities-from <known mode
 known model's capabilities it has; such a request is validated as that model but gets no cost
 estimate, because the known model's prices need not apply.
 
+Aliases are dated snapshots or unambiguous nicknames (`nano-banana-2`, `nano-banana-pro`,
+`veo-fast`). The bare `nano-banana` is deliberately none: Google's "Nano Banana" is
+`gemini-2.5-flash-image`, which Iris does not register, so accepting it for Nano Banana 2 would
+silently run a differently branded model. `--model nano-banana` is `unknown_model` with a hint
+naming `nano-banana-2` and `nano-banana-pro`.
+
 **Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
 [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations) ·
 [OpenAI changelog](https://developers.openai.com/api/docs/changelog) ·

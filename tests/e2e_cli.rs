@@ -287,8 +287,8 @@ fn borrowed_model_ids_are_checked_as_the_adapter_checks_them() {
     };
 
     for id in gemini_ok {
-        run(&image_args(id, "nano-banana"), true).ok();
-        run(&image_args(id, "nano-banana"), false).ok();
+        run(&image_args(id, "nano-banana-2"), true).ok();
+        run(&image_args(id, "nano-banana-2"), false).ok();
         assert_eq!(api.count("POST", &gemini_generate_path(id)), 1, "{id} reached the provider as given");
     }
     let video = ["video", "generate", "waves", "-m", veo_ok, "--capabilities-from", "veo-lite", "--detach"];
@@ -304,7 +304,7 @@ fn borrowed_model_ids_are_checked_as_the_adapter_checks_them() {
     for id in ["gemini:9", "bad/../id", "-lead", ".hidden", "a%2Fb", long.as_str()] {
         let model = format!("--model={id}");
         for dry in [true, false] {
-            let args = ["image", "generate", "a fox", &model, "--capabilities-from", "nano-banana"];
+            let args = ["image", "generate", "a fox", &model, "--capabilities-from", "nano-banana-2"];
             let v = run(&args, dry).err(2, "invalid_argument");
             assert!(v["error"]["provider_status"].is_null(), "{id}: {v}");
             let args = ["video", "generate", "waves", &model, "--capabilities-from", "veo", "--detach"];

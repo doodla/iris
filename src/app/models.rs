@@ -64,10 +64,10 @@ pub async fn show(
 ) -> Result<ModelShowResult, IrisError> {
     let spec = ctx.catalog.find(model).ok_or_else(|| {
         let known: Vec<&str> = ctx.catalog.models().iter().map(|m| m.id).collect();
-        IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'")).with_hint(format!(
-            "known models: {}",
-            if known.is_empty() { "none".to_string() } else { known.join(", ") }
-        ))
+        let hint = crate::catalog::declined_name_hint(model).map(str::to_string).unwrap_or_else(|| {
+            format!("known models: {}", if known.is_empty() { "none".to_string() } else { known.join(", ") })
+        });
+        IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'")).with_hint(hint)
     })?;
     if spec.lifecycle == crate::catalog::Lifecycle::Preview {
         warnings.push(Warning::new(

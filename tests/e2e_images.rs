@@ -432,6 +432,24 @@ fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory(
     assert_eq!(std::fs::read(sb.path("out")).unwrap(), b"in the way", "the file in the way is untouched");
 }
 
+/// The bare `nano-banana` nickname is refused everywhere a model is named, with a
+/// hint at the names Iris does register, before anything is sent.
+#[test]
+fn the_bare_nano_banana_nickname_is_an_unknown_model() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    for args in [
+        &["models", "show", "nano-banana", "--json"][..],
+        &["image", "generate", PROMPT, "--model", "nano-banana", "--dry-run", "--json"],
+        &["image", "generate", PROMPT, "--model", "nano-banana", "--json"],
+    ] {
+        let v = sb.iris().gemini(&api).args(args).run().err(2, "unknown_model");
+        let hint = v["error"]["hint"].as_str().unwrap();
+        assert!(hint.contains("nano-banana-2") && hint.contains("nano-banana-pro"), "{args:?}: {v}");
+    }
+    assert_eq!(api.total(), 0);
+}
+
 #[test]
 fn a_missing_key_creates_no_output_directory() {
     let sb = Sandbox::new();
