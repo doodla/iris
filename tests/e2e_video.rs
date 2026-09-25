@@ -1046,10 +1046,57 @@ fn overwrite_or_a_recorded_file_that_no_longer_validates_fetches_the_output_agai
         .run()
         .err(1, "artifact_expired");
     let hint = v["error"]["hint"].as_str().unwrap();
-    assert!(hint.contains(target.to_str().unwrap()) && hint.contains("unchanged"), "{hint}");
+    assert!(hint.contains(&format!("the file saved earlier, {}, is unchanged", target.display())), "{hint}");
     assert_eq!(std::fs::read(&target).unwrap(), fresh);
     let rec = sb.record(&id);
     assert_eq!(rec["outputs"][0]["download_state"], "downloaded", "a saved file is never forgotten");
+    assert_eq!(veo.file_fetches(), 5);
+
+    // Only an intact file is called unchanged. Edited after it was downloaded, it
+    // is no copy of the output: the output is fetched for another target instead,
+    // and when that fails the hint says the saved file no longer matches.
+    let mut edited = fresh.clone();
+    edited.extend_from_slice(b"edited");
+    std::fs::write(&target, &edited).unwrap();
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["jobs", "download", &id, "-o", "other.mp4", "--json"])
+        .run()
+        .err(1, "artifact_expired");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(!hint.contains("unchanged"), "{hint}");
+    assert!(
+        hint.contains(&format!("{}, no longer matches the downloaded output", target.display())),
+        "{hint}"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), edited, "the fetch never touches the saved file");
+    assert!(!sb.path("other.mp4").exists());
+    assert_eq!(veo.file_fetches(), 6);
+
+    // Deleted: the output is fetched to its recorded path; when the file host fails,
+    // the hint says the file saved earlier is gone.
+    std::fs::remove_file(&target).unwrap();
+    veo.file.set(
+        json_response(500, json!({ "error": "backend unavailable" })).insert_header("retry-after-ms", "5"),
+    );
+    let v =
+        sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(1, "download_failed");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(!hint.contains("unchanged"), "{hint}");
+    assert!(hint.contains("nothing is regenerated"), "{hint}");
+    assert!(
+        hint.contains(&format!("the file saved earlier, {}, no longer exists", target.display())),
+        "{hint}"
+    );
+    assert!(!target.exists());
+
+    // The file host recovers: the output is saved at its recorded path again.
+    veo.file.set(wiremock::ResponseTemplate::new(200).set_body_raw(fresh.clone(), "video/mp4"));
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert_eq!(job_of(&v)["artifacts"][0]["path"], target.to_str().unwrap());
+    assert_eq!(std::fs::read(&target).unwrap(), fresh);
+    assert!(sb.record(&id)["outputs"][0]["last_error"].is_null(), "{}", sb.record(&id));
     assert_eq!(veo.submits(), 1);
     veo.assert_no_credential_leaks();
 }

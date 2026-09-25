@@ -17,7 +17,9 @@ use std::time::Duration;
 use jiff::Timestamp;
 use url::Url;
 
-use crate::artifacts::{self, DownloadDecision, FinalizeMode, Naming, PartFile, PathRequest, SavedArtifact};
+use crate::artifacts::{
+    self, DownloadDecision, FinalizeMode, Naming, PartFile, PathRequest, RecordedFile, SavedArtifact,
+};
 use crate::config::SettingSource;
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
@@ -1042,13 +1044,14 @@ async fn download_outputs(
                     ))
                 };
                 // A file saved earlier stays the output's artifact (see
-                // `JobRecord::mark_output_failed`); say so when a fresh copy failed.
-                let e = match (recorded, e.hint.clone()) {
-                    (Some(file), hint) => {
-                        let kept = format!("the file saved earlier, {}, is unchanged", file.path.display());
-                        e.with_hint(hint.map_or(kept.clone(), |h| format!("{h}; {kept}")))
+                // `JobRecord::mark_output_failed`); say what became of it.
+                let e = match recorded {
+                    Some(file) => {
+                        let note = earlier_file_note(&file);
+                        let hint = e.hint.clone();
+                        e.with_hint(hint.map_or_else(|| note.clone(), |h| format!("{h}; {note}")))
                     }
-                    (None, _) => e,
+                    None => e,
                 };
                 if e.code == ErrorCode::ArtifactExpired {
                     ctx.store.update(id, |r| r.mark_output_expired(out.index, &e, now))?;
@@ -1063,6 +1066,22 @@ async fn download_outputs(
     match remote_failure {
         Some(e) => Err(with_job_context(e, &rec)),
         None => Ok(rec),
+    }
+}
+
+/// For the error of a failed fetch: the state of the file recorded for the output
+/// earlier. The fetch never touches it and the record keeps naming it, but the
+/// file may have been deleted or edited since it was downloaded (that is one
+/// reason to fetch the output again), so it is called unchanged only while it is
+/// intact.
+fn earlier_file_note(file: &RecordedFile<'_>) -> String {
+    let path = file.path.display();
+    if artifacts::is_intact(file) {
+        format!("the file saved earlier, {path}, is unchanged")
+    } else if std::fs::symlink_metadata(file.path).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+        format!("the file saved earlier, {path}, no longer exists")
+    } else {
+        format!("the file saved earlier, {path}, no longer matches the downloaded output")
     }
 }
 

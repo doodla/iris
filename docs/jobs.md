@@ -260,7 +260,9 @@ Order of decision for each output, under the job's download lock:
    example a video an older Iris saved from a host that stopped after the metadata): the output
    is fetched again (step 3), and when the recorded file is the target, the new download
    atomically replaces it. If that fetch fails, the file saved earlier stays as it was and stays
-   recorded (the error's hint names it).
+   recorded. Whenever a fetch of an output saved earlier fails, the error's hint names the saved
+   file and says whether it is unchanged, no longer exists, or no longer matches the downloaded
+   output (deleted or edited since it was downloaded, which is why the output was fetched).
 3. Otherwise, check that Iris may fetch the recorded URI with the configuration of *this*
    invocation (for Veo: a Files API download URL under the configured Gemini base URL; see
    [configuration.md](configuration.md#base-url-overrides) for proxies). A refused URI fails that
