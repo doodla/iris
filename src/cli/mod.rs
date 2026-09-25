@@ -62,12 +62,8 @@ pub fn run() -> i32 {
     let stdout: Sink = Arc::new(Mutex::new(TrackedStdout { written: Arc::clone(&written) }));
     let stderr: Sink = Arc::new(Mutex::new(std::io::stderr()));
     let out = Output { json, stdout: stdout.clone(), stderr: stderr.clone() };
-    let env = match EnvSnapshot::from_process() {
-        Ok(env) => env,
-        Err(e) => return out.failure(command, &e, Vec::new()),
-    };
     let io = Io {
-        env,
+        env: EnvSnapshot::from_process(),
         stdin: Box::new(std::io::stdin()),
         stdin_is_tty: std::io::stdin().is_terminal(),
         stdout,
@@ -229,7 +225,13 @@ async fn execute(
         return Ok(ResultPayload::Doctor(result));
     }
 
-    let ctx = AppContext::new(settings?, deps, progress);
+    let settings = settings?;
+    if writes_to_default_output_dir(&request, &settings) {
+        // The default output directory is the current directory: a deleted one is
+        // reported now, before anything is planned, recorded, or sent.
+        io.env.cwd()?;
+    }
+    let ctx = AppContext::new(settings, deps, progress);
     Ok(match request {
         Request::Image(op, args) => match app::image::run(&ctx, op, args, warnings).await? {
             GenerationOutcome::Completed(r) => ResultPayload::Image(r),
@@ -265,6 +267,19 @@ async fn execute(
     })
 }
 
+/// Whether `request` places its outputs in the default output directory (the
+/// current directory unless a flag, variable, or the config file names one):
+/// generation without `-o`. `jobs wait`/`download` normally use the directory
+/// recorded with the job, and reach the default only as a fallback.
+fn writes_to_default_output_dir(request: &Request, settings: &Settings) -> bool {
+    let common = match request {
+        Request::Image(_, args) => &args.common,
+        Request::Video(args) => &args.common,
+        _ => return false,
+    };
+    common.output.is_none() && settings.output_dir.source == config::SettingSource::Default
+}
+
 fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), IrisError> {
     let mut o = Overrides::default();
     let request = match command {
@@ -278,8 +293,8 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
             let common =
                 generation(&a.prompt, &a.model, a.options.flags(), &a.output, a.dry_run, io, &mut o)?;
             o.image_provider = common.provider;
-            let images = a.images.into_iter().map(|p| absolute(&io.env, p)).collect();
-            let mask = a.mask.map(|p| absolute(&io.env, p));
+            let images = a.images.into_iter().map(|p| absolute(&io.env, p)).collect::<Result<_, _>>()?;
+            let mask = a.mask.map(|p| absolute(&io.env, p)).transpose()?;
             Request::Image(Operation::ImageEdit, ImageArgs { common, images, mask })
         }
         Command::Video(VideoCommand::Generate(a)) => {
@@ -289,9 +304,13 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
             o.poll_interval = duration_flag("--poll-interval", a.poll_interval.as_deref())?;
             Request::Video(VideoArgs {
                 common,
-                first_frame: a.first_frame.map(|p| absolute(&io.env, p)),
-                last_frame: a.last_frame.map(|p| absolute(&io.env, p)),
-                references: a.references.into_iter().map(|p| absolute(&io.env, p)).collect(),
+                first_frame: a.first_frame.map(|p| absolute(&io.env, p)).transpose()?,
+                last_frame: a.last_frame.map(|p| absolute(&io.env, p)).transpose()?,
+                references: a
+                    .references
+                    .into_iter()
+                    .map(|p| absolute(&io.env, p))
+                    .collect::<Result<_, _>>()?,
                 detach: a.detach,
             })
         }
@@ -312,7 +331,7 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
                 args: WaitArgs {
                     download: !a.no_download,
                     target: Target {
-                        output: a.output.output.map(|p| absolute(&io.env, p)),
+                        output: a.output.output.map(|p| absolute(&io.env, p)).transpose()?,
                         overwrite: a.output.overwrite,
                     },
                 },
@@ -323,7 +342,7 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
             Request::JobsDownload {
                 job_id: a.job_id,
                 target: Target {
-                    output: a.output.output.map(|p| absolute(&io.env, p)),
+                    output: a.output.output.map(|p| absolute(&io.env, p)).transpose()?,
                     overwrite: a.output.overwrite,
                 },
             }
@@ -364,7 +383,7 @@ fn generation(
 ) -> Result<GenerationArgs, IrisError> {
     let prompt_args = PromptArgs {
         prompt: prompt_args.prompt.clone(),
-        prompt_file: prompt_args.prompt_file.clone().map(|p| absolute(&io.env, p)),
+        prompt_file: prompt_args.prompt_file.clone().map(|p| absolute(&io.env, p)).transpose()?,
         prompt_stdin: prompt_args.prompt_stdin,
     };
     let prompt = prompt::read(&prompt_args, &mut *io.stdin, io.stdin_is_tty)?;
@@ -377,17 +396,17 @@ fn generation(
         model: model.model.clone(),
         capabilities_from: model.capabilities_from.clone(),
         options,
-        output: output.output.clone().map(|p| absolute(&io.env, p)),
+        output: output.output.clone().map(|p| absolute(&io.env, p)).transpose()?,
         overwrite: output.overwrite,
         dry_run,
     })
 }
 
 /// Resolve a user-supplied path against the invocation's current directory (the
-/// environment snapshot's, which is the process's in production). Paths are
-/// otherwise used literally.
-fn absolute(env: &EnvSnapshot, path: PathBuf) -> PathBuf {
-    if path.is_absolute() { path } else { env.cwd().join(path) }
+/// environment snapshot's, which is the process's in production); `io_error` for a
+/// relative path when that directory is unknown. Paths are otherwise used literally.
+fn absolute(env: &EnvSnapshot, path: PathBuf) -> Result<PathBuf, IrisError> {
+    if path.is_absolute() { Ok(path) } else { Ok(env.cwd()?.join(path)) }
 }
 
 /// Typed flags → `RawOption { source: Flag(..) }` using the command's flag → option

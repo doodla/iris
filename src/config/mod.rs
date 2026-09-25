@@ -126,7 +126,11 @@ pub struct Settings {
     pub config_file: Resolved<PathBuf>,
     /// True if the config file existed and was loaded.
     pub config_file_exists: bool,
-    /// Absolute default output directory.
+    /// Absolute default output directory. The one exception: when it is the
+    /// default (the current directory) and the current directory is unknown
+    /// ([`EnvSnapshot::cwd`] fails, e.g. it was deleted), it is `.`, which cannot be
+    /// written to; a command that writes there fails before sending anything
+    /// (the CLI checks up front).
     pub output_dir: Resolved<PathBuf>,
     /// Absolute state directory (jobs live in `<state_dir>/jobs`).
     pub state_dir: Resolved<PathBuf>,
@@ -171,7 +175,9 @@ impl Settings {
             cli.out_dir.as_deref().map(|p| flag_path(p, "--out-dir", env)).transpose()?,
             env_path(env, ENV_OUTPUT_DIR)?,
             cfg.output_dir.as_deref().map(|v| file_path(path, "output_dir", v, env)).transpose()?,
-            || Ok(env.cwd().to_path_buf()),
+            // The current directory; `.` when it is unknown, so commands that do not
+            // write outputs still work (see `Settings::output_dir`).
+            || Ok(env.cwd().map(Path::to_path_buf).unwrap_or_else(|_| PathBuf::from("."))),
         )?;
         let state_dir = layered(
             None,
@@ -689,17 +695,17 @@ fn env_path(env: &EnvSnapshot, var: &str) -> Result<Option<PathBuf>, IrisError> 
         .transpose()
 }
 
+/// A path flag: `~`-expanded, then a relative path is resolved against the current
+/// directory (`io_error` naming the flag if that is unknown).
 fn flag_path(p: &Path, flag: &str, env: &EnvSnapshot) -> Result<PathBuf, IrisError> {
-    absolute(p, env).map_err(|m| flag_error(flag, m))
-}
-
-/// `~`-expand, then resolve relative paths against the current directory.
-fn absolute(p: &Path, env: &EnvSnapshot) -> Result<PathBuf, String> {
     if p.as_os_str().is_empty() {
-        return Err("empty path".to_string());
+        return Err(flag_error(flag, "empty path"));
     }
-    let p = expand_tilde(p, env.home())?;
-    Ok(if p.is_absolute() { p } else { env.cwd().join(p) })
+    let p = expand_tilde(p, env.home()).map_err(|m| flag_error(flag, m))?;
+    if p.is_absolute() {
+        return Ok(p);
+    }
+    Ok(env.cwd().map_err(|e| e.with_detail("flag", flag))?.join(p))
 }
 
 /// Paths in the config file must be absolute after `~` expansion.

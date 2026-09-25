@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use super::paths::Platform;
 use crate::domain::ProviderId;
-use crate::error::IrisError;
+use crate::error::{ErrorCode, IrisError};
 use crate::secret::Secret;
 
 /// `IRIS_CONFIG`: config file path.
@@ -49,13 +49,16 @@ pub const SETTING_VARS: &[&str] = &[
 /// base URL override, and each provider's credential (`OPENAI_API_KEY` /
 /// `GEMINI_API_KEY`, held as [`Secret`]s, never as plain strings).
 ///
+/// The current directory may be unknown (it was deleted, or is not accessible):
+/// only a command that needs it fails, when it asks ([`EnvSnapshot::cwd`]).
+///
 /// Empty or whitespace-only variables count as unset. `Debug` shows variable names
 /// only, never values.
 #[derive(Clone)]
 pub struct EnvSnapshot {
     platform: Platform,
     home: Option<PathBuf>,
-    cwd: PathBuf,
+    cwd: Option<PathBuf>,
     vars: BTreeMap<String, String>,
     non_unicode: BTreeSet<String>,
     credentials: BTreeMap<ProviderId, Secret>,
@@ -63,12 +66,13 @@ pub struct EnvSnapshot {
 
 impl EnvSnapshot {
     /// Capture the current process environment. The home directory comes from the
-    /// `dirs` crate (`$HOME`, else the password database).
-    pub fn from_process() -> Result<Self, IrisError> {
-        let cwd = std::env::current_dir()
-            .map_err(|e| IrisError::io("cannot determine the current directory", &e))?;
+    /// `dirs` crate (`$HOME`, else the password database). A current directory that
+    /// cannot be determined (e.g. deleted) is recorded as unknown, not an error:
+    /// commands that never use it (`version`, `config show`, `doctor`, …) still work.
+    pub fn from_process() -> Self {
         let home = dirs::home_dir();
-        let mut snap = EnvSnapshot::new(Platform::current(), home, cwd);
+        let mut snap = EnvSnapshot::new(Platform::current(), home, PathBuf::new());
+        snap.cwd = std::env::current_dir().ok();
         let base_url_vars = ProviderId::ALL.iter().map(|p| p.base_url_env());
         for name in SETTING_VARS.iter().copied().chain(base_url_vars) {
             match std::env::var(name) {
@@ -84,7 +88,7 @@ impl EnvSnapshot {
                 snap.credentials.insert(*provider, secret);
             }
         }
-        Ok(snap)
+        snap
     }
 
     /// An empty environment (for tests and embedding): no variables, no credentials.
@@ -92,7 +96,7 @@ impl EnvSnapshot {
         EnvSnapshot {
             platform,
             home,
-            cwd,
+            cwd: Some(cwd),
             vars: BTreeMap::new(),
             non_unicode: BTreeSet::new(),
             credentials: BTreeMap::new(),
@@ -145,9 +149,28 @@ impl EnvSnapshot {
         }
     }
 
-    /// Current directory (relative paths from flags and variables resolve against it).
-    pub fn cwd(&self) -> &Path {
-        &self.cwd
+    /// This environment with an unknown current directory, as when the process's
+    /// working directory was deleted (for tests and embedding).
+    pub fn without_cwd(mut self) -> Self {
+        self.cwd = None;
+        self
+    }
+
+    /// The current directory, which relative paths from flags resolve against and
+    /// which is the default output directory; `io_error` if it is unknown (deleted
+    /// or inaccessible).
+    pub fn cwd(&self) -> Result<&Path, IrisError> {
+        self.cwd.as_deref().ok_or_else(|| {
+            IrisError::new(
+                ErrorCode::IoError,
+                "cannot determine the current directory (it may have been deleted), which this command needs \
+                 to resolve a relative path or as the default output directory",
+            )
+            .with_hint(
+                "run iris from an existing directory, or give absolute paths (an absolute -o, or the output \
+                 directory in -d/--out-dir, IRIS_OUTPUT_DIR, or the config file's output_dir)",
+            )
+        })
     }
 
     pub(crate) fn credentials(&self) -> &BTreeMap<ProviderId, Secret> {
@@ -184,6 +207,17 @@ mod tests {
         assert!(!dbg.contains("test-openai-key-000"), "{dbg}");
         assert!(!dbg.contains("debug\""), "{dbg}");
         assert!(dbg.contains("OPENAI_API_KEY"));
+    }
+
+    #[test]
+    fn an_unknown_current_directory_fails_only_when_asked_for() {
+        let env = EnvSnapshot::new(Platform::Linux, None, PathBuf::from("/w"));
+        assert_eq!(env.cwd().unwrap(), Path::new("/w"));
+        let env = env.without_cwd();
+        let e = env.cwd().unwrap_err();
+        assert_eq!(e.code, ErrorCode::IoError);
+        assert!(e.message.contains("current directory"), "{}", e.message);
+        assert!(format!("{env:?}").contains("cwd: None"));
     }
 
     #[test]

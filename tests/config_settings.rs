@@ -733,3 +733,31 @@ fn relative_path_variables_are_rejected_naming_the_variable() {
     let cli = CliOverrides { out_dir: Some(PathBuf::from("rel-out")), ..Default::default() };
     assert_eq!(Settings::load(&cli, &fx.env()).unwrap().output_dir.value, fx.cwd.join("rel-out"));
 }
+
+/// An unknown current directory (deleted) fails only what needs it: a relative
+/// flag path. The default output directory is then `.`, which the CLI refuses to
+/// write to before anything is sent.
+#[test]
+fn settings_load_without_a_current_directory() {
+    let fx = Fixture::new();
+    let env = fx.env().without_cwd();
+    let s = load(&env).unwrap();
+    assert_eq!(
+        (s.output_dir.value.as_path(), &s.output_dir.source),
+        (Path::new("."), &SettingSource::Default)
+    );
+    let s = load(&env.clone().with_var("IRIS_OUTPUT_DIR", "/env/out")).unwrap();
+    assert_eq!(s.output_dir.value, Path::new("/env/out"));
+    let cli = CliOverrides { out_dir: Some(PathBuf::from("/flag/out")), ..Default::default() };
+    assert_eq!(Settings::load(&cli, &env).unwrap().output_dir.value, Path::new("/flag/out"));
+
+    for (cli, flag) in [
+        (CliOverrides { out_dir: Some(PathBuf::from("rel-out")), ..Default::default() }, "--out-dir"),
+        (CliOverrides { config_path: Some(PathBuf::from("iris.toml")), ..Default::default() }, "--config"),
+    ] {
+        let e = load_err(&cli, &env);
+        assert_eq!(e.code, ErrorCode::IoError, "{flag}");
+        assert!(e.message.contains("current directory"), "{}", e.message);
+        assert_eq!(e.details.get("flag").and_then(|v| v.as_str()), Some(flag));
+    }
+}

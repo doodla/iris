@@ -169,6 +169,14 @@ An environment variable's value is validated exactly like a config-file value �
 directory (a state directory that moves loses its jobs). Relative paths given as flags
 (`--config`, `-d`/`--out-dir`, `-o`, input files) resolve against the current directory.
 
+If the current directory no longer exists (it was deleted under a running shell), commands that
+do not need it still work: `version`, `schema`, `completions`, `--help`, `config path`/`show`,
+`providers list`, `models`, `jobs list`/`status`, and `doctor` (`config show` then reports the
+default output directory as `.`, and `doctor` flags it as unusable). A command that does need it —
+one given a relative path, or a generation command whose outputs would go to the default output
+directory — fails with `io_error` before anything is sent; an absolute `-o`, `-d`, or
+`IRIS_OUTPUT_DIR` avoids that.
+
 Real `config show` output, with `HOME=/home/you`, both keys set, and
 `IRIS_STATE_DIR=/home/you/iris-state`, `IRIS_OPENAI_BASE_URL=http://127.0.0.1:8080/v1`, and
 `IRIS_GEMINI_BASE_URL=http://127.0.0.1:8080` (the table goes to stdout; the two
