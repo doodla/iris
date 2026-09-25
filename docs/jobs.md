@@ -432,7 +432,7 @@ refused unless you pass `--force`:
 ```console
 $ iris jobs delete job_01m3a3eg0fgm3qsnw4eybjd7v5
 error[invalid_argument]: job job_01m3a3eg0fgm3qsnw4eybjd7v5 is still running; deleting its local record would make the job unrecoverable
-  hint: wait for the job to finish (`iris jobs wait`), or pass --force to delete the local record anyway (the remote job is not cancelled)
+  hint: wait for the job to finish (`iris jobs wait job_01m3a3eg0fgm3qsnw4eybjd7v5`), or pass --force to delete the local record anyway (the remote job is not cancelled)
   job: job_01m3a3eg0fgm3qsnw4eybjd7v5 (status running)
 $ echo $?
 2
@@ -441,21 +441,51 @@ Deleted job_01m3a3eg0fgm3qsnw4eybjd7v5
 Local records only; remote jobs and downloaded files are untouched.
 ```
 
-`iris jobs delete --all` follows the same rule for the whole set: it deletes **nothing** and
-reports which jobs are still active if any of them are non-terminal, unless `--force` is also
-given:
+The rule goes by the status **on disk**. A record whose submitting process died before it could
+record the provider's operation id stays `submitting` on disk, even though `jobs status` and
+`jobs list` report it as `submission_unknown` once the submission budget has passed. Such a record
+is refused too (a live but slow submitter could still record the operation id); no command can
+finish it, so the hint points straight at `--force`:
+
+```console
+$ iris jobs delete job_01m39pq2gd0a7w3k5c8e1v6h9n
+error[invalid_argument]: job job_01m39pq2gd0a7w3k5c8e1v6h9n is recorded as submitting; the submitting process has probably stopped (the job is reported as submission_unknown), but deleting the local record would lose the provider operation id if that process is still running
+  hint: no command can finish this record; check the provider console for the request, then delete the local record with `iris jobs delete job_01m39pq2gd0a7w3k5c8e1v6h9n --force` (a remote job, if one was created, is not cancelled)
+  job: job_01m39pq2gd0a7w3k5c8e1v6h9n (status submitting)
+```
+
+**Deletion is all or nothing.** Every job named (with `--all`, every record) is checked before
+anything is deleted; if any of them is refused — still active, not found, or unreadable without
+`--force` — nothing is deleted, the error says so, and in `--json` mode `error.details.deleted` is
+`[]`. With several refusals (or any with `--all`), one `invalid_argument` names each job and why,
+and `error.details.refused` lists their ids:
 
 ```console
 $ iris jobs delete --all
-error[invalid_argument]: 1 job(s) are still active and would become unrecoverable: job_01m3a3eg1tckbg2s35k2frympv (running); nothing was deleted
-  hint: wait for them (`iris jobs wait <id>`), delete finished jobs by id, or pass --force (remote jobs are not cancelled)
+error[invalid_argument]: 2 of the 3 job(s) cannot be deleted: job_01m3a3eg0fgm3qsnw4eybjd7v5 (running), job_01m39pq2gd0a7w3k5c8e1v6h9n (submitting; probably abandoned, shown as submission_unknown); nothing was deleted
+  hint: wait for active jobs to finish (`iris jobs wait <id>`), delete the other jobs by id, or pass --force to delete the local records anyway (remote jobs are not cancelled; for a job still submitting, check the provider console first)
 $ echo $?
 2
-$ iris jobs delete --all --force
-Deleted job_01m3a3eg1tckbg2s35k2frympv
-Deleted job_01m3a333vp4pc80nb37svfgq7x
-Local records only; remote jobs and downloaded files are untouched.
 ```
+
+Without `--force`, `--all` skips records it cannot read (each with a `job_record_unreadable`
+warning). With `--force`, it deletes them too — only regular files named `<job_id>.json` in the
+jobs directory, nothing else there — lists them in `deleted`, and names them in the note:
+
+```console
+$ iris jobs delete --all --force
+Deleted job_01m3a3eg0fgm3qsnw4eybjd7v5
+Deleted job_01m3a333vp4pc80nb37svfgq7x
+Deleted job_01m39pq2gd0a7w3k5c8e1v6h9n
+Deleted job_01m3a3fznq2sv8nqnqc3h25z4n
+Local records only; remote jobs and downloaded files are untouched. Also deleted 1 record(s) that could not be read: job_01m3a3fznq2sv8nqnqc3h25z4n.
+```
+
+`jobs delete` never removes the `.<job_id>.json.<random>.tmp` files an interrupted record write can
+leave in the jobs directory (see [Downloads](#downloads)); they are harmless, and you can delete
+them by hand. If a record changes between the check and its deletion (another process is working
+on the same jobs at that moment), the command can still stop partway; its error then lists the
+records it did delete in `details.deleted`, and in human mode as `Deleted <job_id>` lines.
 
 Local job-history deletion is a separate action from removing the Iris *binary* or its
 *configuration* — see [install.md](install.md#uninstall) — and from a provider's own retention

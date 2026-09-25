@@ -1069,6 +1069,123 @@ fn a_crafted_64_bit_box_size_in_a_downloaded_video_never_crashes_iris() {
     veo.assert_no_credential_leaks();
 }
 
+/// Turn the record of `id` into one a process killed during its paid submission
+/// left behind three days ago: still `submitting`, no operation id.
+fn make_abandoned_submission(sb: &Sandbox, id: &str) {
+    let mut rec = sb.record(id);
+    rec["status"] = json!("submitting");
+    for key in
+        ["remote_operation_id", "provider_request_id", "submitted_at", "completed_at", "last_checked_at"]
+    {
+        rec[key] = Value::Null;
+    }
+    std::fs::write(sb.record_path(id), serde_json::to_vec_pretty(&rec).unwrap()).unwrap();
+    backdate_record(sb, id, 3);
+}
+
+#[test]
+fn jobs_delete_checks_every_record_before_deleting_any() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let done = submit_detached(&sb, &veo, &[]);
+    let running = submit_detached(&sb, &veo, &[]);
+    let abandoned = submit_detached(&sb, &veo, &[]);
+    make_abandoned_submission(&sb, &abandoned);
+    veo.succeed();
+    sb.iris().gemini(&veo.api).args(["jobs", "wait", &done, "--json"]).run().ok();
+    let records = || files_in(&sb.jobs_dir()).into_iter().filter(|n| n.ends_with(".json")).count();
+    assert_eq!(records(), 3);
+
+    // A finished job named with a running one: nothing is deleted.
+    let v = sb.iris().args(["jobs", "delete", &done, &running, "--json"]).run().err(2, "invalid_argument");
+    let error = &v["error"];
+    assert_eq!(error["details"]["deleted"], json!([]), "{v}");
+    assert_eq!(error["job_id"], running.as_str());
+    assert!(error["message"].as_str().unwrap().ends_with("nothing was deleted"), "{v}");
+    assert_eq!(records(), 3);
+    sb.iris().args(["jobs", "status", &done, "--no-refresh", "--json"]).run().ok();
+    // Human mode says only what failed: there is no "Deleted" line.
+    let out = sb.iris().args(["jobs", "delete", &done, &running]).run();
+    assert_eq!(out.code, 2);
+    assert_eq!(out.stdout, "", "nothing was deleted");
+    assert!(out.stderr.contains("error[invalid_argument]"), "{}", out.stderr);
+
+    // The abandoned submission is reported as submission_unknown, but its record
+    // is still `submitting` on disk, which is what deletion goes by: --all refuses
+    // before deleting anything, and the hint points at --force.
+    let v = sb.iris().args(["jobs", "list", "--json"]).run().ok();
+    let listed: Vec<&str> =
+        v["result"]["jobs"].as_array().unwrap().iter().map(|j| j["status"].as_str().unwrap()).collect();
+    assert!(listed.contains(&"submission_unknown"), "{v}");
+    let v = sb.iris().args(["jobs", "delete", "--all", "--json"]).run().err(2, "invalid_argument");
+    let error = &v["error"];
+    assert_eq!(error["details"]["deleted"], json!([]));
+    let mut refused: Vec<&str> =
+        error["details"]["refused"].as_array().unwrap().iter().map(|j| j.as_str().unwrap()).collect();
+    refused.sort_unstable();
+    let mut expected = vec![running.as_str(), abandoned.as_str()];
+    expected.sort_unstable();
+    assert_eq!(refused, expected);
+    let message = error["message"].as_str().unwrap();
+    assert!(message.contains(&format!("{running} (running)")), "{message}");
+    assert!(message.contains(&format!("{abandoned} (submitting; probably abandoned")), "{message}");
+    assert!(error["hint"].as_str().unwrap().contains("--force"), "{v}");
+    assert_eq!(records(), 3, "nothing was deleted");
+
+    let v = sb.iris().args(["jobs", "delete", &abandoned, "--json"]).run().err(2, "invalid_argument");
+    let hint = v["error"]["hint"].as_str().unwrap();
+    assert!(hint.contains(&format!("iris jobs delete {abandoned} --force")), "{hint}");
+    assert!(!hint.contains("jobs wait"), "waiting cannot finish an abandoned submission: {hint}");
+    assert_eq!(v["error"]["job_status"], "submitting");
+
+    // --all --force deletes every record, including unreadable record files, and
+    // nothing that is not a record.
+    let jobs = sb.jobs_dir();
+    let corrupt = "job_00000000000000000000000001";
+    let newer = "job_00000000000000000000000002";
+    let misnamed = "job_00000000000000000000000003";
+    std::fs::write(jobs.join(format!("{corrupt}.json")), b"{ not json").unwrap();
+    let mut future = sb.record(&done);
+    future["schema_version"] = json!(99);
+    future["job_id"] = json!(newer);
+    std::fs::write(jobs.join(format!("{newer}.json")), future.to_string()).unwrap();
+    std::fs::write(jobs.join(format!("{misnamed}.json")), sb.record(&done).to_string()).unwrap();
+    let keep = ["notes.json", "job_x.json.bak", ".job_00000000000000000000000004.json.abcd1234.tmp"];
+    for name in keep {
+        std::fs::write(jobs.join(name), b"not a record").unwrap();
+    }
+    std::fs::create_dir(jobs.join("job_00000000000000000000000005.json")).unwrap();
+
+    let v = sb.iris().args(["jobs", "delete", "--all", "--force", "--json"]).run().ok();
+    let mut deleted: Vec<&str> =
+        v["result"]["deleted"].as_array().unwrap().iter().map(|j| j.as_str().unwrap()).collect();
+    deleted.sort_unstable();
+    let mut expected = vec![done.as_str(), running.as_str(), abandoned.as_str(), corrupt, newer, misnamed];
+    expected.sort_unstable();
+    assert_eq!(deleted, expected);
+    let note = v["result"]["note"].as_str().unwrap();
+    for id in [corrupt, newer, misnamed] {
+        assert!(note.contains(id), "{note}");
+    }
+    // Only the directory, which is no record file, is still reported as unreadable.
+    let unreadable: Vec<&Value> =
+        v["warnings"].as_array().unwrap().iter().filter(|w| w["code"] == "job_record_unreadable").collect();
+    assert_eq!(unreadable.len(), 1, "{v}");
+    assert!(unreadable[0]["message"].as_str().unwrap().contains("job_00000000000000000000000005.json"));
+    let mut left: Vec<String> = files_in(&jobs).into_iter().filter(|n| !n.ends_with(".lock")).collect();
+    left.sort();
+    let mut expected: Vec<String> = keep
+        .iter()
+        .map(|s| s.to_string())
+        .chain(["job_00000000000000000000000005.json".to_string()])
+        .collect();
+    expected.sort();
+    assert_eq!(left, expected);
+    assert!(sb.path(&format!("{done}.mp4")).is_file(), "downloaded files are never touched");
+    assert_eq!(veo.submits(), 3);
+    veo.assert_no_credential_leaks();
+}
+
 // ----- scenario 9: concurrent waits --------------------------------------------------------------
 
 #[test]

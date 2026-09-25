@@ -9,7 +9,9 @@ use std::time::Duration;
 use iris::domain::{JobStatus, Operation, ProviderId};
 use iris::error::{ErrorCode, IrisError};
 use iris::http::Timeouts;
-use iris::jobs::{JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord, paid_submit_budget};
+use iris::jobs::{
+    JobId, JobRecord, JobStore, NewJob, OutputPlan, PromptRecord, RefusalKind, paid_submit_budget,
+};
 use iris::providers::SubmittedOperation;
 use jiff::Timestamp;
 use serde_json::{Map, Value, json};
@@ -530,6 +532,61 @@ fn delete_uses_the_status_on_disk_so_a_slow_submitter_keeps_its_record() {
     impatient.create(&other).unwrap();
     impatient.delete(other.job_id(), true).unwrap();
     assert_eq!(impatient.load(other.job_id()).unwrap_err().code, ErrorCode::JobNotFound);
+}
+
+#[test]
+fn deletion_can_be_checked_first_with_the_same_rule() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path()).with_submit_budget(Duration::from_secs(1));
+    let mut running = JobRecord::new(new_job(), now()).unwrap();
+    running
+        .mark_submitted(
+            &SubmittedOperation { remote_id: "operations/1".into(), provider_request_id: None },
+            now(),
+        )
+        .unwrap();
+    store.create(&running).unwrap();
+    let fresh = JobRecord::new(new_job(), now()).unwrap();
+    store.create(&fresh).unwrap();
+    let abandoned = JobRecord::new(new_job(), ago(3600)).unwrap();
+    store.create(&abandoned).unwrap();
+    let mut rejected = JobRecord::new(new_job(), now()).unwrap();
+    rejected.mark_rejected(&IrisError::new(ErrorCode::ProviderError, "400"), now()).unwrap();
+    store.create(&rejected).unwrap();
+    let corrupt = JobId::generate();
+    fs::write(store.record_path(&corrupt), b"not json").unwrap();
+    let missing = JobId::generate();
+
+    let kind = |id: &JobId, force: bool| store.check_delete(id, force).err().map(|r| r.kind);
+    assert_eq!(kind(running.job_id(), false), Some(RefusalKind::Active));
+    assert_eq!(kind(fresh.job_id(), false), Some(RefusalKind::Active));
+    assert_eq!(kind(abandoned.job_id(), false), Some(RefusalKind::Abandoned));
+    assert_eq!(kind(rejected.job_id(), false), None);
+    assert_eq!(kind(&corrupt, false), Some(RefusalKind::Unreadable));
+    assert_eq!(kind(&missing, false), Some(RefusalKind::NotFound));
+    for id in [running.job_id(), fresh.job_id(), abandoned.job_id(), &corrupt] {
+        assert_eq!(kind(id, true), None, "--force deletes {id}");
+    }
+    assert_eq!(kind(&missing, true), Some(RefusalKind::NotFound));
+
+    // The abandoned submission points at --force, not at waiting.
+    let refusal = store.check_delete(abandoned.job_id(), false).unwrap_err();
+    assert_eq!(refusal.error.job_status, Some(JobStatus::Submitting));
+    let hint = refusal.error.hint.as_deref().unwrap();
+    assert!(hint.contains("--force") && !hint.contains("jobs wait"), "{hint}");
+    assert!(refusal.summary.contains("abandoned"), "{}", refusal.summary);
+    // Checking deletes nothing; `delete` refuses the same way.
+    assert_eq!(names_in(store.dir()).len(), 5);
+    assert_eq!(store.delete(abandoned.job_id(), false).unwrap_err().code, ErrorCode::InvalidArgument);
+    assert_eq!(store.delete(&corrupt, false).unwrap_err().code, ErrorCode::StateInvalid);
+
+    // The listing names unreadable record files (regular files only).
+    fs::create_dir(store.record_path(&missing)).unwrap();
+    let listing = store.list().unwrap();
+    assert_eq!(listing.warnings.len(), 2, "{:?}", listing.warnings);
+    assert_eq!(listing.unreadable.len(), 1);
+    assert_eq!(listing.unreadable[0].id, corrupt);
+    assert!(listing.warnings.contains(&listing.unreadable[0].warning));
 }
 
 #[test]

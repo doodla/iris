@@ -81,6 +81,18 @@ pub fn clap_args(args: &[OsString]) -> Vec<OsString> {
         .collect()
 }
 
+/// `Deleted <job_id>` lines for the job records a failed `jobs delete` had already
+/// deleted (`details.deleted`); empty when there are none.
+fn deleted_before_error(e: &ErrorBody) -> String {
+    let deleted = e.details.as_ref().and_then(|d| d.get("deleted")).and_then(serde_json::Value::as_array);
+    deleted
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .map(|id| format!("Deleted {id}\n"))
+        .collect()
+}
+
 /// Commands that have subcommands.
 const GROUPS: &[&str] = &["image", "video", "jobs", "models", "providers", "config"];
 
@@ -161,9 +173,10 @@ impl Output {
         0
     }
 
-    /// Print a failure; returns the error's exit code. In human mode, files that
-    /// were saved before the failure (`details.saved`) are still listed on stdout
-    /// as `Saved <path>` lines.
+    /// Print a failure; returns the error's exit code. In human mode, what was done
+    /// before the failure is still listed on stdout: files saved (`details.saved`,
+    /// as `Saved <path>` lines) and job records deleted (`details.deleted`, as
+    /// `Deleted <job_id>` lines).
     pub fn failure(&self, command: Option<CommandName>, error: &IrisError, warnings: Vec<Warning>) -> i32 {
         if self.json {
             write(&self.stdout, &Envelope::failure(command, error, warnings).to_json_line());
@@ -171,6 +184,7 @@ impl Output {
             let body = ErrorBody::from(error);
             self.human_warnings(&warnings);
             write(&self.stdout, &redact::scrub(&human::saved_before_error(&body)));
+            write(&self.stdout, &redact::scrub(&deleted_before_error(&body)));
             write(&self.stderr, &redact::scrub(&human::error(&body)));
         }
         error.exit_code()
@@ -271,6 +285,28 @@ mod tests {
                     --bogus'\n\nUsage: iris image generate [OPTIONS] [PROMPT]\n";
         assert_eq!(clap_message(text), "unexpected argument '--bogus' found");
         assert_eq!(clap_message(""), "invalid arguments");
+    }
+
+    #[test]
+    fn human_failures_list_the_records_deleted_before_them() {
+        let stdout: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let stderr: Arc<Mutex<Vec<u8>>> = Arc::new(Mutex::new(Vec::new()));
+        let output = Output { json: false, stdout: stdout.clone(), stderr: stderr.clone() };
+        let error = IrisError::new(crate::error::ErrorCode::IoError, "cannot delete job record")
+            .with_detail("deleted", vec!["job_a".to_string(), "job_b".to_string()]);
+        let code = output.failure(Some(CommandName::JobsDelete), &error, Vec::new());
+        assert_eq!(code, 1);
+        let out = String::from_utf8(stdout.lock().unwrap().clone()).unwrap();
+        assert_eq!(out, "Deleted job_a\nDeleted job_b\n");
+        let err = String::from_utf8(stderr.lock().unwrap().clone()).unwrap();
+        assert!(err.contains("error[io_error]: cannot delete job record"), "{err}");
+
+        // A refusal deleted nothing and prints nothing on stdout.
+        stdout.lock().unwrap().clear();
+        let refused =
+            IrisError::invalid("job x is still running").with_detail("deleted", Vec::<String>::new());
+        output.failure(Some(CommandName::JobsDelete), &refused, Vec::new());
+        assert!(stdout.lock().unwrap().is_empty());
     }
 
     #[test]

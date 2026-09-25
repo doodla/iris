@@ -60,6 +60,43 @@ pub fn paid_submit_budget(timeouts: &Timeouts) -> Duration {
 pub struct JobListing {
     pub records: Vec<JobRecord>,
     pub warnings: Vec<Warning>,
+    /// The skipped records that are regular files named `<job_id>.json` in the
+    /// jobs directory, with the warning each produced (also in `warnings`): what
+    /// `jobs delete --all --force` removes along with the readable records.
+    pub unreadable: Vec<UnreadableRecord>,
+}
+
+/// A record file that [`JobStore::list`] could not read.
+#[derive(Debug, Clone)]
+pub struct UnreadableRecord {
+    pub id: JobId,
+    /// Its `job_record_unreadable` warning.
+    pub warning: Warning,
+}
+
+/// Why [`JobStore::delete`] refuses a record without `force` (or at all).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RefusalKind {
+    /// There is no local record with this id (`job_not_found`; `force` does not help).
+    NotFound,
+    /// The record cannot be read (corrupt, written by a newer Iris, or an I/O error).
+    Unreadable,
+    /// `running`, or `submitting` while its submitter may still be waiting for the
+    /// provider's answer.
+    Active,
+    /// Still `submitting` past the stale threshold (reported as
+    /// `submission_unknown`): the submitter has probably stopped, but a live one
+    /// could still record the operation id.
+    Abandoned,
+}
+
+/// A refused deletion: its kind, a short description for lists, and the error
+/// [`JobStore::delete`] returns (with the job's id and on-disk status).
+#[derive(Debug, Clone)]
+pub struct DeleteRefusal {
+    pub kind: RefusalKind,
+    pub summary: String,
+    pub error: IrisError,
 }
 
 /// Exclusive lock on `<job_id>.download.lock`, held for the whole download of a
@@ -216,10 +253,16 @@ impl JobStore {
                 }
                 // Deleted between read_dir and read: not an error for a listing.
                 Err(e) if e.code == ErrorCode::JobNotFound => {}
-                Err(e) => listing.warnings.push(Warning::new(
-                    "job_record_unreadable",
-                    format!("skipped job record {}: {}", entry.path().display(), e.message),
-                )),
+                Err(e) => {
+                    let warning = Warning::new(
+                        "job_record_unreadable",
+                        format!("skipped job record {}: {}", entry.path().display(), e.message),
+                    );
+                    if fs::symlink_metadata(entry.path()).is_ok_and(|m| m.file_type().is_file()) {
+                        listing.unreadable.push(UnreadableRecord { id, warning: warning.clone() });
+                    }
+                    listing.warnings.push(warning);
+                }
             }
         }
         listing
@@ -228,46 +271,80 @@ impl JobStore {
         Ok(listing)
     }
 
-    /// Delete a job's LOCAL record and its lock files (never downloaded media, never
-    /// anything remote). Refuses active jobs (`submitting`/`running`, which would
-    /// become unrecoverable) and unreadable records unless `force`.
+    /// Whether [`JobStore::delete`]`(id, force)` would delete the record, decided
+    /// by the same rule without deleting anything and without locking (so a
+    /// caller can check every record before deleting any).
     ///
     /// The decision uses the status on disk, without the stale-`submitting` rule: a
     /// record still `submitting` may belong to a live process whose submission is
     /// merely slow, and deleting it would lose the operation id that process is
     /// about to record. Such a record needs `force` even when it is reported as
-    /// `submission_unknown`.
+    /// `submission_unknown` (kind [`RefusalKind::Abandoned`]).
+    pub fn check_delete(&self, id: &JobId, force: bool) -> Result<(), DeleteRefusal> {
+        let record = match self.read(id) {
+            Ok(record) => record,
+            Err(e) if e.code == ErrorCode::JobNotFound => {
+                return Err(DeleteRefusal {
+                    kind: RefusalKind::NotFound,
+                    summary: "no local record".into(),
+                    error: e,
+                });
+            }
+            Err(_) if force => return Ok(()),
+            Err(e) => {
+                return Err(DeleteRefusal {
+                    kind: RefusalKind::Unreadable,
+                    summary: "unreadable record".into(),
+                    error: e.with_hint(format!(
+                        "pass --force to delete the unreadable local record (`iris jobs delete {id} --force`)"
+                    )),
+                });
+            }
+        };
+        if force || !record.is_active() {
+            return Ok(());
+        }
+        let status = record.status();
+        let refusal = if record.is_stale_submitting(now(), self.submit_budget) {
+            DeleteRefusal {
+                kind: RefusalKind::Abandoned,
+                summary: "submitting; probably abandoned, shown as submission_unknown".into(),
+                error: IrisError::invalid(format!(
+                    "job {id} is recorded as submitting; the submitting process has probably stopped (the job is \
+                     reported as submission_unknown), but deleting the local record would lose the provider \
+                     operation id if that process is still running"
+                ))
+                .with_hint(format!(
+                    "no command can finish this record; check the provider console for the request, then delete \
+                     the local record with `iris jobs delete {id} --force` (a remote job, if one was created, is \
+                     not cancelled)"
+                )),
+            }
+        } else {
+            DeleteRefusal {
+                kind: RefusalKind::Active,
+                summary: status.to_string(),
+                error: IrisError::invalid(format!(
+                    "job {id} is still {status}; deleting its local record would make the job unrecoverable"
+                ))
+                .with_hint(format!(
+                    "wait for the job to finish (`iris jobs wait {id}`), or pass --force to delete the local record \
+                     anyway (the remote job is not cancelled)"
+                )),
+            }
+        };
+        let DeleteRefusal { kind, summary, error } = refusal;
+        Err(DeleteRefusal { kind, summary, error: error.with_job(id.to_string(), Some(status)) })
+    }
+
+    /// Delete a job's LOCAL record and its lock files (never downloaded media, never
+    /// anything remote), under the job's record lock. Refuses what
+    /// [`JobStore::check_delete`] refuses: active jobs (`submitting`/`running`,
+    /// which would become unrecoverable) and unreadable records unless `force`, and
+    /// a missing record always (`job_not_found`).
     pub fn delete(&self, id: &JobId, force: bool) -> Result<(), IrisError> {
         let _lock = self.lock_record(id)?;
-        match self.read(id) {
-            Ok(record) => {
-                if record.is_active() && !force {
-                    let message = if record.is_stale_submitting(now(), self.submit_budget) {
-                        format!(
-                            "job {id} is recorded as submitting; the submitting process has probably stopped \
-                             (the job is reported as submission_unknown), but deleting the local record would \
-                             lose the provider operation id if it is still running"
-                        )
-                    } else {
-                        format!(
-                            "job {id} is still {}; deleting its local record would make the job unrecoverable",
-                            record.status()
-                        )
-                    };
-                    return Err(IrisError::invalid(message)
-                        .with_job(id.to_string(), Some(record.status()))
-                        .with_hint(
-                            "wait for the job to finish (`iris jobs wait`), or pass --force to delete the \
-                             local record anyway (the remote job is not cancelled)",
-                        ));
-                }
-            }
-            Err(e) if e.code == ErrorCode::JobNotFound => return Err(e),
-            Err(e) if !force => {
-                return Err(e.with_hint("pass --force to delete the unreadable local record"));
-            }
-            Err(_) => {}
-        }
+        self.check_delete(id, force).map_err(|refusal| refusal.error)?;
         let record_path = self.record_path(id);
         fs::remove_file(&record_path).or_else(ignore_not_found).map_err(|e| {
             IrisError::io(format_args!("cannot delete job record {}", record_path.display()), &e)

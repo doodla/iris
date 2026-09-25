@@ -154,10 +154,18 @@ $ iris jobs delete job_01m3a2s5ynyvhxtmdxbx1qvdyz --json
 {"command":"jobs.delete","error":{"category":"validation","code":"invalid_argument",
  "details":{"deleted":[]},"job_id":"job_01m3a2s5ynyvhxtmdxbx1qvdyz","job_status":"running",
  "message":"job job_01m3a2s5ynyvhxtmdxbx1qvdyz is still running; deleting its local record would make the job unrecoverable",
- "hint":"wait for the job to finish (`iris jobs wait`), or pass --force to delete the local record anyway (the remote job is not cancelled)",
+ "hint":"wait for the job to finish (`iris jobs wait job_01m3a2s5ynyvhxtmdxbx1qvdyz`), or pass --force to delete the local record anyway (the remote job is not cancelled)",
  "retryable":false,"...":"other Error fields omitted for brevity"},
  "ok":false,"result":null,"schema_version":1,"warnings":[]}
 ```
+
+Deletion is all or nothing: every record is checked before any is deleted, and a refused
+`jobs delete` always has `details.deleted: []`. When several jobs (or any with `--all`) are
+refused, the one `invalid_argument` names each of them and `details.refused` lists their ids; a
+single named job keeps its own error (`invalid_argument`, `job_not_found`, or `state_invalid` for
+an unreadable record). `--all --force` also deletes unreadable record files and names them in
+`note`. Only if a record changes between the check and its deletion can the command stop partway;
+`details.deleted` then lists what it deleted (see [jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
 ### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [], "default_for": [] } ] }`
 

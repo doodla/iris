@@ -22,7 +22,7 @@ use crate::config::SettingSource;
 use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{self, AuthHeader, DownloadError, DownloadRequest};
-use crate::jobs::{self, JobId, JobOutput, JobRecord, PollApplied};
+use crate::jobs::{self, DeleteRefusal, JobId, JobOutput, JobRecord, PollApplied, RefusalKind};
 use crate::output::ErrorBody;
 use crate::output::results::{JobDeleteResult, JobListResult, JobResult};
 use crate::providers::VideoProvider;
@@ -209,8 +209,20 @@ pub async fn download(
     }
 }
 
-/// `jobs delete`: delete local records only. Active jobs (`submitting`,
-/// `running`) are refused unless `force`. With `all`, every readable record.
+/// `jobs delete`: delete local records only, all or nothing.
+///
+/// Every named record (with `all`: every record in the jobs directory) is checked
+/// with the store's own rule ([`JobStore::check_delete`](crate::jobs::JobStore::check_delete),
+/// the status on disk) before anything is deleted; if any is refused, nothing is
+/// deleted and the error lists every refusal, with `details.deleted: []`. Without
+/// `force`, active jobs (`submitting`, `running`) and unreadable records are
+/// refused, and `all` skips unreadable records with a warning. With `all` and
+/// `force`, unreadable record files (regular files named `<job_id>.json` in the
+/// jobs directory, nothing else) are deleted too, listed in `deleted` and named in
+/// the note.
+///
+/// A record that changes between the check and its deletion can still make a
+/// later one fail; the error then lists what was deleted in `details.deleted`.
 pub fn delete(
     ctx: &AppContext,
     job_ids: &[String],
@@ -218,44 +230,105 @@ pub fn delete(
     force: bool,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobDeleteResult, IrisError> {
+    let nothing_deleted = |e: IrisError| e.with_detail("deleted", Vec::<String>::new());
+    let mut unreadable: Vec<JobId> = Vec::new();
     let ids: Vec<JobId> = if all {
-        let listing = ctx.store.list()?;
-        warnings.extend(listing.warnings);
-        if !force {
-            let active: Vec<String> = listing
-                .records
-                .iter()
-                .filter(|r| r.is_active())
-                .map(|r| format!("{} ({})", r.job_id(), r.status()))
-                .collect();
-            if !active.is_empty() {
-                return Err(IrisError::invalid(format!(
-                    "{} job(s) are still active and would become unrecoverable: {}; nothing was deleted",
-                    active.len(),
-                    active.join(", ")
-                ))
-                .with_hint(
-                    "wait for them (`iris jobs wait <id>`), delete finished jobs by id, or pass --force (remote \
-                     jobs are not cancelled)",
-                ));
+        let listing = ctx.store.list().map_err(nothing_deleted)?;
+        let mut ids: Vec<JobId> = listing.records.iter().map(|r| r.job_id().clone()).collect();
+        if force {
+            // These are deleted, not skipped: their "skipped" warnings would be wrong.
+            let deleted_warnings: Vec<&Warning> = listing.unreadable.iter().map(|u| &u.warning).collect();
+            warnings.extend(listing.warnings.iter().filter(|w| !deleted_warnings.contains(w)).cloned());
+            unreadable = listing.unreadable.iter().map(|u| u.id.clone()).collect();
+            ids.extend(unreadable.iter().cloned());
+        } else {
+            warnings.extend(listing.warnings);
+        }
+        ids
+    } else {
+        let mut ids: Vec<JobId> = Vec::new();
+        for raw in job_ids {
+            let id = JobId::parse(raw).map_err(nothing_deleted)?;
+            if !ids.contains(&id) {
+                ids.push(id);
             }
         }
-        listing.records.iter().map(|r| r.job_id().clone()).collect()
-    } else {
-        job_ids.iter().map(|raw| JobId::parse(raw)).collect::<Result<_, _>>()?
+        ids
     };
+
+    // Check everything first: all or nothing.
+    let refusals: Vec<(JobId, DeleteRefusal)> = ids
+        .iter()
+        .filter_map(|id| ctx.store.check_delete(id, force).err().map(|r| (id.clone(), r)))
+        // With --all, a record deleted meanwhile (by another process) is simply gone.
+        .filter(|(_, r)| !(all && r.kind == RefusalKind::NotFound))
+        .collect();
+    if !refusals.is_empty() {
+        return Err(nothing_deleted(refused_deletion(refusals, ids.len(), all)));
+    }
+
     let mut deleted: Vec<String> = Vec::new();
     for id in &ids {
-        if let Err(e) = ctx.store.delete(id, force) {
-            return Err(e.with_detail("deleted", deleted));
+        match ctx.store.delete(id, force) {
+            Ok(()) => deleted.push(id.to_string()),
+            Err(e) if all && e.code == ErrorCode::JobNotFound => {}
+            Err(e) => return Err(e.with_detail("deleted", deleted)),
         }
-        deleted.push(id.to_string());
     }
-    Ok(JobDeleteResult {
-        deleted,
-        remote_effect: "none".to_string(),
-        note: "Local records only; remote jobs and downloaded files are untouched.".to_string(),
-    })
+    let mut note = "Local records only; remote jobs and downloaded files are untouched.".to_string();
+    let removed_unreadable: Vec<String> =
+        unreadable.iter().map(JobId::to_string).filter(|id| deleted.contains(id)).collect();
+    if !removed_unreadable.is_empty() {
+        note.push_str(&format!(
+            " Also deleted {} record(s) that could not be read: {}.",
+            removed_unreadable.len(),
+            removed_unreadable.join(", ")
+        ));
+    }
+    Ok(JobDeleteResult { deleted, remote_effect: "none".to_string(), note })
+}
+
+/// The error of a `jobs delete` that refused some of `requested` records. A single
+/// named record keeps the store's own error (its code, message, and hint); several,
+/// or any with `--all`, become one `invalid_argument` that names each job and why.
+fn refused_deletion(mut refusals: Vec<(JobId, DeleteRefusal)>, requested: usize, all: bool) -> IrisError {
+    if !all && refusals.len() == 1 {
+        let (_, refusal) = refusals.remove(0);
+        let mut e = refusal.error;
+        if requested > 1 {
+            e.message = format!("{}; nothing was deleted", e.message);
+        }
+        return e;
+    }
+    let kinds: Vec<RefusalKind> = refusals.iter().map(|(_, r)| r.kind).collect();
+    let listed: Vec<String> = refusals.iter().map(|(id, r)| format!("{id} ({})", r.summary)).collect();
+    let mut steps: Vec<&str> = Vec::new();
+    if kinds.contains(&RefusalKind::Active) {
+        steps.push("wait for active jobs to finish (`iris jobs wait <id>`)");
+    }
+    if kinds.contains(&RefusalKind::NotFound) {
+        steps.push("check the ids with `iris jobs list`");
+    }
+    if all {
+        steps.push("delete the other jobs by id");
+    }
+    let force = kinds.iter().any(|k| *k != RefusalKind::NotFound).then_some(
+        "pass --force to delete the local records anyway (remote jobs are not cancelled; for a job still \
+         submitting, check the provider console first)",
+    );
+    let hint = match (steps.is_empty(), force) {
+        (false, Some(force)) => format!("{}, or {force}", steps.join(", ")),
+        (false, None) => steps.join(", "),
+        (true, Some(force)) => force.to_string(),
+        (true, None) => String::new(),
+    };
+    let e = IrisError::invalid(format!(
+        "{} of the {requested} job(s) cannot be deleted: {}; nothing was deleted",
+        refusals.len(),
+        listed.join(", ")
+    ))
+    .with_detail("refused", refusals.iter().map(|(id, _)| id.to_string()).collect::<Vec<_>>());
+    if hint.is_empty() { e } else { e.with_hint(hint) }
 }
 
 /// Wait for a job, then finish per `args` (shared with `video generate`).
