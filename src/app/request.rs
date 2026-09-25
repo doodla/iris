@@ -80,7 +80,22 @@ pub(crate) fn resolve_model(
 ) -> Result<(ResolvedModel, ModelSource), IrisError> {
     let (resolved, source) = match args.model.as_deref() {
         Some(model) => {
-            (ctx.catalog.resolve(model, args.capabilities_from.as_deref(), op)?, ModelSource::Flag)
+            let resolved = ctx.catalog.resolve(model, args.capabilities_from.as_deref(), op)?;
+            if !resolved.spec.supports(op) {
+                let supported: Vec<&str> = resolved.spec.operations.iter().map(|o| o.as_str()).collect();
+                return Err(IrisError::new(
+                    ErrorCode::UnsupportedOperation,
+                    format!(
+                        "model '{}' does not support {op} (supports: {})",
+                        resolved.spec.id,
+                        supported.join(", ")
+                    ),
+                )
+                .with_hint(format!("run `iris models list --operation {op}` and pass -m <MODEL>"))
+                .with_detail("operation", op.as_str())
+                .with_detail("candidates", ctx.catalog.candidates(Some(op))));
+            }
+            (resolved, ModelSource::Flag)
         }
         None => {
             if args.capabilities_from.is_some() {
@@ -159,7 +174,9 @@ fn configured_model(ctx: &AppContext, op: Operation) -> Result<ResolvedModel, Ir
             "pass -m <MODEL> for {op} (`iris models list --operation {op}`), or set {key} to a model that \
              supports it"
         ))
-        .with_detail("config_key", key));
+        .with_detail("config_key", key)
+        .with_detail("operation", op.as_str())
+        .with_detail("candidates", ctx.catalog.candidates(Some(op))));
     }
     Ok(resolved)
 }
@@ -239,9 +256,11 @@ fn check_output_format(common: &GenerationArgs, opts: &ResolvedOptions) -> Resul
         Some(OptionSource::Flag(flag)) => format!("{flag} {format}"),
         Some(OptionSource::Generic) | None => format!("-O format={format}"),
     };
+    let path = paths::absolute(output)?.to_string_lossy().into_owned();
     Err(IrisError::invalid(format!("-o/--output extension '.{ext}' contradicts {given}"))
         .with_hint("make the -o extension and the requested format agree, or give only one of them")
-        .with_detail("option", "format"))
+        .with_detail("option", "format")
+        .with_detail("path", path))
 }
 
 /// Number of outputs requested: the explicit or default `count`, else 1.

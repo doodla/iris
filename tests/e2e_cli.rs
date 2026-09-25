@@ -890,23 +890,30 @@ fn an_unknown_model_names_the_models_to_use_instead() {
     let dalle = "use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2";
     let veo = "use veo (veo-3.1-generate-preview), veo-fast (veo-3.1-fast-generate-preview), or veo-lite \
                (veo-3.1-lite-generate-preview)";
-    for (args, op, dalle_instead, veo_instead) in [
+    let dalle_ids = json!(["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"]);
+    let veo_ids =
+        json!(["veo-3.1-generate-preview", "veo-3.1-fast-generate-preview", "veo-3.1-lite-generate-preview"]);
+    for (args, op, dalle_instead, veo_instead, dalle_suggested, veo_suggested) in [
         (
             &["image", "generate", "a fox"][..],
             "image.generate",
             dalle.to_string(),
             "run `iris models list --operation image.generate` and pass -m <MODEL>".to_string(),
+            dalle_ids.clone(),
+            json!([]),
         ),
         (
             &["video", "generate", "waves"],
             "video.generate",
             "run `iris models list --operation video.generate` and pass -m <MODEL>".to_string(),
             veo.to_string(),
+            json!([]),
+            veo_ids.clone(),
         ),
     ] {
-        for (model, hint) in [
-            ("dall-e-3", format!("{}; {dalle_instead}", reason("dall-e-3"))),
-            ("veo-3", format!("{}; {veo_instead}", reason("veo-3"))),
+        for (model, hint, suggested) in [
+            ("dall-e-3", format!("{}; {dalle_instead}", reason("dall-e-3")), dalle_suggested),
+            ("veo-3", format!("{}; {veo_instead}", reason("veo-3")), veo_suggested),
             (
                 "sora-2",
                 format!(
@@ -914,6 +921,7 @@ fn an_unknown_model_names_the_models_to_use_instead() {
                      know yet, add --capabilities-from <KNOWN_MODEL> to declare which known model's \
                      capabilities it has"
                 ),
+                json!([]),
             ),
         ] {
             let v = sb
@@ -928,7 +936,8 @@ fn an_unknown_model_names_the_models_to_use_instead() {
             assert!(v["error"]["provider_status"].is_null(), "{v}");
             assert_eq!(candidate_ids(&v), catalog_ids(Some(op)), "{model} for {op}");
             assert_eq!(v["error"]["hint"], hint, "{model} for {op}");
-            assert_eq!(v["error"]["details"]["suggestions"], json!([]), "{model} for {op}");
+            // A declined name's replacements for the operation are its suggestions.
+            assert_eq!(v["error"]["details"]["suggestions"], suggested, "{model} for {op}");
         }
     }
     // A declined template gets the same reason, with the replacements for the operation.
@@ -1157,6 +1166,43 @@ fn a_model_option_typed_as_a_flag_points_at_the_o_form() {
         sb.iris().args(["image", "generate", "x", "-m", "gpt-image-2", "--background", "opaque"]).run();
     assert_eq!(human.code, 2);
     assert!(human.stderr.contains("hint: did you mean -O background=VALUE?"), "{}", human.stderr);
+}
+
+/// A model of another operation is `unsupported_operation` with the models that do
+/// support the command (`details.candidates`, as `unknown_model` lists them) and a
+/// hint naming `models list --operation`; an `-o` extension the model cannot
+/// produce names the path (`details.path`), and one that contradicts `--format` the
+/// option too.
+#[test]
+fn refusals_carry_the_models_and_paths_they_are_about() {
+    let sb = Sandbox::new();
+    for (args, op) in [
+        (&["image", "generate", "x", "-m", "veo-lite"][..], "image.generate"),
+        (&["video", "generate", "x", "-m", "gpt-image-2"], "video.generate"),
+    ] {
+        let v = sb.iris().args(args).args(["--dry-run", "--json"]).run().err(2, "unsupported_operation");
+        assert_eq!(
+            v["error"]["hint"],
+            format!("run `iris models list --operation {op}` and pass -m <MODEL>")
+        );
+        assert_eq!(v["error"]["details"]["operation"], op);
+        assert_eq!(candidate_ids(&v), catalog_ids(Some(op)), "{args:?}");
+    }
+
+    let v = sb
+        .iris()
+        .args(["video", "generate", "x", "-m", "veo-lite", "-o", "waves.mov", "--dry-run", "--json"])
+        .run()
+        .err(2, "invalid_argument");
+    assert_eq!(v["error"]["details"]["path"], sb.work().join("waves.mov").to_str().unwrap());
+    let v = sb
+        .iris()
+        .args(["image", "generate", "x", "-m", "gpt-image-2", "--format", "png", "-o", "a.jpg", "--dry-run"])
+        .arg("--json")
+        .run()
+        .err(2, "invalid_argument");
+    assert_eq!(v["error"]["details"]["path"], sb.work().join("a.jpg").to_str().unwrap());
+    assert_eq!(v["error"]["details"]["option"], "format");
 }
 
 /// An option or input the model does not take is refused with the catalog models

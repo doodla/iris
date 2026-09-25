@@ -75,12 +75,9 @@ impl DeclinedName {
     /// `otherwise` when none does.
     pub fn hint(&self, ops: &[Operation], otherwise: &str) -> String {
         let instead: Vec<String> = self
-            .instead
-            .iter()
-            .filter_map(|name| find(name).map(|spec| (name, spec)))
-            .filter(|(_, spec)| ops.is_empty() || ops.iter().any(|op| spec.supports(*op)))
+            .replacements(ops)
             .map(|(name, spec)| {
-                if spec.id != *name && !is_snapshot_of(spec.id, name) {
+                if spec.id != name && !is_snapshot_of(spec.id, name) {
                     format!("{name} ({})", spec.id)
                 } else {
                     name.to_string()
@@ -92,6 +89,22 @@ impl DeclinedName {
         }
         format!("{}; use {}", self.reason, or_list(&instead))
     }
+
+    /// The canonical ids of the replacements [`Self::hint`] names for `ops`, in the
+    /// order declared (`details.suggestions` of the `unknown_model` error).
+    pub fn replacement_ids(&self, ops: &[Operation]) -> Vec<&'static str> {
+        self.replacements(ops).map(|(_, spec)| spec.id).collect()
+    }
+
+    /// Each replacement as declared, with its model, that supports one of `ops` (any,
+    /// when `ops` is empty).
+    fn replacements(&self, ops: &[Operation]) -> impl Iterator<Item = (&'static str, &'static ModelSpec)> {
+        let ops = ops.to_vec();
+        self.instead
+            .iter()
+            .filter_map(|name| find(name).map(|spec| (*name, spec)))
+            .filter(move |(_, spec)| ops.is_empty() || ops.iter().any(|op| spec.supports(*op)))
+    }
 }
 
 /// The `unknown_model` error for `name`, which no model of `models` (the catalog)
@@ -99,13 +112,13 @@ impl DeclinedName {
 /// with `template`, the `--capabilities-from` model; `op` is the operation of the
 /// generation command given the name, if any. The hint names the command that lists
 /// the models for `op`, after, for a name Iris declines, why and what to use instead
-/// for `op` ([`DeclinedName::hint`]), and otherwise the models `name` nearly names
-/// ([`suggestions`], also in `details.suggestions`) as "did you mean …?", or, when
-/// those are all models of other operations, which operations they are for (they are
-/// not suggestions for `op`). Only an `-m` that is neither declined nor close to a
-/// model gets the suggestion to use a model Iris does not know yet with
-/// `--capabilities-from`. The app adds the models the command can use
-/// (`details.candidates`).
+/// for `op` ([`DeclinedName::hint`], whose replacements are `details.suggestions`),
+/// and otherwise the models `name` nearly names ([`suggestions`], also in
+/// `details.suggestions`) as "did you mean …?", or, when those are all models of
+/// other operations, which operations they are for (they are not suggestions for
+/// `op`). Only an `-m` that is neither declined nor close to a model gets the
+/// suggestion to use a model Iris does not know yet with `--capabilities-from`. The
+/// app adds the models the command can use (`details.candidates`).
 pub fn unknown_model(
     models: &[&'static ModelSpec],
     name: &str,
@@ -127,7 +140,10 @@ pub fn unknown_model(
         None => "run `iris models list` to see the models Iris knows".to_string(),
     };
     let declined = declined(name);
-    let suggested = if declined.is_some() { Vec::new() } else { suggestions(models, name, op) };
+    let suggested = match declined {
+        Some(declined) => declined.replacement_ids(op.as_slice()),
+        None => suggestions(models, name, op),
+    };
     // Close models of other operations are named for what they do, not suggested.
     let elsewhere = match (&declined, suggested.as_slice(), op) {
         (None, [], Some(_)) => suggestions(models, name, None),
@@ -579,9 +595,10 @@ mod tests {
     /// A name that nearly names models of the operation suggests them by the first
     /// rule that finds any (case, display name, the start of an id or alias, the
     /// words), and its hint asks "did you mean …?" instead of offering
-    /// `--capabilities-from`; a declined name suggests nothing. The word rule never
-    /// drops a word some catalog model has: a tier (`fast`, `lite`, `flare`) or a
-    /// version (`2.5`) that no model of the operation has suggests nothing.
+    /// `--capabilities-from`; a declined name suggests its replacements. The word
+    /// rule never drops a word some catalog model has: a tier (`fast`, `lite`,
+    /// `flare`) or a version (`2.5`) that no model of the operation has suggests
+    /// nothing.
     #[test]
     fn near_misses_suggest_the_models_they_nearly_name() {
         let models: Vec<&'static ModelSpec> = all().collect();
@@ -648,7 +665,16 @@ mod tests {
                  pass one of its models to --capabilities-from"
             )
         );
-        assert_eq!(error("veo-3", None).details["suggestions"], serde_json::json!([]));
+        // A declined name's suggestions are its replacements for the operation.
+        assert_eq!(
+            error("veo-3", None).details["suggestions"],
+            serde_json::json!([
+                "veo-3.1-generate-preview",
+                "veo-3.1-fast-generate-preview",
+                "veo-3.1-lite-generate-preview"
+            ])
+        );
+        assert_eq!(error("dall-e-3", None).details["suggestions"], serde_json::json!([]));
         assert_eq!(error("sora-2", None).details["suggestions"], serde_json::json!([]));
     }
 }

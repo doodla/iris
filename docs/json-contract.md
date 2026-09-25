@@ -433,29 +433,29 @@ elsewhere, a family of them, or a nickname of one, such as `dall-e-3`, `gpt-imag
 `veo-3`, or `nano-banana` (see [decisions.md](decisions.md#built-in-models) for the models and
 families) — gets a hint that says why, with the provider's date, and what to use instead that
 supports the command's operation (when none does, which command lists the ones that do), and no
-`--capabilities-from` suggestion:
+`--capabilities-from` suggestion. Those replacements are its `details.suggestions`, as ids:
 
 ```json
-"hint":"OpenAI removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12 and recommends a GPT Image 2.5 model for new integrations; use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2"
+"hint":"OpenAI removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12 and recommends a GPT Image 2.5 model for new integrations; use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2",
+"details":{"candidates":["..."],"suggestions":["gpt-image-2.5-sunburst","gpt-image-2.5-flare","gpt-image-2"]}
 ```
 
-Any other name that nearly names models the command can use gets their ids in
-`details.suggestions`, in catalog order (the list is empty otherwise, and for a declined name).
-They are found by the first of these rules that finds any, each ignoring case: the name is an id
-or alias; it is a display name, or either name of a display name written `A (B)`; it begins an id
-or alias; or, word by word, it names the model. For the last rule, names are split into words of
-letters or of digits (`veo3-fast` is `veo`, `3`, `fast`; `gpt-image-2.5` is `gpt`, `image`, `2`,
-`5`), and a word of four or more letters also matches one it nearly spells (Jaro-Winkler
-similarity at least 0.9: `flair` matches `flare`, `flash` does not). Every word of the name that
-any catalog model's id, alias, or display name has must be a word of the suggested model, so a
-tier (`fast`, `lite`, `pro`, `flare`, `sunburst`) or a version (`2.5`) is never dropped:
-`veo3-fast` suggests Veo 3.1 Fast only, and `gpt-image-2.5-mini` the two GPT Image 2.5 models,
-never `gpt-image-2`. Words no model has are ignored, but the words some model has must be more
-than half of the name's words and not only digits, so `veo-4-ultra` and `sora-2`, which may be
-models Iris does not know yet, suggest nothing. Of the models left, those matching the most words
-exactly are suggested. With suggestions, the hint asks "did you mean …?" and does not offer
-`--capabilities-from`, which would send the name as given. When the models a name nearly names are
-all for other operations, they are not suggestions for this one: the hint says what they are for
+Any other name that nearly names models the command can use gets their ids in `details.suggestions`,
+in catalog order (the list is empty otherwise). They are found by the first of these rules that
+finds any, each ignoring case: the name is an id or alias; it is a display name, or either name of a
+display name written `A (B)`; it begins an id or alias; or, word by word, it names the model. For
+the last rule, names are split into words of letters or of digits (`veo3-fast` is `veo`, `3`,
+`fast`; `gpt-image-2.5` is `gpt`, `image`, `2`, `5`), and a word of four or more letters also
+matches one it nearly spells (Jaro-Winkler similarity at least 0.9: `flair` matches `flare`, `flash`
+does not). Every word of the name that any catalog model's id, alias, or display name has must be a
+word of the suggested model, so a tier (`fast`, `lite`, `pro`, `flare`, `sunburst`) or a version
+(`2.5`) is never dropped: `veo3-fast` suggests Veo 3.1 Fast only, and `gpt-image-2.5-mini` the two
+GPT Image 2.5 models, never `gpt-image-2`. Words no model has are ignored, but the words some model
+has must be more than half of the name's words and not only digits, so `veo-4-ultra` and `sora-2`,
+which may be models Iris does not know yet, suggest nothing. Of the models left, those matching the
+most words exactly are suggested. With suggestions, the hint asks "did you mean …?" and does not
+offer `--capabilities-from`, which would send the name as given. When the models a name nearly names
+are all for other operations, they are not suggestions for this one: the hint says what they are for
 instead (`veo-3.1-lite-generate-preview is a video.generate model; run …`), again without
 `--capabilities-from`. Only a name that is neither declined nor close to a model gets the
 `--capabilities-from` hint shown above:
@@ -487,6 +487,11 @@ A value that is not one of an option's listed values is `invalid_argument` with 
 and `details.allowed`, the values the model accepts, typed like them (`--quality ultra` on
 `gpt-image-2`: `"allowed": ["low", "medium", "high", "auto"]`; `--duration 5` on a Veo model:
 `"allowed": [4, 6, 8]`).
+
+A model that does not implement the command's operation (`image generate -m veo-lite`) is
+`unsupported_operation` with `details.operation` and, as for `unknown_model`, `details.candidates`,
+and a hint naming `iris models list --operation <OPERATION>`; for the config file's model,
+`details.config_key` names the key too.
 
 A generation command given no model — no `-m`/`--model`, and no `image.model` or `video.model` in
 the config file — fails with `model_required` (exit 2, category `usage`) before anything is sent,
@@ -644,21 +649,23 @@ request before running again"; agents that need to distinguish them check `error
 
 Output locations are checked the same way before anything is sent: an existing file is
 `output_exists` (unless `--overwrite`), with `details.path` naming it. For a model that takes no
-output format (the provider chooses the image type), that includes a file at each planned path
-with the extension of another type the model may return (`outputs.media_types` in `models show`):
-`-o g.png` is `output_exists` naming `g.jpg` when that exists, since a JPEG answer would be saved
-there. With `--overwrite` the run goes ahead, but such a file is never replaced: an image of its
-type is saved as `<stem>.<n>.<ext>` with `output_renamed`. A location that cannot be used as given
-(a file where a directory should be, no permission, a read-only file system, a directory that
-cannot be created) is `invalid_argument` with `details.path` naming the offending path. Iris writes
-media only to files and prints their paths, so these are `invalid_argument` too, with a hint saying
-so: `-o -` (standard output; `./-` names a file called `-`), an `-o` naming a standard stream or
-file descriptor (`/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/…`, `/proc/…/fd/…`) whatever
-it currently points to, and an `-o` naming an existing device, pipe, or socket (e.g. `/dev/null`);
-the last two carry `details.path`. A real run creates the output directory and proves it writable
-before the paid request; `--dry-run` refuses the same locations, creating no directory and leaving
-nothing behind (see [`plan`](#plan-any-generation-command-run-with---dry-run)). Other I/O failures
-there (e.g. a full disk) stay `io_error` (exit 1).
+output format (the provider chooses the image type), that includes a file at each planned path with
+the extension of another type the model may return (`outputs.media_types` in `models show`): `-o
+g.png` is `output_exists` naming `g.jpg` when that exists, since a JPEG answer would be saved there.
+With `--overwrite` the run goes ahead, but such a file is never replaced: an image of its type is
+saved as `<stem>.<n>.<ext>` with `output_renamed`. An `-o` whose extension the model cannot produce,
+or that contradicts the requested format, is `invalid_argument` with `details.path` too (and
+`details.option: "format"` for the latter). A location that cannot be used as given (a file where a
+directory should be, no permission, a read-only file system, a directory that cannot be created) is
+`invalid_argument` with `details.path` naming the offending path. Iris writes media only to files
+and prints their paths, so these are `invalid_argument` too, with a hint saying so: `-o -` (standard
+output; `./-` names a file called `-`), an `-o` naming a standard stream or file descriptor
+(`/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/…`, `/proc/…/fd/…`) whatever it currently
+points to, and an `-o` naming an existing device, pipe, or socket (e.g. `/dev/null`); the last two
+carry `details.path`. A real run creates the output directory and proves it writable before the paid
+request; `--dry-run` refuses the same locations, creating no directory and leaving nothing behind
+(see [`plan`](#plan-any-generation-command-run-with---dry-run)). Other I/O failures there (e.g. a
+full disk) stay `io_error` (exit 1).
 
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint

@@ -178,7 +178,9 @@ pub fn validate_request(
             ErrorCode::UnsupportedOperation,
             format!("model '{}' does not support {operation} (supports: {})", spec.id, supported.join(", ")),
         )
-        .with_hint("run `iris models list` to see which models support this operation"));
+        .with_hint(format!(
+            "run `iris models list --operation {operation}` to see the models that support it"
+        )));
     }
 
     let mut resolved = ResolvedOptions::new();

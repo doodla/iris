@@ -114,12 +114,14 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
         Some(f) => {
             let t = media_type_for_format(f).ok_or_else(|| {
                 IrisError::invalid(format!("unknown output format '{f}' (expected png, jpeg, or webp)"))
+                    .with_detail("option", "format")
             })?;
             if !media::accepts(req.media_types, t) {
                 return Err(IrisError::invalid(format!(
                     "this model cannot produce {f} output (it produces {})",
                     req.media_types.join(", ")
-                )));
+                ))
+                .with_detail("option", "format"));
             }
             Some(t)
         }
@@ -132,11 +134,13 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
         Some(output) => {
             let names_directory = output.as_os_str().to_string_lossy().ends_with(std::path::MAIN_SEPARATOR);
             let output = resolve_file_target(output)?;
+            let path = output.to_string_lossy().into_owned();
             if names_directory || output.is_dir() {
                 return Err(IrisError::invalid(format!(
                     "-o/--output expects a file path, but {} is a directory; use -d/--out-dir for directories",
                     output.display()
-                )));
+                ))
+                .with_detail("path", path));
             }
             let ext = output.extension().map(|e| e.to_string_lossy().into_owned());
             let given = output.display().to_string();
@@ -157,19 +161,23 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
                             output.display(),
                             extension_list(req.media_types)
                         ))
+                        .with_detail("path", path.clone())
                     })?;
                     if let Some(t) = format_type {
                         if !same_type(t, ext_type) {
                             return Err(IrisError::invalid(format!(
                                 "-o/--output extension '.{ext}' contradicts the requested output format {}",
                                 req.format.unwrap_or_default()
-                            )));
+                            ))
+                            .with_detail("path", path)
+                            .with_detail("option", "format"));
                         }
                     } else if !media::accepts(req.media_types, ext_type) {
                         return Err(IrisError::invalid(format!(
                             "this model cannot produce {ext_type} ('.{ext}'); use one of {}",
                             extension_list(req.media_types)
-                        )));
+                        ))
+                        .with_detail("path", path));
                     } else {
                         implied_format = format_for_media_type(ext_type);
                     }
@@ -570,7 +578,7 @@ fn indexed(path: &Path, i: u32) -> PathBuf {
 }
 
 /// `path` made absolute (against the current directory) and lexically normalized.
-fn absolute(path: &Path) -> Result<PathBuf, IrisError> {
+pub(crate) fn absolute(path: &Path) -> Result<PathBuf, IrisError> {
     let abs = std::path::absolute(path)
         .map_err(|e| IrisError::io(format_args!("cannot resolve path {}", path.display()), &e))?;
     let abs = normalize_lexically(&abs);

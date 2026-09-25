@@ -253,7 +253,7 @@ config loads (see [Config file](#config-file)). It is stored as the id `-m` woul
 canonical id for a nickname such as `nano-banana-2`, a dated snapshot as written; `config show`
 shows it. `--capabilities-from` has no config equivalent. If `image.model` does not support the
 operation being run, that command fails with `unsupported_operation`, naming the key in its
-message and in `details.config_key`.
+message and in `details.config_key`, with the models that do support it in `details.candidates`.
 
 `-m` always wins over the config file. Every result says which of the two chose the model:
 `model_source` is `flag` or `config` in the dry-run plan, the image result, and the job (see
