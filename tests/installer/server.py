@@ -22,6 +22,7 @@ and <mode> selects the behaviour:
 import http.server
 import os
 import socket
+import socketserver
 import sys
 import threading
 import time
@@ -107,6 +108,17 @@ class Handler(http.server.BaseHTTPRequestHandler):
         sys.stderr.flush()
 
 
+class Server(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+
+    def server_bind(self):
+        # HTTPServer.server_bind also resolves the host's fully qualified name, a
+        # reverse DNS lookup of 127.0.0.1 that can take many seconds on macOS; the
+        # handler never uses that name.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 def exit_with_parent():
     """Stop serving if the test runner that started us goes away."""
     parent = os.getppid()
@@ -119,8 +131,7 @@ def main():
     global ROOT
     ROOT, port_file = sys.argv[1], sys.argv[2]
     threading.Thread(target=exit_with_parent, daemon=True).start()
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-    server.daemon_threads = True
+    server = Server(("127.0.0.1", 0), Handler)
     tmp = port_file + ".tmp"
     with open(tmp, "w") as f:
         f.write(str(server.server_address[1]))

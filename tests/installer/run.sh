@@ -155,7 +155,8 @@ start_server() {
   tries=0
   while [ ! -s "$W/port" ]; do
     tries=$((tries + 1))
-    [ "$tries" -le 100 ] || die "server did not start; see $W/server.log"
+    [ "$tries" -le 100 ] || die "server did not start; its log ($W/server.log):
+$(cat "$W/server.log" 2>/dev/null)"
     sleep 0.1
   done
   SERVER=http://127.0.0.1:$(cat "$W/port")
