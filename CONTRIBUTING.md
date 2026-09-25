@@ -111,7 +111,11 @@ Maintainers cut a release from `main`:
    A manual run of the Release workflow also shows it in the run's summary.
 3. Merge that change, and wait until CI has passed on the resulting `main` commit. Only ever tag
    a `main` commit whose CI is green.
-4. Tag that commit and push the tag:
+4. Run the Release workflow by hand on that commit (Actions → Release → Run workflow; a manual run
+   never publishes) and wait for it to pass. CI covers only the Linux release path; this run also
+   builds, packages, and smoke-tests both macOS archives with the pinned release toolchain, so a
+   problem there does not use up a version number.
+5. Tag that commit and push the tag:
 
    ```console
    $ git tag vX.Y.Z <commit>

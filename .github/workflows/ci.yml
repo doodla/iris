@@ -185,17 +185,34 @@ jobs:
     name: release dry run (x86_64-unknown-linux-musl)
     # The Linux leg of release.yml without publishing, so the release-only
     # paths (musl build, packaging, the smoke test of the archive and of
-    # install.sh with it) are exercised before anything is tagged.
+    # install.sh with it) are exercised before anything is tagged, with the
+    # same pinned toolchain the release uses (read from release.yml, so the
+    # two never drift). The macOS legs run only in release.yml; CONTRIBUTING
+    # asks for a manual dry run of it before tagging.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Read the pinned release toolchain from release.yml
+        run: |
+          set -eu
+          version=$(sed -n 's/^  RELEASE_RUST_TOOLCHAIN: "\([0-9.]*\)"$/\1/p' .github/workflows/release.yml)
+          if [ -z "$version" ]; then
+            echo "::error::no RELEASE_RUST_TOOLCHAIN found in .github/workflows/release.yml"
+            exit 1
+          fi
+          echo "RELEASE_RUST_TOOLCHAIN=$version" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
         with:
-          toolchain: stable
+          toolchain: ${{ env.RELEASE_RUST_TOOLCHAIN }}
           targets: x86_64-unknown-linux-musl
+          components: clippy
+      - name: Check the release toolchain
+        run: sh scripts/check-release-toolchain.sh "$RELEASE_RUST_TOOLCHAIN"
+      - name: Clippy with the release toolchain
+        run: cargo clippy --all-targets --locked -- -D warnings
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: Install musl toolchain
         run: |

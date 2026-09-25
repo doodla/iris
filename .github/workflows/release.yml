@@ -14,7 +14,7 @@
 #   - iris-vX.Y.Z-x86_64-apple-darwin.tar.gz: macOS 10.12+ (Sierra and
 #     later) — rustc's documented default deployment target for this
 #     triple (https://doc.rust-lang.org/nightly/rustc/platform-support.html,
-#     checked 2026-09-24); not overridden here via MACOSX_DEPLOYMENT_TARGET.
+#     checked 2026-09-24); the build pins MACOSX_DEPLOYMENT_TARGET to it.
 #   - iris-vX.Y.Z-aarch64-apple-darwin.tar.gz: macOS 11.0+ (Big Sur and
 #     later) — same source; also the first macOS version Apple Silicon
 #     Macs shipped with, so this is not a practical additional restriction.

@@ -254,11 +254,12 @@ The BusyBox cases use a `busybox` binary for every tool when one is on `PATH` (o
 `BUSYBOX=/path/to/busybox`), as on Alpine; otherwise they run GNU `wget` behind a shim with
 BusyBox's exit codes.
 
-CI also runs the release path itself on every change: it builds the real
-`x86_64-unknown-linux-musl` binary, packages it twice (the two archives must be byte-identical),
+CI also runs the Linux release path itself on every change, with the pinned release toolchain: it
+builds the real `x86_64-unknown-linux-musl` binary, packages it twice (the two archives must be byte-identical),
 and runs `scripts/smoke-test-release.sh`, which runs the packaged binary and then installs the
-archive with `install.sh` from a local server. The release workflow runs the same smoke test on
-every target before publishing. To replay the Linux run locally (it needs the musl target:
+archive with `install.sh` from a local server. The macOS archives are built and smoke-tested only
+by the release workflow, which runs the same smoke test on every target before publishing; a manual
+run of it (which never publishes) checks them before a tag is pushed. To replay the Linux run locally (it needs the musl target:
 `rustup target add x86_64-unknown-linux-musl`, your distribution's `musl-tools`, and the exact
 cargo-about version that `scripts/package-release.sh` requires, which generates
 `THIRD-PARTY-LICENSES`):
