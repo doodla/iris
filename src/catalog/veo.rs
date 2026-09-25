@@ -114,7 +114,7 @@ const NEGATIVE_PROMPT: OptionSpec = OptionSpec {
     default: None,
     flag: Some("--negative-prompt"),
     operations: VIDEO,
-    description: "What the video should not contain; sent only when given",
+    description: "What the video should not contain; sent only when given, and not with reference images",
 };
 
 const PERSON_GENERATION: OptionSpec = OptionSpec {
@@ -150,7 +150,9 @@ const LITE_OPTIONS: &[OptionSpec] = &[
          on this model. The price depends on it; audio is always included",
     ),
     ASPECT_RATIO,
-    NEGATIVE_PROMPT,
+    // No negative_prompt: the Gemini API answers "`negativePrompt` isn't supported
+    // by this model" for Veo 3.1 Lite (live request, 2026-09-25), although the SDKs
+    // map the field and a cookbook example once used it with Lite.
     PERSON_GENERATION,
 ];
 
@@ -165,8 +167,6 @@ const NOTE_RETENTION: &str =
 const NOTE_NO_CANCEL: &str = "No remote cancellation (the provider offers none for Veo operations)";
 const NOTE_NO_DELETE: &str = "Remote deletion of generated videos is not supported by Iris; provider support is \
                               unverified";
-const NOTE_REF_WIRE: &str =
-    "Reference-image wire format (referenceType casing) verified against official SDKs only, not live";
 const NOTE_EXTENSION: &str =
     "Video extension (a previous Veo video as input) is provider-supported but not implemented by Iris";
 
@@ -213,9 +213,6 @@ pub static MODELS: &[ModelSpec] = &[
             NOTE_RETENTION,
             NOTE_NO_CANCEL,
             NOTE_NO_DELETE,
-            NOTE_REF_WIRE,
-            "Reference images on Veo 3.1 Fast are documented in the guide but unverified (the official \
-             cookbook lists them for Veo 3.1 only)",
             NOTE_EXTENSION,
         ],
         docs_url: DOCS_URL,
@@ -248,7 +245,6 @@ pub static MODELS: &[ModelSpec] = &[
             NOTE_RETENTION,
             NOTE_NO_CANCEL,
             NOTE_NO_DELETE,
-            NOTE_REF_WIRE,
             NOTE_EXTENSION,
         ],
         docs_url: DOCS_URL,
@@ -313,6 +309,16 @@ pub const REFERENCES_REQUIRE_DURATION_8: Constraint = Constraint {
     inputs: &["reference"],
     description: "reference images require duration 8 (the default)",
 };
+/// Observed live (2026-09-25): Veo 3.1 Fast accepted a negative prompt for
+/// text-to-video but refused it next to a reference image ("Negative prompt is
+/// not supported in your use case"). The same combination on Veo 3.1 was not
+/// tried; it is refused too, since the provider documents no support for it.
+pub const NEGATIVE_PROMPT_EXCLUDES_REFERENCES: Constraint = Constraint {
+    id: "negative_prompt_excludes_references",
+    options: &["negative_prompt"],
+    inputs: &["reference"],
+    description: "a negative prompt cannot be combined with reference images",
+};
 pub const LAST_FRAME_REQUIRES_FIRST_FRAME: Constraint = Constraint {
     id: "last_frame_requires_first_frame",
     options: &[],
@@ -333,6 +339,7 @@ const FULL_RULES: RequestRules = RequestRules {
         HIGH_RESOLUTION_REQUIRES_DURATION_8,
         REFERENCES_EXCLUDE_FRAMES,
         REFERENCES_REQUIRE_DURATION_8,
+        NEGATIVE_PROMPT_EXCLUDES_REFERENCES,
         LAST_FRAME_REQUIRES_FIRST_FRAME,
         PERSON_GENERATION_DEPENDS_ON_IMAGE_INPUTS,
     ],
@@ -369,6 +376,11 @@ fn validate_video(input: &ValidationInput<'_>) -> Result<(), IrisError> {
         return Err(REFERENCES_REQUIRE_DURATION_8
             .violation(format!("reference images (--ref) require --duration 8 (got {duration})"))
             .with_detail("option", "duration"));
+    }
+    if has_refs && input.options.get("negative_prompt").is_some() {
+        return Err(NEGATIVE_PROMPT_EXCLUDES_REFERENCES
+            .violation("--negative-prompt cannot be combined with reference images (--ref)")
+            .with_detail("option", "negative_prompt"));
     }
     if input.has_last_frame && !input.has_first_frame {
         return Err(

@@ -374,7 +374,8 @@ fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
     sb.iris().gemini(&api).args(["image", "generate", "-m", flash.id, "x", "-d", "out", "--json"]).run().ok();
     check(limit.upper_bound("x", &ResolvedOptions::new(), []), body_len(&route));
 
-    // Veo predictLongRunning: reference images plus every parameter, and the
+    // Veo predictLongRunning: reference images plus every parameter they allow,
+    // frames plus the negative prompt (which reference images exclude), and the
     // parameters the adapter always sends when none is given.
     let veo = catalog::find("veo").unwrap();
     let limit = veo.inputs.max_request.expect("Veo models declare the inline cap");
@@ -388,7 +389,6 @@ fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
     let pairs = [
         ("aspect_ratio", "9:16"),
         ("duration", "8"),
-        ("negative_prompt", negative),
         ("person_generation", "allow_adult"),
         ("resolution", "1080p"),
     ];
@@ -397,6 +397,21 @@ fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
         .args([
             "video", "generate", "-m", "veo", prompt, "--ref", "a.png", "--ref", "b.jpg", "--ref", "c.png",
         ])
+        .args(["--aspect-ratio", "9:16", "--duration", "8", "--resolution", "1080p"])
+        .args(["-O", "person_generation=allow_adult", "--detach", "--json"])
+        .run()
+        .ok();
+    check(limit.upper_bound(prompt, &options(&pairs), sizes), body_len(&route));
+    let pairs = [
+        ("aspect_ratio", "9:16"),
+        ("duration", "8"),
+        ("negative_prompt", negative),
+        ("person_generation", "allow_adult"),
+        ("resolution", "1080p"),
+    ];
+    sb.iris()
+        .gemini(&api)
+        .args(["video", "generate", "-m", "veo", prompt, "--image", "a.png", "--last-frame", "b.jpg"])
         .args([
             "--aspect-ratio",
             "9:16",
@@ -410,7 +425,7 @@ fn the_inline_request_bound_covers_the_bodies_the_adapters_send() {
         .args(["-O", "person_generation=allow_adult", "--detach", "--json"])
         .run()
         .ok();
-    check(limit.upper_bound(prompt, &options(&pairs), sizes), body_len(&route));
+    check(limit.upper_bound(prompt, &options(&pairs), [sizes[0], sizes[1]]), body_len(&route));
     sb.iris()
         .gemini(&api)
         .args([

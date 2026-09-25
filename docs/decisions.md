@@ -139,14 +139,21 @@ Veo is a real provider-native asynchronous job and gets a durable job record, `-
 `jobs status|wait|download`. The guide's REST samples conflict with the official Python and
 JavaScript SDKs on several wire details (inline image encoding, duration as a string, lowercase
 `asset`), and some printed samples are not valid JSON; the SDKs are what Google's own clients
-send, so Iris follows them (the `ASSET` casing follows the official SDKs; it is not yet
-confirmed by a live reference-image request). Sending duration, resolution, and aspect ratio
+send, so Iris follows them (a live reference-image request on Veo 3.1 Fast confirmed the
+`ASSET` casing on 2026-09-25). Sending duration, resolution, and aspect ratio
 explicitly bounds the cost of every job instead of depending on server defaults. Audio is always
 on for Veo 3.1 on the Gemini API and the SDKs reject `generateAudio` there, so Iris offers no
 audio flag. The discovery document has no cancel or delete method for these operations, so Iris
 offers no remote cancellation. It declares a `files.delete` method, but whether it applies to
 generated Veo outputs is not documented, so Iris neither offers remote deletion nor says the
 provider lacks it.
+
+Live requests on 2026-09-25 also showed where the API refuses `negativePrompt`, which the SDKs map
+but the guide's parameter table omits: Veo 3.1 Lite refuses it outright ("isn't supported by this
+model"), and Veo 3.1 Fast refuses it next to a reference image ("not supported in your use case")
+while accepting it for text-to-video. Iris declares no negative prompt for Lite and refuses a
+negative prompt with reference images on Fast and Standard before sending; the Standard
+combination was not tried, and the provider documents no support for it.
 
 **Sources.** [Veo guide](https://ai.google.dev/gemini-api/docs/veo) ·
 [Video generation overview](https://ai.google.dev/gemini-api/docs/video) ·
@@ -181,8 +188,8 @@ Gemini API only the three Veo 3.1 preview models remain; Veo 2.0 and 3.0 shut do
 other authentication and endpoints. Veo 3.1 Fast is the default because it is documented to
 support every video option Iris offers, including 4k and reference images, for a quarter of the
 standard model's per-second price at 720p and less than it at every resolution. Reference images
-on Fast are documented in the Veo guide but unverified: the official cookbook lists them for Veo
-3.1 only. Gemini Omni Flash is a video model on the Interactions API and is out of scope for this
+on Fast, which the official cookbook lists only for Veo 3.1, were confirmed by a live 4k request
+on 2026-09-25. Gemini Omni Flash is a video model on the Interactions API and is out of scope for this
 version. Model defaults live in the catalog (`default_for`), and a provider's default can be
 overridden in the config file.
 

@@ -125,6 +125,8 @@ machine-readable contract for agents.
   [docs/jobs.md](https://github.com/doodla/iris/blob/main/docs/jobs.md#why-synchronous-calls-have-no-job-record)).
 - Veo audio cannot be disabled (not an option the Gemini API offers), Veo outputs are retained by
   the provider for about 2 days, and all Veo models are labeled preview by Google.
+- Veo 3.1 Lite takes no negative prompt, and no Veo model takes one together with reference
+  images: the Gemini API refuses both, so Iris rejects them before sending.
 - No remote job cancellation of any kind — `jobs delete` removes only the local record.
 - No Windows support (builds, CI, or installer) in v1; Linux and macOS only.
 - macOS archives are not signed or notarized; see [docs/install.md](https://github.com/doodla/iris/blob/main/docs/install.md) for installing

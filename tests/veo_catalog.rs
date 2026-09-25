@@ -97,8 +97,8 @@ fn the_three_veo_31_preview_models_are_declared() {
         ] {
             assert!(m.access_notes.contains(&note), "{}: {note}", m.id);
         }
-        let ref_wire = "Reference-image wire format (referenceType casing) verified against official SDKs only, not live";
-        assert_eq!(m.access_notes.contains(&ref_wire), m.inputs.max_reference_images > 0, "{}", m.id);
+        // Reference images (referenceType "ASSET") were confirmed live on Veo 3.1 Fast.
+        assert!(!m.access_notes.iter().any(|n| n.contains("referenceType")), "{}", m.id);
         assert!(m.access_notes.iter().any(|n| n.contains("provider support is unverified")), "{}", m.id);
     }
     assert_eq!(spec(FAST).display_name, "Veo 3.1 Fast");
@@ -108,7 +108,9 @@ fn the_three_veo_31_preview_models_are_declared() {
     assert_eq!(spec(FAST).inputs.max_reference_images, 3);
     assert_eq!(spec(STANDARD).inputs.max_reference_images, 3);
     assert_eq!(spec(LITE).inputs.max_reference_images, 0);
-    assert!(spec(FAST).access_notes.iter().any(|n| n.contains("Veo 3.1 Fast") && n.contains("unverified")));
+    assert!(
+        !spec(FAST).access_notes.iter().any(|n| n.contains("Reference images") && n.contains("unverified"))
+    );
     assert!(spec(FAST).access_notes.iter().any(|n| n.contains("extension")));
 }
 
@@ -127,10 +129,13 @@ fn fast_is_the_video_default_and_shut_down_ids_are_unknown() {
 fn options_and_defaults_match_the_contract() {
     for m in catalog::veo::MODELS {
         let names: Vec<&str> = m.options.iter().map(|o| o.name).collect();
-        assert_eq!(
-            names,
-            ["count", "duration", "resolution", "aspect_ratio", "negative_prompt", "person_generation"]
-        );
+        // Veo 3.1 Lite refuses a negative prompt (seen live).
+        let expected: &[&str] = if m.id == LITE {
+            &["count", "duration", "resolution", "aspect_ratio", "person_generation"]
+        } else {
+            &["count", "duration", "resolution", "aspect_ratio", "negative_prompt", "person_generation"]
+        };
+        assert_eq!(names, expected, "{}", m.id);
         let o = |n: &str| m.option(n).unwrap();
         assert!(matches!(o("count").kind, OptionKind::Integer { min: 1, max: 1 }));
         assert!(matches!(o("duration").kind, OptionKind::Enum(v) if v == ["4", "6", "8"]));
@@ -138,8 +143,10 @@ fn options_and_defaults_match_the_contract() {
         assert_eq!(o("resolution").default, Some("720p"));
         assert!(matches!(o("aspect_ratio").kind, OptionKind::Enum(v) if v == ["16:9", "9:16"]));
         assert_eq!(o("aspect_ratio").default, Some("16:9"));
-        assert!(matches!(o("negative_prompt").kind, OptionKind::Text { max_chars: 4000 }));
-        assert_eq!(o("negative_prompt").default, None);
+        if m.id != LITE {
+            assert!(matches!(o("negative_prompt").kind, OptionKind::Text { max_chars: 4000 }));
+            assert_eq!(o("negative_prompt").default, None);
+        }
         assert!(
             matches!(o("person_generation").kind, OptionKind::Enum(v) if v == ["allow_all", "allow_adult"])
         );
@@ -269,6 +276,7 @@ fn every_cross_option_rule_is_a_declared_constraint() {
         "high_resolution_requires_duration_8",
         "references_exclude_frames",
         "references_require_duration_8",
+        "negative_prompt_excludes_references",
         "last_frame_requires_first_frame",
         "person_generation_depends_on_image_inputs",
     ];
@@ -282,4 +290,27 @@ fn every_cross_option_rule_is_a_declared_constraint() {
             "person_generation_depends_on_image_inputs"
         ]
     );
+}
+
+/// Both rules come from live requests: Veo 3.1 Lite answers that `negativePrompt`
+/// "isn't supported by this model", and Veo 3.1 Fast refuses a negative prompt next
+/// to a reference image while accepting it for text-to-video. Iris refuses both
+/// locally, before anything is sent.
+#[test]
+fn negative_prompts_are_refused_where_the_provider_refuses_them() {
+    assert_eq!(validate(LITE, &[("negative_prompt", "text")], text()), Err(ErrorCode::UnsupportedOption));
+    assert_eq!(
+        validate(LITE, &[("negative_prompt", "text")], first_frame()),
+        Err(ErrorCode::UnsupportedOption)
+    );
+    for id in [FAST, STANDARD] {
+        assert_eq!(validate(id, &[("negative_prompt", "text")], text()), Ok(()), "{id}");
+        assert_eq!(validate(id, &[("negative_prompt", "text")], first_frame()), Ok(()), "{id}");
+        assert_eq!(
+            validate(id, &[("negative_prompt", "text"), ("duration", "8")], refs(1)),
+            Err(ErrorCode::InvalidArgument),
+            "{id}"
+        );
+        assert_eq!(validate(id, &[("duration", "8")], refs(1)), Ok(()), "{id}");
+    }
 }
