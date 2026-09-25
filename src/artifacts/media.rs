@@ -109,7 +109,7 @@ pub fn sniff(head: &[u8]) -> Option<&'static str> {
 
 /// Media type of an ISO-BMFF file from its `ftyp` brands.
 fn classify_brands(major: &[u8; 4], compatible: &[u8]) -> Option<&'static str> {
-    let has = |brand: &[u8; 4]| compatible.chunks_exact(4).any(|c| c == brand);
+    let has = |brand: &[u8; 4]| compatible.as_chunks::<4>().0.iter().any(|c| c == brand);
     match major {
         b"qt  " => Some(QUICKTIME),
         b"heic" | b"heix" | b"heim" | b"heis" | b"hevc" | b"hevx" => Some(HEIC),
