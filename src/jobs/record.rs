@@ -577,9 +577,35 @@ impl JobRecord {
     pub fn error(&self) -> Option<&ErrorBody> {
         self.error.as_deref()
     }
-    /// The job's error as the public view shows it (see [`Preserved::view`]).
+    /// The job's error as the public view shows it (see [`Preserved::view`]), and
+    /// as `jobs wait`/`jobs download` report it again.
+    ///
+    /// Once a job has ended without success (`failed`, `expired`,
+    /// `submission_unknown`), nothing about it can change, so its error is shown as
+    /// `retryable: false` even when the error itself was retryable (a submission
+    /// rejected with `rate_limited`, or a `network_error` before anything was
+    /// sent): repeating `jobs wait` or `jobs download` only replays it. The
+    /// recorded value is kept in `details.submission_retryable`, and the hint adds
+    /// that trying again means a new, billed submission. The record keeps the error
+    /// as it was written.
     pub fn error_view(&self) -> Option<ErrorBody> {
-        self.error.as_ref().map(Preserved::view)
+        let mut body = self.error.as_ref().map(Preserved::view)?;
+        let ended =
+            matches!(self.status, JobStatus::Failed | JobStatus::Expired | JobStatus::SubmissionUnknown);
+        if ended && body.retryable != Some(false) {
+            body.details
+                .get_or_insert_with(Map::new)
+                .insert("submission_retryable".to_string(), json!(body.retryable));
+            body.retryable = Some(false);
+            let replay = "this job has ended and will not change (`iris jobs wait` and `iris jobs download` only \
+                          report this error again); trying again means submitting a new job with `iris video \
+                          generate`, a new, billed request";
+            body.hint = Some(match body.hint.take() {
+                Some(hint) => format!("{hint}; {replay}"),
+                None => replay.to_string(),
+            });
+        }
+        Some(body)
     }
     pub fn usage(&self) -> Option<&Usage> {
         self.usage.as_deref()

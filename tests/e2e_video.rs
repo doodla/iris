@@ -569,6 +569,46 @@ fn a_rate_limited_veo_submission_is_retried_into_one_job() {
     veo.assert_no_credential_leaks();
 }
 
+#[test]
+fn a_rejected_submission_replayed_later_is_not_retryable() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    // Every attempt is rate limited: the submission is a definite rejection.
+    veo.submit.set(google_error(
+        429,
+        "RESOURCE_EXHAUSTED",
+        "Resource has been exhausted (e.g. check quota).",
+        json!([{ "@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0.01s" }]),
+    ));
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--detach", "--json"])
+        .run()
+        .err(1, "rate_limited");
+    // For the submission itself, trying again may work.
+    assert_eq!(v["error"]["retryable"], true);
+    assert_eq!(v["error"]["job_status"], "failed");
+    let id = v["error"]["job_id"].as_str().unwrap().to_string();
+    assert_eq!(sb.record(&id)["error"]["retryable"], true, "the record keeps the error as it was");
+
+    // The job itself can never succeed: later commands replay its error as not
+    // retryable, keep the original, and say that trying again means a new, billed job.
+    for cmd in ["wait", "download"] {
+        let v = sb.iris().gemini(&veo.api).args(["jobs", cmd, &id, "--json"]).run().err(1, "rate_limited");
+        let error = &v["error"];
+        assert_eq!(error["retryable"], false, "jobs {cmd}: {v}");
+        assert_eq!(error["details"]["submission_retryable"], true);
+        assert_eq!(error["job_status"], "failed");
+        assert!(error["hint"].as_str().unwrap().contains("new, billed request"), "{v}");
+    }
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "status", &id, "--json"]).run().ok();
+    assert_eq!(job_of(&v)["error"]["retryable"], false);
+    assert_eq!(job_of(&v)["error"]["details"]["submission_retryable"], true);
+    assert_eq!(veo.submits(), 3, "one command's bounded retries; later commands never resubmit");
+    veo.assert_no_credential_leaks();
+}
+
 // ----- scenario 6: submission uncertainty ------------------------------------------------------
 
 #[test]

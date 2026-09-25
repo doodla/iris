@@ -395,6 +395,15 @@ resubmits a paid request whose outcome it cannot prove. An image-command error w
 `details.charge_possible` is `true` (the provider may have processed and billed the request) never
 says `retryable: true`.
 
+The recorded error of a job that has ended without success (`failed`, `expired`,
+`submission_unknown`) — in `job.error`, and as the error `jobs wait` and `jobs download` report
+for such a job — always says `retryable: false`: the job cannot change, so repeating those
+commands only replays it. When the error was recorded as retryable (for example a submission
+rejected with `rate_limited`, or a `network_error` before anything was sent), the recorded value is
+kept in `details.submission_retryable` and the hint adds that trying again means submitting a new
+job, a new, billed request. The error `video generate` itself returns for that submission keeps
+the recorded value.
+
 **Exit code summary:**
 
 | exit | meaning |

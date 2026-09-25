@@ -347,6 +347,38 @@ fn outputs_with_unusable_uris_fail_alone_and_only_all_of_them_fail_the_job() {
 }
 
 #[test]
+fn errors_of_ended_jobs_are_shown_as_not_retryable_and_kept_as_written() {
+    // A submission rejected before anything was accepted (retryable as a
+    // submission), then shown by a later `jobs status`/`wait`/`download`.
+    for (code, retryable) in [(ErrorCode::RateLimited, Some(true)), (ErrorCode::ProviderBadResponse, None)] {
+        let mut rec = JobRecord::new(new_job(), ts(0)).unwrap();
+        let error = IrisError::new(code, "rejected").with_retryable(retryable).with_hint("nothing was sent");
+        rec.mark_rejected(&error, ts(1)).unwrap();
+        assert_eq!(rec.error().unwrap().retryable, retryable, "the record keeps what was written");
+        let view = rec.error_view().unwrap();
+        assert_eq!(view.code, code);
+        assert_eq!(view.retryable, Some(false), "{code:?}: waiting or downloading again cannot help");
+        assert_eq!(view.details.as_ref().unwrap()["submission_retryable"], json!(retryable));
+        let hint = view.hint.as_deref().unwrap();
+        assert!(hint.starts_with("nothing was sent; ") && hint.contains("new, billed request"), "{hint}");
+        assert_eq!(rec.to_view().error.unwrap().retryable, Some(false));
+        // Written back unchanged.
+        let written = serde_json::to_value(&rec).unwrap();
+        assert_eq!(written["error"]["retryable"], json!(retryable));
+        assert!(written["error"]["details"].get("submission_retryable").is_none());
+    }
+
+    // An error that already says not retryable is shown as it is.
+    let mut rec = running_record();
+    let blocked = IrisError::new(ErrorCode::ContentBlocked, "blocked").with_hint("change the prompt");
+    rec.apply_poll(RemoteStatus::Failed { error: blocked }, None, ts(5)).unwrap();
+    let view = rec.error_view().unwrap();
+    assert_eq!(view.retryable, Some(false));
+    assert!(view.details.is_none_or(|d| !d.contains_key("submission_retryable")));
+    assert_eq!(view.hint.as_deref(), Some("change the prompt"));
+}
+
+#[test]
 fn poll_failure_and_gone() {
     let mut failed = running_record();
     let err = IrisError::new(ErrorCode::ContentBlocked, "blocked by safety filters");
