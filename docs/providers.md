@@ -81,7 +81,8 @@ compiler alone):
   because no provider Iris implements today offers one. If your provider *does* document a cancel
   endpoint, that is a CLI-contract change (a new command), not something to bolt onto the existing
   trait — treat it as a deliberate, documented CLI/JSON compatibility change (see
-  [AGENTS.md#compatibility](../AGENTS.md#compatibility)) rather than improvising.
+  [AGENTS.md#compatibility](https://github.com/doodla/iris/blob/main/AGENTS.md#compatibility))
+  rather than improvising.
 - **Downloads use the shared credential-origin rule**, not a bespoke one: `http::download`
   already attaches `Provider::credential_header()` only when the download URL's scheme+host+port
   match the provider's configured base URL, and follows redirects manually so a redirect off that
@@ -218,7 +219,7 @@ Mirror the existing per-provider test files (`tests/openai_catalog.rs` /
   `tests/app_support.rs`) need an arm for the new provider; the compiler shows where.
 - Run `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, and `cargo test` before
   committing — the same checks every commit in this repository passes (see
-  [CONTRIBUTING.md](../CONTRIBUTING.md)).
+  [CONTRIBUTING.md](https://github.com/doodla/iris/blob/main/CONTRIBUTING.md)).
 
 ## Checklist: everything a new provider touches
 
@@ -298,4 +299,4 @@ beyond the help text that names providers, or new branches in `app/image.rs` / `
 keyed on which provider was selected), that is a sign the abstraction in `providers` needs to grow
 first — fix the trait or the shared catalog types, not the application layer, and record why as a
 deliberate, documented CLI/JSON compatibility change (see
-[AGENTS.md#compatibility](../AGENTS.md#compatibility)).
+[AGENTS.md#compatibility](https://github.com/doodla/iris/blob/main/AGENTS.md#compatibility)).

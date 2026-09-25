@@ -1,7 +1,8 @@
 # Live verification (paid, opt-in)
 
 The normal test suite (`cargo test`) runs offline against local mock servers, needs no
-credentials, and costs nothing — see [CONTRIBUTING.md](../CONTRIBUTING.md). Live verification is
+credentials, and costs nothing — see
+[CONTRIBUTING.md](https://github.com/doodla/iris/blob/main/CONTRIBUTING.md). Live verification is
 different: it sends real, billed requests to OpenAI and Google with your keys. CI never runs it,
 and nothing runs it automatically.
 
@@ -22,9 +23,10 @@ Steps 4–7 share **one** Veo job: video is the expensive part, so a run submits
 
 ## Running it
 
-[`scripts/live-verify.sh`](../scripts/live-verify.sh) runs the steps through the built binary with
-the cheapest settings, one step at a time or all in order. Read
-[tests/live/README.md](../tests/live/README.md) and the script before running it.
+[`scripts/live-verify.sh`](https://github.com/doodla/iris/blob/main/scripts/live-verify.sh) runs
+the steps through the built binary with the cheapest settings, one step at a time or all in order.
+Read [tests/live/README.md](https://github.com/doodla/iris/blob/main/tests/live/README.md) and the
+script before running it.
 
 ```console
 $ cargo build --release
