@@ -4,13 +4,12 @@ All notable changes to this project are documented in this file. The format foll
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and Iris intends to follow
 [Semantic Versioning](https://semver.org/) once it reaches 1.0.
 
+No release has been tagged yet: the section below becomes the `0.1.0` release (and its GitHub
+release notes) when that version is tagged, following the release steps in CONTRIBUTING.md.
+
 ## [Unreleased]
 
-No release has been tagged yet. The entries below describe v1's capabilities as implemented at
-this commit; this section will be dated and renamed to a `[0.1.0]` release heading once a `v0.1.0`
-tag is actually cut, per [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
-
-Iris's planned first release: a Rust CLI that generates and edits images and generates videos through
+Iris's first release: a Rust CLI that generates and edits images and generates videos through
 OpenAI and Google, with a durable job model for provider-native asynchronous work and a
 machine-readable contract for agents.
 
@@ -49,8 +48,9 @@ machine-readable contract for agents.
   (`output_format_mismatch`), and an image that cannot be written where requested, or content
   that is not a valid image, is kept in `<state_dir>/unsaved/` (`output_saved_elsewhere`, or
   `details.fallback_paths` on errors).
-- An answer that completed without a usable image reports what it cost: `details.charged`,
-  `details.usage` and, when prices are known, `details.cost_estimate`.
+- An answer that completed without a usable image reports what it cost: `details.usage` and,
+  when prices are known, `details.cost_estimate`; a Gemini answer is also marked
+  `details.charged: true`, an OpenAI one `details.charge_possible: true`.
 
 **Durable jobs**
 
@@ -96,7 +96,8 @@ machine-readable contract for agents.
 **Configuration and security**
 
 - Credentials come only from `OPENAI_API_KEY` and `GEMINI_API_KEY` and are never printed, logged
-  or persisted. Signed URLs and secrets are redacted in all output; prompts are not logged.
+  or persisted. Signed URLs and secrets are redacted in all output; prompts are not logged, and job
+  records keep a prompt's hash and length, not its text, unless `jobs.store_prompts` is set.
 - Base URLs must use https (plain http only for loopback hosts, which never go through a proxy),
   and every command that sends a key to a non-default base URL warns `non_default_base_url`.
 - API answers are read only up to fixed limits, request time limits allow for uploading large
@@ -112,8 +113,8 @@ machine-readable contract for agents.
   `README.md`, `CHANGELOG.md` and `docs/`. Releases are built with a pinned Rust toolchain, smoke
   tested before publishing, and their notes come from this file.
 - CI: formatting, Clippy, offline tests on Linux and macOS, an MSRV check, weekly dependency
-  license and advisory scanning, the full release path (musl build, packaging, installer) on every
-  change, installer tests, and an offline run of the live-verification script.
+  license and advisory scanning, the Linux release path (musl build with the pinned release
+  toolchain, packaging, installer) on every change, installer tests, and an offline run of the live-verification script.
 - Documentation under `docs/`, including a decisions log with official sources and the date each
   was checked, and `AGENTS.md`/`CLAUDE.md` instructions for coding agents.
 
@@ -121,10 +122,10 @@ machine-readable contract for agents.
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider
   accepted it — there is no job to resume, unlike video (see
-  [docs/jobs.md](docs/jobs.md#why-synchronous-calls-have-no-job-record)).
+  [docs/jobs.md](https://github.com/doodla/iris/blob/main/docs/jobs.md#why-synchronous-calls-have-no-job-record)).
 - Veo audio cannot be disabled (not an option the Gemini API offers), Veo outputs are retained by
   the provider for about 2 days, and all Veo models are labeled preview by Google.
 - No remote job cancellation of any kind — `jobs delete` removes only the local record.
 - No Windows support (builds, CI, or installer) in v1; Linux and macOS only.
-- macOS archives are not signed or notarized; see [docs/install.md](docs/install.md) for installing
+- macOS archives are not signed or notarized; see [docs/install.md](https://github.com/doodla/iris/blob/main/docs/install.md) for installing
   one downloaded in a browser.
