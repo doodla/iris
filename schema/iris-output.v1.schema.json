@@ -1646,26 +1646,6 @@
       ],
       "type": "object"
     },
-    "LowestEstimate": {
-      "description": "The cheapest single-output request of a model, as its own pre-call estimator\nprices it.",
-      "properties": {
-        "cost_estimate": {
-          "$ref": "#/$defs/CostEstimate"
-        },
-        "options": {
-          "additionalProperties": {
-            "$ref": "#/$defs/OptionValue"
-          },
-          "description": "The option values to pass (with their typed flags or `-O name=value`); every\nother option keeps its default.",
-          "type": "object"
-        }
-      },
-      "required": [
-        "options",
-        "cost_estimate"
-      ],
-      "type": "object"
-    },
     "MaskRequirementsView": {
       "description": "Rules for the `--mask` of `image.edit`.",
       "properties": {
@@ -1746,17 +1726,6 @@
         "limits": {
           "$ref": "#/$defs/LimitsView"
         },
-        "lowest_estimate": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LowestEstimate"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The estimate of the model's cheapest single-output request; null when Iris\ncannot estimate the model's cost before a call."
-        },
         "operations": {
           "items": {
             "$ref": "#/$defs/Operation"
@@ -1781,6 +1750,17 @@
         "provider": {
           "$ref": "#/$defs/ProviderId"
         },
+        "standard_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StandardCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the standard output of the model's operations costs (as in\n`models.list`); null when Iris cannot estimate the model's cost before a call."
+        },
         "summary": {
           "description": "What the model is for and its trade-off, in one line (from the provider's\ndocumentation).",
           "type": "string"
@@ -1801,7 +1781,7 @@
         "outputs",
         "limits",
         "pricing",
-        "lowest_estimate",
+        "standard_cost",
         "access",
         "capabilities_source",
         "catalog_as_of",
@@ -1872,17 +1852,6 @@
         "lifecycle": {
           "$ref": "#/$defs/Lifecycle"
         },
-        "lowest_estimate": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/LowestEstimate"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "The estimate of the model's cheapest single-output request; null when Iris\ncannot estimate the model's cost before a call."
-        },
         "operations": {
           "items": {
             "$ref": "#/$defs/Operation"
@@ -1891,6 +1860,17 @@
         },
         "provider": {
           "$ref": "#/$defs/ProviderId"
+        },
+        "standard_cost": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StandardCost"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the standard output of the model's operations costs, so that models\ncompare on the same output; null when Iris cannot estimate the model's cost\nbefore a call."
         },
         "summary": {
           "description": "What the model is for and its trade-off, in one line (from the provider's\ndocumentation).",
@@ -1906,7 +1886,7 @@
         "lifecycle",
         "billing",
         "operations",
-        "lowest_estimate"
+        "standard_cost"
       ],
       "type": "object"
     },
@@ -2432,6 +2412,47 @@
         "value",
         "source",
         "env_var"
+      ],
+      "type": "object"
+    },
+    "StandardCost": {
+      "description": "The estimated cost of the standard output of a model's operations: the same\noutput for every model of an operation kind.",
+      "properties": {
+        "estimates": {
+          "description": "One estimate per request for that output, by the model's own pre-call\nestimator: one per quality with an estimate for a model whose quality sets\nthe price (lowest quality first), else one.",
+          "items": {
+            "$ref": "#/$defs/StandardEstimate"
+          },
+          "type": "array"
+        },
+        "output": {
+          "description": "The output, in words: `one 1024x1024 image` for the image operations, `one\n8-second 720p video` for video.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "output",
+        "estimates"
+      ],
+      "type": "object"
+    },
+    "StandardEstimate": {
+      "description": "One request for the standard output and its estimate.",
+      "properties": {
+        "cost_estimate": {
+          "$ref": "#/$defs/CostEstimate"
+        },
+        "options": {
+          "additionalProperties": {
+            "$ref": "#/$defs/OptionValue"
+          },
+          "description": "The option values to pass (with their typed flags or `-O name=value`); every\nother option keeps its default.",
+          "type": "object"
+        }
+      },
+      "required": [
+        "options",
+        "cost_estimate"
       ],
       "type": "object"
     },

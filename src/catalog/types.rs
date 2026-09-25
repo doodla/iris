@@ -250,16 +250,51 @@ pub struct RequestRules {
 /// `cost_estimate_unavailable` warning.
 pub type CostEstimator = fn(&ModelSpec, &EstimateInput<'_>) -> Result<CostEstimate, String>;
 
-/// A model's pre-call cost estimate: the estimator, and the request it estimates
-/// lowest.
+/// A model's pre-call cost estimate: the estimator, and the requests for the
+/// [`StandardOutput`] of its operations, so that its cost compares with other models'.
 #[derive(Debug, Clone, Copy)]
 pub struct Estimator {
     pub estimate: CostEstimator,
-    /// Option values (`name`, value as `-O` takes it) of the model's cheapest
-    /// single-output request; the options not listed keep their defaults.
-    /// `models list` and `models show` report its estimate as `lowest_estimate`, and
-    /// the catalog tests check that no valid request is estimated lower.
-    pub lowest: &'static [(&'static str, &'static str)],
+    /// Option sets (`name`, value as `-O` takes it) that each ask for exactly the
+    /// standard output, one per setting that still changes its price (the quality
+    /// tiers of the OpenAI models); the options not listed keep their defaults.
+    /// `models list` and `models show` report their estimates as `standard_cost`, and
+    /// the catalog tests check that each set is valid and gives the standard output.
+    pub standard: &'static [&'static [(&'static str, &'static str)]],
+}
+
+/// The output every model of an operation kind is priced on in `models list` and
+/// `models show`: a comparison of costs needs the same output. The image operations
+/// compare one 1024x1024 image, video one 8-second 720p video (every Veo model
+/// supports it).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StandardOutput {
+    /// One image of `width` x `height` pixels.
+    Image { width: u64, height: u64 },
+    /// One video of `seconds` seconds at `resolution`.
+    Video { seconds: i64, resolution: &'static str },
+}
+
+impl StandardOutput {
+    /// The standard output of `op`'s kind.
+    pub fn of(op: Operation) -> StandardOutput {
+        match op {
+            Operation::ImageGenerate | Operation::ImageEdit => {
+                StandardOutput::Image { width: 1024, height: 1024 }
+            }
+            Operation::VideoGenerate => StandardOutput::Video { seconds: 8, resolution: "720p" },
+        }
+    }
+
+    /// The output in words, as `standard_cost.output` reports it.
+    pub fn description(&self) -> String {
+        match self {
+            StandardOutput::Image { width, height } => format!("one {width}x{height} image"),
+            StandardOutput::Video { seconds, resolution } => {
+                format!("one {seconds}-second {resolution} video")
+            }
+        }
+    }
 }
 
 /// Post-call cost estimator hook, from provider-reported usage. The usage already
@@ -362,19 +397,24 @@ impl ModelSpec {
         })
     }
 
-    /// The options of the model's cheapest single-output request ([`Estimator::lowest`])
-    /// and the estimate its own estimator gives them, for its first operation (the
-    /// catalog tests check that every operation gives the same); `None` without an
-    /// estimator.
-    pub fn lowest_estimate(&self) -> Option<(ResolvedOptions, CostEstimate)> {
+    /// The standard output of the model's operations and, for each option set of
+    /// [`Estimator::standard`], its options and the estimate the model's own estimator
+    /// gives them, for its first operation (the catalog tests check that every
+    /// operation has the same standard output and gives the same estimates); `None`
+    /// without an estimator.
+    pub fn standard_cost(&self) -> Option<(StandardOutput, Vec<(ResolvedOptions, CostEstimate)>)> {
         let estimator = self.estimate?;
-        let mut options = ResolvedOptions::new();
-        for (name, value) in estimator.lowest {
-            options.insert(*name, OptionValue::parse(&self.option(name)?.kind, value).ok()?);
-        }
         let operation = *self.operations.first()?;
-        let estimate =
-            (estimator.estimate)(self, &EstimateInput { operation, options: &options, count: 1 }).ok()?;
-        Some((options, estimate))
+        let mut estimates = Vec::new();
+        for set in estimator.standard {
+            let mut options = ResolvedOptions::new();
+            for (name, value) in *set {
+                options.insert(*name, OptionValue::parse(&self.option(name)?.kind, value).ok()?);
+            }
+            let estimate =
+                (estimator.estimate)(self, &EstimateInput { operation, options: &options, count: 1 }).ok()?;
+            estimates.push((options, estimate));
+        }
+        Some((StandardOutput::of(operation), estimates))
     }
 }

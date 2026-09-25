@@ -125,6 +125,14 @@ impl Operation {
         matches!(self, Operation::VideoGenerate)
     }
 
+    /// What the operation produces: `image` or `video`.
+    pub fn media(self) -> &'static str {
+        match self {
+            Operation::ImageGenerate | Operation::ImageEdit => "image",
+            Operation::VideoGenerate => "video",
+        }
+    }
+
     /// The config file key that names the model for this operation when `-m/--model`
     /// is not given: `image.model` for the image operations, `video.model` for video.
     pub fn model_config_key(self) -> &'static str {
@@ -422,6 +430,16 @@ pub struct CostEstimate {
     pub as_of: String,
 }
 
+/// A dollar amount as Iris prints it: `$`, then the amount with at least two decimals
+/// and every decimal it has (`$0.80`, `$0.00588`, `$30.00`). It is never rounded, so a
+/// printed estimate and a printed cap compare as the amounts do.
+pub fn format_usd(amount: f64) -> String {
+    let digits = amount.to_string();
+    let decimals = digits.split_once('.').map_or(0, |(_, decimals)| decimals.len());
+    let point = if digits.contains('.') { "" } else { "." };
+    format!("${digits}{point}{}", "0".repeat(2usize.saturating_sub(decimals)))
+}
+
 impl CostEstimate {
     pub fn usd(amount: f64, basis: impl Into<String>, source_url: &str, as_of: &str) -> Self {
         CostEstimate {
@@ -457,7 +475,34 @@ mod tests {
 
     use serde_json::Value;
 
-    use super::ProviderId;
+    use super::{ProviderId, format_usd};
+
+    /// Dollars print with at least two decimals and every decimal the amount has, so
+    /// no amount is rounded, up or down.
+    #[test]
+    fn dollar_amounts_keep_every_decimal_and_at_least_two() {
+        let printed: Vec<String> =
+            [0.8, 3.2, 1.0, 30.0, 0.067, 0.0336, 0.00588, 0.21072, 0.005, 1e-7, 1234.5]
+                .into_iter()
+                .map(format_usd)
+                .collect();
+        assert_eq!(
+            printed,
+            [
+                "$0.80",
+                "$3.20",
+                "$1.00",
+                "$30.00",
+                "$0.067",
+                "$0.0336",
+                "$0.00588",
+                "$0.21072",
+                "$0.005",
+                "$0.0000001",
+                "$1234.50"
+            ]
+        );
+    }
 
     /// The names an enum itself declares, read from its derived JSON Schema: the
     /// derive sees every variant, unlike a hand-written `ALL`.

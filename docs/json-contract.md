@@ -148,7 +148,7 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
   "artifacts": [ "...the same array as outputs[].artifact, downloaded ones only (a convenience)" ],
   "error": null, "usage": null,
   "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.4,
-                      "basis": "4 s × $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged",
+                      "basis": "4 s × $0.10/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged",
                       "source_url": "https://ai.google.dev/gemini-api/docs/pricing", "as_of": "2026-09-24" },
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": 4, "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
@@ -207,29 +207,42 @@ if a record changes between the check and its deletion can the command stop part
 `details.deleted` then lists what it deleted (see
 [jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
-### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "billing", "operations": [], "lowest_estimate" } ] }`
+### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "billing", "operations": [], "standard_cost" } ] }`
 
 `summary` is one line on what the model is for and its trade-off, from the provider's documentation.
 `billing` says whether the model's requests cost money: `paid` (requests are billed to the provider
 account at its published prices; no free tier) for every model today. It is an open set, so read a
-value you do not know as "requests may cost money". `lowest_estimate` is the model's cheapest
-single-output request, as its own pre-call estimator prices it (the same estimate a `--dry-run` of
-that request gives), or `null` when Iris cannot estimate the model's cost before a call:
+value you do not know as "requests may cost money". `standard_cost` is what a standard output costs
+with the model, the same output for every model of an operation kind so that costs compare: one
+1024x1024 image for the image operations, one 8-second 720p video for `video.generate`. It is
+`null` when Iris cannot estimate the model's cost before a call:
 
 ```json
-"lowest_estimate": {
-  "options": { "quality": "low", "size": "1440x480" },
-  "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.00162,
-                     "basis": "estimate: 1 image × 54 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1440x480); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included",
-                     "source_url": "https://developers.openai.com/api/docs/pricing", "as_of": "2026-09-24" }
+"standard_cost": {
+  "output": "one 1024x1024 image",
+  "estimates": [
+    { "options": { "quality": "low", "size": "1024x1024" },
+      "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.00588,
+                         "basis": "estimate: 1 image × 196 output tokens × $30.00/1M (gpt-image-2.5-sunburst, low, 1024x1024); OpenAI calculator formula (indicative for GPT Image 2.5); prompt and input-image tokens not included",
+                         "source_url": "https://developers.openai.com/api/docs/pricing", "as_of": "2026-09-24" } },
+    { "options": { "quality": "medium", "size": "1024x1024" },
+      "cost_estimate": { "amount": 0.01317, "...": "..." } },
+    "...one object per quality with an estimate: high, xhigh, max"
+  ]
 }
 ```
 
-`options` are the values to pass (each option's typed flag or `-O name=value`, as `models show`
-lists them); every other option keeps its default. The OpenAI models' cheapest size is not
-square: by OpenAI's published calculator formula a non-square size never needs more output tokens
-than a square one with the same number of pixels, so a larger non-square size can cost less than a
-smaller square one.
+`output` describes the standard output. `estimates` has one entry per request for it: one per
+quality with an estimate for the OpenAI models (lowest quality first), whose price at one size
+the quality sets, and one for every other model (Gemini images: `aspect_ratio` `1:1` at
+`resolution` `1K`; Veo: `duration` `8` at `resolution` `720p`). Each entry's `options` are the
+values to pass (each option's typed flag or `-O name=value`, as `models show` lists them; every
+other option keeps its default), and its `cost_estimate` is what the model's own pre-call
+estimator gives them, the same estimate a `--dry-run` of that request gives. A `--dry-run` also
+estimates any other request: the OpenAI models' price at other sizes follows OpenAI's published
+calculator formula, by which a non-square size never needs more output tokens than a square one
+with the same number of pixels, so a larger non-square size can cost less than a smaller square
+one.
 
 ### `models.show` → `{ "model": ModelCapabilities }`
 
@@ -256,8 +269,10 @@ smaller square one.
   "pricing": [ { "description": "Text input tokens (prompt)", "unit": "1M text input tokens",
                  "usd": 5.0, "source_url": "https://developers.openai.com/api/docs/pricing",
                  "as_of": "2026-09-24" } ],
-  "lowest_estimate": { "options": { "quality": "low", "size": "1440x480" },
-                       "cost_estimate": { "amount": 0.00162, "...": "..." } },
+  "standard_cost": { "output": "one 1024x1024 image",
+                     "estimates": [ { "options": { "quality": "low", "size": "1024x1024" },
+                                      "cost_estimate": { "amount": 0.00588, "...": "..." } },
+                                    "...one per quality with an estimate" ] },
   "access": { "credential_env": "OPENAI_API_KEY", "credential_present": true,
               "requirements": ["API Organization Verification may be required for GPT Image models"],
               "account_access": "not_checked", "checked_at": null },
@@ -266,7 +281,7 @@ smaller square one.
 }
 ```
 
-`summary`, `billing`, and `lowest_estimate` are the ones `models.list` reports. Each option's
+`summary`, `billing`, and `standard_cost` are the ones `models.list` reports. Each option's
 `type` is `enum` (its `values` listed, as strings), `integer` (every whole number from `min` to
 `max`, or only the listed `values`, as integers: Veo's `duration` takes `[4, 6, 8]`), `boolean`,
 or `string`: a pattern described by `syntax`, or free text at most `max_chars` characters long
@@ -506,8 +521,8 @@ and a hint naming `iris models list --operation <OPERATION>`; for the config fil
 A generation command given no model — no `-m`/`--model`, and no `image.model` or `video.model` in
 the config file — fails with `model_required` (exit 2, category `usage`) before anything is sent,
 a `--dry-run` too; no job record is written. Its `details` say how to choose one: each candidate
-carries the model's `summary` and its `lowest_estimate` as `models list` reports it (the options
-of its cheapest single-output request and their estimate, or `null`):
+carries the model's `summary` and its `standard_cost` as `models list` reports it (what the
+standard output of the operation costs with the model, or `null`):
 
 ```json
 {"code":"model_required","category":"usage",
@@ -518,8 +533,10 @@ of its cheapest single-output request and their estimate, or `null`):
             "candidates":[{"model":"gpt-image-2.5-sunburst","provider":"openai","display_name":"GPT Image 2.5 Sunburst",
                            "summary":"OpenAI's most capable image model, for workflows where editing precision matters most",
                            "aliases":["gpt-image-2.5-sunburst-2026-09-08"],
-                           "lowest_estimate":{"options":{"quality":"low","size":"1440x480"},
-                                              "cost_estimate":{"amount":0.00162,"...":"..."}}},
+                           "standard_cost":{"output":"one 1024x1024 image",
+                                            "estimates":[{"options":{"quality":"low","size":"1024x1024"},
+                                                          "cost_estimate":{"amount":0.00588,"...":"..."}},
+                                                         "...one per quality with an estimate"]}},
                           "...one object per catalog model that supports the operation, in catalog order"]},
  "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
 ```
@@ -544,7 +561,7 @@ that is not a positive decimal number of US dollars (`0.05`, `2`) is `invalid_ar
 ```json
 {"code":"cost_limit_exceeded","category":"validation",
  "message":"the request is estimated at $0.00588 USD, above --max-cost $0.005",
- "hint":"choose cheaper options or a cheaper model (`iris models list` shows each model's cheapest request), or raise --max-cost",
+ "hint":"choose cheaper options or a cheaper model (`iris models list` compares the models' costs on the same output), or raise --max-cost",
  "details":{"max_cost":0.005,"cost_estimate":{"amount":0.00588,"...":"..."},"cost_estimate_unavailable":null},
  "retryable":false,"provider":null,"provider_status":null,"...":"other Error fields omitted for brevity"}
 ```

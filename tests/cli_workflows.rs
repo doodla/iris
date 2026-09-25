@@ -115,7 +115,7 @@ async fn human_output_lists_saved_paths_on_stdout_and_quiet_silences_progress() 
         assert!(p.starts_with(f.sandbox.path("pics").to_str().unwrap()), "{p}");
         assert!(std::path::Path::new(p).is_file());
     }
-    assert!(run.stderr.contains("Estimated cost: ~$0.0200"), "{}", run.stderr);
+    assert!(run.stderr.contains("Estimated cost: ~$0.02 USD"), "{}", run.stderr);
 
     let quiet = f.run(&["-q", "image", "generate", "-m", "fake-image-1", "a fox"]).await;
     assert_eq!(quiet.code, 0);
@@ -561,24 +561,35 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     let ids: Vec<&str> =
         v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, ["fake-image-1", "fake-gemini-image", "fake-video-1"]);
-    // To choose by: what each model is for, and the estimate of its cheapest
-    // single-output request (null without an estimator), in JSON and in the table.
+    // To choose by: what each model is for, and what the standard output of its
+    // operations costs, one estimate per request for it (null without an estimator),
+    // in JSON and in the table.
     let models = v["result"]["models"].as_array().unwrap();
     assert_eq!(models[0]["summary"], FAKE_IMAGE_MODEL.summary);
-    assert_eq!(models[0]["lowest_estimate"]["options"], serde_json::json!({"quality": "low"}));
-    assert_eq!(models[0]["lowest_estimate"]["cost_estimate"]["amount"], 0.01);
-    assert!(models[1]["lowest_estimate"].is_null(), "{}", models[1]);
-    assert_eq!(models[2]["lowest_estimate"]["options"], serde_json::json!({"duration": 4}));
-    // The billing, and the estimate always with the options that give it.
+    let image = &models[0]["standard_cost"];
+    assert_eq!(image["output"], "one 1024x1024 image");
+    let estimates = image["estimates"].as_array().unwrap();
+    assert_eq!(estimates.len(), 2, "{image}");
+    assert_eq!(estimates[0]["options"], serde_json::json!({"quality": "low", "size": "1024x1024"}));
+    assert_eq!(estimates[1]["options"], serde_json::json!({"quality": "high", "size": "1024x1024"}));
+    assert_eq!(estimates[0]["cost_estimate"]["amount"], 0.01);
+    assert!(models[1]["standard_cost"].is_null(), "{}", models[1]);
+    assert_eq!(models[2]["standard_cost"]["output"], "one 8-second 720p video");
+    assert_eq!(
+        models[2]["standard_cost"]["estimates"][0]["options"],
+        serde_json::json!({"duration": 8, "resolution": "720p"})
+    );
+    // The billing, the standard output, and each estimate with the option values that
+    // tell the estimates apart (named at the first).
     let table = f.run(&["models", "list"]).await.stdout;
     let lines: Vec<&str> = table.lines().collect();
     assert!(lines[0].starts_with("MODEL ") && lines[0].ends_with(" ALIASES"), "{table}");
     assert!(lines[1].starts_with("fake-image-1 "), "{table}");
     assert_eq!(lines[2], format!("  {}", FAKE_IMAGE_MODEL.summary));
-    assert_eq!(lines[3], "  paid; cheapest single-output request: ~$0.0100 with quality=low");
+    assert_eq!(lines[3], "  paid; one 1024x1024 image: ~$0.01 (quality=low), ~$0.01 (high)");
     assert!(lines[4].starts_with("fake-gemini-image "), "{table}");
     assert_eq!(lines[6], "  paid; no estimate before the call");
-    assert_eq!(lines.last().unwrap(), &"  paid; cheapest single-output request: ~$0.4000 with duration=4");
+    assert_eq!(lines.last().unwrap(), &"  paid; one 8-second 720p video: ~$0.80");
     let v = f.run(&["models", "list", "--operation", "video.generate", "--json"]).await.json();
     assert_eq!(v["result"]["models"].as_array().unwrap().len(), 1);
     let v = f.run(&["models", "list", "--provider", "gemini", "--json"]).await.json();
@@ -645,7 +656,11 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
         run.stdout
     );
     assert!(
-        run.stdout.contains("\n  cheapest:    ~$0.0100 USD with --quality low (1 image(s) x $0.01 (fake))\n"),
+        run.stdout.contains(
+            "\n  standard:    one 1024x1024 image, the output every image model is priced on\n    ~$0.01 USD with \
+             --quality low --size 1024x1024 (1 image(s) x $0.01 (fake))\n    ~$0.01 USD with --quality high --size \
+             1024x1024 (1 image(s) x $0.01 (fake))\n"
+        ),
         "{}",
         run.stdout
     );

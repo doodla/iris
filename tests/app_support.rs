@@ -160,7 +160,13 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
     access_notes: &["Fake access note"],
     docs_url: "https://example.invalid/docs",
     validate: None,
-    estimate: Some(Estimator { estimate: fake_image_estimate, lowest: &[("quality", "low")] }),
+    estimate: Some(Estimator {
+        estimate: fake_image_estimate,
+        standard: &[
+            &[("quality", "low"), ("size", "1024x1024")],
+            &[("quality", "high"), ("size", "1024x1024")],
+        ],
+    }),
     estimate_usage: Some(fake_usage_estimate),
 };
 
@@ -314,7 +320,10 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
     access_notes: &["Preview model (fake)"],
     docs_url: "https://example.invalid/video",
     validate: Some(RequestRules { constraints: &[FAKE_LAST_FRAME_RULE], check: fake_video_rules }),
-    estimate: Some(Estimator { estimate: fake_video_estimate, lowest: &[("duration", "4")] }),
+    estimate: Some(Estimator {
+        estimate: fake_video_estimate,
+        standard: &[&[("duration", "8"), ("resolution", "720p")]],
+    }),
     estimate_usage: None,
 };
 

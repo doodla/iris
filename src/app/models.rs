@@ -8,9 +8,9 @@ use crate::config::EnvSnapshot;
 use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
-    AccessView, ConstraintView, InputsView, LimitsView, LowestEstimate, MaskRequirementsView,
-    ModelCapabilities, ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView,
-    ProviderListResult, ProviderView,
+    AccessView, ConstraintView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities,
+    ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult,
+    ProviderView, StandardCost, StandardEstimate,
 };
 use crate::providers::AccountAccess;
 use crate::redact;
@@ -45,18 +45,24 @@ fn summary(m: &ModelSpec) -> ModelSummary {
         lifecycle: m.lifecycle,
         billing: m.billing,
         operations: m.operations.to_vec(),
-        lowest_estimate: lowest_estimate(m),
+        standard_cost: standard_cost(m),
     }
 }
 
-/// The model's cheapest single-output request and its estimate
-/// ([`ModelSpec::lowest_estimate`]), as `models list`, `models show`, and the
-/// `model_required` candidates report it.
-pub(crate) fn lowest_estimate(m: &ModelSpec) -> Option<LowestEstimate> {
-    let (options, cost_estimate) = m.lowest_estimate()?;
-    Some(LowestEstimate {
-        options: options.iter().map(|(name, value)| (name.clone(), value.clone())).collect(),
-        cost_estimate,
+/// What the standard output of the model's operations costs
+/// ([`ModelSpec::standard_cost`]), as `models list`, `models show`, and the
+/// `model_required` and `unknown_model` candidates report it.
+pub(crate) fn standard_cost(m: &ModelSpec) -> Option<StandardCost> {
+    let (output, estimates) = m.standard_cost()?;
+    Some(StandardCost {
+        output: output.description(),
+        estimates: estimates
+            .into_iter()
+            .map(|(options, cost_estimate)| StandardEstimate {
+                options: options.iter().map(|(name, value)| (name.clone(), value.clone())).collect(),
+                cost_estimate,
+            })
+            .collect(),
     })
 }
 
@@ -160,7 +166,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
                 as_of: p.as_of.to_string(),
             })
             .collect(),
-        lowest_estimate: lowest_estimate(m),
+        standard_cost: standard_cost(m),
         access: AccessView {
             credential_env: m.provider.credential_env().to_string(),
             credential_present,

@@ -10,7 +10,7 @@
 //! the parameter table's per-model options, checked 2026-09-25), and the published
 //! per-second prices, where Google calls the model Veo 3.1 Standard.
 
-use crate::domain::{Billing, CostEstimate, Operation, ProviderId};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId, format_usd};
 use crate::error::IrisError;
 
 use super::options::OptionValue;
@@ -197,9 +197,10 @@ const fn per_second(description: &'static str, usd: f64) -> PriceRule {
     PriceRule { description, unit: "second", usd, source_url: PRICING_URL, as_of: CATALOG_AS_OF }
 }
 
-/// The cheapest single-output request of every Veo model: the shortest video at the
-/// lowest resolution (the price is per second, by resolution).
-const LOWEST: &[(&str, &str)] = &[("duration", "4"), ("resolution", "720p")];
+/// The request for the standard output of video generation, one 8-second 720p video
+/// ([`StandardOutput`](super::StandardOutput)), which every Veo model supports; either
+/// aspect ratio gives it at the same price.
+const STANDARD: &[&[(&str, &str)]] = &[&[("duration", "8"), ("resolution", "720p")]];
 
 /// Video names Iris gives no model. Dates and replacements are those of the Gemini
 /// deprecations page (<https://ai.google.dev/gemini-api/docs/deprecations>), checked
@@ -279,7 +280,7 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: Some(FULL_RULES),
-        estimate: Some(Estimator { estimate: estimate_video, lowest: LOWEST }),
+        estimate: Some(Estimator { estimate: estimate_video, standard: STANDARD }),
         estimate_usage: None,
     },
     ModelSpec {
@@ -313,7 +314,7 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: Some(FULL_RULES),
-        estimate: Some(Estimator { estimate: estimate_video, lowest: LOWEST }),
+        estimate: Some(Estimator { estimate: estimate_video, standard: STANDARD }),
         estimate_usage: None,
     },
     ModelSpec {
@@ -346,7 +347,7 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: Some(LITE_RULES),
-        estimate: Some(Estimator { estimate: estimate_video, lowest: LOWEST }),
+        estimate: Some(Estimator { estimate: estimate_video, standard: STANDARD }),
         estimate_usage: None,
     },
 ];
@@ -499,8 +500,8 @@ fn estimate_video(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEst
     Ok(CostEstimate::usd(
         round_usd(amount),
         format!(
-            "{seconds} s × ${rate}/s ({}, {resolution}, audio included); estimate; blocked videos are not \
-             charged",
+            "{seconds} s × {}/s ({}, {resolution}, audio included); estimate; blocked videos are not charged",
+            format_usd(rate),
             spec.id
         ),
         PRICING_URL,

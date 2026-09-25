@@ -484,7 +484,16 @@ fn max_cost_refuses_before_anything_is_sent() {
         .arg("--dry-run")
         .run();
     let cost = out.human().lines().find(|l| l.starts_with("  cost:")).unwrap_or_default().to_string();
-    assert!(cost.starts_with("  cost:       ~$0.2 USD, within --max-cost $0.25 (4 s × $0.05/s"), "{cost}");
+    assert!(cost.starts_with("  cost:       ~$0.20 USD, within --max-cost $0.25 (4 s × $0.05/s"), "{cost}");
+    // Every dollar amount prints the same way, with or without a cap: at least two
+    // decimals and every decimal it has.
+    let out =
+        iris().args(["video", "generate", "waves", "-m", VEO_LITE, "--duration", "4", "--dry-run"]).run();
+    let cost = out.human().lines().find(|l| l.starts_with("  cost:")).unwrap_or_default().to_string();
+    assert!(cost.starts_with("  cost:       ~$0.20 USD (4 s × $0.05/s"), "{cost}");
+    let out = iris().args(["video", "generate", "waves", "-m", "veo", "--max-cost", "4", "--dry-run"]).run();
+    let cost = out.human().lines().find(|l| l.starts_with("  cost:")).unwrap_or_default().to_string();
+    assert!(cost.starts_with("  cost:       ~$3.20 USD, within --max-cost $4.00 (8 s × $0.40/s"), "{cost}");
 
     // Human output of a refusal: the code, the estimate against the cap, and the hint.
     let out = iris().args(["image", "generate", "a fox", "--max-cost", "0.005"]).args(low).run();
@@ -720,6 +729,8 @@ fn a_command_without_a_model_is_model_required_and_sends_nothing() {
     let api = answering_api();
     sb.write("a.png", png(16, 16));
     let config = sb.config("iris.toml", "[video]\nwait_timeout = \"5m\"\n");
+    let models = sb.iris().args(["models", "list", "--json"]).run().ok();
+    let models = models["result"]["models"].as_array().unwrap();
     for (args, op, table) in [
         (&["image", "generate", "a fox"][..], "image.generate", "image"),
         (&["image", "edit", "-i", "a.png", "add a hat"], "image.edit", "image"),
@@ -761,12 +772,12 @@ fn a_command_without_a_model_is_model_required_and_sends_nothing() {
             assert_eq!(first["display_name"], spec.display_name);
             assert_eq!(first["summary"], spec.summary);
             assert_eq!(first["aliases"], serde_json::json!(spec.aliases));
-            // What each model costs at least, to choose by, with the options that give it:
-            // the `lowest_estimate` `models list` reports.
+            // What the standard output costs with each model, to choose by: the
+            // `standard_cost` `models list` reports.
             for (candidate, id) in e["details"]["candidates"].as_array().unwrap().iter().zip(&candidates) {
-                let (options, estimate) = iris::catalog::find(id).unwrap().lowest_estimate().unwrap();
-                let lowest = serde_json::json!({ "options": options, "cost_estimate": estimate });
-                assert_eq!(candidate["lowest_estimate"], lowest, "{id}");
+                let model = models.iter().find(|m| m["id"] == *id).unwrap();
+                assert!(candidate["standard_cost"].is_object(), "{id}");
+                assert_eq!(candidate["standard_cost"], model["standard_cost"], "{id}");
             }
             // The config file was chosen explicitly (IRIS_CONFIG), so the command the hint
             // suggests names it.
@@ -1461,7 +1472,7 @@ fn veo_duration_is_an_integer_with_listed_values() {
     let v = sb.iris().args(["models", "list", "--json"]).run().ok();
     let lite =
         v["result"]["models"].as_array().unwrap().iter().find(|m| m["id"] == VEO_LITE).unwrap().clone();
-    assert_eq!(lite["lowest_estimate"]["options"]["duration"], 4);
+    assert_eq!(lite["standard_cost"]["estimates"][0]["options"]["duration"], 8);
 
     let api = answering_api();
     let v = sb

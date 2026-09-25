@@ -4,7 +4,7 @@
 
 use iris::catalog::{
     self, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionKind, OptionSource, OptionValue, RawOption,
-    ResolvedOptions, openai,
+    ResolvedOptions, StandardOutput, openai,
 };
 use iris::domain::{Operation, ProviderId, Usage};
 use iris::error::ErrorCode;
@@ -434,46 +434,47 @@ fn estimator_names_the_auto_options_to_pass_for_an_estimate() {
     }
 }
 
-/// The cheapest request of every GPT Image model is `low` quality at the cheapest
-/// size the model accepts: `catalog_support` tries every other valid combination of
-/// declared values, and this tries every valid size at every quality.
+/// Every GPT Image model is priced on one 1024x1024 image at every quality that has
+/// an estimate, lowest quality first, by the calculator formula; the size the
+/// requests give is read with the catalog's own size parser.
 #[test]
-fn the_cheapest_request_is_low_quality_at_the_cheapest_valid_size() {
+fn the_standard_output_is_priced_at_every_quality_with_an_estimate() {
     for m in openai::MODELS {
-        catalog_support::assert_lowest_estimate_is_the_cheapest(m);
-        let (options, lowest) = m.lowest_estimate().unwrap();
-        let options: Vec<(&String, String)> = options.iter().map(|(k, v)| (k, v.to_string())).collect();
-        assert_eq!(
-            options,
-            [(&"quality".to_string(), "low".into()), (&"size".to_string(), "1440x480".into())]
-        );
-        assert_eq!(lowest.amount, 0.00162, "54 output tokens: {}", lowest.basis);
-
+        let gives = |options: &ResolvedOptions| {
+            let size = m.effective(options, "size").unwrap();
+            let (width, height) =
+                openai::parse_size(size.as_str().unwrap()).unwrap_or_else(|| panic!("{size}"));
+            StandardOutput::Image { width, height }
+        };
+        let amounts = catalog_support::assert_standard_requests_give_the_standard_output(m, gives);
         let OptionKind::Enum(qualities) = m.option("quality").unwrap().kind else {
             panic!("quality is an enum")
         };
-        let mut sizes = 0;
-        for w in (16..=openai::SIZE_MAX_EDGE).step_by(16) {
-            for h in (16..=openai::SIZE_MAX_EDGE).step_by(16) {
-                let size = format!("{w}x{h}");
-                if openai::validate_size(&size).is_err() {
-                    continue;
-                }
-                sizes += 1;
-                for quality in qualities {
-                    let options =
-                        validate(m.id, Operation::ImageGenerate, &[("quality", quality), ("size", &size)])
-                            .unwrap_or_else(|e| panic!("{quality} {size}: {}", e.message));
-                    let input =
-                        EstimateInput { operation: Operation::ImageGenerate, options: &options, count: 1 };
-                    if let Ok(e) = (m.estimate.unwrap().estimate)(m, &input) {
-                        assert!(e.amount >= lowest.amount, "{} {quality} {size}: {}", m.id, e.basis);
-                    }
-                }
-            }
-        }
-        assert_eq!(sizes, 29_146, "every valid size was tried");
+        let with_an_estimate: Vec<&str> = qualities
+            .iter()
+            .copied()
+            .filter(|quality| estimate(m.id, &[("quality", quality), ("size", "1024x1024")], 1).is_ok())
+            .collect();
+        let standard: Vec<&str> = m
+            .estimate
+            .unwrap()
+            .standard
+            .iter()
+            .map(|set| set.iter().find(|(name, _)| *name == "quality").map(|(_, value)| *value).unwrap())
+            .collect();
+        assert_eq!(standard, with_an_estimate, "{}", m.id);
+        assert!(amounts.windows(2).all(|pair| pair[0] < pair[1]), "{}: {amounts:?}", m.id);
     }
+    let amounts = |id: &str| {
+        let (_, estimates) = model(id).standard_cost().unwrap();
+        estimates.iter().map(|(_, e)| e.amount).collect::<Vec<_>>()
+    };
+    // 196, 439, 1756, 3122, and 7024 output tokens at $30/1M.
+    let tiers_2_5 = [0.00588, 0.01317, 0.05268, 0.09366, 0.21072];
+    assert_eq!(amounts("gpt-image-2.5-sunburst"), tiers_2_5);
+    assert_eq!(amounts("gpt-image-2.5-flare"), tiers_2_5);
+    // 196, 1756, and 7024 output tokens: OpenAI publishes $0.006, $0.053, and $0.211.
+    assert_eq!(amounts("gpt-image-2"), [0.00588, 0.05268, 0.21072]);
 }
 
 /// The `size` description says why a non-square size can cost less than a square

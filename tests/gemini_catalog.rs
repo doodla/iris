@@ -4,7 +4,7 @@
 
 use iris::catalog::{
     self, CATALOG_AS_OF, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionKind, OptionSource,
-    OptionValue, RawOption, ResolvedOptions, validate_request,
+    OptionValue, RawOption, ResolvedOptions, StandardOutput, validate_request,
 };
 use iris::domain::{Operation, ProviderId, Usage};
 use iris::error::ErrorCode;
@@ -349,24 +349,40 @@ fn pre_call_estimate_is_the_per_image_price_for_the_effective_resolution() {
     }
 }
 
-/// Each model's cheapest request is its smallest resolution (`catalog_support` tries
-/// every valid request), and the summaries' price claims hold: Nano Banana 2 Lite is
-/// the cheapest, and Nano Banana Pro has the highest per-image price at each of its
-/// resolutions.
+/// Every Gemini image model is priced on one 1024x1024 image, 1K at 1:1 by Google's
+/// resolution table (`SQUARE_1K_PIXELS`), and the summaries' price claims hold:
+/// Nano Banana 2 Lite costs less per image than the others at any resolution, and
+/// Nano Banana Pro has the highest per-image price at each of its resolutions.
 #[test]
-fn the_cheapest_request_and_the_summaries_follow_the_published_prices() {
+fn the_standard_output_and_the_summaries_follow_the_published_prices() {
     for m in catalog::gemini::MODELS {
-        catalog_support::assert_lowest_estimate_is_the_cheapest(m);
+        let gives = |options: &ResolvedOptions| {
+            let value = |name| m.effective(options, name).map(|v| v.to_string());
+            match (value("aspect_ratio").as_deref(), value("resolution").as_deref()) {
+                (Some("1:1"), Some("1K")) => {
+                    let (width, height) = catalog::gemini::SQUARE_1K_PIXELS;
+                    StandardOutput::Image { width, height }
+                }
+                other => panic!("{}: no declared pixel size for {other:?}", m.id),
+            }
+        };
+        catalog_support::assert_standard_requests_give_the_standard_output(m, gives);
     }
-    let lowest = |id: &str| {
-        let (options, estimate) = spec(id).lowest_estimate().unwrap();
-        (options.get("resolution").unwrap().to_string(), estimate.amount)
+    let amount = |id: &str| {
+        let (_, estimates) = spec(id).standard_cost().unwrap();
+        estimates.iter().map(|(_, e)| e.amount).collect::<Vec<_>>()
     };
-    assert_eq!(lowest(FLASH), ("512".to_string(), 0.045));
-    assert_eq!(lowest(LITE), ("1K".to_string(), 0.0336));
-    assert_eq!(lowest(PRO), ("1K".to_string(), 0.134));
-    assert!(gemini_models().iter().all(|m| m.lowest_estimate().unwrap().1.amount >= lowest(LITE).1));
-    for res in ["1K", "2K", "4K"] {
+    assert_eq!((amount(FLASH), amount(LITE), amount(PRO)), (vec![0.067], vec![0.0336], vec![0.134]));
+    let resolutions = |id: &str| match spec(id).option("resolution").unwrap().kind {
+        OptionKind::Enum(values) => values,
+        _ => panic!("resolution is an enum"),
+    };
+    for id in [FLASH, PRO] {
+        for res in resolutions(id) {
+            assert!(estimate(id, &[("resolution", res)]).amount > amount(LITE)[0], "{id} {res}");
+        }
+    }
+    for res in resolutions(PRO) {
         let pro = estimate(PRO, &[("resolution", res)]).amount;
         for other in [FLASH, LITE] {
             if validate(other, Operation::ImageGenerate, &[("resolution", res)], 0).is_ok() {

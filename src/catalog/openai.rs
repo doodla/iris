@@ -21,7 +21,7 @@
 //!   says "For new integrations, use one of the GPT Image 2.5 models", so its summary
 //!   gives that advice and the documented differences.
 
-use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage, format_usd};
 use crate::error::IrisError;
 
 use super::options::OptionValue;
@@ -227,12 +227,22 @@ const OPTIONS_2_5: &[OptionSpec] =
     &[COUNT, SIZE, QUALITY_2_5, FORMAT, COMPRESSION, BACKGROUND_2_5, MODERATION];
 const OPTIONS_2: &[OptionSpec] = &[COUNT, SIZE, QUALITY_2, FORMAT, COMPRESSION, BACKGROUND_2, MODERATION];
 
-/// The cheapest single-output request of every GPT Image model: `low` quality at
-/// 1440x480. The calculator formula scales the quality's base down by the aspect
-/// ratio, so a size near 3:1 with few pixels needs the fewest output tokens (54 at
-/// low, where 1024x1024 needs 196); 1408x480 and 1424x480 need as many for fewer
-/// pixels. `tests/openai_catalog.rs` checks it against every valid size.
-const LOWEST: &[(&str, &str)] = &[("quality", "low"), ("size", "1440x480")];
+/// The requests for the standard output of the image operations, one 1024x1024 image
+/// ([`StandardOutput`](super::StandardOutput)), at every quality with an estimate:
+/// at one size, the quality sets the price of a GPT Image model.
+const STANDARD_2_5: &[&[(&str, &str)]] = &[
+    &[("quality", "low"), ("size", "1024x1024")],
+    &[("quality", "medium"), ("size", "1024x1024")],
+    &[("quality", "high"), ("size", "1024x1024")],
+    &[("quality", "xhigh"), ("size", "1024x1024")],
+    &[("quality", "max"), ("size", "1024x1024")],
+];
+/// [`STANDARD_2_5`] for GPT Image 2, whose quality goes up to `high`.
+const STANDARD_2: &[&[(&str, &str)]] = &[
+    &[("quality", "low"), ("size", "1024x1024")],
+    &[("quality", "medium"), ("size", "1024x1024")],
+    &[("quality", "high"), ("size", "1024x1024")],
+];
 
 /// What to use instead of a GPT Image or DALL·E model Iris does not register: the
 /// guide says "For new integrations, use one of the GPT Image 2.5 models", and the
@@ -286,7 +296,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: Some(RULES),
-        estimate: Some(Estimator { estimate: estimate_gpt_image_2_5, lowest: LOWEST }),
+        estimate: Some(Estimator { estimate: estimate_gpt_image_2_5, standard: STANDARD_2_5 }),
         estimate_usage: Some(cost_from_usage),
     },
     ModelSpec {
@@ -307,7 +317,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: Some(RULES),
-        estimate: Some(Estimator { estimate: estimate_gpt_image_2_5, lowest: LOWEST }),
+        estimate: Some(Estimator { estimate: estimate_gpt_image_2_5, standard: STANDARD_2_5 }),
         estimate_usage: Some(cost_from_usage),
     },
     ModelSpec {
@@ -329,7 +339,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: Some(RULES),
-        estimate: Some(Estimator { estimate: estimate_gpt_image_2, lowest: LOWEST }),
+        estimate: Some(Estimator { estimate: estimate_gpt_image_2, standard: STANDARD_2 }),
         estimate_usage: Some(cost_from_usage),
     },
 ];
@@ -464,8 +474,9 @@ fn estimate_with(
     Ok(CostEstimate::usd(
         amount,
         format!(
-            "estimate: {count} {noun} × {tokens} output tokens × ${IMAGE_OUTPUT_USD_PER_M:.2}/1M ({}, {quality}, \
-             {size}); OpenAI calculator formula{note}; prompt and input-image tokens not included",
+            "estimate: {count} {noun} × {tokens} output tokens × {}/1M ({}, {quality}, {size}); OpenAI \
+             calculator formula{note}; prompt and input-image tokens not included",
+            format_usd(IMAGE_OUTPUT_USD_PER_M),
             spec.id
         ),
         PRICING_URL,
@@ -534,20 +545,23 @@ pub fn cost_from_usage(spec: &ModelSpec, usage: &Usage) -> Option<CostEstimate> 
     );
     let input_part = if split {
         format!(
-            "{text} text input tokens × ${TEXT_INPUT_USD_PER_M:.2}/1M + {image} image input tokens × \
-             ${IMAGE_INPUT_USD_PER_M:.2}/1M"
+            "{text} text input tokens × {}/1M + {image} image input tokens × {}/1M",
+            format_usd(TEXT_INPUT_USD_PER_M),
+            format_usd(IMAGE_INPUT_USD_PER_M)
         )
     } else {
         format!(
-            "{image} input tokens × ${IMAGE_INPUT_USD_PER_M:.2}/1M (no text/image split reported; upper bound)"
+            "{image} input tokens × {}/1M (no text/image split reported; upper bound)",
+            format_usd(IMAGE_INPUT_USD_PER_M)
         )
     };
     Some(CostEstimate::usd(
         amount,
         format!(
-            "estimate from reported usage ({}): {input_part} + {output} output tokens × \
-             ${IMAGE_OUTPUT_USD_PER_M:.2}/1M; cached-input discounts not reported",
-            spec.id
+            "estimate from reported usage ({}): {input_part} + {output} output tokens × {}/1M; cached-input \
+             discounts not reported",
+            spec.id,
+            format_usd(IMAGE_OUTPUT_USD_PER_M)
         ),
         PRICING_URL,
         PRICING_AS_OF,

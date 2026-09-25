@@ -10,7 +10,7 @@ use std::fmt::Write as _;
 use serde_json::Value;
 
 use crate::domain::{
-    Artifact, Billing, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode,
+    Artifact, Billing, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode, format_usd,
 };
 use crate::providers::AccountAccess;
 
@@ -132,9 +132,9 @@ fn cost(c: &CostEstimate) -> String {
     format!("{} {} ({})", amount(c), c.currency, c.basis)
 }
 
-/// The amount of a cost estimate, marked as approximate: `~$0.0059`.
+/// The amount of a cost estimate, marked as approximate: `~$0.00588`.
 fn amount(c: &CostEstimate) -> String {
-    format!("~${:.4}", c.amount)
+    format!("~{}", format_usd(c.amount))
 }
 
 fn image(res: &ImageResult, r: &mut Rendered) {
@@ -314,9 +314,9 @@ fn lifecycle<T: serde::Serialize>(l: &T) -> String {
     serde_json::to_value(l).ok().and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
 }
 
-/// One row per model, each followed by its summary, its billing, and the estimate of
-/// its cheapest single-output request with the options that give it, indented and
-/// wrapped at [`NOTE_WIDTH`] columns.
+/// One row per model, each followed by its summary, its billing, and what the
+/// standard output of its operations costs, indented and wrapped at [`NOTE_WIDTH`]
+/// columns.
 fn model_list(res: &ModelListResult) -> String {
     if res.models.is_empty() {
         return "No models in the catalog.\n".to_string();
@@ -338,13 +338,8 @@ fn model_list(res: &ModelListResult) -> String {
     let mut lines = table.lines();
     let mut out = format!("{}\n", lines.next().unwrap_or_default());
     for (line, m) in lines.zip(&res.models) {
-        let cost = match &m.lowest_estimate {
-            Some(lowest) => {
-                let options: Vec<String> =
-                    lowest.options.iter().map(|(name, value)| format!("{name}={value}")).collect();
-                let with = if options.is_empty() { "the defaults".to_string() } else { options.join(" ") };
-                format!("cheapest single-output request: {} with {with}", amount(&lowest.cost_estimate))
-            }
+        let cost = match &m.standard_cost {
+            Some(standard) => standard_cost(standard),
             None => "no estimate before the call".to_string(),
         };
         let _ = writeln!(out, "{line}");
@@ -354,17 +349,50 @@ fn model_list(res: &ModelListResult) -> String {
     out
 }
 
+/// `one 1024x1024 image: ~$0.00588 (quality=low), ~$0.01317 (medium)`: the standard
+/// output and each estimate for it, with the values of the options that differ
+/// between the estimates (named at the first), each kept on one line.
+fn standard_cost(cost: &StandardCost) -> String {
+    let differ = |name: &String| {
+        let value = |e: &StandardEstimate| e.options.get(name).cloned();
+        cost.estimates.iter().any(|e| value(e) != cost.estimates.first().and_then(value))
+    };
+    let prices: Vec<String> = cost
+        .estimates
+        .iter()
+        .enumerate()
+        .map(|(i, e)| {
+            let values: Vec<String> = e
+                .options
+                .iter()
+                .filter(|(name, _)| differ(name))
+                .map(|(name, value)| if i == 0 { format!("{name}={value}") } else { value.to_string() })
+                .collect();
+            if values.is_empty() {
+                amount(&e.cost_estimate)
+            } else {
+                format!("{}{KEEP_TOGETHER}({})", amount(&e.cost_estimate), values.join(", "))
+            }
+        })
+        .collect();
+    format!("{}: {}", cost.output, prices.join(", "))
+}
+
 /// Width of the indented notes under a table row.
 const NOTE_WIDTH: usize = 100;
 
+/// Joins words that [`wrapped`] keeps on one line; it prints as a space.
+const KEEP_TOGETHER: char = '\u{a0}';
+
 /// `text` in lines of at most `width` columns, each starting with `indent` (a word
-/// longer than a line keeps a line of its own).
+/// longer than a line keeps a line of its own). Words joined by [`KEEP_TOGETHER`]
+/// count as one.
 fn wrapped(text: &str, indent: &str, width: usize) -> String {
     let mut out = String::new();
     let mut line = String::new();
-    for word in text.split_whitespace() {
+    for word in text.split(|c: char| c.is_whitespace() && c != KEEP_TOGETHER).filter(|w| !w.is_empty()) {
         if !line.is_empty() && indent.len() + line.chars().count() + 1 + word.chars().count() > width {
-            let _ = writeln!(out, "{indent}{line}");
+            let _ = writeln!(out, "{indent}{}", line.replace(KEEP_TOGETHER, " "));
             line.clear();
         }
         if !line.is_empty() {
@@ -373,7 +401,7 @@ fn wrapped(text: &str, indent: &str, width: usize) -> String {
         line.push_str(word);
     }
     if !line.is_empty() {
-        let _ = writeln!(out, "{indent}{line}");
+        let _ = writeln!(out, "{indent}{}", line.replace(KEEP_TOGETHER, " "));
     }
     out
 }
@@ -460,25 +488,37 @@ fn model_show(m: &ModelCapabilities) -> String {
         for p in &m.pricing {
             let _ = writeln!(
                 out,
-                "    ${} per {} — {} (as of {}, {})",
-                p.usd, p.unit, p.description, p.as_of, p.source_url
+                "    {} per {} — {} (as of {}, {})",
+                format_usd(p.usd),
+                p.unit,
+                p.description,
+                p.as_of,
+                p.source_url
             );
         }
     }
-    if let Some(lowest) = &m.lowest_estimate {
-        let options: Vec<String> = lowest
-            .options
-            .iter()
-            .map(|(name, value)| {
-                match m.options.iter().find(|o| &o.name == name).and_then(|o| o.flag.as_ref()) {
-                    Some(flag) => format!("{flag} {value}"),
-                    None => format!("-O {name}={value}"),
-                }
-            })
-            .collect();
-        let with = if options.is_empty() { "the defaults".to_string() } else { options.join(" ") };
-        let c = &lowest.cost_estimate;
-        let _ = writeln!(out, "  cheapest:    {} {} with {with} ({})", amount(c), c.currency, c.basis);
+    if let (Some(standard), Some(op)) = (&m.standard_cost, m.operations.first()) {
+        let _ = writeln!(
+            out,
+            "  standard:    {}, the output every {} model is priced on",
+            standard.output,
+            op.media()
+        );
+        for e in &standard.estimates {
+            let options: Vec<String> = e
+                .options
+                .iter()
+                .map(|(name, value)| {
+                    match m.options.iter().find(|o| &o.name == name).and_then(|o| o.flag.as_ref()) {
+                        Some(flag) => format!("{flag} {value}"),
+                        None => format!("-O {name}={value}"),
+                    }
+                })
+                .collect();
+            let with = if options.is_empty() { "the defaults".to_string() } else { options.join(" ") };
+            let c = &e.cost_estimate;
+            let _ = writeln!(out, "    {} {} with {with} ({})", amount(c), c.currency, c.basis);
+        }
     }
     let a = &m.access;
     let access = match a.account_access {
@@ -626,13 +666,12 @@ fn plan(res: &PlanResult) -> String {
             if res.credential_present { "is set" } else { "is NOT set (required for the real run)" }
         ),
     );
-    // With --max-cost the plan exists only when the estimate is at most the cap, and
-    // the estimate is shown unrounded next to it.
+    // With --max-cost the plan exists only when the estimate is at most the cap.
     field(
         "cost",
         match (&res.cost_estimate, res.max_cost) {
             (Some(c), Some(max)) => {
-                format!("~${} {}, within --max-cost ${max} ({})", c.amount, c.currency, c.basis)
+                format!("{} {}, within --max-cost {} ({})", amount(c), c.currency, format_usd(max), c.basis)
             }
             (Some(c), None) => cost(c),
             (None, _) => "no estimate available".to_string(),
@@ -650,6 +689,7 @@ mod tests {
         assert_eq!(wrapped("aa bb cc", "  ", 7), "  aa bb\n  cc\n");
         assert_eq!(wrapped("aa averyverylongword b", "  ", 7), "  aa\n  averyverylongword\n  b\n");
         assert_eq!(wrapped("", "  ", 7), "");
+        assert_eq!(wrapped("aa bb\u{a0}cc", "  ", 7), "  aa\n  bb cc\n");
     }
 
     #[test]

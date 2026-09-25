@@ -387,7 +387,7 @@ job_01m3a5ffjkdnar227bba60tfa2
   checked:    2026-09-24T16:55:21Z
   remote op:  models/veo-3.1-lite-generate-preview/operations/op_mockjob
   save to:    directory /home/you
-  cost:       ~$0.2000 USD (4 s × $0.05/s (veo-3.1-lite-generate-preview, 720p, audio included); estimate; blocked videos are not charged)
+  cost:       ~$0.20 USD (4 s × $0.05/s (veo-3.1-lite-generate-preview, 720p, audio included); estimate; blocked videos are not charged)
 
 $ iris jobs wait job_01m3a5ffjkdnar227bba60tfa2
 Job job_01m3a5ffjkdnar227bba60tfa2 succeeded

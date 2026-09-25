@@ -238,9 +238,10 @@ $ echo $?
 
 With `--json`, the error's `details` hold the `operation`, the `config_key` (`image.model` or
 `video.model`), the resolved `config_file`, and the `candidates`: one `{model, provider,
-display_name, summary, aliases, lowest_estimate}` object per catalog model that supports the
-operation, in catalog order, with what the model is for and its cheapest single-output request
-with that request's estimated cost (see [json-contract.md](json-contract.md#error-object)). An
+display_name, summary, aliases, standard_cost}` object per catalog model that supports the
+operation, in catalog order, with what the model is for and what the same output costs with it
+(one 1024x1024 image, or one 8-second 720p video; see
+[json-contract.md](json-contract.md#error-object)). An
 `-m` naming no catalog model is `unknown_model` (exit 2) with the same `candidates`; a near miss of
 catalog models (`gpt-image-2.5`, `Nano-Banana-2`) has them in `suggestions` and a hint asking "did
 you mean …?", and a name Iris declines (a model its provider deprecated, shut down, limited, or
@@ -271,7 +272,7 @@ Dry run: nothing was sent and nothing was charged.
   options:    count=1 resolution=1K thinking_level=minimal
   output:     /home/you/iris-<ulid>.jpg
   credential: GEMINI_API_KEY is NOT set (required for the real run)
-  cost:       ~$0.0670 USD (1 image × $0.067 (gemini-3.1-flash-image, 1K); input and thinking tokens not included)
+  cost:       ~$0.067 USD (1 image × $0.067 (gemini-3.1-flash-image, 1K); input and thinking tokens not included)
 ```
 
 The progress line of a real run names it the same way: `Requesting 1 image from gemini

@@ -158,15 +158,28 @@ pub struct ModelSummary {
     /// Whether the model's requests cost money.
     pub billing: Billing,
     pub operations: Vec<Operation>,
-    /// The estimate of the model's cheapest single-output request; null when Iris
-    /// cannot estimate the model's cost before a call.
-    pub lowest_estimate: Option<LowestEstimate>,
+    /// What the standard output of the model's operations costs, so that models
+    /// compare on the same output; null when Iris cannot estimate the model's cost
+    /// before a call.
+    pub standard_cost: Option<StandardCost>,
 }
 
-/// The cheapest single-output request of a model, as its own pre-call estimator
-/// prices it.
+/// The estimated cost of the standard output of a model's operations: the same
+/// output for every model of an operation kind.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
-pub struct LowestEstimate {
+pub struct StandardCost {
+    /// The output, in words: `one 1024x1024 image` for the image operations, `one
+    /// 8-second 720p video` for video.
+    pub output: String,
+    /// One estimate per request for that output, by the model's own pre-call
+    /// estimator: one per quality with an estimate for a model whose quality sets
+    /// the price (lowest quality first), else one.
+    pub estimates: Vec<StandardEstimate>,
+}
+
+/// One request for the standard output and its estimate.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct StandardEstimate {
     /// The option values to pass (with their typed flags or `-O name=value`); every
     /// other option keeps its default.
     pub options: BTreeMap<String, OptionValue>,
@@ -305,9 +318,9 @@ pub struct ModelCapabilities {
     pub outputs: OutputsView,
     pub limits: LimitsView,
     pub pricing: Vec<PriceView>,
-    /// The estimate of the model's cheapest single-output request; null when Iris
-    /// cannot estimate the model's cost before a call.
-    pub lowest_estimate: Option<LowestEstimate>,
+    /// What the standard output of the model's operations costs (as in
+    /// `models.list`); null when Iris cannot estimate the model's cost before a call.
+    pub standard_cost: Option<StandardCost>,
     pub access: AccessView,
     /// `catalog` (declared by Iris, checked on `catalog_as_of`).
     pub capabilities_source: String,

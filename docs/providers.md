@@ -139,7 +139,7 @@ pub static MODELS: &[ModelSpec] = &[
         validate: Some(RULES),                         // cross-field rules and their published constraints
         estimate: Some(Estimator {                      // pre-call cost estimate, or None if unsupportable
             estimate: estimate_pre_call,
-            lowest: &[("duration", "4")],               // the cheapest single-output request's options
+            standard: &[&[("duration", "8"), ("resolution", "720p")]], // requests for the standard output
         }),
         estimate_usage: None,                           // post-call estimate from reported usage, if any
     },
@@ -211,15 +211,20 @@ Then:
    where the provider says nothing that helps choose, state factual differences (options, prices)
    rather than marketing.
 7. If the model's prices support an estimate before the call, set `estimate` to an `Estimator`: the
-   estimate function, and in `lowest` the option values of the model's cheapest single-output
-   request. When the function cannot estimate a request (OpenAI's `auto` quality or size), it
-   returns why and which options to pass for an estimate; that is the message of the
-   `cost_estimate_unavailable` warning. `models list` and `models show` report the cheapest
-   request's estimate as `lowest_estimate`, computed by the same function, and so do the
-   `model_required` candidates. Call `catalog_support::assert_lowest_estimate_is_the_cheapest` from
-   your catalog tests: it validates the declared options and fails if any valid combination of
-   declared values is estimated lower (try the values of a pattern option, such as OpenAI's `size`,
-   in your own test, as `tests/openai_catalog.rs` does).
+   estimate function, and in `standard` the option values of the requests that give exactly the
+   standard output of the model's operations (`StandardOutput`: one 1024x1024 image for the image
+   operations, one 8-second 720p video for video), one request per setting that still changes the
+   price of that output (the OpenAI models list every quality with an estimate); the options not
+   listed keep their defaults. When the function cannot estimate a request (OpenAI's `auto`
+   quality or size), it returns why and which options to pass for an estimate; that is the message
+   of the `cost_estimate_unavailable` warning. `models list` and `models show` report the standard
+   output and each request's estimate as `standard_cost`, computed by the same function, and so do
+   the `model_required` and `unknown_model` candidates, so that models compare on the same output.
+   Call `catalog_support::assert_standard_requests_give_the_standard_output` from your catalog
+   tests, with a function that says which output a request gives from your catalog's own
+   declarations (a size, a resolution, a duration): it checks that each declared request is valid
+   for every operation of the model, asks for one output, gives the standard output, and is
+   estimated by the model's own estimator.
 
 ## 4. Register the adapter
 

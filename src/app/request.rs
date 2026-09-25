@@ -12,7 +12,7 @@ use crate::catalog::{
     self, CapabilitySource, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionSource, RawOption,
     ResolvedModel, ResolvedOptions,
 };
-use crate::domain::{CostEstimate, ModelSource, Operation, Usage, Warning, WarningCode};
+use crate::domain::{CostEstimate, ModelSource, Operation, Usage, Warning, WarningCode, format_usd};
 use crate::error::{ErrorCode, IrisError};
 use crate::jobs;
 use crate::output::results::{PlanInput, PlanResult};
@@ -405,15 +405,18 @@ pub(crate) fn check_max_cost(
         Ok(estimate) if estimate.amount <= max => Ok(()),
         Ok(estimate) => Err(refusal(
             format!(
-                "the request is estimated at ${} {}, above --max-cost ${max}",
-                estimate.amount, estimate.currency
+                "the request is estimated at {} {}, above --max-cost {}",
+                format_usd(estimate.amount),
+                estimate.currency,
+                format_usd(max)
             ),
-            "choose cheaper options or a cheaper model (`iris models list` shows each model's cheapest \
-             request), or raise --max-cost",
+            "choose cheaper options or a cheaper model (`iris models list` compares the models' costs on the \
+             same output), or raise --max-cost",
         )),
         Err(why) => Err(refusal(
             format!(
-                "--max-cost ${max} needs a cost estimate, and there is none for this request: {}",
+                "--max-cost {} needs a cost estimate, and there is none for this request: {}",
+                format_usd(max),
                 why.reason()
             ),
             match why {

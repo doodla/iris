@@ -79,9 +79,8 @@ impl Catalog {
     /// The models a command for `op` (every model without one) can use, in catalog
     /// order, as the `model_required` and `unknown_model` errors list them in
     /// `details.candidates`: one object per model, `{model, provider, display_name,
-    /// summary, aliases, lowest_estimate}` (the `lowest_estimate` of `models list`:
-    /// the options of the cheapest single-output request and their estimate, null
-    /// without an estimator).
+    /// summary, aliases, standard_cost}` (the `standard_cost` of `models list`: what
+    /// the standard output of its operations costs, null without an estimator).
     pub fn candidates(&self, op: Option<Operation>) -> Vec<Value> {
         self.models()
             .into_iter()
@@ -93,7 +92,7 @@ impl Catalog {
                     "display_name": m.display_name,
                     "summary": m.summary,
                     "aliases": m.aliases,
-                    "lowest_estimate": super::models::lowest_estimate(m),
+                    "standard_cost": super::models::standard_cost(m),
                 })
             })
             .collect()

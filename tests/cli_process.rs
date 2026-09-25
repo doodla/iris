@@ -561,32 +561,50 @@ fn models_list_is_consistent_with_the_catalog() {
         v["result"]["models"].as_array().unwrap().iter().map(|m| m["id"].as_str().unwrap()).collect();
     let expected: Vec<&str> = iris::catalog::all().map(|m| m.id).collect();
     assert_eq!(ids, expected);
-    // What each model is for, whether it costs money, and its cheapest request as its
-    // own estimator prices it, in the list and in `models show`.
+    // What each model is for, whether it costs money, and what the standard output of
+    // its operations costs by its own estimator, in the list and in `models show`.
     let listed = v["result"]["models"].as_array().unwrap().clone();
     for (m, spec) in listed.iter().zip(iris::catalog::all()) {
-        let (options, estimate) = spec.lowest_estimate().expect("every catalog model has an estimator");
-        let lowest = serde_json::json!({ "options": options, "cost_estimate": estimate });
+        let (output, estimates) = spec.standard_cost().expect("every catalog model has an estimator");
+        let estimates: Vec<_> = estimates
+            .iter()
+            .map(|(options, estimate)| serde_json::json!({ "options": options, "cost_estimate": estimate }))
+            .collect();
+        let standard = serde_json::json!({ "output": output.description(), "estimates": estimates });
         assert_eq!(m["summary"], spec.summary, "{}", spec.id);
         assert_eq!(m["billing"], spec.billing.as_str(), "{}", spec.id);
-        assert_eq!(m["lowest_estimate"], lowest, "{}", spec.id);
+        assert_eq!(m["standard_cost"], standard, "{}", spec.id);
         let shown = run(iris(&sandbox).args(["models", "show", spec.id, "--json"])).json();
         assert_eq!(shown["result"]["model"]["summary"], spec.summary, "{}", spec.id);
         assert_eq!(shown["result"]["model"]["billing"], spec.billing.as_str(), "{}", spec.id);
-        assert_eq!(shown["result"]["model"]["lowest_estimate"], lowest, "{}", spec.id);
+        assert_eq!(shown["result"]["model"]["standard_cost"], standard, "{}", spec.id);
     }
-    // In human output too, each estimate comes with the options that give it, and the
-    // notes under the rows fit in 100 columns.
+    // In human output too, after the billing: the standard output and each estimate,
+    // with the option values that tell the estimates apart (named at the first). The
+    // notes under the rows fit in 100 columns, and an estimate and its options stay
+    // on one line.
     let human = run(iris(&sandbox).args(["models", "list"])).stdout;
     for line in human.lines().filter(|line| line.starts_with("  ")) {
         assert!(line.chars().count() <= 100, "{line}");
+        assert!(!line.trim_start().starts_with('('), "{line}");
     }
+    let flat = human.split_whitespace().collect::<Vec<_>>().join(" ");
     for spec in iris::catalog::all() {
-        let (options, estimate) = spec.lowest_estimate().unwrap();
-        let options: Vec<String> = options.iter().map(|(name, value)| format!("{name}={value}")).collect();
-        let cheapest =
-            format!("cheapest single-output request: ~${:.4} with {}\n", estimate.amount, options.join(" "));
-        assert!(human.contains(&cheapest), "{}: {cheapest}\n{human}", spec.id);
+        let (output, estimates) = spec.standard_cost().unwrap();
+        let amount = iris::domain::format_usd(estimates[0].1.amount);
+        let first = format!("{}; {}: ~{amount}", spec.billing.as_str(), output.description());
+        assert!(flat.contains(&first), "{}: {first}\n{human}", spec.id);
+    }
+    for note in [
+        "paid; one 1024x1024 image: ~$0.00588 (quality=low), ~$0.01317 (medium), ~$0.05268 (high), ~$0.09366 \
+         (xhigh), ~$0.21072 (max) gpt-image-2.5-flare",
+        "paid; one 1024x1024 image: ~$0.00588 (quality=low), ~$0.05268 (medium), ~$0.21072 (high) gemini-",
+        "paid; one 1024x1024 image: ~$0.0336 gemini-3-pro-image",
+        "paid; one 1024x1024 image: ~$0.134 veo-",
+        "paid; one 8-second 720p video: ~$0.80 veo-",
+        "paid; one 8-second 720p video: ~$0.40",
+    ] {
+        assert!(flat.contains(note), "{note}\n{human}");
     }
     let out = run(iris(&sandbox).args(["models", "show", "definitely-not-a-model", "--json"]));
     assert_eq!(out.code, 2);

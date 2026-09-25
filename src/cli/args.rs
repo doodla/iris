@@ -26,7 +26,8 @@ videos (Google Veo) from one agent-friendly command line.
 
 Every generation command names its model: pass -m/--model, or set the model in the config file \
 ([image] model, [video] model). Iris never chooses a model for you; `iris models list` shows the \
-models it knows, what each is for, and the estimated cost of its cheapest request.
+models it knows, what each is for, and the estimated cost of the same output from each (one \
+1024x1024 image or one 8-second 720p video).
 
 Image commands are synchronous: the image is saved before the command returns. Video generation \
 is a provider-native job: Iris records it locally, waits, and saves the video; with --detach it \
@@ -127,9 +128,9 @@ pub enum Command {
     /// List models and inspect their capabilities
     #[command(
         subcommand,
-        long_about = "List the models Iris knows, with what each is for and the estimated cost of its \
-                      cheapest request, and inspect their declared capabilities, options (with their \
-                      defaults), and published prices.",
+        long_about = "List the models Iris knows, with what each is for and its estimated cost for the \
+                      same output, and inspect their declared capabilities, options (with their defaults), and \
+                      published prices.",
         after_help = "Examples:\n  iris models list\n  iris models show nano-banana-2 --json"
     )]
     Models(ModelsCommand),
@@ -691,9 +692,10 @@ pub enum ModelsCommand {
     /// List known models
     #[command(
         long_about = "List the models in Iris's catalog with their provider, lifecycle, operations, and \
-                      aliases, a one-line summary of what each is for, and the estimated cost of its \
-                      cheapest single-output request with the options that give it. It reads only the \
-                      catalog, so it runs even when the config file is invalid.",
+                      aliases, a one-line summary of what each is for, and its estimated cost for a standard \
+                      output, the same for every model of an operation kind so that costs compare: one \
+                      1024x1024 image (at each quality for the OpenAI models) or one 8-second 720p video. It \
+                      reads only the catalog, so it runs even when the config file is invalid.",
         after_help = "Examples:\n  iris models list\n  iris models list --provider gemini --json\n  iris models \
                       list --operation image.edit"
     )]
@@ -702,8 +704,8 @@ pub enum ModelsCommand {
     #[command(
         long_about = "Show one model's summary, billing, and declared capabilities: operations, inputs, \
                       options (with the typed flag or -O key and the default of each), output types, limits, \
-                      published prices, its cheapest single-output request with that request's estimated \
-                      cost, and documented access requirements. Without --check-access it reads only the \
+                      published prices, the estimated cost of the standard output that `models list` \
+                      compares models on, with the options that give it, and documented access requirements. Without --check-access it reads only the \
                       catalog and whether the API key is set, so it runs even when the config file is invalid. \
                       --check-access also asks the provider with a free metadata call whether the model is \
                       visible to your key; billing tier, prepaid credit, and organization verification are \

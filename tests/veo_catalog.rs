@@ -3,7 +3,7 @@
 
 use iris::catalog::{
     self, CATALOG_AS_OF, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionKind, OptionSource,
-    OptionValue, RawOption, validate_request,
+    OptionValue, RawOption, ResolvedOptions, StandardOutput, validate_request,
 };
 use iris::domain::{Operation, ProviderId};
 use iris::error::ErrorCode;
@@ -288,19 +288,29 @@ fn estimates_are_duration_times_the_rate_for_the_resolution() {
     assert!((estimate_usd(STANDARD, &[("resolution", "4k")]) - 4.80).abs() < 1e-9);
 }
 
-/// Every model's cheapest request is 4 seconds at 720p (`catalog_support` tries every
-/// valid request), and the summaries' price claims hold at every resolution: Veo 3.1
-/// costs the most per second, Fast less, and Lite the least.
+/// Every Veo model is priced on one 8-second 720p video, the duration and resolution
+/// the requests give as the catalog's options declare them, and the summaries' price
+/// claims hold at every resolution: Veo 3.1 costs the most per second, Fast less,
+/// and Lite the least.
 #[test]
-fn the_cheapest_request_and_the_summaries_follow_the_published_prices() {
+fn the_standard_output_and_the_summaries_follow_the_published_prices() {
     for m in catalog::veo::MODELS {
-        catalog_support::assert_lowest_estimate_is_the_cheapest(m);
-        let (options, _) = m.lowest_estimate().unwrap();
-        let options: Vec<(&str, String)> = options.iter().map(|(k, v)| (k.as_str(), v.to_string())).collect();
-        assert_eq!(options, [("duration", "4".to_string()), ("resolution", "720p".to_string())], "{}", m.id);
+        let gives = |options: &ResolvedOptions| {
+            let seconds = m.effective(options, "duration").and_then(|v| v.as_int()).unwrap();
+            let resolution = m.effective(options, "resolution").unwrap();
+            let OptionKind::Enum(declared) = m.option("resolution").unwrap().kind else {
+                panic!("resolution is an enum")
+            };
+            let resolution = declared.iter().find(|r| resolution.as_str() == Some(**r)).unwrap();
+            StandardOutput::Video { seconds, resolution }
+        };
+        catalog_support::assert_standard_requests_give_the_standard_output(m, gives);
     }
-    let amount = |id: &str| spec(id).lowest_estimate().unwrap().1.amount;
-    assert_eq!((amount(LITE), amount(FAST), amount(STANDARD)), (0.2, 0.4, 1.6));
+    let amount = |id: &str| {
+        let (_, estimates) = spec(id).standard_cost().unwrap();
+        estimates.iter().map(|(_, e)| e.amount).collect::<Vec<_>>()
+    };
+    assert_eq!((amount(LITE), amount(FAST), amount(STANDARD)), (vec![0.4], vec![0.8], vec![3.2]));
     for res in ["720p", "1080p", "4k"] {
         let rate = |id: &str| catalog::veo::rate_per_second(spec(id).id, res);
         assert!(rate(FAST).unwrap() < rate(STANDARD).unwrap(), "{res}");

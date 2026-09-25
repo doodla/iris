@@ -8,7 +8,7 @@
 //! generation guide's description of each model (checked 2026-09-25) and the
 //! published per-image prices.
 
-use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage};
+use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage, format_usd};
 
 use super::types::{
     DeclinedName, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec,
@@ -264,12 +264,18 @@ pub const DECLINED: &[DeclinedName] = &[
     },
 ];
 
-/// The cheapest single-output request of Nano Banana 2: the smallest resolution
-/// (the per-image price depends only on it).
-const LOWEST_FLASH: &[(&str, &str)] = &[("resolution", "512")];
-/// The cheapest single-output request of the models whose smallest resolution is 1K
-/// (Nano Banana Pro charges as much for 2K).
-const LOWEST_1K: &[(&str, &str)] = &[("resolution", "1K")];
+/// The pixel size of a 1:1 image at 1K: 1024x1024 in the aspect-ratio and image-size
+/// table of the image generation guide
+/// (<https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size>,
+/// checked 2026-09-24), for Nano Banana 2 and Nano Banana Pro. The table has no row for
+/// Nano Banana 2 Lite; its list of aspect ratios links to the table, so its 1K is read
+/// from the same table.
+pub const SQUARE_1K_PIXELS: (u64, u64) = (1024, 1024);
+
+/// The request for the standard output of the image operations, one 1024x1024 image
+/// ([`StandardOutput`](super::StandardOutput)): 1K at 1:1 ([`SQUARE_1K_PIXELS`]). The
+/// aspect ratio is explicit because an edit without one matches its input image.
+const STANDARD: &[&[(&str, &str)]] = &[&[("aspect_ratio", "1:1"), ("resolution", "1K")]];
 
 /// Built-in Gemini image models.
 pub static MODELS: &[ModelSpec] = &[
@@ -291,7 +297,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: &[ACCESS_NOTE_PAID_TIER, ACCESS_NOTE_AUTH_KEY],
         docs_url: DOCS_URL,
         validate: None,
-        estimate: Some(Estimator { estimate: estimate_image, lowest: LOWEST_FLASH }),
+        estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
         estimate_usage: Some(estimate_from_usage),
     },
     ModelSpec {
@@ -316,7 +322,7 @@ pub static MODELS: &[ModelSpec] = &[
         ],
         docs_url: DOCS_URL,
         validate: None,
-        estimate: Some(Estimator { estimate: estimate_image, lowest: LOWEST_1K }),
+        estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
         estimate_usage: Some(estimate_from_usage),
     },
     ModelSpec {
@@ -337,7 +343,7 @@ pub static MODELS: &[ModelSpec] = &[
         access_notes: &[ACCESS_NOTE_PAID_TIER, ACCESS_NOTE_AUTH_KEY],
         docs_url: DOCS_URL,
         validate: None,
-        estimate: Some(Estimator { estimate: estimate_image, lowest: LOWEST_1K }),
+        estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
         estimate_usage: Some(estimate_from_usage),
     },
 ];
@@ -362,7 +368,8 @@ fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEst
     Ok(CostEstimate::usd(
         round_usd(f64::from(count) * per_image),
         format!(
-            "{count} image × ${per_image} ({}, {resolution}); input and thinking tokens not included",
+            "{count} image × {} ({}, {resolution}); input and thinking tokens not included",
+            format_usd(*per_image),
             spec.id
         ),
         PRICING_URL,
@@ -407,9 +414,12 @@ pub fn estimate_from_usage(spec: &ModelSpec, usage: &Usage) -> Option<CostEstima
     Some(CostEstimate::usd(
         round_usd(amount),
         format!(
-            "{prompt} input tokens × ${}/1M + {image_tokens} image output tokens × ${}/1M + \
-             {text_tokens} text and thinking tokens × ${}/1M ({}, from reported usage{note})",
-            rates.input_per_m, rates.image_output_per_m, rates.text_output_per_m, spec.id
+            "{prompt} input tokens × {}/1M + {image_tokens} image output tokens × {}/1M + \
+             {text_tokens} text and thinking tokens × {}/1M ({}, from reported usage{note})",
+            format_usd(rates.input_per_m),
+            format_usd(rates.image_output_per_m),
+            format_usd(rates.text_output_per_m),
+            spec.id
         ),
         PRICING_URL,
         CATALOG_AS_OF,

@@ -265,13 +265,22 @@ rule that found it (see [json-contract.md](json-contract.md#error-object)).
 [Gemini Omni](https://ai.google.dev/gemini-api/docs/omni) ·
 [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
 
-### What each model is for, and what it costs at least
+### What each model is for, and what the same output costs
 
 **Decision.** Every catalog model has a one-line `summary` (what it is for and its trade-off) and
-declares the options of its cheapest single-output request. `models list` and `models show`
-report both (the request's options and estimate as `lowest_estimate`; human output shows the
-estimate with those options), and the `model_required` candidates carry the summary and the same
-`lowest_estimate`. An estimate never appears without the options that give it. The summaries use
+is priced on a standard output, the same for every model of an operation kind: one 1024x1024
+image for the image operations, one 8-second 720p video for video (every Veo model supports it).
+Each model declares the requests that give exactly that output: for the OpenAI models `--size
+1024x1024` at every quality with an estimate (low, medium, and high, and xhigh and max on the 2.5
+models), since at one size the quality sets their price; for the Gemini image models 1K at 1:1,
+which the aspect-ratio and image-size table of Google's image generation guide gives as 1024x1024
+for Nano Banana 2 and Nano Banana Pro (checked 2026-09-24; the table has no row for Nano Banana 2
+Lite, whose list of aspect ratios links to it, so Lite's 1K is read from the same table), with the
+aspect ratio explicit because an edit without one matches its input image; for Veo 8 seconds at
+720p. `models list` and `models show`
+report them as `standard_cost` (the output, and each request's options and estimate; human output
+lists the estimates with the option values that tell them apart), and the `model_required` and
+`unknown_model` candidates carry the summary and the same `standard_cost`. The summaries use
 the providers' own positioning: OpenAI's guide chooses Sunburst for workflows where editing
 precision matters most and Flare for fast, high-quality everyday generation (its most capable
 and its fastest model); Google describes Nano Banana 2 as its most versatile image model, Nano
@@ -285,18 +294,24 @@ summaries' relative price claims against the rate tables. The Gemini image and V
 checked for this on 2026-09-25, the other pages on 2026-09-24.
 
 **Why.** An agent must name its model (see [No default model](#no-default-model)), so it needs to
-know what each model is for and what it costs before choosing, without reading provider pages.
-The lowest estimate is computed by the model's own estimator, so it cannot disagree with the
-estimate a dry run of that request gets, and a test fails if any valid combination of declared
-option values (and, for OpenAI, any valid size) is estimated lower than the declared request.
-OpenAI's cheapest request is `--quality low --size 1440x480`, not a square size: the calculator
-formula scales each quality's base down by the aspect ratio, so at low quality 1024x1024 needs 196
-output tokens, 1536x1024 158, and 1440x480 54. That is OpenAI's published formula, not an Iris
-quirk, and the `size` option's description says so.
+know what each model is for and what it costs before choosing, without reading provider pages. A
+comparison of costs needs the same output: the least each model can cost is the price of a
+different output (a 3:1 image at low quality from OpenAI, a 512-pixel image from Nano Banana 2, a
+4-second video from Veo), which says little about which model costs less for the same work. The
+estimates come from each model's own estimator, so they cannot disagree with the estimate a dry
+run of the same request gets, and the catalog tests check that every declared request is valid
+for each of the model's operations, asks for one output, and gives the standard output by the
+catalog's own declarations (the OpenAI size, Google's image-size table, the Veo duration and
+resolution). At other sizes an OpenAI model's price follows OpenAI's calculator formula, which
+scales each quality's base down by the aspect ratio: at low quality 1024x1024 needs 196 output
+tokens and 1536x1024 158, so a larger non-square size can cost less than a smaller square one.
+That is OpenAI's published formula, not an Iris quirk, and the `size` option's description says
+so.
 
 **Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
 [OpenAI image generation guide (calculator)](https://developers.openai.com/api/docs/guides/image-generation) ·
 [Gemini image generation guide](https://ai.google.dev/gemini-api/docs/image-generation) ·
+[its aspect-ratio and image-size table](https://ai.google.dev/gemini-api/docs/image-generation#aspect_ratios_and_image_size) ·
 [Veo guide](https://ai.google.dev/gemini-api/docs/veo) ·
 [Veo 3.1 model page](https://ai.google.dev/gemini-api/docs/models/veo-3.1-generate-preview) ·
 [OpenAI pricing](https://developers.openai.com/api/docs/pricing) ·
