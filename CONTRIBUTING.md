@@ -66,7 +66,11 @@ Packaging generates `THIRD-PARTY-LICENSES`, the license notices of every crate l
 binary, with cargo-about (`about.toml`, `about.hbs`), and fails on any problem cargo-about
 reports. A new dependency whose license `deny.toml` allows needs no change there. If an update to
 `aws-lc-sys` or `aws-lc-rs` changes that crate's `LICENSE` file, read the new file and put its
-SHA-256 in `about.toml`, whose comments explain why those two files are listed.
+SHA-256 in `about.toml`, whose comments explain why those two files are listed. Packaging accepts
+only one cargo-about version, `cargo_about_version` in `scripts/package-release.sh`, so that the
+same commit always gives the same archive; to move to a newer one, change it there, in the
+cargo-about install steps of `ci.yml` and `release.yml`, and in `docs/install.md`, and compare
+the file it generates with the old one.
 
 ## Tests
 
