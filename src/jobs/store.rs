@@ -95,7 +95,7 @@ pub struct JobStore {
 impl JobStore {
     /// A store for `<state_dir>/jobs/`. The stale-`submitting` rule uses the
     /// worst-case `PaidSubmit` duration with default timeouts
-    /// ([`paid_submit_budget`]`(&Timeouts::default())`, 345s); use
+    /// ([`paid_submit_budget`]`(&Timeouts::default())`, 2145s); use
     /// [`JobStore::with_submit_budget`] when timeouts are configured.
     pub fn new(state_dir: impl AsRef<Path>) -> JobStore {
         JobStore {
