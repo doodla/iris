@@ -80,6 +80,9 @@ machine-readable contract for agents.
   longer validates is fetched again. Temporary files are locked while written, downloads are
   capped at 4 GiB, and videos are validated structurally (media data present, chunk offsets inside
   the file, overflow-safe box parsing).
+- A job records where `video generate` was asked to save (its `-o`, or the output directory in
+  effect, and `--overwrite`), shown as `output_plan` in every job view: `jobs wait` and `jobs
+  download` save there unless given their own `-o` or `-d`.
 - `jobs download` checks a job that still reads `running` once before deciding, and reports a
   failed check (missing key, 401, 403, quota) as that error, not as "not ready".
 - `jobs delete` is all or nothing, deletes only local records, and without `--force` refuses a

@@ -256,6 +256,16 @@ an operation id — `iris jobs status <id>` shows which). These two say `retryab
 
 ## Downloads
 
+**Where outputs are saved.** `video generate` records where it was asked to save the job's
+outputs: its `-o` path, or else the output directory in effect then (`-d`, `IRIS_OUTPUT_DIR`,
+config `output_dir`, or the current directory), and whether `--overwrite` was given. Every job view
+shows it as `output_plan` (`jobs status` as `save to`). `iris jobs wait` and `iris jobs download`
+save to their own `-o` or `-d` when given one, with their own `--overwrite`; given neither, they
+save to the recorded path or directory, with `--overwrite` if either command was given it.
+`IRIS_OUTPUT_DIR` and config `output_dir` at download time do not replace the recorded directory.
+With several outputs an `-o` path becomes `<stem>-<i>.<ext>` with `i` from 1 (`clip-1.mp4`,
+`clip-2.mp4`), while `outputs[].index` and `artifacts[].index` count from 0.
+
 Generation success and download success are **separate outcomes**. `iris jobs download` (and the
 download step inside `iris jobs wait`, unless `--no-download`) never regenerates or resubmits
 anything — it only ever reads the job's already-recorded remote reference and fetches bytes.
@@ -351,6 +361,7 @@ job_01m3a5ffjkdnar227bba60tfa2
   submitted:  2026-09-24T16:55:15Z
   checked:    2026-09-24T16:55:21Z
   remote op:  models/veo-3.1-lite-generate-preview/operations/op_mockjob
+  save to:    directory /home/you
   cost:       ~$0.2000 USD (4 s × $0.05/s (veo-3.1-lite-generate-preview, 720p, audio included); estimate; blocked videos are not charged)
 
 $ iris jobs wait job_01m3a5ffjkdnar227bba60tfa2

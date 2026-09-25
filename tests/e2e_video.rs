@@ -856,6 +856,17 @@ fn job_help_states_the_exit_codes_and_the_state_directory_rule() {
     ] {
         assert!(wait.contains(needle), "{needle:?} in {wait}");
     }
+    // Where a later command saves: its -o or -d, else what the job recorded.
+    for command in [["jobs", "wait"], ["jobs", "download"]] {
+        let text = help(&command);
+        for needle in [
+            "Outputs are saved to -o or -d when given; otherwise where video generate was asked to save them",
+            "Without -o or -d: where the job was submitted to save (result.job.output_plan)",
+            "<stem>-<i>.<ext>, i from 1",
+        ] {
+            assert!(text.contains(needle), "{command:?}: {needle:?} in {text}");
+        }
+    }
     // The rule holds: a process with another state directory has no record of the job.
     let veo = VeoMock::start();
     let id = submit_detached(&sb, &veo, &[]);
@@ -875,6 +886,52 @@ fn job_help_states_the_exit_codes_and_the_state_directory_rule() {
             "resume with `iris jobs wait <JOB_ID>` from any later process that uses the same state directory"
         ),
         "{video}"
+    );
+}
+
+/// `video generate` records where it was asked to save, and every job view shows it
+/// (`output_plan`; `save to` in `jobs status`): a later `jobs wait` or `jobs download`
+/// given neither -o nor -d saves there, even from another directory with another
+/// IRIS_OUTPUT_DIR, while its own -o or -d wins.
+#[test]
+fn a_detached_job_saves_where_it_was_asked_unless_told_otherwise() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let target = sb.path("clips/waves.mp4");
+    let id = submit_detached(&sb, &veo, &["-o", "clips/waves.mp4"]);
+    let v = sb.iris().args(["jobs", "status", &id, "--no-refresh", "--json"]).run().ok();
+    assert_eq!(
+        job_of(&v)["output_plan"],
+        json!({ "path": target.to_str().unwrap(), "dir": null, "overwrite": false })
+    );
+    let human = sb.iris().args(["jobs", "status", &id, "--no-refresh"]).run();
+    assert!(human.human().contains(&format!("  save to:    {}\n", target.display())), "{}", human.stdout);
+
+    veo.succeed();
+    let elsewhere = sb.path("elsewhere");
+    std::fs::create_dir_all(&elsewhere).unwrap();
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .current_dir(&elsewhere)
+        .env("IRIS_OUTPUT_DIR", &elsewhere)
+        .args(["jobs", "wait", &id, "--json"])
+        .run()
+        .ok();
+    assert_eq!(job_of(&v)["artifacts"][0]["path"], target.to_str().unwrap());
+    assert!(files_in(&elsewhere).is_empty());
+
+    // An explicit -d wins over the recorded path.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "-d", "copies", "--json"]).run().ok();
+    let copy = sb.path(&format!("copies/{id}.mp4"));
+    assert_eq!(job_of(&v)["artifacts"][0]["path"], copy.to_str().unwrap());
+
+    // Without -o, the output directory in effect at submission is recorded.
+    let id = submit_detached(&sb, &veo, &["-d", "later", "--overwrite"]);
+    let v = sb.iris().args(["jobs", "status", &id, "--no-refresh", "--json"]).run().ok();
+    assert_eq!(
+        job_of(&v)["output_plan"],
+        json!({ "path": null, "dir": sb.path("later").to_str().unwrap(), "overwrite": true })
     );
 }
 

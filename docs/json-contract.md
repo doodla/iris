@@ -151,13 +151,20 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
                       "basis": "4 s × $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged",
                       "source_url": "https://ai.google.dev/gemini-api/docs/pricing", "as_of": "2026-09-24" },
   "request": { "aspect_ratio": "16:9", "count": 1, "duration": 4, "resolution": "720p",
-               "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } }
+               "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
+  "output_plan": { "dir": "/home/you", "path": null, "overwrite": false }
 }
 ```
 
 `request` holds only resolved, non-secret options (and input *counts*, never paths or bytes) —
 see [jobs.md](jobs.md) for what is and is not persisted, and why. `model_source` is `null` for a
 job record that does not say where its model came from.
+
+`output_plan` is where `jobs wait` and `jobs download` save the outputs when given neither `-o` nor
+`-d`: the `-o` path (`path`) or the output directory (`dir`) recorded when `video generate`
+submitted the job, and whether it was given `--overwrite` (see [jobs.md](jobs.md#downloads)). With
+several outputs an `-o` path is saved as `<stem>-<i>.<ext>` with `i` from 1, while
+`outputs[].index` and `artifacts[].index` count from 0.
 
 ### `jobs.list` → `{ "jobs": [Job] }`
 
@@ -361,7 +368,8 @@ exactly as the real run writes it. A name the real run generates is shown as its
 real run generates its own: `iris-<ulid>.<ext>` for an image (the real run's ULID) and
 `<job_id>.<ext>` for a video (the id of the job the real run records), with `-<i>` before the
 extension when there are several (`iris-<ulid>-1.png`). A name given with `-o` is shown as it will
-be written.
+be written: with several outputs, `<stem>-<i>.<ext>`. `i` counts from 1 (`-n 3 -o p.png` plans
+`p-1.png`, `p-2.png`, `p-3.png`), while the result's `artifacts[].index` counts from 0.
 
 ### Shared objects
 

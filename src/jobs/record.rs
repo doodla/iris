@@ -42,7 +42,7 @@ use crate::domain::{
 };
 use crate::error::{ErrorCode, IrisError};
 use crate::output::ErrorBody;
-use crate::output::results::{JobOutputView, JobView};
+use crate::output::results::{JobOutputView, JobView, OutputPlanView};
 use crate::providers::{RemoteStatus, SubmittedOperation};
 use crate::redact;
 
@@ -1031,6 +1031,11 @@ impl JobRecord {
             usage: self.usage().cloned(),
             cost_estimate: self.cost_estimate().cloned(),
             request: self.request.clone(),
+            output_plan: OutputPlanView {
+                path: self.output_plan.path.as_ref().map(|p| p.display().to_string()),
+                dir: self.output_plan.dir.as_ref().map(|p| p.display().to_string()),
+                overwrite: self.output_plan.overwrite,
+            },
         }
     }
 

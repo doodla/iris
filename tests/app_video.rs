@@ -149,6 +149,9 @@ async fn detach_records_the_job_before_and_after_submission() {
     assert_eq!(rec["request"]["resolution"], "720p", "{}", rec["request"]);
     assert_eq!(job.request["duration"], 8);
     assert_eq!(rec["output_plan"]["dir"], f.sandbox.work().to_str().unwrap());
+    // The job view shows the recorded target a later `jobs wait` saves to.
+    assert_eq!(job.output_plan.dir.as_deref(), f.sandbox.work().to_str());
+    assert_eq!((job.output_plan.path.as_deref(), job.output_plan.overwrite), (None, false));
     let raw =
         std::fs::read_to_string(f.sandbox.state().join("jobs").join(format!("{}.json", job.job_id))).unwrap();
     assert!(!raw.contains("waves at dusk") && !raw.contains("no boats"));
@@ -990,6 +993,8 @@ async fn detach_preflights_the_recorded_output_before_submitting() {
     let rec = record_json(&f.sandbox.state(), &res.job.job_id);
     assert_eq!(rec["output_plan"]["path"], existing.to_str().unwrap());
     assert_eq!(rec["output_plan"]["overwrite"], true);
+    assert_eq!(res.job.output_plan.path.as_deref(), existing.to_str());
+    assert!(res.job.output_plan.overwrite && res.job.output_plan.dir.is_none());
     assert_eq!(f.submits(), 1);
 }
 

@@ -211,6 +211,13 @@ fn job_block(j: &JobView) -> String {
     if let Some(op) = &j.remote_operation_id {
         field("remote op", op);
     }
+    // Where a later `jobs wait` or `jobs download` given neither -o nor -d saves.
+    let replacing = if j.output_plan.overwrite { ", replacing an existing file" } else { "" };
+    match (&j.output_plan.path, &j.output_plan.dir) {
+        (Some(path), _) => field("save to", &format!("{path}{replacing}")),
+        (None, Some(dir)) => field("save to", &format!("directory {dir}{replacing}")),
+        (None, None) => {}
+    }
     if let Some(c) = &j.cost_estimate {
         field("cost", &cost(c));
     }

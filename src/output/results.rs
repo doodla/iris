@@ -73,6 +73,25 @@ pub struct JobView {
     pub cost_estimate: Option<CostEstimate>,
     /// Non-secret resolved request options (never the prompt text or input contents).
     pub request: serde_json::Map<String, serde_json::Value>,
+    /// Where `jobs wait` and `jobs download` save the outputs when given neither
+    /// `-o` nor `-d`: the target `video generate` recorded when it submitted the job.
+    pub output_plan: OutputPlanView,
+}
+
+/// The save target a job recorded when it was submitted.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct OutputPlanView {
+    /// The absolute `-o` path given at submission (with several outputs,
+    /// `<stem>-<i>.<ext>`, `i` from 1); null when none was given.
+    pub path: Option<String>,
+    /// The absolute output directory resolved at submission (`-d`, `IRIS_OUTPUT_DIR`,
+    /// config `output_dir`, or the current directory), where outputs are saved as
+    /// `<job_id>.<ext>`; null when `-o` was given. When both are null, the output
+    /// directory of the later command applies.
+    pub dir: Option<String>,
+    /// Whether `--overwrite` was given at submission: a file already at the target is
+    /// replaced.
+    pub overwrite: bool,
 }
 
 /// `video.generate`, `jobs.status`, `jobs.wait`, `jobs.download`.

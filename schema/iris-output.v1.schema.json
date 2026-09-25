@@ -1518,6 +1518,10 @@
         "operation": {
           "$ref": "#/$defs/Operation"
         },
+        "output_plan": {
+          "$ref": "#/$defs/OutputPlanView",
+          "description": "Where `jobs wait` and `jobs download` save the outputs when given neither\n`-o` nor `-d`: the target `video generate` recorded when it submitted the job."
+        },
         "outputs": {
           "items": {
             "$ref": "#/$defs/JobOutputView"
@@ -1587,7 +1591,8 @@
         "error",
         "usage",
         "cost_estimate",
-        "request"
+        "request",
+        "output_plan"
       ],
       "type": "object"
     },
@@ -1995,6 +2000,35 @@
         "flag",
         "operations",
         "description"
+      ],
+      "type": "object"
+    },
+    "OutputPlanView": {
+      "description": "The save target a job recorded when it was submitted.",
+      "properties": {
+        "dir": {
+          "description": "The absolute output directory resolved at submission (`-d`, `IRIS_OUTPUT_DIR`,\nconfig `output_dir`, or the current directory), where outputs are saved as\n`<job_id>.<ext>`; null when `-o` was given. When both are null, the output\ndirectory of the later command applies.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "overwrite": {
+          "description": "Whether `--overwrite` was given at submission: a file already at the target is\nreplaced.",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "The absolute `-o` path given at submission (with several outputs,\n`<stem>-<i>.<ext>`, `i` from 1); null when none was given.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "path",
+        "dir",
+        "overwrite"
       ],
       "type": "object"
     },

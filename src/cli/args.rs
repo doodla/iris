@@ -218,6 +218,23 @@ impl Command {
 const VIDEO_MODEL_HELP: &str =
     "Model id or alias (see `iris models list`); required unless the config file sets video.model";
 
+/// `-o` help of `jobs wait` and `jobs download`, whose default is the job's recorded target.
+const JOB_OUTPUT_HELP: &str = "Exact output file; with several outputs: <stem>-<i>.<ext>, i from 1. Without -o or \
+                               -d: where the job was submitted to save (result.job.output_plan)";
+/// `-d` help of `jobs wait` and `jobs download` (see [`JOB_OUTPUT_HELP`]).
+const JOB_OUT_DIR_HELP: &str = "Output directory (created if missing). Without -o or -d: where the job was \
+                                submitted to save (result.job.output_plan)";
+
+/// How `jobs wait` and `jobs download` choose where to save, for their long help
+/// (a macro, so that `concat!` can place it in both).
+macro_rules! job_target_rule {
+    () => {
+        "Outputs are saved to -o or -d when given; otherwise where video generate was asked to save them when \
+         it submitted the job: its -o path, or the output directory in effect then, with its --overwrite \
+         (result.job.output_plan)."
+    };
+}
+
 /// Exactly one prompt source.
 #[derive(Debug, Args)]
 #[command(next_help_heading = "Prompt (exactly one source)")]
@@ -367,7 +384,7 @@ impl VideoOptions {
 #[derive(Debug, Args, Default)]
 #[command(next_help_heading = "Output")]
 pub struct OutputArgs {
-    /// Exact output file; with several outputs: <stem>-<i>.<ext>
+    /// Exact output file; with several outputs: <stem>-<i>.<ext>, i from 1
     #[arg(short = 'o', long, value_name = "PATH", conflicts_with = "out_dir")]
     pub output: Option<PathBuf>,
     /// Output directory (created if missing); default: IRIS_OUTPUT_DIR, config output_dir, or the current directory
@@ -451,9 +468,12 @@ pub enum VideoCommand {
                       returns right after submission; resume with `iris jobs wait <JOB_ID>` from any later \
                       process that uses the same state directory (`iris config path` shows it): the job \
                       record lives there, so another machine, container, or state directory cannot resume \
-                      the job.\n\nIf the caller's wait limit (--timeout) passes or you press Ctrl-C, the job \
-                      keeps running remotely and stays resumable (exit 4 or 130). If the outcome of the \
-                      submission itself is uncertain, Iris exits 5 and never resubmits automatically.",
+                      the job. The job also records where to save its outputs (-o, or the output directory \
+                      in effect, and --overwrite): a later `iris jobs wait` or `iris jobs download` given \
+                      neither -o nor -d saves there (result.job.output_plan).\n\nIf the caller's wait limit \
+                      (--timeout) passes or you press Ctrl-C, the job keeps running remotely and stays \
+                      resumable (exit 4 or 130). If the outcome of the submission itself is uncertain, Iris \
+                      exits 5 and never resubmits automatically.",
         after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
                       iris video generate -m veo-lite \"a paper boat\" --detach --json\n  iris video generate \
                       -m veo-lite --image first.png \"the scene comes alive\" --timeout 15m\n  iris video \
@@ -525,32 +545,40 @@ pub enum JobsCommand {
     Status(JobsStatusArgs),
     /// Wait for a job to finish, then download its outputs
     #[command(
-        long_about = "Wait for a job to finish, then download its outputs (unless --no-download). Works from \
-                      any process that uses the same state directory: the job is resumed from its local \
-                      record. The wait limit and Ctrl-C only stop waiting; the job keeps running remotely. \
-                      With --overwrite, outputs downloaded earlier are fetched again and replace the saved \
-                      files.\n\nExit status: 0 once the job has succeeded and its outputs are saved (with \
-                      --no-download, once it has succeeded); 4 (wait_timeout) when the wait limit passes while \
-                      the job continues remotely; 130 when interrupted, the job continuing too. A job that \
-                      ended without success exits with the code of its recorded error, such as 1 for a remote \
-                      failure, a blocked video, or an expired job (remote_job_failed, content_blocked, \
-                      artifact_expired), or 5 (submission_uncertain) when it is unknown whether the provider \
-                      accepted it. Other errors keep their own codes (e.g. 1 download_failed, 2 output_exists, \
-                      3 missing_credentials).",
+        long_about = concat!(
+            "Wait for a job to finish, then download its outputs (unless --no-download). Works from any process \
+             that uses the same state directory: the job is resumed from its local record. The wait limit and \
+             Ctrl-C only stop waiting; the job keeps running remotely. With --overwrite, outputs downloaded \
+             earlier are fetched again and replace the saved files.\n\n",
+            job_target_rule!(),
+            "\n\nExit status: 0 once the job has succeeded and its outputs are saved (with --no-download, once \
+             it has succeeded); 4 (wait_timeout) when the wait limit passes while the job continues remotely; \
+             130 when interrupted, the job continuing too. A job that ended without success exits with the code \
+             of its recorded error, such as 1 for a remote failure, a blocked video, or an expired job \
+             (remote_job_failed, content_blocked, artifact_expired), or 5 (submission_uncertain) when it is \
+             unknown whether the provider accepted it. Other errors keep their own codes (e.g. 1 \
+             download_failed, 2 output_exists, 3 missing_credentials)."
+        ),
         after_help = "Examples:\n  iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs wait \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --timeout 30m -d videos/ --json\n  iris jobs wait \
-                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download"
+                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download",
+        mut_arg("output", |arg| arg.help(JOB_OUTPUT_HELP)),
+        mut_arg("out_dir", |arg| arg.help(JOB_OUT_DIR_HELP))
     )]
     Wait(JobsWaitArgs),
     /// Download the outputs of a finished job (never resubmits)
     #[command(
-        long_about = "Download the outputs of a succeeded job. Nothing is ever regenerated or resubmitted. \
-                      Repeating a download is safe: an intact file already at the target is reported as \
-                      already_downloaded, and an intact earlier download is copied locally. With \
-                      --overwrite, every output is fetched from the provider again and replaces the saved \
-                      file atomically.",
+        long_about = concat!(
+            "Download the outputs of a succeeded job. Nothing is ever regenerated or resubmitted. Repeating a \
+             download is safe: an intact file already at the target is reported as already_downloaded, and an \
+             intact earlier download is copied locally. With --overwrite, every output is fetched from the \
+             provider again and replaces the saved file atomically.\n\n",
+            job_target_rule!()
+        ),
         after_help = "Examples:\n  iris jobs download job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs download \
-                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json"
+                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json",
+        mut_arg("output", |arg| arg.help(JOB_OUTPUT_HELP)),
+        mut_arg("out_dir", |arg| arg.help(JOB_OUT_DIR_HELP))
     )]
     Download(JobsDownloadArgs),
     /// Delete LOCAL job records (no remote cancellation or deletion)

@@ -247,16 +247,19 @@ option, typed or `-O`-only.
 
 Without `-o`/`-d`, Iris saves to the current directory under a predictable name: images as
 `iris-<ulid>.<ext>` (the extension follows the actual returned media type), and video job outputs
-as `<job_id>.mp4`. `-o/--output PATH` names an exact file (with several outputs:
-`<stem>-<i>.<ext>`); `-d/--out-dir DIR` picks a directory and keeps the default naming. Media is
-never written to standard output: `-o -`, a name of a standard stream such as `/dev/stdout` (even
-when standard output is redirected to a file), and a device such as `/dev/null` are refused, and
-the saved paths are what Iris prints (`result.artifacts[].path` with `--json`). An existing
-file at the target path is refused as `output_exists` unless `--overwrite` is passed — Iris never
-silently replaces a file. A paid image is never thrown away either: if it cannot be written where
-you asked after the request was made (say the disk filled up or the directory was removed), Iris
-saves it under `<state dir>/unsaved/` instead and reports the path (`iris config path` shows the
-state dir). Returned content that is not a valid image is kept there too, as received (`.bin`).
+as `<job_id>.mp4`. `-o/--output PATH` names an exact file (with several outputs: `<stem>-<i>.<ext>`
+with `i` from 1, so `-n 3 -o p.png` saves `p-1.png` to `p-3.png`, while `artifacts[].index` counts
+from 0); `-d/--out-dir DIR` picks a directory and keeps the default naming. A video job records
+where it was asked to save (`result.job.output_plan`): a later `iris jobs wait` or `iris jobs
+download` without `-o` or `-d` saves there. Media is never written to standard output: `-o -`, a
+name of a standard stream such as `/dev/stdout` (even when standard output is redirected to a
+file), and a device such as `/dev/null` are refused, and the saved paths are what Iris prints
+(`result.artifacts[].path` with `--json`). An existing file at the target path is refused as
+`output_exists` unless `--overwrite` is passed — Iris never silently replaces a file. A paid image
+is never thrown away either: if it cannot be written where you asked after the request was made
+(say the disk filled up or the directory was removed), Iris saves it under `<state dir>/unsaved/`
+instead and reports the path (`iris config path` shows the state dir). Returned content that is not
+a valid image is kept there too, as received (`.bin`).
 
 The extension of `-o` also picks the image type for models that take a format (OpenAI's `-o
 fox.jpg` requests JPEG). Gemini image models take none: the provider chooses the type (live runs
