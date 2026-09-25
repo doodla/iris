@@ -331,7 +331,7 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
                 args: WaitArgs {
                     download: !a.no_download,
                     target: Target {
-                        output: a.output.output.map(|p| absolute(&io.env, p)).transpose()?,
+                        output: a.output.output.map(|p| output_path(&io.env, p)).transpose()?,
                         overwrite: a.output.overwrite,
                     },
                 },
@@ -342,7 +342,7 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
             Request::JobsDownload {
                 job_id: a.job_id,
                 target: Target {
-                    output: a.output.output.map(|p| absolute(&io.env, p)).transpose()?,
+                    output: a.output.output.map(|p| output_path(&io.env, p)).transpose()?,
                     overwrite: a.output.overwrite,
                 },
             }
@@ -396,7 +396,7 @@ fn generation(
         model: model.model.clone(),
         capabilities_from: model.capabilities_from.clone(),
         options,
-        output: output.output.clone().map(|p| absolute(&io.env, p)).transpose()?,
+        output: output.output.clone().map(|p| output_path(&io.env, p)).transpose()?,
         overwrite: output.overwrite,
         dry_run,
     })
@@ -407,6 +407,13 @@ fn generation(
 /// relative path when that directory is unknown. Paths are otherwise used literally.
 fn absolute(env: &EnvSnapshot, path: PathBuf) -> Result<PathBuf, IrisError> {
     if path.is_absolute() { Ok(path) } else { Ok(env.cwd()?.join(path)) }
+}
+
+/// An `-o/--output` path, resolved like [`absolute`] except `-` itself, which is
+/// passed on as given: it would mean standard output, and output planning refuses
+/// it by that name (`./-` names a file called `-`, as usual).
+fn output_path(env: &EnvSnapshot, path: PathBuf) -> Result<PathBuf, IrisError> {
+    if path.as_os_str() == "-" { Ok(path) } else { absolute(env, path) }
 }
 
 /// Typed flags → `RawOption { source: Flag(..) }` using the command's flag → option

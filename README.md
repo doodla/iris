@@ -233,8 +233,9 @@ Without `-o`/`-d`, Iris saves to the current directory under a predictable name:
 `iris-<ulid>.<ext>` (the extension follows the actual returned media type), and video job outputs
 as `<job_id>.mp4`. `-o/--output PATH` names an exact file (with several outputs:
 `<stem>-<i>.<ext>`); `-d/--out-dir DIR` picks a directory and keeps the default naming. Media is
-never written to standard output: `-o -` (or a device such as `/dev/null`) is refused, and the
-saved paths are what Iris prints (`result.artifacts[].path` with `--json`). An existing
+never written to standard output: `-o -`, a name of a standard stream such as `/dev/stdout` (even
+when standard output is redirected to a file), and a device such as `/dev/null` are refused, and
+the saved paths are what Iris prints (`result.artifacts[].path` with `--json`). An existing
 file at the target path is refused as `output_exists` unless `--overwrite` is passed — Iris never
 silently replaces a file. A paid image is never thrown away either: if it cannot be written where
 you asked after the request was made (say the disk filled up or the directory was removed), Iris

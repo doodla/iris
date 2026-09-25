@@ -474,11 +474,13 @@ Output locations are checked the same way before anything is sent: an existing f
 `output_exists` (unless `--overwrite`), and a location that cannot be used as given (a file where a
 directory should be, no permission, a read-only file system, a directory that cannot be created) is
 `invalid_argument` with `details.path` naming the offending path. Iris writes media only to files
-and prints their paths, so `-o -` (standard output) and an `-o` naming an existing device, pipe, or
-socket (e.g. `/dev/null`) are `invalid_argument` too, with a hint saying so. A real run creates the output
-directory and proves it writable before the paid request; `--dry-run` writes nothing, so it catches
-a file in the way but not a missing permission. Other I/O failures there (e.g. a full disk) stay
-`io_error` (exit 1).
+and prints their paths, so these are `invalid_argument` too, with a hint saying so: `-o -` (standard
+output; `./-` names a file called `-`), an `-o` naming a standard stream or file descriptor
+(`/dev/stdin`, `/dev/stdout`, `/dev/stderr`, `/dev/fd/…`, `/proc/…/fd/…`) whatever it currently
+points to, and an `-o` naming an existing device, pipe, or socket (e.g. `/dev/null`); the last two
+carry `details.path`. A real run creates the output directory and proves it writable before the
+paid request; `--dry-run` writes nothing, so it catches a file in the way but not a missing
+permission. Other I/O failures there (e.g. a full disk) stay `io_error` (exit 1).
 
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint

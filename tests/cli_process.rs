@@ -913,6 +913,38 @@ fn image_generation_is_validated_locally_before_any_request() {
     assert_nothing_sent(&out, "input_file_invalid", 2);
 }
 
+/// `-o /dev/stdout` is refused by name, also when standard output is a regular file
+/// (the usual `--json > out.json`) and the name resolves to that file: Iris writes
+/// media to files and prints their paths, it never streams media.
+#[cfg(unix)]
+#[test]
+fn output_to_dev_stdout_is_refused_even_when_stdout_is_a_file() {
+    let sandbox = Sandbox::new();
+    let captured = sandbox.home().join("captured.json");
+    for extra in [&["--dry-run"][..], &[]] {
+        let mut cmd = std::process::Command::new(BIN);
+        configure(&mut cmd, &sandbox);
+        let status = cmd
+            .args(["image", "generate", "a fox", "-o", "/dev/stdout", "--json"])
+            .args(extra)
+            .stdin(Stdio::null())
+            .stdout(std::fs::File::create(&captured).unwrap())
+            .stderr(Stdio::null())
+            .status()
+            .unwrap();
+        let out = Out {
+            code: status.code().unwrap_or(-1),
+            stdout: std::fs::read_to_string(&captured).unwrap(),
+            stderr: String::new(),
+        };
+        assert_nothing_sent(&out, "invalid_argument", 2);
+        let v = out.json();
+        assert_eq!(v["error"]["details"]["path"], "/dev/stdout", "{v}");
+        assert!(v["error"]["hint"].as_str().unwrap().contains("prints their paths"), "{v}");
+    }
+    assert!(files_in(&sandbox.work()).is_empty());
+}
+
 #[test]
 fn video_generation_is_validated_locally_before_any_record_or_request() {
     let Some(spec) = builtin_default(ProviderId::Gemini, Operation::VideoGenerate) else { return };

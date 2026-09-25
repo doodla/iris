@@ -12,9 +12,9 @@
 //! * `-o PATH` is used literally; with several artifacts it becomes
 //!   `<stem>-<i>.<ext>`. Its extension must agree with `--format` and with what
 //!   the model can produce; without `--format` it selects the format. It must name
-//!   a regular file: `-o -` (standard output) and an existing device, pipe, or
-//!   socket are `invalid_argument`, because Iris saves media to files and prints
-//!   their paths.
+//!   a regular file: `-o -` (standard output), a name of a standard stream or file
+//!   descriptor such as `/dev/stdout`, and an existing device, pipe, or socket are
+//!   `invalid_argument`, because Iris saves media to files and prints their paths.
 //! * [`preflight`] refuses existing files before any paid request unless
 //!   `--overwrite`; [`preflight_dirs`] makes sure the output directories exist (or
 //!   can be created) and are writable, so a paid result is never lost because it
@@ -47,7 +47,8 @@ pub struct PathRequest<'a> {
     pub naming: Naming<'a>,
     /// Number of artifacts to plan (at least 1).
     pub count: u32,
-    /// `-o/--output`, used literally (relative paths resolve against the cwd).
+    /// `-o/--output`, used literally (relative paths resolve against the cwd); `-`
+    /// itself means standard output and is refused.
     pub output: Option<&'a Path>,
     /// Output directory already resolved by the caller (used when `output` is `None`).
     pub dir: &'a Path,
@@ -124,9 +125,8 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
     let mut implied_format = None;
     let (media_type, paths) = match req.output {
         Some(output) => {
-            check_file_target(output)?;
             let names_directory = output.as_os_str().to_string_lossy().ends_with(std::path::MAIN_SEPARATOR);
-            let output = absolute(output)?;
+            let output = resolve_file_target(output)?;
             if names_directory || output.is_dir() {
                 return Err(IrisError::invalid(format!(
                     "-o/--output expects a file path, but {} is a directory; use -d/--out-dir for directories",
@@ -224,28 +224,67 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
 const FILES_HINT: &str = "Iris saves media to files and prints their paths (result.artifacts[].path with --json); \
                           give a file path with -o/--output, or a directory with -d/--out-dir";
 
-/// `-o` must name a file Iris can create or replace: not `-` (which would mean
-/// standard output), and not an existing device, pipe, or socket such as
-/// `/dev/stdout` or `/dev/null` (paid output is never streamed or discarded).
-fn check_file_target(output: &Path) -> Result<(), IrisError> {
-    if output.file_name().is_some_and(|name| name == "-") {
+/// The absolute, lexically normalized path `-o` names, once it is known to name a
+/// file Iris can create or replace. Refused with `invalid_argument` and a hint that
+/// Iris writes files and prints their paths (paid output is never streamed or
+/// discarded):
+///
+/// * `-` itself, which would mean standard output (`./-` or `dir/-` name a file
+///   called `-`, as usual);
+/// * the name of a standard stream or an open file descriptor ([`names_a_stream`]),
+///   whatever it currently resolves to: with standard output redirected to a file,
+///   `/dev/stdout` is that file, so checking what it is would not be enough;
+/// * an existing device, pipe, or socket, such as `/dev/null`.
+fn resolve_file_target(output: &Path) -> Result<PathBuf, IrisError> {
+    if output.as_os_str() == "-" {
         return Err(IrisError::invalid(
             "-o/--output - would mean standard output, but Iris writes media only to files",
         )
         .with_hint(FILES_HINT));
     }
-    if let Ok(meta) = fs::metadata(output)
+    let resolved = absolute(output)?;
+    let refuse = |what: &str| {
+        IrisError::invalid(format!(
+            "-o/--output {} {what}; Iris writes media only to files",
+            resolved.display()
+        ))
+        .with_detail("path", resolved.to_string_lossy().into_owned())
+        .with_hint(FILES_HINT)
+    };
+    if names_a_stream(&resolved) {
+        return Err(refuse("names a standard stream or file descriptor, not a file"));
+    }
+    if let Ok(meta) = fs::metadata(&resolved)
         && !meta.is_file()
         && !meta.is_dir()
     {
-        return Err(IrisError::invalid(format!(
-            "-o/--output {} is not a regular file (a device, pipe, or socket); Iris writes media only to files",
-            output.display()
-        ))
-        .with_detail("path", output.to_string_lossy().into_owned())
-        .with_hint(FILES_HINT));
+        return Err(refuse("is not a regular file (a device, pipe, or socket)"));
     }
-    Ok(())
+    Ok(resolved)
+}
+
+/// Whether `path` (absolute, lexically normalized) is, on Unix, a name of a
+/// standard stream or an open file descriptor: `/dev/stdin`, `/dev/stdout`,
+/// `/dev/stderr`, anything under `/dev/fd`, or anything under a process's `fd`
+/// directory in `/proc` (`/proc/self/fd/1`, `/proc/<pid>/task/<tid>/fd/1`, …).
+/// Other names under `/dev` (e.g. `/dev/shm/…`, which holds regular files) are not
+/// refused by name.
+fn names_a_stream(path: &Path) -> bool {
+    if !cfg!(unix) {
+        return false;
+    }
+    let mut parts = path.components();
+    if parts.next() != Some(Component::RootDir) {
+        return false;
+    }
+    let mut names = parts.map(Component::as_os_str);
+    match (names.next(), names.next()) {
+        (Some(top), Some(name)) if top == "dev" => {
+            ["stdin", "stdout", "stderr", "fd"].iter().any(|s| name == *s)
+        }
+        (Some(top), Some(_)) if top == "proc" => names.any(|name| name == "fd"),
+        _ => false,
+    }
 }
 
 /// Check planned paths before any paid request: an existing file without

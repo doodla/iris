@@ -214,16 +214,29 @@ fn output_naming_a_directory_is_rejected() {
     );
 }
 
-/// Iris writes files and prints their paths: `-o -` (standard output), relative or
-/// resolved against a directory, and an existing device are refused with a hint
-/// saying so, for images and videos alike.
+/// Iris writes files and prints their paths: `-o -` (standard output), a name of a
+/// standard stream or file descriptor, and an existing device are refused with a
+/// hint saying so, for images and videos alike.
 #[test]
 fn output_to_standard_output_or_a_device_is_rejected() {
     let dir = tempfile::tempdir().unwrap();
-    let dash = dir.path().join("-");
-    let mut targets = vec![PathBuf::from("-"), dash.clone()];
+    let mut targets = vec![PathBuf::from("-")];
     if cfg!(unix) {
-        // (Not /dev/stdout: whether it is a device depends on how the tests are run.)
+        // Refused by name, whatever the stream is when the tests run (a terminal, a
+        // pipe, or a regular file standard output is redirected to).
+        for stream in [
+            "/dev/stdout",
+            "/dev/stderr",
+            "/dev/stdin",
+            "/dev/fd/1",
+            "/dev/./stdout",
+            "/dev/fd/../stdout",
+            "/proc/self/fd/1",
+            "/proc/thread-self/fd/2",
+            "/proc/1/task/1/fd/1",
+        ] {
+            targets.push(PathBuf::from(stream));
+        }
         targets.push(PathBuf::from("/dev/null"));
     }
     for output in &targets {
@@ -241,11 +254,36 @@ fn output_to_standard_output_or_a_device_is_rejected() {
             let err = plan_outputs(&req).unwrap_err();
             assert_eq!(err.code, ErrorCode::InvalidArgument, "{}", output.display());
             assert!(err.hint.as_deref().unwrap().contains("prints their paths"), "{:?}", err.hint);
+            if output != Path::new("-") {
+                let named = paths::normalize_lexically(output);
+                assert_eq!(err.details["path"], named.to_str().unwrap(), "{}", output.display());
+            }
         }
     }
-    assert!(!dash.exists());
-    // A file that merely contains a dash in its name is fine.
+    if cfg!(unix) {
+        let err = plan_outputs(&image_req(dir.path(), 1, Some(Path::new("/dev/stdout")), None)).unwrap_err();
+        assert!(err.message.contains("standard stream"), "{}", err.message);
+    }
+}
+
+/// Only `-` itself means standard output: `./-` and `dir/-` are the usual ways to
+/// name a file called `-`, and other names under `/dev` are ordinary paths.
+#[test]
+fn a_file_named_dash_or_under_dev_is_an_ordinary_output() {
+    let dir = tempfile::tempdir().unwrap();
+    let dash = dir.path().join("-");
+    let plan = plan_outputs(&image_req(dir.path(), 1, Some(&dash), None)).unwrap();
+    assert_eq!(plan.paths, vec![dir.path().join("-.png")]);
+    assert!(!dash.exists() && !dir.path().join("-.png").exists(), "planning writes nothing");
+    let plan = plan_outputs(&image_req(dir.path(), 1, Some(Path::new("./-")), None)).unwrap();
+    assert_eq!(plan.paths, vec![std::env::current_dir().unwrap().join("-.png")]);
     assert!(plan_outputs(&image_req(dir.path(), 1, Some(&dir.path().join("a-b.png")), None)).is_ok());
+    if cfg!(unix) {
+        let shm = Path::new("/dev/shm/iris-plan-test-7f3a.png");
+        assert_eq!(plan_outputs(&image_req(dir.path(), 1, Some(shm), None)).unwrap().paths, vec![shm]);
+        let named = Path::new("/dev/stdout.png");
+        assert_eq!(plan_outputs(&image_req(dir.path(), 1, Some(named), None)).unwrap().paths, vec![named]);
+    }
 }
 
 #[test]

@@ -191,6 +191,11 @@ async fn output_to_standard_output_is_refused_with_a_hint() {
     assert_eq!(run.error_code(), "invalid_argument");
     assert_eq!(f.image_calls(), 0);
     assert!(!f.sandbox.work().join("-").exists());
+
+    // `./-` is the usual way to name a file called `-`, and names one here too.
+    let run = f.run(&["image", "generate", "x", "-o", "./-", "--dry-run", "--json"]).await;
+    assert_eq!(run.code, 0, "{run:?}");
+    assert_eq!(run.json()["result"]["outputs"][0], f.sandbox.path("-.png").to_str().unwrap());
 }
 
 #[tokio::test]
