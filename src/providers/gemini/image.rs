@@ -19,7 +19,7 @@ use crate::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass, TransportKind};
 use crate::providers::{
-    GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, UnusableOutput,
+    self, GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, UnusableOutput,
 };
 use crate::redact;
 
@@ -67,7 +67,7 @@ pub async fn run(
     let request_id = client::request_id(&resp);
     let status = resp.status.as_u16();
     let parsed: GenerateContentResponse = resp.json().map_err(|_| {
-        charged_bad_response(
+        possibly_billed_bad_response(
             "the Gemini API answered with a body Iris could not parse as a generateContent response",
             status,
         )
@@ -230,13 +230,22 @@ fn paid_call_error(err: HttpError) -> IrisError {
     }
 }
 
-/// A 2xx answer Iris cannot use. The request was processed, so it may be billed.
-fn charged_bad_response(message: &str, status: u16) -> IrisError {
+/// A 2xx answer Iris cannot use. The request was processed, so it may be billed
+/// (`details.charge_possible`, which keeps the error from being called retryable).
+fn possibly_billed_bad_response(message: &str, status: u16) -> IrisError {
     IrisError::new(ErrorCode::ProviderBadResponse, message)
         .with_provider(ProviderId::Gemini)
         .with_provider_status(status)
         .with_detail("charge_possible", true)
         .with_hint("the provider may have billed this request; Iris did not retry automatically")
+}
+
+/// `err`, built from a completed `generateContent` answer (HTTP 200) that holds no
+/// usable image. Google bills such an answer by the tokens it reports, image or not,
+/// so the error says so (`details.charged: true`) and carries the sanitized usage
+/// the answer reported (`details.usage`), from which the app estimates the cost.
+fn billed_answer(err: IrisError, usage: Option<&Usage>) -> IrisError {
+    providers::with_reported_usage(err.with_detail("charged", true), usage)
 }
 
 /// Why one returned inline item is not a usable image.
@@ -260,7 +269,8 @@ struct Unusable {
 /// (with `output_format_mismatch` when the label differs or is missing); an item that
 /// is not a usable image is skipped with `output_item_unusable`, its content handed
 /// to the app in `unusable` to be saved as received. Only an answer without any
-/// usable image is an error (with that content in the failure). Warnings name items
+/// usable image is an error (with that content in the failure); it completed, so it
+/// is billed ([`billed_answer`]) whatever the reason. Warnings name items
 /// by their position among the returned inline items ("response item N"), which
 /// differs from the artifact index once an earlier item was skipped.
 fn interpret(
@@ -308,29 +318,31 @@ fn interpret(
     let usage = resp.usage_metadata.as_ref().and_then(usage_from_metadata);
 
     if images.is_empty() {
-        if let Some(first) = unusable.first() {
-            let reasons: Vec<&str> = unusable.iter().map(|u| u.why.as_str()).collect();
-            let mut err = charged_bad_response(
-                &format!("the Gemini API returned no usable image: {}", reasons.join("; ")),
-                status,
-            )
-            .with_provider_request_id(request_id);
-            if let Some(declared) = &first.declared {
-                err = err.with_detail("declared_media_type", declared.clone());
+        let err = match unusable.first() {
+            // Inline items came back, none of them a usable image: their content
+            // goes back to the app to be kept.
+            Some(first) => {
+                let reasons: Vec<&str> = unusable.iter().map(|u| u.why.as_str()).collect();
+                let mut err = possibly_billed_bad_response(
+                    &format!("the Gemini API returned no usable image: {}", reasons.join("; ")),
+                    status,
+                )
+                .with_hint(
+                    "the request completed, so the provider bills the tokens it reports in details.usage; \
+                     Iris did not retry automatically",
+                );
+                if let Some(declared) = &first.declared {
+                    err = err.with_detail("declared_media_type", declared.clone());
+                }
+                if let Some(sniffed) = first.sniffed {
+                    err = err.with_detail("sniffed_media_type", sniffed);
+                }
+                err
             }
-            if let Some(sniffed) = first.sniffed {
-                err = err.with_detail("sniffed_media_type", sniffed);
-            }
-            return Err(ImageFailure { error: err, unusable: kept });
-        }
-        let mut err = no_image_error(&resp, text.as_deref())
-            .with_provider_status(status)
-            .with_provider_request_id(request_id)
-            .with_detail("charged", true);
-        if let Some(usage) = usage.as_ref().and_then(|u| serde_json::to_value(u).ok()) {
-            err = err.with_detail("usage", usage);
-        }
-        return Err(err.into());
+            None => no_image_error(&resp, text.as_deref()).with_provider_status(status),
+        };
+        let err = billed_answer(err.with_provider_request_id(request_id), usage.as_ref());
+        return Err(ImageFailure { error: err, unusable: kept });
     }
 
     let mut warnings = Vec::new();

@@ -528,8 +528,11 @@ async fn one_bad_item_never_drops_the_good_ones() {
     }
 }
 
+/// A completed answer whose inline items are none of them a usable image is a bad
+/// response. Google bills it like any other completed answer, so it is charged and
+/// reports its usage, like an answer with only text.
 #[tokio::test]
-async fn an_answer_without_any_usable_image_is_a_bad_response_that_may_be_charged() {
+async fn an_answer_without_any_usable_image_is_a_bad_response_that_is_charged() {
     for data in ["not base64 at all!!", &b64(b"{\"error\": \"not an image\"}")] {
         let server = MockServer::start().await;
         mount_ok(
@@ -540,6 +543,12 @@ async fn an_answer_without_any_usable_image_is_a_bad_response_that_may_be_charge
         let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{data}");
         assert_eq!(err.details["charge_possible"], true, "{data}");
+        assert_eq!(err.details["charged"], true, "{data}");
+        assert_eq!(err.details["usage"]["input_tokens"], 14, "{data}");
+        assert_eq!(err.details["usage"]["output_tokens"], 747 + 180, "{data}");
+        assert_eq!(err.details["usage"]["total_tokens"], 941, "{data}");
+        assert!(err.hint.as_deref().unwrap().contains("details.usage"), "{:?}", err.hint);
+        assert_eq!(err.provider_request_id.as_deref(), Some("resp-abc123"), "{data}");
         assert_eq!(err.details["declared_media_type"], "image/png", "{data}");
         assert_ne!(err.retryable, Some(true), "{data}");
         assert_eq!(requests(&server).await.len(), 1, "{data}");
@@ -558,7 +567,19 @@ async fn an_answer_without_any_usable_image_is_a_bad_response_that_may_be_charge
     let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse);
     assert_eq!(err.details["sniffed_media_type"], "video/mp4");
+    assert_eq!(err.details["charged"], true);
     assert_eq!(err.unusable, [UnusableOutput { item: 0, bytes: mp4_head.to_vec() }]);
+
+    // Without usageMetadata there is no usage to report; the answer is still charged.
+    let server = MockServer::start().await;
+    let mut body = response_with(vec![json!({"inlineData": {"mimeType": "image/png", "data": ""}})], "STOP");
+    body.as_object_mut().unwrap().remove("usageMetadata");
+    mount_ok(&server, body).await;
+    let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
+    assert_eq!(err.details["charged"], true);
+    assert!(err.details.get("usage").is_none(), "{:?}", err.details);
+    assert!(err.unusable.is_empty(), "an item without data has no content to keep");
 }
 
 #[tokio::test]
@@ -572,6 +593,9 @@ async fn an_unparseable_success_body_is_a_bad_response_that_may_be_charged() {
     let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse);
     assert_eq!(err.details["charge_possible"], true);
+    // Not known to be a completed Gemini answer (it may be a proxy's page), so not
+    // known to be billed either.
+    assert!(err.details.get("charged").is_none(), "{:?}", err.details);
     assert_eq!(requests(&server).await.len(), 1);
 }
 

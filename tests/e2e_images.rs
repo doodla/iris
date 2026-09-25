@@ -430,7 +430,8 @@ fn an_unusable_openai_item_never_costs_the_good_image() {
 /// A completed answer with no usable image fails, yet its paid content is kept as
 /// received and the user is told where: `details.fallback_paths` and an
 /// `output_saved_elsewhere` warning in JSON mode, the warning line in human mode
-/// (which never prints details).
+/// (which never prints details). Google bills the answer like any completed one, so
+/// the error says so and reports its usage and a cost estimate from it.
 #[test]
 fn a_paid_answer_without_a_usable_image_keeps_its_content_and_says_where() {
     let content = br#"{"error": "not an image"}"#;
@@ -459,9 +460,17 @@ fn a_paid_answer_without_a_usable_image_keeps_its_content_and_says_where() {
         assert!(files_in(&sb.work()).is_empty(), "nothing at the requested location");
         if json_mode {
             let v = out.err(1, "provider_bad_response");
-            assert_eq!(v["error"]["details"]["charge_possible"], true, "{v}");
+            let details = &v["error"]["details"];
+            assert_eq!(details["charge_possible"], true, "{v}");
             assert_ne!(v["error"]["retryable"], true, "possibly charged: {v}");
-            assert_eq!(v["error"]["details"]["fallback_paths"], json!([kept]), "{v}");
+            assert_eq!(details["charged"], true, "{v}");
+            assert_eq!(details["usage"]["input_tokens"], 12, "{v}");
+            assert_eq!(details["usage"]["output_tokens"], 1120 + 40, "{v}");
+            // As for a saved image: 12 × $0.50 + 1120 × $60 + 40 × $3 per 1M tokens.
+            assert_eq!(details["cost_estimate"]["estimated"], true, "{v}");
+            let amount = details["cost_estimate"]["amount"].as_f64().unwrap();
+            assert!((amount - 0.067326).abs() < 1e-9, "{v}");
+            assert_eq!(details["fallback_paths"], json!([kept]), "{v}");
             let named = v["warnings"].as_array().unwrap().iter().any(|w| {
                 w["code"] == "output_saved_elsewhere" && w["message"].as_str().unwrap().contains(kept)
             });

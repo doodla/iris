@@ -506,12 +506,17 @@ a Veo submission it is `submission_uncertain`, and the job is recorded as `submi
 
 A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retryable, for a 5xx)
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
-errors are not charged. A Gemini answer that completed (HTTP 200) without an image — only text
-(`provider_error`, `retryable: true`), a blocked prompt or output (`content_blocked`), or a limited
-account (`permission_denied`) — is billed by the tokens it reports: its error carries
-`details.charged: true`, the sanitized `details.usage` (a `Usage` object) when the answer reported
-usage, and `details.cost_estimate` computed from it when Iris can estimate the model's cost. Ctrl-C while a paid image request is in flight is `interrupted` (exit 130)
-with `retryable: false` and `details.charge_possible: true`.
+errors are not charged. A Gemini answer that completed (HTTP 200) without a usable image — only
+text (`provider_error`, `retryable: true`), a blocked prompt or output (`content_blocked`), a
+limited account (`permission_denied`), or only content that is not a usable image
+(`provider_bad_response`, which also keeps `charge_possible` and so is never retryable) — is billed
+by the tokens it reports: its error carries `details.charged: true`, the sanitized `details.usage`
+(a `Usage` object) when the answer reported usage, and `details.cost_estimate` computed from it when
+Iris can estimate the model's cost. A success body Iris cannot parse at all is not known to be a
+completed Gemini answer, so its `provider_bad_response` has `charge_possible` only.
+
+Ctrl-C while a paid image request is in flight is `interrupted` (exit 130) with `retryable: false`
+and `details.charge_possible: true`.
 
 `interrupted` (exit 130) covers SIGINT (Ctrl-C), SIGTERM, and SIGHUP alike, once Iris has started
 an interruptible phase (a provider call, a poll, a wait, a download); it is always reported as one
@@ -575,7 +580,8 @@ skipped with `output_item_unusable`, whose message names the item and the reason
 number items by their position in the provider's response ("response item 1"), which is not the
 artifact `index` once an earlier item was skipped; `unexpected_output_count` counts items, usable or
 not. Only a response with no usable image at all fails, as `provider_bad_response` with
-`details.charge_possible: true`.
+`details.charge_possible: true` (a Gemini one also with `details.charged: true` and its usage; see
+[above](#stable-codes-categories-exit-codes-and-default-retryability)).
 
 Returned content that is not a valid image is paid output too, and is never thrown away: the
 content of a skipped item (the decoded bytes, or the payload as received when it is not valid

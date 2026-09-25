@@ -164,6 +164,16 @@ impl std::ops::Deref for ImageFailure {
     }
 }
 
+/// `error`, built from a completed answer, with the usage that answer reported in
+/// `details.usage` (the sanitized [`Usage`]), from which the app adds a cost
+/// estimate; `error` unchanged when the answer reported none.
+pub(crate) fn with_reported_usage(error: IrisError, usage: Option<&Usage>) -> IrisError {
+    match usage.and_then(|u| serde_json::to_value(u).ok()) {
+        Some(usage) => error.with_detail("usage", usage),
+        None => error,
+    }
+}
+
 /// A provider accepted an asynchronous job.
 #[derive(Debug, Clone)]
 pub struct SubmittedOperation {
