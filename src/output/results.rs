@@ -85,13 +85,24 @@ pub struct JobView {
 
 /// A prompt's SHA-256 and length: enough to match a job to a prompt one has, not to
 /// recover the prompt.
-#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct PromptFingerprint {
     /// Lowercase hex SHA-256 of the prompt as sent, encoded as UTF-8 (a
     /// `--prompt-file` or `--prompt-stdin` prompt without its trailing whitespace).
     pub sha256: String,
     /// The prompt's length in characters (Unicode scalar values).
     pub chars: u64,
+}
+
+impl PromptFingerprint {
+    /// The fingerprint of `prompt`, the text as sent.
+    pub fn of(prompt: &str) -> PromptFingerprint {
+        use sha2::{Digest, Sha256};
+        PromptFingerprint {
+            sha256: hex::encode(Sha256::digest(prompt.as_bytes())),
+            chars: prompt.chars().count() as u64,
+        }
+    }
 }
 
 /// The save target a job recorded when it was submitted.
@@ -482,4 +493,7 @@ pub struct PlanResult {
     pub outputs: Vec<String>,
     pub credential_present: bool,
     pub cost_estimate: Option<CostEstimate>,
+    /// The fingerprint of the prompt the real run would send, as a video job records
+    /// it (`job.prompt_fingerprint`); never the text.
+    pub prompt_fingerprint: PromptFingerprint,
 }

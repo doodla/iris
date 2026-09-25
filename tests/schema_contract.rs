@@ -173,7 +173,7 @@ fn open_sets_accept_later_values_of_the_documented_form_only() {
                 "dry_run": true, "provider": "openai", "model": "m", "model_source": "flag",
                 "operation": "image.generate", "async_job": false, "detach": false, "wait": null,
                 "billing": billing, "options": {}, "inputs": [], "outputs": [], "credential_present": false,
-                "cost_estimate": null
+                "cost_estimate": null, "prompt_fingerprint": { "sha256": "00", "chars": 1 }
             }
         })
     };
@@ -361,7 +361,8 @@ fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
         "dry_run": true, "provider": "openai", "model": "m", "model_source": "config",
         "operation": "image.generate",
         "async_job": false, "detach": false, "wait": null, "billing": "paid", "options": {}, "inputs": [],
-        "outputs": [], "credential_present": false, "cost_estimate": null
+        "outputs": [], "credential_present": false, "cost_estimate": null,
+        "prompt_fingerprint": { "sha256": "00", "chars": 1 }
     });
     let envelope = |ok: bool, command: Value, result: Value, error: Value| {
         serde_json::json!({

@@ -212,7 +212,9 @@ lowercase hex SHA-256 of the prompt as sent, encoded as UTF-8 (a `--prompt-file`
 `--prompt-stdin` prompt without its trailing whitespace), and its length in characters; never the
 text, even with `jobs.store_prompts`. To find the record, list the jobs still submitting (`--status
 submission_unknown` once the submission budget has passed) and match `model`, `created_at` (written
-just before the request was sent), and `prompt_fingerprint` against your own request:
+just before the request was sent), and `prompt_fingerprint` against your own request. A dry run
+shows the same fingerprint beforehand (`result.prompt_fingerprint`), so a caller can record it
+before the paid call:
 
 ```console
 $ iris jobs list --status submitting --json

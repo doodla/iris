@@ -32,7 +32,7 @@ use crate::config::{ENV_POLL_INTERVAL, ENV_WAIT_TIMEOUT, KEY_POLL_INTERVAL, KEY_
 use crate::domain::{JobStatus, ModelSource, Operation, ProviderId, Warning};
 use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
 use crate::jobs::{self, JobId, JobRecord, NewJob, OutputPlan, PromptRecord};
-use crate::output::results::{JobResult, PlanResult, PlanWait, WaitSetting};
+use crate::output::results::{JobResult, PlanResult, PlanWait, PromptFingerprint, WaitSetting};
 use crate::providers::{InputRole, VideoRequest};
 
 use super::context::AppContext;
@@ -164,6 +164,7 @@ async fn generate(
             outputs: plan.shown.clone(),
             credential_present: ctx.settings.credential_present(provider),
             cost_estimate: estimate,
+            prompt_fingerprint: PromptFingerprint::of(&common.prompt),
         }));
     }
 

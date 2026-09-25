@@ -473,7 +473,11 @@ pub enum VideoCommand {
                       neither -o nor -d saves there (result.job.output_plan).\n\nIf the caller's wait limit \
                       (--timeout) passes or you press Ctrl-C, the job keeps running remotely and stays \
                       resumable (exit 4 or 130). If the outcome of the submission itself is uncertain, Iris \
-                      exits 5 and never resubmits automatically.",
+                      exits 5 and never resubmits automatically. If the command is killed before it prints \
+                      the job id, find the job with `iris jobs list --status submitting --json` \
+                      (submission_unknown once the submission budget has passed) by its model, created_at, \
+                      and prompt_fingerprint, the prompt's SHA-256 and length, which --dry-run shows \
+                      beforehand (result.prompt_fingerprint).",
         after_help = "Examples:\n  iris video generate -m veo-lite \"waves at dusk\" --duration 4 -o waves.mp4\n  \
                       iris video generate -m veo-lite \"a paper boat\" --detach --json\n  iris video generate \
                       -m veo-lite --image first.png \"the scene comes alive\" --timeout 15m\n  iris video \
@@ -524,7 +528,11 @@ pub enum JobsCommand {
     /// List local job records (newest first)
     #[command(
         long_about = "List local job records, newest first. Records that cannot be read are skipped with a \
-                      job_record_unreadable warning.",
+                      job_record_unreadable warning.\n\nEach job shows its prompt's fingerprint \
+                      (prompt_fingerprint: the SHA-256 of the prompt as sent, and its length; never the \
+                      text), to match a job to the request that created it: a record left submitting by a \
+                      process that was killed is found with --status submitting (submission_unknown once the \
+                      submission budget has passed), by model, created_at, and prompt_fingerprint.",
         after_help = "Examples:\n  iris jobs list\n  iris jobs list --status running --json\n  iris jobs list \
                       --provider gemini --limit 5"
     )]

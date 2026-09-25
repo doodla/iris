@@ -887,6 +887,15 @@ fn job_help_states_the_exit_codes_and_the_state_directory_rule() {
         ),
         "{video}"
     );
+    // How to find a job whose submitting process was killed.
+    for (command, needle) in [
+        (&["video", "generate"][..], "`iris jobs list --status submitting --json`"),
+        (&["video", "generate"], "which --dry-run shows beforehand (result.prompt_fingerprint)"),
+        (&["jobs", "list"], "by model, created_at, and prompt_fingerprint"),
+    ] {
+        let text = help(command);
+        assert!(text.contains(needle), "{command:?}: {needle:?} in {text}");
+    }
 }
 
 /// `video generate` records where it was asked to save, and every job view shows it
@@ -1058,6 +1067,11 @@ fn a_record_left_submitting_by_a_killed_process_is_found_by_its_prompt_fingerpri
     let veo = VeoMock::start();
     let other = submit_detached(&sb, &veo, &[]);
     let prompt = "a lantern floating over a night market, ünïcode";
+    let fingerprint = json!({ "sha256": sha256_hex(prompt.as_bytes()), "chars": prompt.chars().count() });
+    // A dry run shows the fingerprint the job will have, before anything is paid for.
+    let plan =
+        sb.iris().args(["video", "generate", prompt, "-m", VEO_LITE, "--dry-run", "--json"]).run().ok();
+    assert_eq!(plan["result"]["prompt_fingerprint"], fingerprint);
     veo.submit.set(json_response(200, json!({ "name": veo.op_name })).set_delay(Duration::from_secs(60)));
     let child = sb
         .iris()
@@ -1076,10 +1090,7 @@ fn a_record_left_submitting_by_a_killed_process_is_found_by_its_prompt_fingerpri
     let job = &jobs[0];
     assert_ne!(job["job_id"], other.as_str());
     assert_eq!(job["model"], VEO_LITE);
-    assert_eq!(
-        job["prompt_fingerprint"],
-        json!({ "sha256": sha256_hex(prompt.as_bytes()), "chars": prompt.chars().count() })
-    );
+    assert_eq!(job["prompt_fingerprint"], fingerprint);
     let listed = sb.iris().args(["jobs", "list", "--json"]).run().ok();
     let theirs = listed["result"]["jobs"].as_array().unwrap().iter().find(|j| j["job_id"] == other.as_str());
     assert_eq!(theirs.unwrap()["prompt_fingerprint"]["sha256"], sha256_hex(PROMPT.as_bytes()));

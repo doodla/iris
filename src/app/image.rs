@@ -17,7 +17,7 @@ use crate::artifacts::{self, FinalizeMode, Naming, PathRequest};
 use crate::catalog::{self, InputCounts, OptionSource, RawOption, ResolvedModel};
 use crate::domain::{Artifact, JobStatus, ModelSource, Operation, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
-use crate::output::results::{ImageResult, PlanResult};
+use crate::output::results::{ImageResult, PlanResult, PromptFingerprint};
 use crate::providers::{ImageFailure, ImageOutput, ImageRequest, InputRole, UnusableOutput};
 
 use super::context::AppContext;
@@ -202,6 +202,7 @@ async fn run_checked(
             outputs: plan.shown.clone(),
             credential_present: ctx.settings.credential_present(provider),
             cost_estimate: pre_estimate.ok(),
+            prompt_fingerprint: PromptFingerprint::of(&common.prompt),
         }));
     }
 

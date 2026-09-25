@@ -644,6 +644,9 @@ fn a_gemini_output_extension_is_flagged_as_the_providers_choice() {
     };
     let v = run(true);
     assert_eq!(v["result"]["outputs"][0], sb.work().join("g.png").to_str().unwrap());
+    let fingerprint =
+        serde_json::json!({ "sha256": sha256_hex(PROMPT.as_bytes()), "chars": PROMPT.chars().count() });
+    assert_eq!(v["result"]["prompt_fingerprint"], fingerprint);
     assert!(warning_codes(&v).contains(&"output_extension_may_change".to_string()), "{v}");
     assert_eq!(api.total(), 0);
 

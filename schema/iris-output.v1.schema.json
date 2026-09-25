@@ -2142,6 +2142,10 @@
           },
           "type": "array"
         },
+        "prompt_fingerprint": {
+          "$ref": "#/$defs/PromptFingerprint",
+          "description": "The fingerprint of the prompt the real run would send, as a video job records\nit (`job.prompt_fingerprint`); never the text."
+        },
         "provider": {
           "$ref": "#/$defs/ProviderId"
         },
@@ -2171,7 +2175,8 @@
         "inputs",
         "outputs",
         "credential_present",
-        "cost_estimate"
+        "cost_estimate",
+        "prompt_fingerprint"
       ],
       "type": "object"
     },

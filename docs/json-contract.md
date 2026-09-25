@@ -356,7 +356,8 @@ creates and removes at once, a dry run proves the nearest existing directory wri
   "inputs": [ { "role": "first_frame", "path": "/home/you/fox.png", "media_type": "image/png", "bytes": 75 } ],
   "outputs": [ "/home/you/<job_id>.mp4" ],
   "credential_present": true,
-  "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.8, "...": "..." }
+  "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.8, "...": "..." },
+  "prompt_fingerprint": { "sha256": "c039da7d...", "chars": 31 }
 }
 ```
 
@@ -378,6 +379,8 @@ real run generates its own: `iris-<ulid>.<ext>` for an image (the real run's ULI
 extension when there are several (`iris-<ulid>-1.png`). A name given with `-o` is shown as it will
 be written: with several outputs, `<stem>-<i>.<ext>`. `i` counts from 1 (`-n 3 -o p.png` plans
 `p-1.png`, `p-2.png`, `p-3.png`), while the result's `artifacts[].index` counts from 0.
+`prompt_fingerprint` is the fingerprint of the prompt the real run would send, the same object a
+video job shows (`job.prompt_fingerprint`), so a caller can record it before the paid call.
 
 ### Shared objects
 

@@ -161,12 +161,8 @@ impl fmt::Debug for PromptRecord {
 impl PromptRecord {
     /// Build the record for `prompt`. `store_text` is config `jobs.store_prompts`.
     pub fn new(prompt: &str, store_text: bool) -> PromptRecord {
-        PromptRecord {
-            sha256: sha256_hex(prompt.as_bytes()),
-            chars: prompt.chars().count() as u64,
-            text: store_text.then(|| prompt.to_string()),
-            extra: Map::new(),
-        }
+        let PromptFingerprint { sha256, chars } = PromptFingerprint::of(prompt);
+        PromptRecord { sha256, chars, text: store_text.then(|| prompt.to_string()), extra: Map::new() }
     }
 }
 
