@@ -2,8 +2,8 @@
 # archives (docs/install.md) for a pushed `vX.Y.Z` tag (or, via
 # workflow_dispatch, everything but publishing — see the `dry_run` input
 # below). Publishing needs every other job to pass on the tagged commit. The
-# release notes are the version's section of CHANGELOG.md; a tag without one
-# fails in the first job, before anything is built.
+# release notes are the version's section of CHANGELOG.md; a tag without one,
+# or with an empty one, fails in the first job, before anything is built.
 #
 # Runtime compatibility of the three published archives (documented here so
 # this workflow's claims about what each archive runs on match
@@ -55,6 +55,20 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # parse-changelog reads one version's section out of a Keep a Changelog
+      # file (the tool taiki-e/create-gh-release-action uses). install-action
+      # checks the download against the SHA-256 in its pinned manifest. Only
+      # this job, which has a read-only token, runs it: the publish job gets
+      # the notes as an artifact, so it publishes exactly the text checked
+      # here and runs no extra tool while it holds `contents: write`.
+      # CONTRIBUTING.md (Releasing) gives this version for local previews.
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: parse-changelog@0.6.17
+          # Fail if the manifest lacks this version, rather than fall back to
+          # cargo-binstall, which fetches a binary no manifest checksum covers
+          # and is handed the job's token.
+          fallback: none
       - id: check
         env:
           # github.event_name is not attacker-controlled, but routing every
@@ -69,19 +83,42 @@ jobs:
           if [ "$EVENT_NAME" = "push" ]; then
             tag="${GITHUB_REF#refs/tags/}"
             version=$(sh scripts/check-tag-version.sh "$tag")
-            # The publish job uses this section as the release notes: fail
-            # now, before any build, if CHANGELOG.md lacks it.
-            sh scripts/release-notes.sh "$version" >/dev/null
           else
             tag=""
             version=$(sh scripts/check-tag-version.sh)
             echo "::notice::workflow_dispatch dry run, no tag pushed; using Cargo.toml version $version"
-            if ! sh scripts/release-notes.sh "$version" >/dev/null; then
-              echo "::warning::CHANGELOG.md has no section for $version yet; pushing tag v$version would fail"
-            fi
           fi
+
+          # The release notes are this version's CHANGELOG.md section, and it
+          # must have some text: parse-changelog exits 0 for an empty one. A
+          # tag push without them fails now, before anything is built; a dry
+          # run only warns. The job summary shows them as the release will.
+          notes="$RUNNER_TEMP/release-notes.md"
+          problem=""
+          if ! parse-changelog CHANGELOG.md "$version" > "$notes"; then
+            problem="could not read a \"## [$version]\" section from CHANGELOG.md (parse-changelog's error is above)"
+          elif ! grep -q '[^[:space:]]' "$notes"; then
+            problem="the \"## [$version]\" section of CHANGELOG.md is empty"
+          fi
+          if [ -z "$problem" ]; then
+            { printf '## Release notes for %s\n\n' "$version"; cat "$notes"; } >> "$GITHUB_STEP_SUMMARY"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            echo "::error::$problem; nothing was built or published (CONTRIBUTING.md, Releasing)"
+            exit 1
+          else
+            echo "::warning::$problem; pushing tag v$version would fail"
+          fi
+
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - name: Pass the release notes to the publish job
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Not "release-*": the publish job downloads that pattern into dist/.
+          name: notes
+          path: ${{ runner.temp }}/release-notes.md
+          if-no-files-found: error
 
   checks:
     name: checks
@@ -207,6 +244,10 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: notes
+          path: ${{ runner.temp }}/notes
 
       - name: Assert expected archives and build SHA256SUMS
         env:
@@ -248,9 +289,14 @@ jobs:
           VERSION: ${{ needs.verify.outputs.version }}
         run: |
           set -euo pipefail
-          # The release notes are this version's CHANGELOG.md section.
-          sh scripts/release-notes.sh "$VERSION" > "$RUNNER_TEMP/release-notes.md"
-          args=(dist/*.tar.gz dist/SHA256SUMS install.sh --title "$TAG" --notes-file "$RUNNER_TEMP/release-notes.md")
+          # The release notes: this version's CHANGELOG.md section, as the
+          # verify job read and checked it. Never publish without them.
+          notes="$RUNNER_TEMP/notes/release-notes.md"
+          if ! grep -q '[^[:space:]]' "$notes"; then
+            echo "::error::no release notes for $VERSION"
+            exit 1
+          fi
+          args=(dist/*.tar.gz dist/SHA256SUMS install.sh --title "$TAG" --notes-file "$notes")
           case "$TAG" in
             *-*) args+=(--prerelease) ;;
           esac

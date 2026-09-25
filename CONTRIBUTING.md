@@ -103,8 +103,12 @@ Maintainers cut a release from `main`:
    so that `Cargo.lock` records it too. Commit both.
 2. In `CHANGELOG.md`, move the entries under `## [Unreleased]` to a new `## [X.Y.Z] - YYYY-MM-DD`
    heading below it, and leave `[Unreleased]` empty. That section becomes the text of the GitHub
-   release, and the release workflow fails if it is missing or empty; preview it with
-   `sh scripts/release-notes.sh X.Y.Z`.
+   release. The release workflow fails if it is missing or empty, or if any version has two
+   headings. The workflow reads it with
+   [parse-changelog](https://github.com/taiki-e/parse-changelog), at the version pinned in
+   `release.yml`. To preview that text, install the same version with
+   `cargo install --locked parse-changelog@0.6.17` and run `parse-changelog CHANGELOG.md X.Y.Z`.
+   A manual run of the Release workflow also shows it in the run's summary.
 3. Merge that change, and wait until CI has passed on the resulting `main` commit. Only ever tag
    a `main` commit whose CI is green.
 4. Tag that commit and push the tag:

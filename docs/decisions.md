@@ -491,7 +491,8 @@ Linux and macOS, the minimum-Rust-version check, and `cargo deny` for advisories
 with actions pinned to commit SHAs; the advisory scan also runs weekly. CI on `main` uses current
 stable Rust and the minimum version; releases are checked and built with one pinned Rust version,
 which the release workflow logs (`rustc -Vv`) and which maintainers bump deliberately. A release's
-notes are its version's `CHANGELOG.md` section, and a tag without one is not released.
+notes are its version's `CHANGELOG.md` section, read with parse-changelog, and a tag without one,
+or with an empty one, is not released.
 
 **Why.** A `-gnu` binary built on a recent runner needs at least that runner's glibc and fails on
 older distributions; the musl build is statically linked and runs on any x86_64 Linux kernel 3.2
@@ -503,8 +504,16 @@ covers both advisories and licenses with one tool, and its action has current re
 and Clippy's lints, under an already-tested commit, and no record would say which compiler built
 an archive; a pinned version makes a release repeatable and its log says what built it. GitHub's
 generated notes list pull requests, not the user-facing changes the changelog records.
+parse-changelog is the established tool for reading one version's section of such a file
+(create-gh-release-action uses it). A hand-written line-based extractor, tried first, stopped
+early at a reference-link definition or at a `## ` line inside a code block and returned the
+shortened section without an error. parse-changelog handles both and rejects a version with two
+headings. Only the release's verify job, which has a read-only token, runs it; it passes the text
+to the publish job as an artifact. So the job holding the write token runs no extra tool and
+publishes exactly the text that was checked.
 
 **Sources.** [Rust platform support](https://doc.rust-lang.org/nightly/rustc/platform-support.html) ·
 [GitHub-hosted runner images](https://github.com/actions/runner-images) ·
 [macOS 13 runner retirement](https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/) ·
-[cargo-deny-action](https://github.com/EmbarkStudios/cargo-deny-action)
+[cargo-deny-action](https://github.com/EmbarkStudios/cargo-deny-action) ·
+[parse-changelog](https://github.com/taiki-e/parse-changelog)
