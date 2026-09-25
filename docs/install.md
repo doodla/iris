@@ -25,6 +25,17 @@ notices, and gives the crates.io address where each crate's source is available 
 installer installs only `iris`; the rest is there for a manual install and for reading offline.
 Unpacking an archive by hand works too: copy the `iris` executable anywhere on your `PATH`.
 
+**macOS: the archives are not signed with an Apple Developer ID or notarized by Apple.** The
+installer is not affected, because files that `curl` (or `wget`) downloads are not marked as
+downloaded from the internet. An archive downloaded with a web browser is marked (quarantined),
+the `iris` unpacked from it usually is too, and Gatekeeper then refuses to run it. Either download
+the archive with `curl -fLO` instead of a browser, or remove the mark from the unpacked executable
+before running it:
+
+```console
+$ xattr -d com.apple.quarantine ./iris
+```
+
 HTTPS requests (installer download, and every provider API call `iris` itself makes) use the
 **system's CA trust store**, not a bundled one. On a minimal container or base image, install
 `ca-certificates` (or your distribution's equivalent) first, or TLS verification will fail.
@@ -34,7 +45,7 @@ HTTPS requests (installer download, and every provider API call `iris` itself ma
 `doodla/iris` has **no published release** yet, so the installer paths below describe intended
 behavior that is tested offline — against local fixtures and against locally built release
 archives (see [Testing the installer without a real release](#testing-the-installer-without-a-real-release))
-— not against a real GitHub release. **What works today** is building from a checkout:
+— not against a real GitHub release. Building from source needs no release:
 
 ```console
 $ git clone https://github.com/doodla/iris && cd iris

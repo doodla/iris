@@ -65,9 +65,9 @@ failover, and Windows.
 
 Iris ships a small POSIX-sh installer per release ([docs/install.md](docs/install.md) has the
 full details: pinned installs, passing options through the pipe, checksum verification, upgrade,
-and uninstall). **As of this writing no release has been published yet**, so the one-liner below
-documents the intended, tested path (the installer itself is verified offline against local
-fixtures — see [docs/install.md](docs/install.md)) rather than something you can run today:
+and uninstall). **No release has been published yet**, so the one-liner below documents the
+intended path (the installer itself is tested offline against local fixtures — see
+[docs/install.md](docs/install.md)); it cannot install anything until the first release exists:
 
 ```console
 $ curl -fsSL https://raw.githubusercontent.com/doodla/iris/main/install.sh | sh
@@ -77,18 +77,20 @@ It installs to `~/.local/bin` (no sudo), detects your OS/CPU (Linux x86_64, macO
 verifies the downloaded archive's SHA-256 against the release's `SHA256SUMS`, and prints the
 installed version plus any PATH change you need.
 
-### From a checkout (works today)
+### Building from source
+
+Building from source needs no release, only Rust 1.89 or newer (`rustup` is the easiest way to get
+a toolchain):
 
 ```console
 $ git clone https://github.com/doodla/iris && cd iris
 $ cargo install --locked --path .
 ```
 
-This builds and installs the `iris` binary with `cargo` (Rust 1.89 or newer; `rustup` is the
-easiest way to get a toolchain). Verified at this commit: `cargo build --locked --release`
-succeeds against the committed `Cargo.lock` and produces a working `iris --version`. Once
-releases are published, see [docs/install.md](docs/install.md#supported-platforms-and-runtime-requirements)
-for the supported platforms and their minimum OS/kernel versions.
+This builds `iris` with exactly the dependency versions in the committed `Cargo.lock` and installs
+it into Cargo's `bin` directory (`~/.cargo/bin` by default). The platforms release archives are
+built for, and their minimum OS/kernel versions, are listed in
+[docs/install.md](docs/install.md#supported-platforms-and-runtime-requirements).
 
 ## Setup
 
