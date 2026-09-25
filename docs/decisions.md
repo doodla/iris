@@ -467,14 +467,21 @@ reason.
 `x86_64-apple-darwin` and `aarch64-apple-darwin`, each built on a native runner. There is no
 Linux arm64 or Windows build. CI runs formatting, Clippy with warnings denied, offline tests on
 Linux and macOS, the minimum-Rust-version check, and `cargo deny` for advisories and licenses,
-with actions pinned to commit SHAs; the advisory scan also runs weekly.
+with actions pinned to commit SHAs; the advisory scan also runs weekly. CI on `main` uses current
+stable Rust and the minimum version; releases are checked and built with one pinned Rust version,
+which the release workflow logs (`rustc -Vv`) and which maintainers bump deliberately. A release's
+notes are its version's `CHANGELOG.md` section, and a tag without one is not released.
 
 **Why.** A `-gnu` binary built on a recent runner needs at least that runner's glibc and fails on
 older distributions; the musl build is statically linked and runs on any x86_64 Linux kernel 3.2
 or newer, regardless of the host's C library. Rust's platform table gives macOS 10.12 as the
 minimum for `x86_64-apple-darwin` and macOS 11.0 for `aarch64-apple-darwin`. The macOS 13 runner
 image has been retired, so the Intel build uses the current Intel runner label. `cargo-deny`
-covers both advisories and licenses with one tool, and its action has current releases.
+covers both advisories and licenses with one tool, and its action has current releases. With
+`stable`, a Rust release landing between CI on `main` and the tag push would change the compiler,
+and Clippy's lints, under an already-tested commit, and no record would say which compiler built
+an archive; a pinned version makes a release repeatable and its log says what built it. GitHub's
+generated notes list pull requests, not the user-facing changes the changelog records.
 
 **Sources.** [Rust platform support](https://doc.rust-lang.org/nightly/rustc/platform-support.html) ·
 [GitHub-hosted runner images](https://github.com/actions/runner-images) ·

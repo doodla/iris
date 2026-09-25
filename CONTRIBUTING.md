@@ -90,7 +90,9 @@ Maintainers cut a release from `main`:
 1. On a branch, set the new `version` in `Cargo.toml` and run `cargo check` (without `--locked`)
    so that `Cargo.lock` records it too. Commit both.
 2. In `CHANGELOG.md`, move the entries under `## [Unreleased]` to a new `## [X.Y.Z] - YYYY-MM-DD`
-   heading below it, and leave `[Unreleased]` empty.
+   heading below it, and leave `[Unreleased]` empty. That section becomes the text of the GitHub
+   release, and the release workflow fails if it is missing or empty; preview it with
+   `sh scripts/release-notes.sh X.Y.Z`.
 3. Merge that change, and wait until CI has passed on the resulting `main` commit. Only ever tag
    a `main` commit whose CI is green.
 4. Tag that commit and push the tag:
@@ -101,15 +103,30 @@ Maintainers cut a release from `main`:
    ```
 
 Pushing a `v*` tag starts the release workflow (`.github/workflows/release.yml`). It fails unless
-the tag is `v` followed by the `Cargo.toml` version; reruns formatting, Clippy, and the tests on the
-tagged commit; builds the Linux musl binary and both macOS binaries on their own runners; packages
-each as `iris-vX.Y.Z-<target>.tar.gz` (the binary, `LICENSE`, `README.md`, `CHANGELOG.md`, and
-`docs/`); and smoke-tests every archive, including installing it with `install.sh`. Only when all
-of that passes does it create the GitHub release, with the three archives, `SHA256SUMS`, and
-`install.sh`; a version with a `-` suffix (such as `1.2.0-rc.1`) becomes a pre-release. If any job
-fails, nothing is published: re-run a job that failed for a transient reason, and otherwise fix the
-problem on `main` and release a new version rather than moving a pushed tag. Running the workflow
-by hand (workflow_dispatch) does everything except publishing.
+the tag is `v` followed by the `Cargo.toml` version and `CHANGELOG.md` has that version's section;
+reruns formatting, Clippy, and the tests on the tagged commit; builds the Linux musl binary and
+both macOS binaries on their own runners; packages each as `iris-vX.Y.Z-<target>.tar.gz` (the
+binary, `LICENSE`, `README.md`, `CHANGELOG.md`, and `docs/`); and smoke-tests every archive,
+including installing it with `install.sh`. Only when all of that passes does it create the GitHub
+release, with the three archives, `SHA256SUMS`, and `install.sh`, and the version's `CHANGELOG.md`
+section as its notes; a version with a `-` suffix (such as `1.2.0-rc.1`) becomes a pre-release. If
+any job fails, nothing is published: re-run a job that failed for a transient reason, and otherwise
+fix the problem on `main` and release a new version rather than moving a pushed tag. Running the
+workflow by hand (workflow_dispatch) does everything except publishing.
+
+### The release toolchain
+
+The release workflow checks and builds with one pinned Rust version, `RELEASE_RUST_TOOLCHAIN` at
+the top of `.github/workflows/release.yml`, not with whatever `stable` is current when a tag is
+pushed; every job that uses it logs `rustc -Vv` and fails if the compiler is a different version.
+CI on `main` keeps testing current stable and the minimum supported version. To move releases to a
+newer Rust:
+
+1. On a branch, set `RELEASE_RUST_TOOLCHAIN` to an exact `X.Y.Z` release (not `stable` or `X.Y`),
+   no older than `rust-version` in `Cargo.toml`.
+2. Run the Release workflow by hand on that branch (Actions → Release → Run workflow). It runs the
+   release checks, builds, and smoke tests with the new toolchain and publishes nothing.
+3. Merge once it passes, before tagging the release that should use it.
 
 ## Reporting a security issue
 
