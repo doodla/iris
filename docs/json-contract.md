@@ -414,11 +414,14 @@ says `retryable: true`.
 The recorded error of a job that has ended without success (`failed`, `expired`,
 `submission_unknown`) — in `job.error`, and as the error `jobs wait` and `jobs download` report
 for such a job — always says `retryable: false`: the job cannot change, so repeating those
-commands only replays it. When the error was recorded as retryable (for example a submission
-rejected with `rate_limited`, or a `network_error` before anything was sent), the recorded value is
-kept in `details.submission_retryable` and the hint adds that trying again means submitting a new
-job, a new, billed request. The error `video generate` itself returns for that submission keeps
-the recorded value.
+commands only replays it. When the error was not recorded as `retryable: false` (for example a
+submission rejected with `rate_limited`, or a `network_error` before anything was sent), the
+recorded value (`true`, or `null` when unknown) is kept in `details.submission_retryable`, and the
+hint starts by saying that trying again means submitting a new job, a new, billed request. The
+recorded hint follows in parentheses, introduced as "the hint given when the error was recorded":
+its advice (such as "wait and run the command again") was meant for that moment, not for the
+command that replays the error. The error `video generate` itself returns for that submission
+keeps the recorded value and hint.
 
 **Exit code summary:**
 

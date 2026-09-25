@@ -601,9 +601,12 @@ impl JobRecord {
     /// `retryable: false` even when the error itself was retryable (a submission
     /// rejected with `rate_limited`, or a `network_error` before anything was
     /// sent): repeating `jobs wait` or `jobs download` only replays it. The
-    /// recorded value is kept in `details.submission_retryable`, and the hint adds
-    /// that trying again means a new, billed submission. The record keeps the error
-    /// as it was written.
+    /// recorded value is kept in `details.submission_retryable`. The hint first
+    /// says that the job has ended and that trying again means a new, billed
+    /// submission; the recorded hint follows, marked as the one given when the
+    /// error was recorded, because its advice ("wait and run the command again")
+    /// was meant for that moment and would be wrong read as advice for the command
+    /// replaying it. The record keeps the error as it was written.
     pub fn error_view(&self) -> Option<ErrorBody> {
         let mut body = self.error.as_ref().map(Preserved::view)?;
         let ended =
@@ -617,7 +620,7 @@ impl JobRecord {
                           report this error again); trying again means submitting a new job with `iris video \
                           generate`, a new, billed request";
             body.hint = Some(match body.hint.take() {
-                Some(hint) => format!("{hint}; {replay}"),
+                Some(hint) => format!("{replay} (the hint given when the error was recorded: {hint})"),
                 None => replay.to_string(),
             });
         }

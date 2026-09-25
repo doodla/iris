@@ -354,21 +354,39 @@ fn outputs_with_unusable_uris_fail_alone_and_only_all_of_them_fail_the_job() {
 fn errors_of_ended_jobs_are_shown_as_not_retryable_and_kept_as_written() {
     // A submission rejected before anything was accepted (retryable as a
     // submission), then shown by a later `jobs status`/`wait`/`download`.
-    for (code, retryable) in [(ErrorCode::RateLimited, Some(true)), (ErrorCode::ProviderBadResponse, None)] {
+    let cases = [
+        (ErrorCode::RateLimited, Some(true), Some("wait and run the command again")),
+        (ErrorCode::ProviderBadResponse, None, None),
+    ];
+    for (code, retryable, recorded_hint) in cases {
         let mut rec = JobRecord::new(new_job(), ts(0)).unwrap();
-        let error = IrisError::new(code, "rejected").with_retryable(retryable).with_hint("nothing was sent");
+        let mut error = IrisError::new(code, "rejected").with_retryable(retryable);
+        if let Some(hint) = recorded_hint {
+            error = error.with_hint(hint);
+        }
         rec.mark_rejected(&error, ts(1)).unwrap();
         assert_eq!(rec.error().unwrap().retryable, retryable, "the record keeps what was written");
         let view = rec.error_view().unwrap();
         assert_eq!(view.code, code);
         assert_eq!(view.retryable, Some(false), "{code:?}: waiting or downloading again cannot help");
         assert_eq!(view.details.as_ref().unwrap()["submission_retryable"], json!(retryable));
+        // First why repeating the command cannot help; the recorded advice (for the
+        // moment the error happened) only after that, marked as such.
         let hint = view.hint.as_deref().unwrap();
-        assert!(hint.starts_with("nothing was sent; ") && hint.contains("new, billed request"), "{hint}");
+        assert!(hint.starts_with("this job has ended and will not change"), "{hint}");
+        assert!(hint.contains("a new, billed request"), "{hint}");
+        match recorded_hint {
+            Some(recorded) => assert!(
+                hint.ends_with(&format!("(the hint given when the error was recorded: {recorded})")),
+                "{hint}"
+            ),
+            None => assert!(!hint.contains("when the error was recorded"), "{hint}"),
+        }
         assert_eq!(rec.to_view().error.unwrap().retryable, Some(false));
         // Written back unchanged.
         let written = serde_json::to_value(&rec).unwrap();
         assert_eq!(written["error"]["retryable"], json!(retryable));
+        assert_eq!(written["error"]["hint"], json!(recorded_hint));
         assert!(written["error"]["details"].get("submission_retryable").is_none());
     }
 

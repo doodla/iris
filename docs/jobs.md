@@ -149,8 +149,9 @@ finished operation without any output, or one whose every output URI is unusable
 
 A job that has ended without success keeps its error, and `jobs status`, `jobs wait`, and `jobs
 download` show it with `retryable: false`, whatever the error said when it was recorded: nothing
-about the job can change any more, so the only way to try again is a new, billed submission (the
-hint says so, and `details.submission_retryable` keeps the recorded value).
+about the job can change any more, so the only way to try again is a new, billed submission. The
+hint says so first, then gives the recorded hint as the one given when the error was recorded, and
+`details.submission_retryable` keeps the recorded `retryable` value.
 
 **There is deliberately no transition that turns a `running` or `succeeded` job into `failed`
 because of something *local*.** Ctrl-C, a wait-limit expiry, a local network error while polling,

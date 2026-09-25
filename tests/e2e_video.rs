@@ -737,20 +737,30 @@ fn a_rejected_submission_replayed_later_is_not_retryable() {
     assert_eq!(v["error"]["job_status"], "failed");
     let id = v["error"]["job_id"].as_str().unwrap().to_string();
     assert_eq!(sb.record(&id)["error"]["retryable"], true, "the record keeps the error as it was");
+    let recorded_hint = sb.record(&id)["error"]["hint"].as_str().unwrap().to_string();
+    assert!(recorded_hint.contains("wait and run the command again"), "{recorded_hint}");
+    assert_eq!(v["error"]["hint"], recorded_hint.as_str(), "the submission's own advice");
 
     // The job itself can never succeed: later commands replay its error as not
-    // retryable, keep the original, and say that trying again means a new, billed job.
-    for cmd in ["wait", "download"] {
-        let v = sb.iris().gemini(&veo.api).args(["jobs", cmd, &id, "--json"]).run().err(1, "rate_limited");
-        let error = &v["error"];
+    // retryable, keep the original, and say first that trying again means a new,
+    // billed job; the submission's advice follows, marked as given back then.
+    for cmd in ["wait", "download", "status"] {
+        let out = sb.iris().gemini(&veo.api).args(["jobs", cmd, &id, "--json"]).run();
+        let v = if cmd == "status" { out.ok() } else { out.err(1, "rate_limited") };
+        let error = if cmd == "status" { &job_of(&v)["error"] } else { &v["error"] };
         assert_eq!(error["retryable"], false, "jobs {cmd}: {v}");
         assert_eq!(error["details"]["submission_retryable"], true);
-        assert_eq!(error["job_status"], "failed");
-        assert!(error["hint"].as_str().unwrap().contains("new, billed request"), "{v}");
+        let hint = error["hint"].as_str().unwrap();
+        assert!(hint.starts_with("this job has ended and will not change"), "jobs {cmd}: {hint}");
+        assert!(hint.contains("a new, billed request"), "jobs {cmd}: {hint}");
+        assert!(
+            hint.ends_with(&format!("(the hint given when the error was recorded: {recorded_hint})")),
+            "jobs {cmd}: {hint}"
+        );
+        if cmd != "status" {
+            assert_eq!(error["job_status"], "failed");
+        }
     }
-    let v = sb.iris().gemini(&veo.api).args(["jobs", "status", &id, "--json"]).run().ok();
-    assert_eq!(job_of(&v)["error"]["retryable"], false);
-    assert_eq!(job_of(&v)["error"]["details"]["submission_retryable"], true);
     assert_eq!(veo.submits(), 3, "one command's bounded retries; later commands never resubmit");
     veo.assert_no_credential_leaks();
 }
