@@ -250,14 +250,15 @@ fn iso_bmff_variants_are_accepted() {
     assert_eq!(inspect_iso_bmff(&mut Cursor::new(&open_ended)).unwrap().duration_seconds, Some(2.0));
 
     // QuickTime brand.
-    let mov = [ftyp(b"qt  ", &[b"qt  "]), bx(b"moov", &mvhd_v0(1000, 1500))].concat();
+    let mov = [ftyp(b"qt  ", &[b"qt  "]), bx(b"moov", &mvhd_v0(1000, 1500)), bx(b"mdat", &[2u8; 8])].concat();
     let info = inspect_iso_bmff(&mut Cursor::new(&mov)).unwrap();
     assert_eq!(info.media_type, "video/quicktime");
 
     // Unknown duration (all ones) or zero timescale: valid, duration unknown.
-    let unknown = [ftyp(b"isom", &[]), bx(b"moov", &mvhd_v0(1000, u32::MAX))].concat();
+    let unknown =
+        [ftyp(b"isom", &[]), bx(b"moov", &mvhd_v0(1000, u32::MAX)), bx(b"mdat", &[2u8; 8])].concat();
     assert_eq!(inspect_iso_bmff(&mut Cursor::new(&unknown)).unwrap().duration_seconds, None);
-    let no_mvhd = [ftyp(b"isom", &[]), bx(b"moov", &bx(b"trak", &[]))].concat();
+    let no_mvhd = [ftyp(b"isom", &[]), bx(b"moov", &bx(b"trak", &[])), bx(b"mdat", &[2u8; 8])].concat();
     assert_eq!(inspect_iso_bmff(&mut Cursor::new(&no_mvhd)).unwrap().duration_seconds, None);
     // Fragmented MP4: movie duration 0, samples in moof/mdat fragments.
     let fragmented = [
@@ -449,4 +450,86 @@ fn crafted_box_sizes_never_overflow_panic_or_loop() {
     let moov = bx(b"moov", &large_bx(b"mvhd", &mvhd_v0(1000, 3000)[8..]));
     let file = [ftyp(b"isom", &[]), moov, bx(b"mdat", &[1u8; 16])].concat();
     assert_eq!(inspect_iso_bmff(&mut Cursor::new(&file)).unwrap().duration_seconds, Some(3.0));
+}
+
+/// A track whose sample table places its chunks at `offsets` (`stco`, or `co64`
+/// when `wide`).
+fn trak_with_chunks(offsets: &[u64], wide: bool) -> Vec<u8> {
+    let mut table = vec![0u8; 4]; // version + flags
+    table.extend_from_slice(&(offsets.len() as u32).to_be_bytes());
+    for &offset in offsets {
+        if wide {
+            table.extend_from_slice(&offset.to_be_bytes());
+        } else {
+            table.extend_from_slice(&(offset as u32).to_be_bytes());
+        }
+    }
+    let chunk_box = bx(if wide { b"co64" } else { b"stco" }, &table);
+    let stbl = bx(b"stbl", &[bx(b"stsd", &[0u8; 8]), chunk_box].concat());
+    bx(b"trak", &[bx(b"tkhd", &[0u8; 84]), bx(b"mdia", &bx(b"minf", &stbl))].concat())
+}
+
+/// ftyp + moov (one track whose chunks start at the given offsets into the file)
+/// + a 256-byte mdat. Returns the file and the offset of the mdat payload.
+fn mp4_with_chunks(chunks_in_mdat: &[u64], wide: bool) -> (Vec<u8>, u64) {
+    let head = ftyp(b"isom", &[b"isom"]);
+    // The moov size does not depend on the offset values, so lay it out once to
+    // learn where the media data starts.
+    let probe = bx(b"moov", &[mvhd_v0(1000, 2000), trak_with_chunks(chunks_in_mdat, wide)].concat());
+    let data_start = (head.len() + probe.len() + 8) as u64;
+    let absolute: Vec<u64> = chunks_in_mdat.iter().map(|o| data_start + o).collect();
+    let moov = bx(b"moov", &[mvhd_v0(1000, 2000), trak_with_chunks(&absolute, wide)].concat());
+    ([head, moov, bx(b"mdat", &[0x33; 256])].concat(), data_start)
+}
+
+#[test]
+fn videos_need_media_data_that_the_sample_tables_can_reach() {
+    // Chunk offsets inside the media data: valid, with stco and with co64.
+    for wide in [false, true] {
+        let (file, _) = mp4_with_chunks(&[0, 100, 200], wide);
+        let info = inspect_iso_bmff(&mut Cursor::new(&file)).unwrap();
+        assert_eq!(info.duration_seconds, Some(2.0));
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("ok.mp4");
+        std::fs::write(&path, &file).unwrap();
+        assert_eq!(media::validate_file(&path, &["video/mp4"]).unwrap().media_type, "video/mp4");
+    }
+
+    // Cut right after the metadata (the case a file host that stops early
+    // produces): no media data at all.
+    let (file, data_start) = mp4_with_chunks(&[0, 100, 200], false);
+    let metadata_only = &file[..(data_start - 8) as usize];
+    let why = inspect_iso_bmff(&mut Cursor::new(metadata_only)).unwrap_err();
+    assert!(why.contains("sample chunk") && why.contains("truncated"), "{why}");
+    let err = media::validate_bytes(metadata_only, &["video/mp4"]).unwrap_err();
+    assert_eq!(err.code, ErrorCode::InvalidMedia);
+    // Without sample tables to go by, the missing media data box itself.
+    let no_mdat = [ftyp(b"isom", &[]), bx(b"moov", &mvhd_v0(1000, 4000))].concat();
+    let why = inspect_iso_bmff(&mut Cursor::new(&no_mdat)).unwrap_err();
+    assert!(why.contains("'mdat'") && why.contains("truncated"), "{why}");
+
+    // A media data box that claims to extend to the end of the file (size 0), cut
+    // before the last chunk: the sample table reaches past the end.
+    for wide in [false, true] {
+        let (mut file, data_start) = mp4_with_chunks(&[0, 100, 200], wide);
+        let at = (data_start - 8) as usize;
+        file[at..at + 4].copy_from_slice(&0u32.to_be_bytes());
+        assert!(inspect_iso_bmff(&mut Cursor::new(&file)).is_ok(), "complete: every chunk is inside");
+        file.truncate((data_start + 150) as usize);
+        let why = inspect_iso_bmff(&mut Cursor::new(&file)).unwrap_err();
+        assert!(why.contains("sample chunk") && why.contains("truncated"), "{why}");
+    }
+
+    // A chunk offset far past the end (e.g. a 64-bit offset near u64::MAX).
+    let (file, _) = mp4_with_chunks(&[0, u64::MAX / 2], true);
+    assert!(inspect_iso_bmff(&mut Cursor::new(&file)).unwrap_err().contains("sample chunk"));
+
+    // An entry count larger than the table holds is read as far as the table goes.
+    let mut table = vec![0u8; 4];
+    table.extend_from_slice(&u32::MAX.to_be_bytes());
+    table.extend_from_slice(&40u32.to_be_bytes());
+    let stbl = bx(b"stbl", &bx(b"stco", &table));
+    let trak = bx(b"trak", &bx(b"mdia", &bx(b"minf", &stbl)));
+    let file = [ftyp(b"isom", &[]), bx(b"moov", &trak), bx(b"mdat", &[1u8; 64])].concat();
+    assert!(inspect_iso_bmff(&mut Cursor::new(&file)).is_ok());
 }

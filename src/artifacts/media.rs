@@ -10,13 +10,18 @@
 //!   blocks up to the `0x3B` trailer ([`inspect_gif`]), and HEIC/HEIF boxes with
 //!   the ISO-BMFF walker ([`inspect_heif`]). Truncated files fail either way.
 //! * Videos are checked with a small ISO-BMFF box walker: the first top-level box
-//!   is `ftyp`, a `moov` box is present, every top-level box fits in the file (a
-//!   truncated download fails), and the duration is read from `moov/mvhd`.
+//!   is `ftyp`, a `moov` box (movie metadata) and a top-level `mdat` box (media
+//!   data; fragmented files carry `moof` + `mdat` pairs) are present, every
+//!   top-level box fits in the file, and every chunk offset of the sample tables
+//!   (`stco`/`co64`) points inside the file, so a download cut off anywhere,
+//!   including right after the metadata, fails. The duration is read from
+//!   `moov/mvhd`.
 //!
 //! No sniffed type is accepted without one of these checks.
 //!
-//! The box walker is hand-rolled on purpose: Iris needs three facts (first box,
-//! `moov`/`meta` presence, `mvhd` duration) and a truncation check. Existing
+//! The box walker is hand-rolled on purpose: Iris needs a few facts (first box,
+//! `moov`/`mdat`/`meta` presence, `mvhd` duration, chunk offsets) and a truncation
+//! check. Existing
 //! crates are either unmaintained (`mp4`), MPL-licensed (`mp4parse`), or bind to
 //! native FFmpeg; ~100 lines of bounds-checked parsing are simpler to audit.
 //! Every size and offset read from a file is compared with what is left before it
@@ -418,9 +423,12 @@ fn gif_skip_sub_blocks(bytes: &[u8], mut pos: usize) -> Result<usize, String> {
 /// Walk the top-level boxes of an ISO-BMFF file (MP4/QuickTime).
 ///
 /// Checks that the first box is `ftyp` with a video brand, that every box header is
-/// sane and every box fits inside the file (so truncated files fail), and that a
-/// `moov` box is present. Reports the duration from `moov/mvhd` when parseable.
-/// Returns a human-readable reason on failure.
+/// sane and every box fits inside the file (so truncated files fail), that a
+/// `moov` box and a top-level `mdat` box (the media data) are present, and that
+/// every chunk offset in the sample tables (`stco`/`co64`) lies inside the file
+/// (so a file cut inside or before its media data fails even when the last box
+/// claims to extend to the end of the file). Reports the duration from
+/// `moov/mvhd` when parseable. Returns a human-readable reason on failure.
 pub fn inspect_iso_bmff<R: Read + Seek>(reader: &mut R) -> Result<IsoBmffInfo, String> {
     walk_iso_bmff(reader, BmffKind::Video)
 }
@@ -450,6 +458,7 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
     let mut pos = 0u64;
     let mut ftyp: Option<(&'static str, String)> = None;
     let mut saw_moov = false;
+    let mut saw_mdat = false;
     let mut saw_meta = false;
     let mut duration = None;
     let mut dimensions = None;
@@ -476,10 +485,13 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
             ftyp = Some((media_type, brand));
         } else if &header.kind == b"meta" {
             saw_meta = true;
+        } else if &header.kind == b"mdat" {
+            saw_mdat = true;
         } else if &header.kind == b"moov" {
             saw_moov = true;
             if want == BmffKind::Video && duration.is_none() && header.payload_len() <= MAX_MOOV_BYTES {
                 let payload = read_payload(reader, &header, MAX_MOOV_BYTES)?;
+                check_chunk_offsets(&payload, len)?;
                 duration = mvhd_duration(&payload);
                 dimensions = video_dimensions(&payload);
             }
@@ -494,6 +506,12 @@ fn walk_iso_bmff<R: Read + Seek>(reader: &mut R, want: BmffKind) -> Result<IsoBm
         BmffKind::Video if !saw_moov => {
             return Err("no 'moov' box (movie metadata) was found; the file is incomplete or not playable"
                 .to_string());
+        }
+        BmffKind::Video if !saw_mdat => {
+            return Err(
+                "no 'mdat' box (media data) was found; the file is incomplete (truncated) or not playable"
+                    .to_string(),
+            );
         }
         BmffKind::Image if !saw_meta && !saw_moov => {
             return Err(
@@ -650,6 +668,48 @@ fn video_dimensions(moov: &[u8]) -> Option<(u32, u32)> {
         let height = u32::from_be_bytes(tail[4..8].try_into().ok()?) >> 16;
         (width > 0 && height > 0).then_some((width, height))
     })
+}
+
+/// Every chunk offset of every track (`moov/trak/mdia/minf/stbl/stco` or `co64`)
+/// must point inside the file (`len` bytes): the samples live there, so an offset
+/// at or past the end means the media data was cut off. Sample tables that cannot
+/// be parsed are not judged here (the walk only reports what it can read).
+fn check_chunk_offsets(moov: &[u8], len: u64) -> Result<(), String> {
+    for (_, trak) in child_boxes(moov).into_iter().filter(|(kind, _)| kind == b"trak") {
+        let tables = child_boxes(trak)
+            .into_iter()
+            .filter(|(kind, _)| kind == b"mdia")
+            .flat_map(|(_, mdia)| child_boxes(mdia))
+            .filter(|(kind, _)| kind == b"minf")
+            .flat_map(|(_, minf)| child_boxes(minf))
+            .filter(|(kind, _)| kind == b"stbl")
+            .flat_map(|(_, stbl)| child_boxes(stbl));
+        for (kind, body) in tables {
+            let width = match &kind {
+                b"stco" => 4,
+                b"co64" => 8,
+                _ => continue,
+            };
+            // version + flags, entry_count, then the offsets.
+            let Some(count) = body.get(4..8).and_then(|b| <[u8; 4]>::try_from(b).ok()) else { continue };
+            let count = usize::try_from(u32::from_be_bytes(count)).unwrap_or(usize::MAX);
+            let entries = body.get(8..).unwrap_or_default();
+            for entry in entries.chunks_exact(width).take(count) {
+                let offset = match width {
+                    4 => entry.try_into().map(|b| u64::from(u32::from_be_bytes(b))),
+                    _ => entry.try_into().map(u64::from_be_bytes),
+                };
+                let Ok(offset) = offset else { continue };
+                if offset >= len {
+                    return Err(format!(
+                        "the media data is incomplete: a sample chunk starts at offset {offset}, but the file \
+                         has only {len} bytes (truncated file?)"
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Duration from the `mvhd` child of a `moov` payload, if present and meaningful.

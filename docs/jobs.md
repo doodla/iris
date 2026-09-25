@@ -268,7 +268,10 @@ Order of decision for each output, under the job's download lock:
    `Content-Type` says it's an error document (`application/json`/`text/*`/`application/xml`) —
    an API error page mistakenly served as if it were media — or whose bytes' magic number doesn't
    match the declared media type, is rejected as `invalid_media` rather than saved (with
-   `retryable: true` and `download_state: failed`: downloading again may work).
+   `retryable: true` and `download_state: failed`: downloading again may work). So is a file that
+   is not complete media: a video must hold its movie metadata (`moov`), its media data (`mdat`),
+   and sample chunk offsets that point inside the file, so a transfer that stopped early — even
+   one whose `Content-Length` matched what arrived — is never recorded as downloaded.
 4. Finalize through a temp file in the target directory and a no-clobber (or, with `--overwrite`,
    atomic-replace) rename — never a partial file under the final name.
 

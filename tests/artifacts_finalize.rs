@@ -39,7 +39,7 @@ fn mp4(duration_ms: u32) -> Vec<u8> {
 
 /// A minimal valid QuickTime file.
 fn mov() -> Vec<u8> {
-    [bx(b"ftyp", b"qt  \0\0\0\0qt  "), bx(b"moov", &[])].concat()
+    [bx(b"ftyp", b"qt  \0\0\0\0qt  "), bx(b"moov", &[]), bx(b"mdat", &[0x51; 64])].concat()
 }
 
 /// Names in `dir`, asserting no temp/part files were left behind.

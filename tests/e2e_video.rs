@@ -673,6 +673,44 @@ fn an_error_document_served_as_media_is_invalid_media_and_nothing_is_saved() {
     veo.assert_no_credential_leaks();
 }
 
+#[test]
+fn a_video_cut_off_after_its_metadata_is_invalid_media_and_downloaded_again_later() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    veo.succeed();
+    // The file host stops after the ftyp and moov boxes, with a matching
+    // Content-Length: a complete HTTP response, but no media data.
+    let video = veo_video();
+    let moov_end = {
+        let ftyp_len = u32::from_be_bytes(video[0..4].try_into().unwrap()) as usize;
+        ftyp_len + u32::from_be_bytes(video[ftyp_len..ftyp_len + 4].try_into().unwrap()) as usize
+    };
+    assert_eq!(&video[moov_end + 4..moov_end + 8], b"mdat", "the fixture is ftyp + moov + mdat");
+    veo.file.set(wiremock::ResponseTemplate::new(200).set_body_raw(video[..moov_end].to_vec(), "video/mp4"));
+
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run().err(1, "invalid_media");
+    let error = &v["error"];
+    assert_eq!(error["retryable"], true, "downloading again may work: {v}");
+    assert_eq!(error["job_status"], "succeeded");
+    assert!(error["message"].as_str().unwrap().contains("mdat"), "{v}");
+    let rec = sb.record(&id);
+    assert_eq!(rec["status"], "succeeded");
+    assert_eq!(
+        rec["outputs"][0]["download_state"], "failed",
+        "the cut-off file is not recorded as downloaded"
+    );
+    assert!(files_in(&sb.work()).is_empty(), "nothing partial is kept: {:?}", files_in(&sb.work()));
+
+    // The file host serves the whole file again: the next download fetches it.
+    veo.file.set(wiremock::ResponseTemplate::new(200).set_body_raw(video.clone(), "video/mp4"));
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    assert_video(&job_of(&v)["artifacts"][0], &sb.path(&format!("{id}.mp4")));
+    assert_eq!(veo.file_fetches(), 2);
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
 /// Shift every `*_at` timestamp of a job record back by `days`, as if the job had
 /// been submitted (and finished) that long ago (the retention clock counts from
 /// `submitted_at`).
