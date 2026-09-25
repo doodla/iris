@@ -81,6 +81,16 @@ fn configure(cmd: &mut std::process::Command, sandbox: &Sandbox) {
 }
 
 /// `iris` in the sandbox with no credentials and unreachable providers.
+/// The documented default config file for the platform the tests run on, with no
+/// `XDG_CONFIG_HOME` (docs/configuration.md).
+fn default_config_file(sandbox: &Sandbox) -> std::path::PathBuf {
+    if cfg!(target_os = "macos") {
+        sandbox.home().join("Library/Application Support/iris/config.toml")
+    } else {
+        sandbox.home().join(".config/iris/config.toml")
+    }
+}
+
 fn iris(sandbox: &Sandbox) -> Command {
     let mut std_cmd = std::process::Command::new(BIN);
     configure(&mut std_cmd, sandbox);
@@ -522,8 +532,8 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
     assert_eq!(v["result"]["state_dir"], sandbox.state().to_str().unwrap());
     assert_eq!(
         v["result"]["config_file"],
-        sandbox.home().join(".config/iris/config.toml").to_str().unwrap(),
-        "Linux default without XDG_CONFIG_HOME"
+        default_config_file(&sandbox).to_str().unwrap(),
+        "the platform default (no XDG_CONFIG_HOME)"
     );
 
     let out =
@@ -540,10 +550,7 @@ fn providers_config_and_doctor_report_presence_but_never_key_values() {
     let config = checks.iter().find(|c| c["id"] == "config").unwrap();
     assert_eq!(
         config["message"],
-        format!(
-            "no config file at {} (it is optional)",
-            sandbox.home().join(".config/iris/config.toml").display()
-        )
+        format!("no config file at {} (it is optional)", default_config_file(&sandbox).display())
     );
     assert!(!out.stdout.contains("google-key-should-be-ignored"));
 

@@ -590,27 +590,30 @@ pub fn mp4(seconds: u32) -> Vec<u8> {
 // ----- environment and context ---------------------------------------------------------
 
 /// A temp directory with `home/`, `work/` (current directory = default output
-/// directory), and `state/`.
+/// directory), and `state/`. The root is canonicalized so paths compare equal to the
+/// ones Iris reports (macOS `/var` → `/private/var`).
 pub struct Sandbox {
-    pub dir: tempfile::TempDir,
+    _dir: tempfile::TempDir,
+    root: PathBuf,
 }
 
 impl Sandbox {
     pub fn new() -> Sandbox {
         let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
         for sub in ["home", "work", "state"] {
-            std::fs::create_dir_all(dir.path().join(sub)).unwrap();
+            std::fs::create_dir_all(root.join(sub)).unwrap();
         }
-        Sandbox { dir }
+        Sandbox { _dir: dir, root }
     }
     pub fn home(&self) -> PathBuf {
-        self.dir.path().join("home")
+        self.root.join("home")
     }
     pub fn work(&self) -> PathBuf {
-        self.dir.path().join("work")
+        self.root.join("work")
     }
     pub fn state(&self) -> PathBuf {
-        self.dir.path().join("state")
+        self.root.join("state")
     }
     pub fn path(&self, rel: &str) -> PathBuf {
         self.work().join(rel)
