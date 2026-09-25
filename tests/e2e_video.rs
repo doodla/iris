@@ -1626,3 +1626,27 @@ fn verbose_video_runs_never_reveal_the_key_or_signed_urls() {
     }
     veo.assert_no_credential_leaks();
 }
+
+#[test]
+fn jobs_wait_refuses_an_unusable_output_target_before_waiting() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    std::fs::write(sb.path("afile"), b"x").unwrap();
+
+    // The job is still running: each refusal comes before any poll or wait.
+    for target in [vec!["-o", "-"], vec!["-o", "afile/clip.mp4"], vec!["-d", "afile/sub"]] {
+        let v = sb
+            .iris()
+            .gemini(&veo.api)
+            .args(["jobs", "wait", &id, "--timeout", "30s"])
+            .args(&target)
+            .arg("--json")
+            .run()
+            .err(2, "invalid_argument");
+        assert_eq!(v["error"]["job_id"], id.as_str(), "{target:?}");
+        assert_eq!(v["error"]["job_status"], "running", "{target:?}");
+    }
+    assert_eq!(veo.polls(), 0, "nothing was polled for an unusable target");
+    assert_eq!(sb.record(&id)["status"], "running");
+}

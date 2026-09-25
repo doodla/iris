@@ -381,6 +381,9 @@ pub(crate) async fn wait_parsed(
     save: SaveMode,
     warnings: &mut Vec<Warning>,
 ) -> Result<JobResult, IrisError> {
+    if args.download {
+        precheck_explicit_target(ctx, id, &args.target)?;
+    }
     let rec = wait_until_terminal(ctx, id, warnings).await?;
     match rec.status() {
         JobStatus::Succeeded if args.download => {
@@ -393,6 +396,33 @@ pub(crate) async fn wait_parsed(
         }
         _ => Err(job_error(&rec)),
     }
+}
+
+/// Check an explicit `-o`/`-d` of `jobs wait` before waiting, so a location that
+/// cannot be used (a standard stream, a device, a file where a directory should be)
+/// is refused at once instead of after the job finishes. Nothing is created; a
+/// file already at the target is decided on after the wait, as usual (it may be
+/// this job's own earlier download).
+fn precheck_explicit_target(ctx: &AppContext, id: &JobId, target: &Target) -> Result<(), IrisError> {
+    let explicit_dir = ctx.settings.output_dir.source == SettingSource::Flag;
+    if target.output.is_none() && !explicit_dir {
+        return Ok(());
+    }
+    let rec = ctx.store.load(id)?;
+    let count = match rec.outputs().len() {
+        0 => rec.request().get("count").and_then(serde_json::Value::as_u64).unwrap_or(1) as u32,
+        n => n as u32,
+    };
+    let plan = artifacts::plan_outputs(&PathRequest {
+        naming: Naming::Video { job_id: id.as_str() },
+        count: count.max(1),
+        output: target.output.as_deref(),
+        dir: &ctx.settings.output_dir.value,
+        format: None,
+        media_types: output_media_types(ctx, &rec),
+    })
+    .map_err(|e| with_job_context(e, &rec))?;
+    artifacts::preflight_dirs(&plan.paths, false).map_err(|e| with_job_context(e, &rec))
 }
 
 /// The `{job, next_steps}` result for a record.
