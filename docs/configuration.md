@@ -240,5 +240,13 @@ URL configured at that moment.
 - Every URL Iris prints or logs is redacted first (`redact_url`): userinfo is stripped and every
   query value is replaced with `REDACTED` except a small allowlist (e.g. `alt`), so a signed
   download URL never leaks in output.
+- API answers are read into memory only up to a limit, so a misbehaving server or proxy at a
+  configured base URL cannot make Iris buffer gigabytes: 16 MiB for JSON answers (status checks,
+  model metadata, video job submissions) and 512 MiB for image answers, which carry the images
+  inline (the largest legitimate one, ten uncompressed 4K PNGs from OpenAI, is about 422 MiB). Error
+  answers are read up to 1 MiB. A longer status or metadata answer is `provider_bad_response`; a
+  longer answer to a paid request is `submission_uncertain` (the provider processed the request,
+  but its answer was lost), and it is never resent. Downloads stream to disk instead and are
+  capped at 4 GiB (see [jobs.md](jobs.md#downloads)).
 - Test fixtures in this repository contain no real keys; tests set fake ones (e.g.
   `test-openai-key-000`) through the process environment, never through argv.

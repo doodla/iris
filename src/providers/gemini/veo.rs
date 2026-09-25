@@ -49,7 +49,8 @@ pub async fn submit(req: &VideoRequest, ctx: &ProviderContext) -> Result<Submitt
     let body = encode_request(req)?;
     let auth = client::auth(ctx)?;
     let url = client::endpoint(ctx, API_V1BETA, &format!("models/{}:predictLongRunning", req.model));
-    let call = client::call(RetryClass::PaidSubmit, ctx.timeouts.submit);
+    let call =
+        client::call(RetryClass::PaidSubmit, ctx.timeouts.submit).with_max_body(crate::http::JSON_BODY_LIMIT);
 
     let resp = ctx
         .http

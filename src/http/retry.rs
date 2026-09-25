@@ -62,6 +62,32 @@ use crate::redact;
 /// Maximum characters of provider text kept in messages and details (see docs/json-contract.md).
 pub(crate) const PROVIDER_TEXT_MAX: usize = 500;
 
+/// Largest successful response body [`HttpClient::execute`] reads for a JSON API
+/// answer without inline media (16 MiB): status polls, model metadata, job
+/// submissions. Those answers are a few KiB (an operation with its output URIs, a
+/// model description); 16 MiB is thousands of times that, yet small enough that a
+/// misbehaving server or proxy cannot make Iris buffer gigabytes. The default for
+/// [`RetryClass::IdempotentRead`] and [`RetryClass::Download`] calls.
+pub const JSON_BODY_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// Largest successful response body read for a paid synchronous image call (512
+/// MiB), whose answer carries the generated images inline as base64. The largest
+/// such answer today comes from OpenAI: up to 10 images of up to 8,294,400 pixels
+/// (3840x2160). An 8-bit RGBA PNG of that size holds at most about 33.2 MB even if
+/// it does not compress at all, 44.3 MB as base64, so 10 of them are about 443 MB
+/// (422 MiB) plus a little JSON. Gemini returns one image of at most 4K per call,
+/// far less. 512 MiB covers the worst case with room to spare, so a paid output is
+/// never cut off, and still bounds what a misbehaving server can make Iris hold.
+/// The default for [`RetryClass::PaidSubmit`] calls; a paid call whose answer is
+/// small JSON (a video job submission) sets [`JSON_BODY_LIMIT`] with
+/// [`Call::with_max_body`].
+pub const MEDIA_BODY_LIMIT: u64 = 512 * 1024 * 1024;
+
+/// Bytes of a non-success response body read at most (1 MiB). Provider error
+/// bodies are a few KiB; the status alone is a definite answer, so a longer body is
+/// cut here and classified from what was read.
+const ERROR_BODY_LIMIT: u64 = 1024 * 1024;
+
 /// How a call may be retried (see docs/architecture.md "Where invariants live").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RetryClass {
@@ -94,6 +120,16 @@ impl RetryClass {
             RetryClass::PaidSubmit => "paid_submit",
             RetryClass::IdempotentRead => "idempotent_read",
             RetryClass::Download => "download",
+        }
+    }
+
+    /// The largest successful response body [`Call::new`] allows for this class:
+    /// [`MEDIA_BODY_LIMIT`] for paid submissions (synchronous image calls return
+    /// their images inline), [`JSON_BODY_LIMIT`] otherwise.
+    pub const fn default_max_body(self) -> u64 {
+        match self {
+            RetryClass::PaidSubmit => MEDIA_BODY_LIMIT,
+            RetryClass::IdempotentRead | RetryClass::Download => JSON_BODY_LIMIT,
         }
     }
 
@@ -257,13 +293,24 @@ pub struct Call {
     pub request_id_header: Option<&'static str>,
     /// Provider attached to errors produced by the executor.
     pub provider: Option<ProviderId>,
+    /// Largest successful response body read, in bytes. A longer answer (declared by
+    /// `Content-Length` or actually received) is not read further and never
+    /// retried: see [`HttpClient::execute`] for how it is reported.
+    pub max_body: u64,
 }
 
 impl Call {
     /// A call with retry class `class` and per-attempt time limit `timeout`, no
-    /// request id header, and no provider.
+    /// request id header, no provider, and the class's body limit
+    /// ([`RetryClass::default_max_body`]).
     pub fn new(class: RetryClass, timeout: Duration) -> Self {
-        Call { class, timeout, request_id_header: None, provider: None }
+        Call { class, timeout, request_id_header: None, provider: None, max_body: class.default_max_body() }
+    }
+
+    /// Read at most `bytes` of a successful response body (see [`Call::max_body`]).
+    pub fn with_max_body(mut self, bytes: u64) -> Self {
+        self.max_body = bytes;
+        self
     }
 
     /// Capture the provider request id from response header `header` (sanitized
@@ -557,6 +604,13 @@ impl HttpClient {
     ///   [`RetryPolicy::max_retry_after`]; a longer requested delay stops with
     ///   `rate_limited` carrying `retry_after`. `x-should-retry: false` stops retries.
     /// * Returns the first 2xx response (with its attempt count), or an [`HttpError`].
+    /// * A 2xx body longer than [`Call::max_body`] is not read further and never
+    ///   retried. For a [`RetryClass::PaidSubmit`] call the provider answered, so the
+    ///   request was processed, but its answer is lost: that is an
+    ///   [`HttpError::Transport`] with `after_send` set (kind
+    ///   [`TransportKind::Other`]), which paid-submit adapters report as
+    ///   `submission_uncertain`. For any other call it is `provider_bad_response`.
+    ///   A non-2xx body is read up to 1 MiB and classified from what was read.
     /// * Redirects are never followed: a 3xx response goes to `classify` like any
     ///   other non-2xx response.
     /// * Fails with `internal_error`, before building or sending anything, on a
@@ -592,13 +646,9 @@ impl HttpClient {
             let url = redact::redact_url(request.url().as_str());
             let started = Instant::now();
 
-            match send_and_read(&client, request).await {
+            match send_and_read(&client, request, call.max_body).await {
                 Ok((status, headers, body)) => {
-                    let request_id = call
-                        .request_id_header
-                        .and_then(|h| headers.get(h))
-                        .and_then(|v| v.to_str().ok())
-                        .and_then(sanitize_request_id);
+                    let request_id = request_id_from(call, &headers);
                     tracing::debug!(
                         method = %method,
                         url = %url,
@@ -646,13 +696,33 @@ impl HttpClient {
                     );
                     tokio::time::sleep(delay).await;
                 }
-                Err(failure) if failure.local => {
+                Err(ReadError::TooLarge { status, headers, declared }) => {
+                    tracing::debug!(
+                        method = %method,
+                        url = %url,
+                        status = status.as_u16(),
+                        attempt,
+                        class = call.class.as_str(),
+                        elapsed_ms = started.elapsed().as_millis() as u64,
+                        limit = call.max_body,
+                        "http response body over the limit"
+                    );
+                    return Err(too_large(
+                        call,
+                        attempt,
+                        url,
+                        status,
+                        request_id_from(call, &headers),
+                        declared,
+                    ));
+                }
+                Err(ReadError::Transport(failure)) if failure.local => {
                     return Err(HttpError::Error(IrisError::internal(format!(
                         "could not send the HTTP request to {url}: {}",
                         failure.message
                     ))));
                 }
-                Err(failure) => {
+                Err(ReadError::Transport(failure)) => {
                     tracing::debug!(
                         method = %method,
                         url = %url,
@@ -685,20 +755,134 @@ impl HttpClient {
     }
 }
 
-/// Send the request and read the full body. A non-success response whose body
-/// cannot be read is still a definite answer and is returned with an empty body.
+/// Why [`send_and_read`] returned no response.
+enum ReadError {
+    /// No usable response (see [`Failure`]).
+    Transport(Failure),
+    /// A success status whose body is longer than the call's limit: its declared
+    /// `Content-Length` (`declared`), or the bytes actually received.
+    TooLarge { status: StatusCode, headers: HeaderMap, declared: Option<u64> },
+}
+
+/// Sanitized provider request id from the call's request-id header.
+fn request_id_from(call: &Call, headers: &HeaderMap) -> Option<String> {
+    call.request_id_header
+        .and_then(|h| headers.get(h))
+        .and_then(|v| v.to_str().ok())
+        .and_then(sanitize_request_id)
+}
+
+/// Send the request and read the body, at most `max_body` bytes of a success
+/// response (see [`ReadError::TooLarge`]). A non-success response is a definite
+/// answer whatever its body: at most [`ERROR_BODY_LIMIT`] bytes of it are read, and
+/// a body that cannot be read is returned empty.
 async fn send_and_read(
     client: &reqwest::Client,
     request: reqwest::Request,
-) -> Result<(StatusCode, HeaderMap, Bytes), Failure> {
-    let response = client.execute(request).await.map_err(|e| failure_from_reqwest(e, None))?;
+    max_body: u64,
+) -> Result<(StatusCode, HeaderMap, Bytes), ReadError> {
+    let mut response =
+        client.execute(request).await.map_err(|e| ReadError::Transport(failure_from_reqwest(e, None)))?;
     let status = response.status();
     let headers = response.headers().clone();
-    match response.bytes().await {
-        Ok(body) => Ok((status, headers, body)),
-        Err(_) if !status.is_success() => Ok((status, headers, Bytes::new())),
-        Err(e) => Err(failure_from_reqwest(e, Some(status.as_u16()))),
+    if !status.is_success() {
+        let body = match read_limited(&mut response, max_body.min(ERROR_BODY_LIMIT)).await {
+            Ok(Ok(body)) | Ok(Err(body)) => body,
+            Err(_) => Bytes::new(),
+        };
+        return Ok((status, headers, body));
     }
+    let declared = response.content_length();
+    if declared.is_some_and(|n| n > max_body) {
+        return Err(ReadError::TooLarge { status, headers, declared });
+    }
+    match read_limited(&mut response, max_body).await {
+        Ok(Ok(body)) => Ok((status, headers, body)),
+        Ok(Err(_)) => Err(ReadError::TooLarge { status, headers, declared: None }),
+        Err(e) => Err(ReadError::Transport(failure_from_reqwest(e, Some(status.as_u16())))),
+    }
+}
+
+/// Read `response`'s body chunk by chunk: `Ok(Ok(body))` once it ends within
+/// `limit` bytes, `Ok(Err(prefix))` with its first `limit` bytes as soon as it is
+/// longer (the rest is never read), `Err` if reading fails.
+async fn read_limited(
+    response: &mut reqwest::Response,
+    limit: u64,
+) -> Result<Result<Bytes, Bytes>, reqwest::Error> {
+    let limit = usize::try_from(limit).unwrap_or(usize::MAX);
+    // A declared length within the limit sizes the buffer once; a server that
+    // declares more than it sends costs at most `limit` bytes of capacity.
+    let capacity = response.content_length().and_then(|n| usize::try_from(n).ok()).unwrap_or(0).min(limit);
+    let mut body: Vec<u8> = Vec::with_capacity(capacity);
+    while let Some(chunk) = response.chunk().await? {
+        if chunk.len() > limit - body.len() {
+            body.extend_from_slice(&chunk[..limit - body.len()]);
+            return Ok(Err(Bytes::from(body)));
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(Ok(Bytes::from(body)))
+}
+
+/// A successful answer longer than [`Call::max_body`]: an ambiguous outcome for a
+/// paid submission (see [`HttpClient::execute`]), `provider_bad_response` otherwise.
+/// Never retried: a server that answers this way will most likely do it again.
+fn too_large(
+    call: &Call,
+    attempts: u32,
+    url: String,
+    status: StatusCode,
+    request_id: Option<String>,
+    declared: Option<u64>,
+) -> HttpError {
+    let limit = call.max_body;
+    let over = match declared {
+        Some(n) => format!(
+            "a body over Iris's {} limit for this request (it declares {n} bytes)",
+            format_bytes(limit)
+        ),
+        None => format!("a body over Iris's {} limit for this request", format_bytes(limit)),
+    };
+    let status = status.as_u16();
+    if call.class == RetryClass::PaidSubmit {
+        return HttpError::Transport(TransportError {
+            kind: TransportKind::Other,
+            after_send: true,
+            status: Some(status),
+            attempts,
+            class: call.class,
+            provider: call.provider,
+            url,
+            message: format!("the answer (HTTP {status}) has {over}, so Iris stopped reading it"),
+        });
+    }
+    let who = call.provider.map(|p| p.display_name()).unwrap_or("the server");
+    let mut err = IrisError::new(
+        ErrorCode::ProviderBadResponse,
+        format!("{who} answered {url} (HTTP {status}) with {over}; Iris stopped reading it"),
+    )
+    .with_provider_status(status)
+    .with_provider_request_id(request_id)
+    .with_detail("limit_bytes", limit)
+    .with_detail("attempts", attempts)
+    .with_hint(
+        "no answer to this request is legitimately this large, so the server at the configured base URL (or a \
+         proxy in between) is probably misbehaving",
+    );
+    if let Some(n) = declared {
+        err = err.with_detail("declared_bytes", n);
+    }
+    if let Some(p) = call.provider {
+        err = err.with_provider(p);
+    }
+    HttpError::Error(err)
+}
+
+/// `16 MiB`, `512 MiB`, or `N-byte` when not a whole number of MiB.
+fn format_bytes(n: u64) -> String {
+    const MIB: u64 = 1024 * 1024;
+    if n >= MIB && n.is_multiple_of(MIB) { format!("{} MiB", n / MIB) } else { format!("{n}-byte") }
 }
 
 fn enrich(

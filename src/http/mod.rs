@@ -9,7 +9,8 @@
 //!   `User-Agent`, system proxy, no default credentials).
 //! * [`HttpClient::execute`] runs one logical API call under a [`RetryClass`],
 //!   rebuilding the request on every attempt and asking a caller-supplied classifier
-//!   how to treat each non-success response (see [`Verdict`]).
+//!   how to treat each non-success response (see [`Verdict`]). Response bodies are
+//!   read up to a per-call limit ([`Call::max_body`]), never without bound.
 //! * [`download()`] streams an artifact to a file while hashing it, following
 //!   redirects manually and attaching the credential only to the configured origin.
 //!
@@ -35,8 +36,9 @@ pub use download::{
 };
 pub(crate) use retry::PROVIDER_TEXT_MAX;
 pub use retry::{
-    Call, HttpError, HttpResponse, RetryClass, RetryPolicy, TransportError, TransportKind, Verdict,
-    parse_protobuf_duration, redact_urls_in_text, retry_after_from_headers, sanitize_request_id,
+    Call, HttpError, HttpResponse, JSON_BODY_LIMIT, MEDIA_BODY_LIMIT, RetryClass, RetryPolicy,
+    TransportError, TransportKind, Verdict, parse_protobuf_duration, redact_urls_in_text,
+    retry_after_from_headers, sanitize_request_id,
 };
 
 use crate::error::{ErrorCode, IrisError};
