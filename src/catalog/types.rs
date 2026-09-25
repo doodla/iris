@@ -149,6 +149,8 @@ pub struct Limits {
 pub enum OptionKind {
     /// One of a fixed set of string values.
     Enum(&'static [&'static str]),
+    /// One of a fixed set of integers (e.g. a duration of 4, 6, or 8 seconds).
+    IntegerEnum(&'static [i64]),
     /// Integer within an inclusive range.
     Integer { min: i64, max: i64 },
     /// Boolean (`true`/`false`, e.g. `-O name=true`).
@@ -161,6 +163,23 @@ pub enum OptionKind {
         syntax: &'static str,
         validate: fn(&str) -> Result<(), String>,
     },
+}
+
+impl OptionKind {
+    /// The values an option of this kind accepts, typed, when it accepts only
+    /// listed ones (an enum of strings or of integers).
+    pub fn values(&self) -> Option<Vec<OptionValue>> {
+        match self {
+            OptionKind::Enum(values) => {
+                Some(values.iter().map(|v| OptionValue::Str(v.to_string())).collect())
+            }
+            OptionKind::IntegerEnum(values) => Some(values.iter().copied().map(OptionValue::Int).collect()),
+            OptionKind::Integer { .. }
+            | OptionKind::Boolean
+            | OptionKind::Text { .. }
+            | OptionKind::Pattern { .. } => None,
+        }
+    }
 }
 
 /// One accepted option. Names are snake_case and CLI-facing.

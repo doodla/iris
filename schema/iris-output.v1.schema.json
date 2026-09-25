@@ -1928,6 +1928,7 @@
           ]
         },
         "max": {
+          "description": "Largest value of such an `integer`; null for other options.",
           "format": "int64",
           "type": [
             "integer",
@@ -1944,6 +1945,7 @@
           ]
         },
         "min": {
+          "description": "Smallest value of an `integer` that accepts every whole number from `min` to\n`max`; null for other options.",
           "format": "int64",
           "type": [
             "integer",
@@ -1971,8 +1973,9 @@
           "type": "string"
         },
         "values": {
+          "description": "The accepted values, typed like the option's values, when the option accepts\nonly listed ones: every `enum`, and an `integer` such as a duration of 4, 6,\nor 8 seconds. Null otherwise.",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/OptionValue"
           },
           "type": [
             "array",

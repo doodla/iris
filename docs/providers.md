@@ -178,10 +178,11 @@ Then:
    `model_id_syntax` arm for the ids its adapter can send.
 2. Give the adapter a `CredentialHeader` (header name and value prefix, e.g. `Authorization` /
    `Bearer `) matching how the provider documents authentication.
-3. Declare every option the model accepts as an `OptionSpec` (`OptionKind::Enum`, `Integer { min,
-   max }`, `Boolean`, `Text { max_chars }`, or `Pattern` with a custom validator). An option in
-   the typed-flag table of its command (`--count`, `--duration`, …) must use that flag name;
-   anything else is reachable only through `-O name=value`. The tables are `IMAGE_FLAGS` (image
+3. Declare every option the model accepts as an `OptionSpec` (`OptionKind::Enum` of strings,
+   `IntegerEnum` of integers, `Integer { min, max }`, `Boolean`, `Text { max_chars }`, or `Pattern`
+   with a custom validator). An option in the typed-flag table of its command (`--count`,
+   `--duration`, …) must use that flag name; anything else is reachable only through
+   `-O name=value`. The tables are `IMAGE_FLAGS` (image
    commands) and `VIDEO_FLAGS` (`video generate`) in `src/cli/args.rs`, each next to the clap
    struct that defines the flags. `tests/openai_catalog.rs::typed_flags_follow_the_cli_flag_table`
    and `tests/gemini_catalog.rs::typed_flags_follow_the_cli_flag_tables_for_every_gemini_provider_model`

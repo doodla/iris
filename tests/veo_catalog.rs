@@ -3,7 +3,7 @@
 
 use iris::catalog::{
     self, CATALOG_AS_OF, EstimateInput, InputCounts, Lifecycle, ModelSpec, OptionKind, OptionSource,
-    RawOption, validate_request,
+    OptionValue, RawOption, validate_request,
 };
 use iris::domain::{Operation, ProviderId};
 use iris::error::ErrorCode;
@@ -179,8 +179,8 @@ fn options_and_defaults_match_the_contract() {
         assert_eq!(names, expected, "{}", m.id);
         let o = |n: &str| m.option(n).unwrap();
         assert!(matches!(o("count").kind, OptionKind::Integer { min: 1, max: 1 }));
-        assert!(matches!(o("duration").kind, OptionKind::Enum(v) if v == ["4", "6", "8"]));
-        assert_eq!(o("duration").default, Some("8"));
+        assert!(matches!(o("duration").kind, OptionKind::IntegerEnum(v) if v == [4, 6, 8]));
+        assert_eq!(m.effective(&Default::default(), "duration"), Some(OptionValue::Int(8)));
         assert_eq!(o("resolution").default, Some("720p"));
         assert!(matches!(o("aspect_ratio").kind, OptionKind::Enum(v) if v == ["16:9", "9:16"]));
         assert_eq!(o("aspect_ratio").default, Some("16:9"));

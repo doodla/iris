@@ -30,6 +30,13 @@ impl OptionValue {
                     Err(format!("expected one of: {}", values.join(", ")))
                 }
             }
+            OptionKind::IntegerEnum(values) => match raw.trim().parse::<i64>() {
+                Ok(n) if values.contains(&n) => Ok(OptionValue::Int(n)),
+                _ => {
+                    let listed: Vec<String> = values.iter().map(i64::to_string).collect();
+                    Err(format!("expected one of: {}", listed.join(", ")))
+                }
+            },
             OptionKind::Integer { min, max } => match raw.trim().parse::<i64>() {
                 Ok(n) if n >= *min && n <= *max => Ok(OptionValue::Int(n)),
                 _ => Err(format!("expected an integer from {min} to {max}")),
@@ -155,8 +162,9 @@ pub struct InputCounts {
 /// for `operation` is `unsupported_option` with `details.option` (the option's name,
 /// or the input's: `mask`, `first_frame`, `last_frame`, `reference`) and
 /// `details.supported_by`, the ids of the models of `catalog` (the models Iris
-/// knows) that take it, which the hint names; a value that is not one of an enum
-/// option's values is `invalid_argument` with `details.option` and `details.allowed`.
+/// knows) that take it, which the hint names; a value that is not one of an
+/// option's listed values ([`OptionKind::values`]) is `invalid_argument` with
+/// `details.option` and `details.allowed`, typed like the values.
 pub fn validate_request(
     spec: &ModelSpec,
     operation: Operation,
@@ -205,9 +213,9 @@ pub fn validate_request(
         let value = OptionValue::parse(&option.kind, &opt.value).map_err(|why| {
             let e = IrisError::invalid(format!("invalid value '{}' for {describe}: {why}", opt.value))
                 .with_detail("option", opt.name.clone());
-            match option.kind {
-                OptionKind::Enum(values) => e.with_detail("allowed", values),
-                _ => e,
+            match option.kind.values().and_then(|values| serde_json::to_value(values).ok()) {
+                Some(allowed) => e.with_detail("allowed", allowed),
+                None => e,
             }
         })?;
         resolved.insert(opt.name.clone(), value);

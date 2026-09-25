@@ -169,7 +169,7 @@ async fn explicit_options_map_to_their_wire_fields() {
         FAST,
         &[
             ("count", OptionValue::Int(1)),
-            ("duration", s("4")),
+            ("duration", OptionValue::Int(4)),
             ("resolution", s("720p")),
             ("aspect_ratio", s("9:16")),
             ("negative_prompt", s("people, text")),
@@ -194,7 +194,7 @@ async fn explicit_options_map_to_their_wire_fields() {
 
 #[tokio::test]
 async fn first_and_last_frames_use_the_sdk_image_encoding() {
-    let mut req = request(LITE, &[("duration", s("6"))]);
+    let mut req = request(LITE, &[("duration", OptionValue::Int(6))]);
     req.first_frame = Some(image(InputRole::FirstFrame, "image/png", PNG_HEAD));
     req.last_frame = Some(image(InputRole::LastFrame, "image/jpeg", JPEG_HEAD));
     let body = sent_body(&req).await;

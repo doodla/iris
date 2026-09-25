@@ -429,7 +429,7 @@ fn model_show(m: &ModelCapabilities) -> String {
     for o in &m.options {
         let how = o.flag.clone().unwrap_or_else(|| format!("-O {}=…", o.name));
         let values = match (&o.values, o.min, o.max, &o.syntax) {
-            (Some(v), ..) => v.join("|"),
+            (Some(v), ..) => v.iter().map(ToString::to_string).collect::<Vec<_>>().join("|"),
             (None, Some(min), Some(max), _) => format!("{min}..={max}"),
             (None, _, _, Some(syntax)) => syntax.clone(),
             _ => o.kind.clone(),

@@ -232,7 +232,7 @@ pub static FAKE_VIDEO_OPTIONS: &[OptionSpec] = &[
     },
     OptionSpec {
         name: "duration",
-        kind: OptionKind::Enum(&["4", "6", "8"]),
+        kind: OptionKind::IntegerEnum(&[4, 6, 8]),
         default: Some("8"),
         flag: Some("--duration"),
         operations: VIDEO_OPS,
@@ -272,7 +272,7 @@ fn fake_video_rules(v: &ValidationInput<'_>) -> Result<(), IrisError> {
 
 /// $0.10 per second of video.
 fn fake_video_estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
-    let seconds = spec.effective(input.options, "duration").and_then(|d| d.as_str()?.parse::<f64>().ok());
+    let seconds = spec.effective(input.options, "duration").and_then(|d| d.as_int()).map(|d| d as f64);
     let seconds = seconds.ok_or("no duration (fake)")?;
     Ok(CostEstimate::usd(
         seconds * 0.10,

@@ -30,6 +30,7 @@ fn candidates(kind: &OptionKind, default: Option<&str>) -> Vec<Option<String>> {
     let mut values: Vec<Option<String>> = vec![None];
     match kind {
         OptionKind::Enum(values_) => values.extend(values_.iter().map(|v| Some(v.to_string()))),
+        OptionKind::IntegerEnum(values_) => values.extend(values_.iter().map(|v| Some(v.to_string()))),
         OptionKind::Integer { min, max } => {
             values.push(Some(min.to_string()));
             if max != min {

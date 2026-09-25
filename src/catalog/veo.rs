@@ -13,6 +13,7 @@
 use crate::domain::{Billing, CostEstimate, Operation, ProviderId};
 use crate::error::IrisError;
 
+use super::options::OptionValue;
 use super::types::{
     Constraint, DeclinedName, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind,
     OptionSpec, OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
@@ -24,9 +25,15 @@ pub const PRICING_URL: &str = "https://ai.google.dev/gemini-api/docs/pricing";
 /// Provider guide for these models.
 pub const DOCS_URL: &str = "https://ai.google.dev/gemini-api/docs/video";
 
-/// Iris default duration in seconds. The adapter always sends the effective value
+/// Iris default duration, as the `duration` option declares it (a declared default
+/// is written as `-O` takes it).
+const DURATION_DEFAULT: &str = "8";
+/// The same default in seconds. The adapter always sends the effective duration
 /// (explicit or this default) so the cost of a job is bounded.
-pub const DEFAULT_DURATION: &str = "8";
+pub const DEFAULT_DURATION: i64 = match i64::from_str_radix(DURATION_DEFAULT, 10) {
+    Ok(seconds) => seconds,
+    Err(_) => panic!("the declared default duration is a whole number of seconds"),
+};
 /// Iris default resolution (always sent, see [`DEFAULT_DURATION`]).
 pub const DEFAULT_RESOLUTION: &str = "720p";
 /// Iris default aspect ratio (always sent, see [`DEFAULT_DURATION`]).
@@ -84,8 +91,8 @@ const COUNT: OptionSpec = OptionSpec {
 
 const DURATION: OptionSpec = OptionSpec {
     name: "duration",
-    kind: OptionKind::Enum(&["4", "6", "8"]),
-    default: Some(DEFAULT_DURATION),
+    kind: OptionKind::IntegerEnum(&[4, 6, 8]),
+    default: Some(DURATION_DEFAULT),
     flag: Some("--duration"),
     operations: VIDEO,
     description: "Video length in seconds (always sent). 1080p, 4k, and reference images require 8. \
@@ -349,6 +356,11 @@ fn effective<'a>(input: &'a ValidationInput<'_>, name: &str, default: &'a str) -
     input.options.get(name).and_then(|v| v.as_str()).unwrap_or(default)
 }
 
+/// Effective duration in seconds: explicit, else the Veo default.
+fn effective_duration(input: &ValidationInput<'_>) -> i64 {
+    input.options.get("duration").and_then(OptionValue::as_int).unwrap_or(DEFAULT_DURATION)
+}
+
 /// Cross-field rules from the provider's parameter table, enforced by [`validate_video`].
 pub const HIGH_RESOLUTION_REQUIRES_DURATION_8: Constraint = Constraint {
     id: "high_resolution_requires_duration_8",
@@ -417,12 +429,12 @@ const LITE_RULES: RequestRules = RequestRules {
 
 /// Cross-field rules from the provider's parameter table (the constraints above).
 fn validate_video(input: &ValidationInput<'_>) -> Result<(), IrisError> {
-    let duration = effective(input, "duration", DEFAULT_DURATION);
+    let duration = effective_duration(input);
     let resolution = effective(input, "resolution", DEFAULT_RESOLUTION);
     let has_refs = input.reference_images > 0;
     let has_frames = input.has_first_frame || input.has_last_frame;
 
-    if matches!(resolution, "1080p" | "4k") && duration != "8" {
+    if matches!(resolution, "1080p" | "4k") && duration != 8 {
         return Err(HIGH_RESOLUTION_REQUIRES_DURATION_8
             .violation(format!("resolution {resolution} requires --duration 8 (got {duration})"))
             .with_detail("option", "duration"));
@@ -431,7 +443,7 @@ fn validate_video(input: &ValidationInput<'_>) -> Result<(), IrisError> {
         return Err(REFERENCES_EXCLUDE_FRAMES
             .violation("reference images (--ref) cannot be combined with --image or --last-frame"));
     }
-    if has_refs && duration != "8" {
+    if has_refs && duration != 8 {
         return Err(REFERENCES_REQUIRE_DURATION_8
             .violation(format!("reference images (--ref) require --duration 8 (got {duration})"))
             .with_detail("option", "duration"));
@@ -475,9 +487,8 @@ pub fn rate_per_second(model: &str, resolution: &str) -> Option<f64> {
 
 /// Estimate: effective duration × published rate for the effective resolution.
 fn estimate_video(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
-    let value = |name: &str| spec.effective(input.options, name).and_then(|v| v.as_str().map(str::to_string));
-    let seconds: Option<u32> = value("duration").and_then(|d| d.parse().ok());
-    let resolution = value("resolution");
+    let seconds = spec.effective(input.options, "duration").and_then(|v| u32::try_from(v.as_int()?).ok());
+    let resolution = spec.effective(input.options, "resolution").and_then(|v| v.as_str().map(str::to_string));
     let rate = resolution.as_deref().and_then(|resolution| rate_per_second(spec.id, resolution));
     let (Some(seconds), Some(resolution), Some(rate)) = (seconds, resolution, rate) else {
         // Unreachable for the catalog: a test checks a rate for every declared resolution.
@@ -518,7 +529,8 @@ mod tests {
     #[test]
     fn declared_defaults_are_the_constants_the_adapter_sends() {
         for spec in MODELS {
-            assert_eq!(spec.option("duration").unwrap().default, Some(DEFAULT_DURATION));
+            let none = crate::catalog::ResolvedOptions::new();
+            assert_eq!(spec.effective(&none, "duration"), Some(OptionValue::Int(DEFAULT_DURATION)));
             assert_eq!(spec.option("resolution").unwrap().default, Some(DEFAULT_RESOLUTION));
             assert_eq!(spec.option("aspect_ratio").unwrap().default, Some(DEFAULT_ASPECT_RATIO));
         }

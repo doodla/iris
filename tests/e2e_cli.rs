@@ -291,7 +291,7 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
 
         let p = plan(&["video", "generate", "waves", "-m", VEO_LITE, "--duration", "4"]);
         assert_eq!(p["async_job"], true);
-        assert_eq!(p["options"]["duration"], "4");
+        assert_eq!(p["options"]["duration"], 4, "an integer option is an integer in JSON");
         assert_eq!(p["options"]["resolution"], "720p", "effective defaults are shown");
         assert!((p["cost_estimate"]["amount"].as_f64().unwrap() - 0.20).abs() < 1e-9, "{p}");
 
@@ -983,7 +983,45 @@ fn a_refused_option_names_the_models_and_values_that_work() {
     };
     assert_eq!(v["error"]["details"]["option"], "quality");
     assert_eq!(v["error"]["details"]["allowed"], serde_json::json!(qualities));
+    // An integer option with listed values lists them as integers.
+    let v = sb
+        .iris()
+        .args(["video", "generate", "x", "-m", VEO_LITE, "--duration", "5", "--dry-run", "--json"])
+        .run()
+        .err(2, "invalid_argument");
+    assert_eq!(v["error"]["details"]["option"], "duration");
+    assert_eq!(v["error"]["details"]["allowed"], serde_json::json!([4, 6, 8]));
     assert_eq!(api.total(), 0, "nothing was sent");
+}
+
+/// Veo's duration is an integer option that takes 4, 6, or 8: `models show` types
+/// its values and default as integers, and plans and job records carry it as one.
+#[test]
+fn veo_duration_is_an_integer_with_listed_values() {
+    let sb = Sandbox::new();
+    let v = sb.iris().args(["models", "show", VEO_LITE, "--json"]).run().ok();
+    let options = v["result"]["model"]["options"].as_array().unwrap();
+    let duration = options.iter().find(|o| o["name"] == "duration").unwrap();
+    assert_eq!(duration["type"], "integer");
+    assert_eq!(duration["values"], serde_json::json!([4, 6, 8]));
+    assert_eq!((duration["min"].clone(), duration["max"].clone()), (Value::Null, Value::Null));
+    assert_eq!(duration["default"], 8);
+    let human = sb.iris().args(["models", "show", VEO_LITE]).run();
+    assert!(human.human().contains("--duration: 4|6|8 (default 8)"), "{}", human.stdout);
+    let v = sb.iris().args(["models", "list", "--json"]).run().ok();
+    let lite =
+        v["result"]["models"].as_array().unwrap().iter().find(|m| m["id"] == VEO_LITE).unwrap().clone();
+    assert_eq!(lite["lowest_estimate"]["options"]["duration"], 4);
+
+    let api = answering_api();
+    let v = sb
+        .iris()
+        .gemini(&api)
+        .args(["video", "generate", "waves", "-m", VEO_LITE, "--detach", "--json"])
+        .run()
+        .ok();
+    let id = v["result"]["job"]["job_id"].as_str().unwrap();
+    assert_eq!(sb.record(id)["request"]["duration"], 8, "the default, as an integer");
 }
 
 /// `doctor --check-access` checks every catalog model of each provider whose key is

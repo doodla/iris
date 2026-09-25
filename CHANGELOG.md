@@ -104,8 +104,8 @@ machine-readable contract for agents.
   (`details.candidates`), and a name Iris declines (a deprecated, retired, limited, or
   served-elsewhere model such as `dall-e-3`, `gpt-image-1`, `imagen-4` or `veo-3`, or the bare
   `nano-banana`) says why, with the provider's date, and what to use instead. An option or input
-  the model does not take names the models that do (`details.supported_by`), and an enum value it
-  does not allow lists the values it does (`details.allowed`).
+  the model does not take names the models that do (`details.supported_by`), and a value outside
+  an option's listed values lists them (`details.allowed`).
 - `iris models list`/`show`: a one-line summary of what each model is for, the estimate of its
   cheapest single-output request (`lowest_estimate`, computed by the model's own estimator),
   declared operations, options (typed defaults, `max_chars`), machine-readable `constraints`,

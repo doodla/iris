@@ -169,8 +169,14 @@ pub struct OptionView {
     /// `enum`, `integer`, `boolean`, `string`.
     #[serde(rename = "type")]
     pub kind: String,
-    pub values: Option<Vec<String>>,
+    /// The accepted values, typed like the option's values, when the option accepts
+    /// only listed ones: every `enum`, and an `integer` such as a duration of 4, 6,
+    /// or 8 seconds. Null otherwise.
+    pub values: Option<Vec<OptionValue>>,
+    /// Smallest value of an `integer` that accepts every whole number from `min` to
+    /// `max`; null for other options.
     pub min: Option<i64>,
+    /// Largest value of such an `integer`; null for other options.
     pub max: Option<i64>,
     /// Syntax description for pattern-validated and free-text strings.
     pub syntax: Option<String>,

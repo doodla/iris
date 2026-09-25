@@ -421,7 +421,7 @@ async fn dry_run_plans_show_the_effective_options_including_defaults() {
         .run(&["video", "generate", "-m", "fake-video-1", "waves", "--duration", "4", "--dry-run", "--json"])
         .await;
     let v = run.json();
-    assert_eq!(v["result"]["options"]["duration"], "4");
+    assert_eq!(v["result"]["options"]["duration"], 4);
     assert_eq!(v["result"]["options"]["resolution"], "720p", "{v}");
     let run = f.run(&["video", "generate", "-m", "fake-video-1", "waves", "--dry-run"]).await;
     assert!(run.stdout.contains("duration=8") && run.stdout.contains("resolution=720p"), "{}", run.stdout);
@@ -515,7 +515,7 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     assert_eq!(models[0]["lowest_estimate"]["options"], serde_json::json!({"quality": "low"}));
     assert_eq!(models[0]["lowest_estimate"]["cost_estimate"]["amount"], 0.01);
     assert!(models[1]["lowest_estimate"].is_null(), "{}", models[1]);
-    assert_eq!(models[2]["lowest_estimate"]["options"], serde_json::json!({"duration": "4"}));
+    assert_eq!(models[2]["lowest_estimate"]["options"], serde_json::json!({"duration": 4}));
     // The billing, and the estimate always with the options that give it.
     let table = f.run(&["models", "list"]).await.stdout;
     let lines: Vec<&str> = table.lines().collect();
@@ -561,7 +561,14 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     assert_eq!(negative["type"], "string");
     assert_eq!(negative["max_chars"], 100, "{negative}");
     assert!(negative["default"].is_null());
-    assert_eq!(option(&v["result"]["model"], "duration")["default"], "8", "an enum default stays a string");
+    assert_eq!(
+        option(&v["result"]["model"], "resolution")["default"],
+        "720p",
+        "an enum default stays a string"
+    );
+    let duration = option(&v["result"]["model"], "duration");
+    assert_eq!(duration["default"], 8, "an integer enum's default is a JSON number: {duration}");
+    assert_eq!(duration["values"], serde_json::json!([4, 6, 8]));
 
     let v = f.run(&["models", "show", "fake-video-1", "--check-access", "--json"]).await.json();
     assert_eq!(v["result"]["model"]["access"]["account_access"], "available");

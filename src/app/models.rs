@@ -176,16 +176,15 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
 
 /// The JSON view of one declared option.
 pub(crate) fn option_view(o: &OptionSpec) -> OptionView {
-    let (kind, values, min, max, syntax) = match o.kind {
-        OptionKind::Enum(values) => {
-            ("enum", Some(values.iter().map(|v| v.to_string()).collect()), None, None, None)
-        }
-        OptionKind::Integer { min, max } => ("integer", None, Some(min), Some(max), None),
-        OptionKind::Boolean => ("boolean", None, None, None, None),
+    let (kind, min, max, syntax) = match o.kind {
+        OptionKind::Enum(_) => ("enum", None, None, None),
+        OptionKind::IntegerEnum(_) => ("integer", None, None, None),
+        OptionKind::Integer { min, max } => ("integer", Some(min), Some(max), None),
+        OptionKind::Boolean => ("boolean", None, None, None),
         OptionKind::Text { max_chars } => {
-            ("string", None, None, None, Some(format!("free text, at most {max_chars} characters")))
+            ("string", None, None, Some(format!("free text, at most {max_chars} characters")))
         }
-        OptionKind::Pattern { syntax, .. } => ("string", None, None, None, Some(syntax.to_string())),
+        OptionKind::Pattern { syntax, .. } => ("string", None, None, Some(syntax.to_string())),
     };
     let max_chars = match o.kind {
         OptionKind::Text { max_chars } => Some(max_chars),
@@ -198,7 +197,7 @@ pub(crate) fn option_view(o: &OptionSpec) -> OptionView {
     OptionView {
         name: o.name.to_string(),
         kind: kind.to_string(),
-        values,
+        values: o.kind.values(),
         min,
         max,
         syntax,

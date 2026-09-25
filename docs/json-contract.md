@@ -150,7 +150,7 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
   "cost_estimate": { "estimated": true, "currency": "USD", "amount": 0.4,
                       "basis": "4 s × $0.1/s (veo-3.1-fast-generate-preview, 720p, audio included); estimate; blocked videos are not charged",
                       "source_url": "https://ai.google.dev/gemini-api/docs/pricing", "as_of": "2026-09-24" },
-  "request": { "aspect_ratio": "16:9", "count": 1, "duration": "4", "resolution": "720p",
+  "request": { "aspect_ratio": "16:9", "count": 1, "duration": 4, "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } }
 }
 ```
@@ -252,11 +252,12 @@ smaller square one.
 ```
 
 `summary`, `billing`, and `lowest_estimate` are the ones `models.list` reports. Each option's
-`type` is `enum` (its `values` listed), `integer` (`min`..=`max`), `boolean`, or `string`: a
-pattern described by `syntax`, or free text at most `max_chars` characters long (`max_chars` is
-`null` for every other option). `default` is the value in effect when the option is omitted,
-typed like the option's values (`"auto"`, `1`, `true`), or `null` when the provider documents
-none.
+`type` is `enum` (its `values` listed, as strings), `integer` (every whole number from `min` to
+`max`, or only the listed `values`, as integers: Veo's `duration` takes `[4, 6, 8]`), `boolean`,
+or `string`: a pattern described by `syntax`, or free text at most `max_chars` characters long
+(`max_chars` is `null` for every other option). `default` is the value in effect when the option
+is omitted, typed like the option's values (`"auto"`, `1`, `true`), or `null` when the provider
+documents none.
 
 `constraints` lists the rules that relate several options or inputs (e.g. Veo's
 `high_resolution_requires_duration_8`, `references_exclude_frames`,
@@ -332,7 +333,7 @@ creates and removes at once, a dry run proves the nearest existing directory wri
   "dry_run": true, "provider": "gemini", "model": "veo-3.1-fast-generate-preview",
   "model_source": "config", "operation": "video.generate", "async_job": true, "detach": true,
   "billing": "paid",
-  "options": { "aspect_ratio": "16:9", "count": 1, "duration": "8", "resolution": "720p" },
+  "options": { "aspect_ratio": "16:9", "count": 1, "duration": 8, "resolution": "720p" },
   "inputs": [ { "role": "first_frame", "path": "/home/you/fox.png", "media_type": "image/png", "bytes": 75 } ],
   "outputs": [ "/home/you/<job_id>.mp4" ],
   "credential_present": true,
@@ -424,9 +425,10 @@ operation (possibly empty), which the hint names:
  "...":"other Error fields omitted for brevity"}
 ```
 
-A value that is not one of an enum option's values is `invalid_argument` with `details.option` and
-`details.allowed`, the values the model accepts (`--quality ultra` on `gpt-image-2`: `"allowed":
-["low", "medium", "high", "auto"]`).
+A value that is not one of an option's listed values is `invalid_argument` with `details.option`
+and `details.allowed`, the values the model accepts, typed like them (`--quality ultra` on
+`gpt-image-2`: `"allowed": ["low", "medium", "high", "auto"]`; `--duration 5` on a Veo model:
+`"allowed": [4, 6, 8]`).
 
 A generation command given no model — no `-m`/`--model`, and no `image.model` or `video.model` in
 the config file — fails with `model_required` (exit 2, category `usage`) before anything is sent,

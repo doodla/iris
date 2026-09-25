@@ -92,7 +92,7 @@ written with sorted keys:
   "remote_operation_id": "models/veo-3.1-fast-generate-preview/operations/op_mockjob001",
   "provider_request_id": null,
   "remote_expires_at": "2026-09-26T22:53:12Z", "submit_budget_seconds": 2145,
-  "request": { "aspect_ratio": "16:9", "count": 1, "duration": "4", "resolution": "720p",
+  "request": { "aspect_ratio": "16:9", "count": 1, "duration": 4, "resolution": "720p",
                "input_counts": { "first_frame": 0, "last_frame": 0, "reference": 0 } },
   "prompt": { "sha256": "c039da7d...", "chars": 31, "text": null },
   "output_plan": { "dir": "/home/you", "path": null, "overwrite": false },

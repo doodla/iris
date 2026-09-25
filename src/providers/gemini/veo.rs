@@ -113,7 +113,7 @@ pub fn encode_request(req: &VideoRequest) -> Result<bytes::Bytes, IrisError> {
                     )));
                 }
             }
-            "duration" => duration = str_option(name, value)?,
+            "duration" => duration = int_option(name, value)?,
             "resolution" => resolution = str_option(name, value)?,
             "aspect_ratio" => aspect_ratio = str_option(name, value)?,
             "negative_prompt" => negative_prompt = Some(str_option(name, value)?),
@@ -123,9 +123,8 @@ pub fn encode_request(req: &VideoRequest) -> Result<bytes::Bytes, IrisError> {
             }
         }
     }
-    let duration_seconds: u8 = duration.parse().map_err(|_| {
-        IrisError::internal(format!("duration '{duration}' is not a whole number of seconds"))
-    })?;
+    let duration_seconds = u8::try_from(duration)
+        .map_err(|_| IrisError::internal(format!("duration {duration} is not a Veo duration in seconds")))?;
 
     // The inline images alone are a lower bound of the body size: reject early
     // without encoding them when that bound already reaches the cap.
@@ -183,6 +182,12 @@ fn str_option<'a>(name: &str, value: &'a OptionValue) -> Result<&'a str, IrisErr
     value
         .as_str()
         .ok_or_else(|| IrisError::internal(format!("option '{name}' must be a string, got {value}")))
+}
+
+fn int_option(name: &str, value: &OptionValue) -> Result<i64, IrisError> {
+    value
+        .as_int()
+        .ok_or_else(|| IrisError::internal(format!("option '{name}' must be an integer, got {value}")))
 }
 
 /// Submission classifier: 408 and every 5xx leave the outcome open (the job may
