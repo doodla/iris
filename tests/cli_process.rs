@@ -5,14 +5,13 @@
 //!
 //! Every command runs with a temporary HOME and IRIS_STATE_DIR, fake keys set
 //! through `Command::env` only when needed, real keys removed, proxies disabled,
-//! and provider base URLs pointing at an unused 127.0.0.1 port, so a request that
-//! should not happen fails loudly instead of reaching a paid API.
+//! and provider base URLs pointing at a 127.0.0.1 port nothing listens on, so a
+//! request that should not happen fails loudly instead of reaching a paid API.
 
 #[path = "app_support.rs"]
 mod support;
 
 use std::io::{BufRead, BufReader};
-use std::net::TcpListener;
 use std::path::Path;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -53,10 +52,12 @@ const SCRUBBED: &[&str] = &[
     "all_proxy",
 ];
 
-/// A port nothing listens on (bound, then released).
-fn unused_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
+/// The origin of a port nothing listens on: every provider's base URL unless a test
+/// attaches a mock server. Port 9 (discard) lies below every OS's ephemeral port
+/// range, so no mock server started by a test running in parallel can be assigned
+/// it; a bound-then-released ephemeral port could be reused by one, and a stray
+/// request would then land in that test's mock.
+const DEAD_URL: &str = "http://127.0.0.1:9";
 
 /// `provider`'s default base URL moved to `origin`, keeping its path (`/v1` for
 /// OpenAI, none for the Gemini origin), so the adapter builds the paths it expects.
@@ -69,10 +70,9 @@ fn configure(cmd: &mut std::process::Command, sandbox: &Sandbox) {
     for var in SCRUBBED {
         cmd.env_remove(var);
     }
-    let origin = format!("http://127.0.0.1:{}", unused_port());
     for &provider in ProviderId::ALL {
         cmd.env_remove(provider.credential_env())
-            .env(provider.base_url_env(), base_url_at(provider, &origin));
+            .env(provider.base_url_env(), base_url_at(provider, DEAD_URL));
     }
     cmd.current_dir(sandbox.work())
         .env("HOME", sandbox.home())

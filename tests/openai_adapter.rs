@@ -27,6 +27,11 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, ResponseTemplate};
 
 const KEY: &str = "test-openai-key-000";
+/// The origin of a port nothing listens on. Port 9 (discard) lies below every OS's
+/// ephemeral port range, so no mock server started by a test running in parallel can
+/// be assigned it (a bound-then-released ephemeral port could be reused by one, and
+/// the paid requests of a "refused connection" test would then land in its mock).
+const DEAD_URL: &str = "http://127.0.0.1:9";
 const GEN: &str = "/v1/images/generations";
 const EDIT: &str = "/v1/images/edits";
 
@@ -1459,10 +1464,7 @@ async fn a_connection_lost_after_sending_is_submission_uncertain_not_a_timeout()
 
 #[tokio::test]
 async fn a_refused_connection_is_retried_and_reported_as_network_error_without_charge() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let ctx = ctx_for(&format!("http://127.0.0.1:{port}/v1"));
+    let ctx = ctx_for(&format!("{DEAD_URL}/v1"));
     let err =
         OpenAiProvider::new().generate(&generate_request(ResolvedOptions::new()), &ctx).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::NetworkError);
@@ -1603,10 +1605,7 @@ async fn check_access_encodes_the_model_id_as_one_path_segment() {
 
 #[tokio::test]
 async fn check_access_reports_transport_failures_as_errors() {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    let ctx = ctx_for(&format!("http://127.0.0.1:{port}/v1"));
+    let ctx = ctx_for(&format!("{DEAD_URL}/v1"));
     let err = OpenAiProvider::new().check_access("gpt-image-2", &ctx).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::NetworkError);
 }

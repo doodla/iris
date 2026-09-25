@@ -421,17 +421,15 @@ async fn a_client_not_built_by_iris_is_refused_before_building_or_sending() {
     assert_eq!(requests(&server).await, 0);
 }
 
-fn closed_port_url() -> String {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let port = listener.local_addr().unwrap().port();
-    drop(listener);
-    format!("http://127.0.0.1:{port}")
-}
+/// The origin of a port nothing listens on. Port 9 (discard) lies below every OS's
+/// ephemeral port range, so no mock server started by a test running in parallel can
+/// be assigned it (a bound-then-released ephemeral port could be reused by one, and
+/// the paid requests of the refused-connection test would then land in its mock).
+const DEAD_URL: &str = "http://127.0.0.1:9";
 
 #[tokio::test]
 async fn connection_refused_is_retried_for_paid_submit_and_reported_as_not_sent() {
-    let base = closed_port_url();
-    let err = post(&base, RetryClass::PaidSubmit).await.unwrap_err();
+    let err = post(DEAD_URL, RetryClass::PaidSubmit).await.unwrap_err();
     assert!(!sent_without_answer(&err));
     let HttpError::Transport(t) = err else { panic!("expected a transport error") };
     assert_eq!(t.kind, TransportKind::Connect);
