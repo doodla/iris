@@ -118,7 +118,7 @@ fn known_values(open_set: &Value) -> BTreeSet<String> {
     branches[0]["enum"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect()
 }
 
-/// Error codes, commands, and warning codes are open sets, so adding one stays an
+/// Error codes, commands, warning codes, and provider ids are open sets, so adding one stays an
 /// additive change: an envelope of a later 1.x Iris with a value this schema does
 /// not list still validates, as long as it has the documented form. Everything else
 /// stays closed: a malformed value and another `schema_version` are rejected.
@@ -151,6 +151,12 @@ fn open_sets_accept_later_values_of_the_documented_form_only() {
         "warnings": []
     });
     assert!(validator.is_valid(&success), "a later command's result is one of the result types");
+    // A later provider (for example one added through the extension guide).
+    let mut later_provider = error("quota_exceeded", "quota");
+    later_provider["provider"] = "seedance".into();
+    assert!(validator.is_valid(&failure("jobs.list".into(), later_provider.clone(), "preview_model")));
+    later_provider["provider"] = "Seedance".into();
+    assert!(!validator.is_valid(&failure("jobs.list".into(), later_provider, "preview_model")));
 
     for malformed in ["", "Quota", "a-b", "1st", "a b", "a.b"] {
         let v = failure("jobs.list".into(), error(malformed, "quota"), "preview_model");

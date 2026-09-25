@@ -2048,19 +2048,19 @@
       "type": "object"
     },
     "ProviderId": {
-      "description": "A media provider known to Iris.",
-      "oneOf": [
+      "anyOf": [
         {
-          "const": "openai",
-          "description": "OpenAI developer API (api.openai.com).",
-          "type": "string"
+          "enum": [
+            "openai",
+            "gemini"
+          ]
         },
         {
-          "const": "gemini",
-          "description": "Google Gemini developer API (generativelanguage.googleapis.com), including Veo.",
-          "type": "string"
+          "pattern": "^[a-z][a-z0-9_]*$"
         }
-      ]
+      ],
+      "description": "Provider identifier: one of the listed providers, or a provider a later version of this schema_version adds.",
+      "type": "string"
     },
     "ProviderListResult": {
       "description": "`providers.list`.",

@@ -33,12 +33,12 @@ The schema encodes the contract, not only the shapes of the types:
   generation command's `--dry-run`, the help result for `command: null`);
 - an error's `category` must be the one its `code` maps to (table below) for every code the
   schema lists, `internal_error` included;
-- error `code`, `command`, and warning `code` are **open sets**: the schema lists the known values
-  (`anyOf` an `enum` of them) and also accepts any other value of the same form, a snake_case code
-  (`^[a-z][a-z0-9_]*$`) or, for `command`, snake_case codes joined by dots. Adding a value is an
-  additive change (below), so an envelope from a later Iris with the same `schema_version` still
-  validates against this file. Every other enumeration (`category`, statuses, providers,
-  operations, ...) is closed.
+- error `code`, `command`, warning `code`, and provider ids are **open sets**: the schema lists the
+  known values (`anyOf` an `enum` of them) and also accepts any other value of the same form, a
+  snake_case code (`^[a-z][a-z0-9_]*$`) or, for `command`, snake_case codes joined by dots. Adding
+  a value (a new provider included) is an additive change (below), so an envelope from a later Iris
+  with the same `schema_version` still validates against this file. Every other enumeration
+  (`category`, statuses, operations, ...) is closed.
 
 ### Schema versioning policy
 

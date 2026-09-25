@@ -260,7 +260,7 @@ pub fn schema() -> serde_json::Value {
 /// * an error's `category` is the one of its `code` (an error read back from a job
 ///   record written by a newer Iris shows an unknown code as `internal_error` with
 ///   category `internal`, keeping the original in `details.recorded_code`);
-/// * error codes, commands, and warning codes are open sets (see [`open_set`]):
+/// * error codes, commands, warning codes, and provider ids are open sets (see [`open_set`]):
 ///   adding a value is an additive change, which a consumer validating with this
 ///   version's schema keeps accepting; the rules above apply to the known values.
 fn add_contract_rules(schema: &mut serde_json::Value) {
@@ -319,6 +319,13 @@ fn add_contract_rules(schema: &mut serde_json::Value) {
         "Command identifier: one of the listed commands, or a command a later version of this schema_version adds.",
         &commands,
         COMMAND_PATTERN,
+    );
+    let providers: Vec<&str> = ProviderId::ALL.iter().map(|p| p.as_str()).collect();
+    schema["$defs"][ProviderId::schema_name().as_ref()] = open_set(
+        "Provider identifier: one of the listed providers, or a provider a later version of this schema_version \
+         adds.",
+        &providers,
+        CODE_PATTERN,
     );
     let warnings: Vec<&str> = WarningCode::ALL.iter().map(|c| c.as_str()).collect();
     schema["$defs"][Warning::schema_name().as_ref()]["properties"]["code"] = open_set(
