@@ -477,7 +477,7 @@ async fn fetch_into(
                 ),
             }));
         }
-        let mut builder = client.inner.get(url.clone());
+        let mut builder = client.client_for(&url).get(url.clone());
         let with_credential = req.auth.is_some() && same_origin(&url, req.base_url);
         if let Some(auth) = req.auth.filter(|_| with_credential) {
             builder = auth.apply(builder);

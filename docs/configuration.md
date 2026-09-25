@@ -246,7 +246,9 @@ provider. **Your credential is sent to whatever base URL is configured**, so:
   anywhere else the key would cross a network unencrypted. Any other `http://` base URL is
   `config_invalid` naming the variable or config key, before any command runs. Downloads follow
   the same rule: every hop must be `https`, except between loopback hosts when the base URL itself
-  is a loopback `http` one.
+  is a loopback `http` one. Requests to a loopback host never go through a system proxy
+  (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`), whatever `NO_PROXY` says, so a loopback `http` key
+  never reaches a proxy in clear text; requests to any other host honor the system proxy settings.
 - Every command that sends a provider's key to a non-default base URL — `image generate`/`edit`,
   `video generate`, `jobs status`/`wait`/`download` when they reach the provider, and
   `models show --check-access` — reports a `non_default_base_url` warning, once per provider,

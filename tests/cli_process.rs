@@ -1093,3 +1093,40 @@ fn verbose_logs_never_contain_the_prompt_or_the_key() {
     }
     assert!(files_in(&sandbox.work()).is_empty());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn requests_to_a_loopback_base_url_never_go_through_a_proxy() {
+    let sandbox = Sandbox::new();
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                serde_json::json!({"id": "gpt-image-2", "object": "model", "owned_by": "openai"}),
+            ),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    // A proxy that would receive every proxied request; nothing may connect to it,
+    // because a plain-http request carries the key in clear text.
+    let proxy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    proxy.set_nonblocking(true).unwrap();
+    let proxy_url = format!("http://{}", proxy.local_addr().unwrap());
+    let out = tokio::task::block_in_place(|| {
+        let mut cmd = iris(&sandbox);
+        cmd.args(["models", "show", "gpt-image-2", "--check-access", "--json"])
+            .env("IRIS_OPENAI_BASE_URL", base_url_at(ProviderId::OpenAi, &server.uri()))
+            .env("OPENAI_API_KEY", OPENAI_KEY)
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy");
+        for var in ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"] {
+            cmd.env(var, &proxy_url);
+        }
+        run(&mut cmd)
+    });
+    assert_eq!(out.code, 0, "{}", out.stdout);
+    assert!(
+        matches!(proxy.accept(), Err(e) if e.kind() == std::io::ErrorKind::WouldBlock),
+        "a request to a loopback base URL went through the proxy"
+    );
+}

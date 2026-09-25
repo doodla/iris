@@ -650,7 +650,7 @@ impl HttpClient {
         loop {
             attempt += 1;
             let builder = build(&self.inner).map_err(HttpError::Error)?;
-            let (client, request) = builder.build_split();
+            let (_, request) = builder.build_split();
             let mut request = request.map_err(|e| {
                 HttpError::Error(IrisError::internal(format!(
                     "could not build the HTTP request: {}",
@@ -663,6 +663,8 @@ impl HttpClient {
             let url = redact::redact_url(request.url().as_str());
             let started = Instant::now();
 
+            // A loopback destination bypasses any proxy (see `HttpClient::client_for`).
+            let client = self.client_for(request.url()).clone();
             match send_and_read(&client, request, call.max_body).await {
                 Ok((status, headers, body)) => {
                     let request_id = request_id_from(call, &headers);

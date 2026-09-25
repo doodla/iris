@@ -77,6 +77,11 @@ impl Default for HttpSettings {
 #[derive(Debug, Clone)]
 pub struct HttpClient {
     pub(crate) inner: reqwest::Client,
+    /// The same client without any proxy, for loopback destinations: a proxy
+    /// cannot reach this machine's loopback, and sending a request there through a
+    /// system proxy would hand its credential header to the proxy in clear text
+    /// when the base URL is plain http.
+    direct: reqwest::Client,
     pub(crate) retry: RetryPolicy,
     /// True only for clients built by [`HttpClient::new`], whose redirect policy is
     /// known to be `none`. [`HttpClient::execute`] and [`download()`] refuse to run
@@ -94,21 +99,33 @@ impl HttpClient {
     /// * system proxy configuration (reqwest default: `HTTPS_PROXY`, `NO_PROXY`, …)
     ///   unless [`HttpSettings::system_proxy`] is `false`;
     /// * no default headers, in particular no credentials.
+    ///
+    /// Requests to loopback hosts ([`is_loopback`]) never use a proxy.
     pub fn new(settings: &HttpSettings) -> Result<Self, IrisError> {
-        let mut builder = reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .connect_timeout(settings.connect_timeout)
-            .user_agent(USER_AGENT);
-        if !settings.system_proxy {
-            builder = builder.no_proxy();
-        }
-        let inner = builder.build().map_err(|e| {
-            IrisError::internal(format!(
-                "could not initialize the HTTP client: {}",
-                retry::describe_reqwest_error(e)
-            ))
-        })?;
-        Ok(HttpClient { inner, retry: settings.retry.clone(), manual_redirects: true })
+        let build = |proxy: bool| {
+            let mut builder = reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(settings.connect_timeout)
+                .user_agent(USER_AGENT);
+            if !proxy {
+                builder = builder.no_proxy();
+            }
+            builder.build().map_err(|e| {
+                IrisError::internal(format!(
+                    "could not initialize the HTTP client: {}",
+                    retry::describe_reqwest_error(e)
+                ))
+            })
+        };
+        let inner = build(settings.system_proxy)?;
+        let direct = build(false)?;
+        Ok(HttpClient { inner, direct, retry: settings.retry.clone(), manual_redirects: true })
+    }
+
+    /// The client to send a request to `url` with: [`HttpClient::new`]'s client, or
+    /// its proxy-free twin when `url` is a loopback destination.
+    pub(crate) fn client_for(&self, url: &url::Url) -> &reqwest::Client {
+        if is_loopback(url) { &self.direct } else { &self.inner }
     }
 
     /// Wrap an existing reqwest client, using the default [`RetryPolicy`], for direct
@@ -121,7 +138,7 @@ impl HttpClient {
     /// run on a client built here and fail with `internal_error` before sending
     /// anything. Use [`HttpClient::new`] for every client that talks to a provider.
     pub fn from_reqwest(inner: reqwest::Client) -> Self {
-        HttpClient { inner, retry: RetryPolicy::default(), manual_redirects: false }
+        HttpClient { direct: inner.clone(), inner, retry: RetryPolicy::default(), manual_redirects: false }
     }
 
     /// Whether this client was built by [`HttpClient::new`] (redirects are never
