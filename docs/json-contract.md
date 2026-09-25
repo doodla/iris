@@ -172,8 +172,10 @@ single named job keeps its own error (`invalid_argument`, `job_not_found`, or `s
 an unreadable record). Without `--force`, a `succeeded` job whose outputs are not all downloaded
 is refused while the provider still keeps them; its error adds `details.outputs_not_downloaded`
 (the output indexes) and `details.remote_expires_at` (or `null` when the provider documents no
-retention). `--all --force` also deletes unreadable record files and names them in `note`. Only if a record changes between the check and its deletion can the command stop partway;
-`details.deleted` then lists what it deleted (see [jobs.md](jobs.md#local-deletion-vs-remote-state)).
+retention). `--all --force` also deletes unreadable record files and names them in `note`. Only
+if a record changes between the check and its deletion can the command stop partway;
+`details.deleted` then lists what it deleted (see
+[jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
 ### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [], "default_for": [] } ] }`
 
