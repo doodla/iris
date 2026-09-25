@@ -624,6 +624,16 @@ impl JobRecord {
                 None => replay.to_string(),
             });
         }
+        // A delay before retrying means nothing on an error that is not retryable
+        // (the contract keeps `retry_after_seconds` null then); the recorded one
+        // stays visible next to `submission_retryable`.
+        if body.retryable == Some(false)
+            && let Some(delay) = body.retry_after_seconds.take()
+        {
+            body.details
+                .get_or_insert_with(Map::new)
+                .insert("submission_retry_after_seconds".to_string(), json!(delay));
+        }
         Some(body)
     }
     pub fn usage(&self) -> Option<&Usage> {

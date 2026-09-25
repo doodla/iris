@@ -390,6 +390,19 @@ fn errors_of_ended_jobs_are_shown_as_not_retryable_and_kept_as_written() {
         assert!(written["error"]["details"].get("submission_retryable").is_none());
     }
 
+    // A recorded Retry-After delay (a submission answered 429) is not shown as a
+    // delay to wait before retrying an ended job.
+    let mut rec = JobRecord::new(new_job(), ts(0)).unwrap();
+    let limited = IrisError::new(ErrorCode::RateLimited, "slow down")
+        .with_retryable(Some(true))
+        .with_retry_after(std::time::Duration::from_secs(120));
+    rec.mark_rejected(&limited, ts(1)).unwrap();
+    let view = rec.error_view().unwrap();
+    assert_eq!(view.retryable, Some(false));
+    assert_eq!(view.retry_after_seconds, None, "retryable false keeps retry_after_seconds null");
+    assert_eq!(view.details.as_ref().unwrap()["submission_retry_after_seconds"], json!(120));
+    assert_eq!(serde_json::to_value(&rec).unwrap()["error"]["retry_after_seconds"], json!(120));
+
     // An error that already says not retryable is shown as it is.
     let mut rec = running_record();
     let blocked = IrisError::new(ErrorCode::ContentBlocked, "blocked").with_hint("change the prompt");
