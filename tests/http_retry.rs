@@ -292,6 +292,64 @@ async fn provider_supplied_delay_is_honored_and_capped() {
     assert_eq!(requests(&server).await, 1);
 }
 
+/// A `Retry-After` is kept only on an error that retrying could help: never on a
+/// final verdict or an error marked not retryable, whoever set the delay.
+#[tokio::test]
+async fn retry_after_is_kept_only_on_errors_worth_retrying() {
+    let run = |status: u16, class: RetryClass, verdict: fn(&HttpResponse) -> Verdict| async move {
+        let server = MockServer::start().await;
+        failing_then_ok(&server, status, 5, &[("retry-after", "30")]).await;
+        let url = format!("{}/v1/images/generations", server.uri());
+        let err = expect_error(client().execute(&call(class), |c| Ok(c.post(&url)), verdict).await);
+        (err, requests(&server).await)
+    };
+
+    // A final verdict: a quota that will not clear by waiting, an uncertain paid
+    // submission. The classifier's own delay is dropped too.
+    let (err, sent) = run(429, RetryClass::PaidSubmit, |_| {
+        Verdict::Final(
+            iris::error::IrisError::new(ErrorCode::QuotaExceeded, "daily quota used up")
+                .with_retry_after(Duration::from_secs(20)),
+        )
+    })
+    .await;
+    assert_eq!((err.code, err.retry_after, sent), (ErrorCode::QuotaExceeded, None, 1));
+    let (err, sent) = run(503, RetryClass::PaidSubmit, |_| {
+        Verdict::Final(
+            iris::error::IrisError::new(ErrorCode::SubmissionUncertain, "the job may exist")
+                .with_detail("charge_possible", true),
+        )
+    })
+    .await;
+    assert_eq!(
+        (err.code, err.retry_after, err.retryable, sent),
+        (ErrorCode::SubmissionUncertain, None, Some(false), 1)
+    );
+
+    // A transient verdict whose error is not retryable, returned at once for a paid call.
+    let (err, sent) = run(503, RetryClass::PaidSubmit, |resp| Verdict::Transient {
+        error: resp.fallback_error(Some(ProviderId::OpenAi)).with_retryable(Some(false)),
+        retry_after: Some(Duration::from_secs(5)),
+    })
+    .await;
+    assert_eq!((err.retry_after, sent), (None, 1));
+
+    // A retryable error keeps the delay: a Gemini 5xx the caller may run again, or
+    // a rate limit that outlasted the attempts.
+    let (err, sent) = run(503, RetryClass::PaidSubmit, |resp| Verdict::Transient {
+        error: resp.fallback_error(Some(ProviderId::Gemini)),
+        retry_after: None,
+    })
+    .await;
+    assert_eq!((err.code, err.retryable, sent), (ErrorCode::ProviderError, Some(true), 1));
+    assert_eq!(err.retry_after, Some(Duration::from_secs(30)));
+    let server = MockServer::start().await;
+    failing_then_ok(&server, 429, 5, &[("retry-after", "0")]).await;
+    let err = expect_error(post(&server.uri(), RetryClass::PaidSubmit).await);
+    assert_eq!((err.code, err.retry_after), (ErrorCode::RateLimited, Some(Duration::ZERO)));
+    assert_eq!(requests(&server).await, 3);
+}
+
 #[tokio::test]
 async fn the_request_is_rebuilt_for_every_attempt() {
     let server = MockServer::start().await;

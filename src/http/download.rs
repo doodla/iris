@@ -150,7 +150,8 @@ impl DownloadError {
     /// that know the output's retention report `artifact_expired` once it has
     /// passed); 401 → `authentication_failed`;
     /// 429, or any status whose `Retry-After` exceeded the automatic-wait limit →
-    /// `rate_limited` with `retry_after`; other statuses, policy refusals and
+    /// `rate_limited` with `retry_after` (a status that is not retryable never
+    /// carries `retry_after` otherwise); other statuses, policy refusals and
     /// transport failures → `download_failed` (retryable unless the failure is
     /// permanent); an artifact over the size limit → `download_failed`, not
     /// retryable; error documents served as media → `invalid_media`; file errors →
@@ -199,7 +200,8 @@ impl DownloadError {
                     err = err
                         .with_hint("the file host says the output is gone; it can no longer be downloaded");
                 }
-                if let Some(after) = retry_after {
+                // A delay asked for next to a permanent refusal is no reason to retry.
+                if let Some(after) = retry_after.filter(|_| retryable != Some(false)) {
                     err = err.with_retry_after(after);
                 }
                 if !body_snippet.is_empty() {
@@ -691,6 +693,24 @@ mod tests {
         assert_eq!(e.code, ErrorCode::DownloadFailed);
         assert_eq!(e.retryable, Some(true));
         assert_eq!(status(400).into_iris().retryable, Some(false));
+        // A requested delay goes with retryable answers only.
+        let delayed = |s: u16| {
+            DownloadError::Status {
+                status: s,
+                body_snippet: String::new(),
+                retry_after: Some(Duration::from_secs(20)),
+                retry_after_limit: None,
+                attempts: 1,
+                url: "https://x/".into(),
+            }
+            .into_iris()
+        };
+        for s in [410u16, 401, 400] {
+            assert_eq!(delayed(s).retry_after, None, "{s}");
+        }
+        for s in [403u16, 429, 503] {
+            assert_eq!(delayed(s).retry_after, Some(Duration::from_secs(20)), "{s}");
+        }
         let e = DownloadError::Refused { message: "no".into() }.into_iris();
         assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(false)));
         assert_eq!(

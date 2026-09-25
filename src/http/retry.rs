@@ -603,6 +603,9 @@ impl HttpClient {
     ///   verdict's own `retry_after`, are honored up to
     ///   [`RetryPolicy::max_retry_after`]; a longer requested delay stops with
     ///   `rate_limited` carrying `retry_after`. `x-should-retry: false` stops retries.
+    ///   The returned error carries the requested delay as `retry_after` only when
+    ///   retrying could help: never for a [`Verdict::Final`] or an error whose
+    ///   `retryable` is `Some(false)`.
     /// * Returns the first 2xx response (with its attempt count), or an [`HttpError`].
     /// * A 2xx body longer than [`Call::max_body`] is not read further and never
     ///   retried. For a [`RetryClass::PaidSubmit`] call the provider answered, so the
@@ -666,13 +669,14 @@ impl HttpClient {
 
                     let verdict = classify(&resp);
                     let retry_allowed = call.class.retries_verdict(&verdict);
+                    let is_final = matches!(verdict, Verdict::Final(_));
                     let (error, body_delay) = verdict.into_parts();
                     let header_delay = retry_after_from_headers(&resp.headers, jiff::Timestamp::now());
                     let requested = match (header_delay, body_delay) {
                         (Some(a), Some(b)) => Some(a.max(b)),
                         (a, b) => a.or(b),
                     };
-                    let error = enrich(error, &resp, call.provider, requested);
+                    let error = enrich(error, &resp, call.provider, requested, is_final);
                     let should_retry_false =
                         resp.header("x-should-retry").is_some_and(|v| v.trim().eq_ignore_ascii_case("false"));
 
@@ -885,11 +889,18 @@ fn format_bytes(n: u64) -> String {
     if n >= MIB && n.is_multiple_of(MIB) { format!("{} MiB", n / MIB) } else { format!("{n}-byte") }
 }
 
+/// Complete the classifier's error with what the response says: status, request
+/// id, provider, and the delay the provider asked for — unless the error is final
+/// (`is_final`: a [`Verdict::Final`]) or not retryable (`retryable: false`). A
+/// `Retry-After` on such an answer (a quota that resets tomorrow, a paid
+/// submission whose outcome is unknown) is not an invitation to send the request
+/// again, so no such error carries `retry_after`, whoever set it.
 fn enrich(
     mut error: IrisError,
     resp: &HttpResponse,
     provider: Option<ProviderId>,
     retry_after: Option<Duration>,
+    is_final: bool,
 ) -> IrisError {
     if error.provider_status.is_none() {
         error.provider_status = Some(resp.status.as_u16());
@@ -900,7 +911,9 @@ fn enrich(
     if error.provider.is_none() {
         error.provider = provider;
     }
-    if error.retry_after.is_none() {
+    if is_final || error.retryable == Some(false) {
+        error.retry_after = None;
+    } else if error.retry_after.is_none() {
         error.retry_after = retry_after;
     }
     error
