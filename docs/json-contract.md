@@ -455,7 +455,9 @@ request before running again"; agents that need to distinguish them check `error
 Output locations are checked the same way before anything is sent: an existing file is
 `output_exists` (unless `--overwrite`), and a location that cannot be used as given (a file where a
 directory should be, no permission, a read-only file system, a directory that cannot be created) is
-`invalid_argument` with `details.path` naming the offending path. A real run creates the output
+`invalid_argument` with `details.path` naming the offending path. Iris writes media only to files
+and prints their paths, so `-o -` (standard output) and an `-o` naming an existing device, pipe, or
+socket (e.g. `/dev/null`) are `invalid_argument` too, with a hint saying so. A real run creates the output
 directory and proves it writable before the paid request; `--dry-run` writes nothing, so it catches
 a file in the way but not a missing permission. Other I/O failures there (e.g. a full disk) stay
 `io_error` (exit 1).

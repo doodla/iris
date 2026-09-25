@@ -214,6 +214,40 @@ fn output_naming_a_directory_is_rejected() {
     );
 }
 
+/// Iris writes files and prints their paths: `-o -` (standard output), relative or
+/// resolved against a directory, and an existing device are refused with a hint
+/// saying so, for images and videos alike.
+#[test]
+fn output_to_standard_output_or_a_device_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    let dash = dir.path().join("-");
+    let mut targets = vec![PathBuf::from("-"), dash.clone()];
+    if cfg!(unix) {
+        // (Not /dev/stdout: whether it is a device depends on how the tests are run.)
+        targets.push(PathBuf::from("/dev/null"));
+    }
+    for output in &targets {
+        for req in [
+            image_req(dir.path(), 1, Some(output), None),
+            PathRequest {
+                naming: Naming::Video { job_id: JOB },
+                count: 1,
+                output: Some(output),
+                dir: dir.path(),
+                format: None,
+                media_types: VIDEO_TYPES,
+            },
+        ] {
+            let err = plan_outputs(&req).unwrap_err();
+            assert_eq!(err.code, ErrorCode::InvalidArgument, "{}", output.display());
+            assert!(err.hint.as_deref().unwrap().contains("prints their paths"), "{:?}", err.hint);
+        }
+    }
+    assert!(!dash.exists());
+    // A file that merely contains a dash in its name is fine.
+    assert!(plan_outputs(&image_req(dir.path(), 1, Some(&dir.path().join("a-b.png")), None)).is_ok());
+}
+
 #[test]
 fn preflight_refuses_existing_files_unless_overwrite() {
     let dir = tempfile::tempdir().unwrap();

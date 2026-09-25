@@ -11,7 +11,10 @@
 //!   indicative: the real run plans again under a new id.
 //! * `-o PATH` is used literally; with several artifacts it becomes
 //!   `<stem>-<i>.<ext>`. Its extension must agree with `--format` and with what
-//!   the model can produce; without `--format` it selects the format.
+//!   the model can produce; without `--format` it selects the format. It must name
+//!   a regular file: `-o -` (standard output) and an existing device, pipe, or
+//!   socket are `invalid_argument`, because Iris saves media to files and prints
+//!   their paths.
 //! * [`preflight`] refuses existing files before any paid request unless
 //!   `--overwrite`; [`preflight_dirs`] makes sure the output directories exist (or
 //!   can be created) and are writable, so a paid result is never lost because it
@@ -121,6 +124,7 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
     let mut implied_format = None;
     let (media_type, paths) = match req.output {
         Some(output) => {
+            check_file_target(output)?;
             let names_directory = output.as_os_str().to_string_lossy().ends_with(std::path::MAIN_SEPARATOR);
             let output = absolute(output)?;
             if names_directory || output.is_dir() {
@@ -214,6 +218,34 @@ pub fn plan_outputs(req: &PathRequest<'_>) -> Result<PlannedOutputs, IrisError> 
         }
     };
     Ok(PlannedOutputs { paths, media_type, implied_format, warnings })
+}
+
+/// What to do instead of writing media to standard output or a device.
+const FILES_HINT: &str = "Iris saves media to files and prints their paths (result.artifacts[].path with --json); \
+                          give a file path with -o/--output, or a directory with -d/--out-dir";
+
+/// `-o` must name a file Iris can create or replace: not `-` (which would mean
+/// standard output), and not an existing device, pipe, or socket such as
+/// `/dev/stdout` or `/dev/null` (paid output is never streamed or discarded).
+fn check_file_target(output: &Path) -> Result<(), IrisError> {
+    if output.file_name().is_some_and(|name| name == "-") {
+        return Err(IrisError::invalid(
+            "-o/--output - would mean standard output, but Iris writes media only to files",
+        )
+        .with_hint(FILES_HINT));
+    }
+    if let Ok(meta) = fs::metadata(output)
+        && !meta.is_file()
+        && !meta.is_dir()
+    {
+        return Err(IrisError::invalid(format!(
+            "-o/--output {} is not a regular file (a device, pipe, or socket); Iris writes media only to files",
+            output.display()
+        ))
+        .with_detail("path", output.to_string_lossy().into_owned())
+        .with_hint(FILES_HINT));
+    }
+    Ok(())
 }
 
 /// Check planned paths before any paid request: an existing file without

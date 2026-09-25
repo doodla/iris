@@ -174,6 +174,25 @@ async fn option_flags_map_to_catalog_options_and_are_rejected_when_undeclared() 
     );
 }
 
+/// `-o -` does not stream media to standard output: Iris writes files and prints
+/// their paths, and says so before anything is sent (real run and dry run alike).
+#[tokio::test]
+async fn output_to_standard_output_is_refused_with_a_hint() {
+    let f = Fixture::new();
+    for extra in [&["--dry-run"][..], &[]] {
+        let args = [&["image", "generate", "x", "-o", "-", "--json"][..], extra].concat();
+        let run = f.run(&args).await;
+        assert_eq!(run.code, 2, "{run:?}");
+        let v = run.json();
+        assert_eq!(v["error"]["code"], "invalid_argument", "{v}");
+        assert!(v["error"]["hint"].as_str().unwrap().contains("prints their paths"), "{v}");
+    }
+    let run = f.run(&["video", "generate", "x", "-o", "-", "--dry-run", "--json"]).await;
+    assert_eq!(run.error_code(), "invalid_argument");
+    assert_eq!(f.image_calls(), 0);
+    assert!(!f.sandbox.work().join("-").exists());
+}
+
 #[tokio::test]
 async fn clap_usage_errors_become_json_envelopes() {
     let f = Fixture::new();
