@@ -305,11 +305,14 @@ fn operation_not_found(e: IrisError, remote_id: &str) -> IrisError {
 
 /// Map a finished or running operation to [`RemoteStatus`].
 ///
-/// A done operation with output URIs is `Succeeded` with every URI recorded as
-/// given, whatever its host: whether Iris is willing to fetch a URI is decided at
-/// download time ([`check_output_uri`]), against the base URL configured then, so a
-/// refused URI never turns a finished (and billed) job into a failed one. Only an
-/// operation error, or a done operation without any output, is `Failed`.
+/// A done operation with output URIs is `Succeeded` with every sample's URI
+/// recorded as given, whatever its host: whether Iris is willing to fetch a URI is
+/// decided at download time ([`check_output_uri`]), against the base URL configured
+/// then, so a refused URI never turns a finished (and billed) job into a failed
+/// one. A URI that no download could ever use (not an http(s) URL, say) fails only
+/// that output when the job record takes the answer; the samples with usable URIs
+/// are kept. Only an operation error, or a done operation without any output URI,
+/// is `Failed` here.
 fn interpret(op: Operation, remote_id: &str) -> RemoteStatus {
     if op.done != Some(true) {
         return RemoteStatus::Running { progress: progress_percent(op.metadata.as_ref()) };
@@ -318,20 +321,18 @@ fn interpret(op: Operation, remote_id: &str) -> RemoteStatus {
         return RemoteStatus::Failed { error: operation_error(&status, remote_id) };
     }
     let video = op.response.and_then(|r| r.generate_video_response).unwrap_or_default();
-    match outputs(&video) {
-        Ok(outputs) if !outputs.is_empty() => {
-            let mut warnings = Vec::new();
-            if let Some(n) = video.rai_media_filtered_count.filter(|n| *n > 0) {
-                warnings.push(Warning::new(
-                    WARNING_CONTENT_FILTERED,
-                    format!("the provider filtered {n} output(s) of this job for safety"),
-                ));
-            }
-            RemoteStatus::Succeeded { outputs, usage: None, warnings }
-        }
-        Ok(_) => RemoteStatus::Failed { error: no_output_error(&video, remote_id) },
-        Err(error) => RemoteStatus::Failed { error: error.with_remote_operation(remote_id) },
+    let outputs = outputs(&video);
+    if outputs.is_empty() {
+        return RemoteStatus::Failed { error: no_output_error(&video, remote_id) };
     }
+    let mut warnings = Vec::new();
+    if let Some(n) = video.rai_media_filtered_count.filter(|n| *n > 0) {
+        warnings.push(Warning::new(
+            WARNING_CONTENT_FILTERED,
+            format!("the provider filtered {n} output(s) of this job for safety"),
+        ));
+    }
+    RemoteStatus::Succeeded { outputs, usage: None, warnings }
 }
 
 /// A numeric percentage (0–100) from the operation metadata, if the provider sends
@@ -362,42 +363,19 @@ fn operation_error(status: &RpcStatus, remote_id: &str) -> IrisError {
     err
 }
 
-/// Download references of every generated sample, kept exactly as the provider
-/// sent them (the raw URI is stored only in the private job record). Only a
-/// structural check applies here ([`structural_uri_problem`]); a URI that fails it
-/// is not a usable answer at all (`provider_bad_response`).
-fn outputs(video: &GenerateVideoResponse) -> Result<Vec<RemoteArtifact>, IrisError> {
-    let mut out = Vec::new();
-    for sample in video.generated_samples.iter().flatten() {
-        let Some(v) = &sample.video else { continue };
-        let Some(uri) = v.uri.as_deref() else { continue };
-        if let Some(why) = structural_uri_problem(uri) {
-            return Err(IrisError::new(
-                ErrorCode::ProviderBadResponse,
-                format!("the Veo job finished, but the provider's output URI is unusable: {why}"),
-            )
-            .with_provider(ProviderId::Gemini)
-            .with_detail("uri", redact::redact_url(uri)));
-        }
+/// Download references of every generated sample that has one, in sample order,
+/// kept exactly as the provider sent them (the raw URI is stored only in the
+/// private job record, which also marks a structurally unusable one `failed`
+/// without dropping the others).
+fn outputs(video: &GenerateVideoResponse) -> Vec<RemoteArtifact> {
+    video
+        .generated_samples
+        .iter()
+        .flatten()
+        .filter_map(|sample| sample.video.as_ref()?.uri.as_deref())
         // Veo outputs are MP4; the downloader verifies the bytes.
-        out.push(RemoteArtifact { uri: uri.to_string(), media_type: Some(VIDEO_MP4.to_string()) });
-    }
-    Ok(out)
-}
-
-/// Why `uri` cannot be a download reference at all: not a URL, not http(s), or
-/// carrying user information or a fragment. `None` if it is structurally usable.
-fn structural_uri_problem(uri: &str) -> Option<&'static str> {
-    let Ok(url) = url::Url::parse(uri) else {
-        return Some("it is not a valid URL");
-    };
-    if !matches!(url.scheme(), "http" | "https") {
-        return Some("it is not an http(s) URL");
-    }
-    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
-        return Some("it carries user information or a fragment");
-    }
-    None
+        .map(|uri| RemoteArtifact { uri: uri.to_string(), media_type: Some(VIDEO_MP4.to_string()) })
+        .collect()
 }
 
 /// `done` without a usable video: filtered → `content_blocked`; otherwise the

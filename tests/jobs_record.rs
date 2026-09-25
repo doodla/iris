@@ -281,6 +281,72 @@ fn poll_success_records_outputs_usage_and_retention() {
 }
 
 #[test]
+fn outputs_with_unusable_uris_fail_alone_and_only_all_of_them_fail_the_job() {
+    let video = |uri: &str| RemoteArtifact { uri: uri.into(), media_type: Some("video/mp4".into()) };
+    let unusable = [
+        "not a url",
+        "ftp://generativelanguage.googleapis.com/v1beta/files/abc:download",
+        "file:///etc/passwd",
+        "https://generativelanguage.googleapis.com/v1beta/files/abc:download#frag",
+        "https://user:pw@generativelanguage.googleapis.com/v1beta/files/abc:download",
+    ];
+    for bad in unusable {
+        // A good sample, then an unusable one: the job succeeds with both recorded;
+        // only the unusable one is failed, and a warning names it.
+        let mut rec = running_record();
+        let applied = rec
+            .apply_poll(
+                RemoteStatus::Succeeded {
+                    outputs: vec![video(REMOTE_URI), video(bad)],
+                    usage: None,
+                    warnings: vec![],
+                },
+                Some(Duration::from_secs(2 * 24 * 3600)),
+                ts(100),
+            )
+            .unwrap();
+        let PollApplied::Succeeded { warnings } = applied else { panic!("{bad}: {applied:?}") };
+        assert_eq!(rec.status(), JobStatus::Succeeded, "{bad}");
+        assert_eq!(warnings.len(), 1);
+        assert_eq!(warnings[0].code, "output_item_unusable");
+        assert!(warnings[0].message.contains("output 1"), "{}", warnings[0].message);
+        let (good, broken) = (&rec.outputs()[0], &rec.outputs()[1]);
+        assert_eq!(good.download_state, DownloadState::Pending);
+        assert!(good.awaits_download() && good.unusable_reason().is_none());
+        assert_eq!(broken.download_state, DownloadState::Failed);
+        assert!(!broken.awaits_download() && broken.unusable_reason().is_some(), "{bad}");
+        let error = broken.last_error.as_ref().unwrap();
+        assert_eq!(error.code, ErrorCode::ProviderBadResponse);
+        assert_eq!(error.retryable, Some(false));
+        let shown = error.details.as_ref().unwrap()["uri"].as_str().unwrap();
+        assert!(!shown.contains("pw@"), "{shown}");
+        assert!(rec.remote_expires_at().is_some());
+
+        // Nothing usable at all: the job failed, with the provider's bad answer.
+        let mut rec = running_record();
+        let applied = rec
+            .apply_poll(
+                RemoteStatus::Succeeded {
+                    outputs: vec![video(bad), video(bad)],
+                    usage: None,
+                    warnings: vec![],
+                },
+                None,
+                ts(100),
+            )
+            .unwrap();
+        assert_eq!(applied, PollApplied::Failed, "{bad}");
+        assert_eq!(rec.status(), JobStatus::Failed);
+        assert_eq!(rec.completed_at(), Some(ts(100)));
+        let error = rec.error().unwrap();
+        assert_eq!(error.code, ErrorCode::ProviderBadResponse);
+        assert!(error.message.contains("none of its 2 output URI(s)"), "{}", error.message);
+        assert_eq!(error.remote_operation_id.as_deref(), Some("models/veo-test/operations/op123"));
+        assert!(rec.outputs().is_empty());
+    }
+}
+
+#[test]
 fn poll_failure_and_gone() {
     let mut failed = running_record();
     let err = IrisError::new(ErrorCode::ContentBlocked, "blocked by safety filters");

@@ -8,9 +8,14 @@
 //! submitting --definite rejection--> failed
 //! submitting --ambiguous--> submission_unknown        (also: stale submitting, see SUBMIT_GRACE)
 //! running --poll done+ok--> succeeded   running --poll done+error--> failed
+//! running --poll done, but no usable output URI--> failed
 //! running --poll "not found" after submitted_at + retention--> expired
 //! succeeded: outputs[i].download_state pending -> downloaded | failed | expired
 //! ```
+//!
+//! A finished job's output whose URI Iris could never fetch (see
+//! [`output_uri_problem`]) is recorded `failed` from the start; the other outputs
+//! are unaffected, and the job fails only if none is usable.
 //!
 //! There is deliberately no method that turns a `running` or `succeeded` job into
 //! `failed` because of something local (Ctrl-C, wait timeout, poll network error,
@@ -260,6 +265,20 @@ impl fmt::Debug for JobOutput {
 }
 
 impl JobOutput {
+    /// Why this output can never be fetched (its URI is not an http(s) URL, or
+    /// carries user information or a fragment), or `None`. Such an output is
+    /// recorded `failed` with `provider_bad_response` when the job finishes, and is
+    /// never offered for download.
+    pub fn unusable_reason(&self) -> Option<&'static str> {
+        output_uri_problem(&self.remote_uri)
+    }
+
+    /// `pending` or `failed` and fetchable: a download may still get it.
+    pub fn awaits_download(&self) -> bool {
+        matches!(self.download_state, DownloadState::Pending | DownloadState::Failed)
+            && self.unusable_reason().is_none()
+    }
+
     fn pending(index: u32, remote_uri: String, media_type: Option<String>) -> JobOutput {
         JobOutput {
             index,
@@ -694,6 +713,10 @@ impl JobRecord {
     ///   recorded, `remote_expires_at = submitted_at + retention` when the provider
     ///   documents a retention period (the earliest time the provider may delete
     ///   the outputs; the observed completion time if `submitted_at` is missing).
+    ///   An output whose URI Iris could never fetch ([`output_uri_problem`]) is
+    ///   recorded `failed` with `provider_bad_response` and reported as warning
+    ///   `output_item_unusable`; if no output is usable, the job is `failed` with
+    ///   `provider_bad_response` instead.
     /// * `Failed` → `failed` with the provider's error.
     /// * `Gone` → `expired`, but only once `now` has reached `submitted_at +
     ///   retention` (or the retention is unknown). Earlier, the provider's "not
@@ -743,18 +766,57 @@ impl JobRecord {
         self.updated_at = now;
         Ok(match status {
             RemoteStatus::Running { progress } => PollApplied::Running { progress },
-            RemoteStatus::Succeeded { outputs, usage, warnings } => {
-                self.status = JobStatus::Succeeded;
+            RemoteStatus::Succeeded { outputs, usage, mut warnings } => {
                 self.completed_at = Some(now);
-                self.outputs = outputs
+                self.usage = usage.map(Preserved::new);
+                let outputs: Vec<JobOutput> = outputs
                     .into_iter()
                     .enumerate()
                     .map(|(i, o)| JobOutput::pending(i as u32, o.uri, o.media_type))
                     .collect();
-                self.usage = usage.map(Preserved::new);
+                let unusable: Vec<(u32, &'static str)> =
+                    outputs.iter().filter_map(|o| o.unusable_reason().map(|why| (o.index, why))).collect();
+                if !outputs.is_empty() && unusable.len() == outputs.len() {
+                    // Nothing the job produced can be fetched: not a success.
+                    let (_, why) = unusable[0];
+                    let error = IrisError::new(
+                        ErrorCode::ProviderBadResponse,
+                        format!(
+                            "the job finished, but none of its {} output URI(s) is usable: {why}",
+                            outputs.len()
+                        ),
+                    )
+                    .with_retryable(Some(false))
+                    .with_provider(self.provider)
+                    .with_detail("uri", redact::redact_url(&outputs[0].remote_uri));
+                    self.status = JobStatus::Failed;
+                    self.error = Some(self.error_body(&error));
+                    return Ok(PollApplied::Failed);
+                }
+                self.status = JobStatus::Succeeded;
+                self.outputs = outputs;
                 self.remote_expires_at =
                     retention.and_then(|r| self.submitted_at.unwrap_or(now).checked_add(r).ok());
                 self.error = None;
+                for (index, why) in unusable {
+                    let error = IrisError::new(
+                        ErrorCode::ProviderBadResponse,
+                        format!("the provider's URI for output {index} is unusable: {why}"),
+                    )
+                    .with_retryable(Some(false))
+                    .with_provider(self.provider)
+                    .with_detail("uri", redact::redact_url(&self.outputs[index as usize].remote_uri))
+                    .with_hint("this output cannot be downloaded; the job's other outputs are unaffected");
+                    self.record_output_problem(index, &error, DownloadState::Failed, now)?;
+                    warnings.push(Warning::new(
+                        "output_item_unusable",
+                        format!(
+                            "output {index} of job {} cannot be downloaded: the provider's URI for it is \
+                             unusable ({why}); the other outputs are unaffected",
+                            self.job_id
+                        ),
+                    ));
+                }
                 PollApplied::Succeeded { warnings }
             }
             RemoteStatus::Failed { error } => {
@@ -982,6 +1044,22 @@ pub fn request_metadata(
         }),
     );
     map
+}
+
+/// Why `uri` can never be a download reference: not a URL, not http(s), or
+/// carrying user information or a fragment. `None` if it is structurally usable
+/// (whether Iris trusts its host is decided at download time).
+pub fn output_uri_problem(uri: &str) -> Option<&'static str> {
+    let Ok(url) = url::Url::parse(uri) else {
+        return Some("it is not a valid URL");
+    };
+    if !matches!(url.scheme(), "http" | "https") {
+        return Some("it is not an http(s) URL");
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Some("it carries user information or a fragment");
+    }
+    None
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {

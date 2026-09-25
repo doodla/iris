@@ -812,22 +812,40 @@ async fn untrusted_output_uris_still_mean_success_and_are_refused_only_at_downlo
 }
 
 #[tokio::test]
-async fn structurally_unusable_output_uris_are_a_bad_response() {
+async fn every_sample_uri_is_passed_on_in_order_even_an_unusable_one() {
+    // A done operation with several samples: each sample's URI is an output, in
+    // sample order, whatever its shape. The job record fails only the outputs
+    // whose URI no download could use (see tests/jobs_record.rs), so one bad URI
+    // never costs the good ones.
     let server = MockServer::start().await;
-    let base = server.uri();
-    for uri in [
-        "not a url".to_string(),
-        "ftp://generativelanguage.googleapis.com/v1beta/files/abc:download".to_string(),
-        "file:///etc/passwd".to_string(),
-        format!("{}/v1beta/files/abc:download#frag", base),
-        base.replace("http://", "http://user:pw@") + "/v1beta/files/abc:download",
-    ] {
-        let err = failed(poll_output(&server, &uri).await);
-        assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{uri}");
-        assert!(err.details.contains_key("uri"), "{uri}");
-        assert!(!err.details["uri"].as_str().unwrap().contains("pw@"), "{err:?}");
-        assert_eq!(err.remote_operation_id.as_deref(), Some(OPERATION));
-    }
+    let good = format!("{}/v1beta/files/abc-123:download?alt=media", server.uri());
+    let samples = json!([
+        {"video": {"uri": good}},
+        {"video": {"uri": "not a url"}},
+        {"video": {"encodedVideo": "AAAA"}},
+        {},
+        {"video": {"uri": "ftp://example.invalid/v.mp4"}}
+    ]);
+    let status = poll_json(json!({
+        "name": OPERATION, "done": true,
+        "response": {"generateVideoResponse": {"generatedSamples": samples}}
+    }))
+    .await;
+    let RemoteStatus::Succeeded { outputs, .. } = status else {
+        panic!("expected Succeeded, got {status:?}")
+    };
+    let uris: Vec<&str> = outputs.iter().map(|o| o.uri.as_str()).collect();
+    assert_eq!(uris, [good.as_str(), "not a url", "ftp://example.invalid/v.mp4"]);
+    assert!(outputs.iter().all(|o| o.media_type.as_deref() == Some("video/mp4")));
+
+    // Only an answer without any output URI fails the job here.
+    let err = failed(
+        poll_json(json!({"name": OPERATION, "done": true,
+            "response": {"generateVideoResponse": {"generatedSamples": [{}, {"video": {}}]}}}))
+        .await,
+    );
+    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
+    assert_eq!(err.remote_operation_id.as_deref(), Some(OPERATION));
 }
 
 #[test]

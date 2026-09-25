@@ -409,6 +409,69 @@ fn an_output_uri_off_the_configured_origin_keeps_the_job_succeeded_until_the_bas
     veo.assert_no_credential_leaks();
 }
 
+/// The operation is done with one sample per URI in `uris`.
+fn done_with_samples(veo: &VeoMock, uris: &[&str]) -> wiremock::ResponseTemplate {
+    let samples: Vec<Value> = uris.iter().map(|uri| json!({ "video": { "uri": uri } })).collect();
+    json_response(
+        200,
+        json!({
+            "name": veo.op_name,
+            "done": true,
+            "response": { "generateVideoResponse": { "generatedSamples": samples } }
+        }),
+    )
+}
+
+#[test]
+fn a_finished_job_keeps_every_usable_sample_when_another_has_an_unusable_uri() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    let good = veo.output_uri();
+    veo.operation.set(done_with_samples(&veo, &[&good, "ftp://files.example/v.mp4"]));
+
+    let out = sb.iris().gemini(&veo.api).args(["jobs", "wait", &id, "--json"]).run();
+    let v = out.ok();
+    let job = job_of(&v);
+    assert_eq!(job["status"], "succeeded");
+    assert_eq!(job["artifacts"].as_array().unwrap().len(), 1, "{job}");
+    assert_video(&job["artifacts"][0], &sb.path(&format!("{id}-1.mp4")));
+    assert_eq!(job["outputs"][1]["download_state"], "failed");
+    assert_eq!(job["outputs"][1]["last_error"]["code"], "provider_bad_response");
+    assert_eq!(job["outputs"][1]["last_error"]["retryable"], false);
+    assert!(warning_codes(&v).contains(&"output_item_unusable".to_string()), "{v}");
+    assert_eq!(v["result"]["next_steps"], json!([]), "nothing is left that a download could get");
+    assert_eq!(veo.file_fetches(), 1);
+
+    // A later download keeps the saved output and names the unusable one again.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().ok();
+    let codes = warning_codes(&v);
+    assert!(
+        codes.contains(&"already_downloaded".to_string())
+            && codes.contains(&"output_item_unusable".to_string())
+    );
+    assert_eq!(veo.file_fetches(), 1);
+    assert_eq!(job_of(&v)["outputs"][1]["last_error"]["details"]["uri"], "ftp://files.example/v.mp4");
+    assert_eq!(sb.record(&id)["outputs"][1]["remote_uri"], "ftp://files.example/v.mp4", "kept as sent");
+
+    // When no sample has a usable URI, the job itself failed.
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &[]);
+    veo.operation.set(done_with_samples(&veo, &["not a url", "file:///etc/passwd"]));
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["jobs", "wait", &id, "--json"])
+        .run()
+        .err(1, "provider_bad_response");
+    assert_eq!(v["error"]["job_status"], "failed");
+    assert_eq!(sb.record(&id)["status"], "failed");
+    assert_eq!(veo.file_fetches(), 0);
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
 #[test]
 fn a_video_request_refused_locally_sends_nothing_and_leaves_no_job() {
     let sb = Sandbox::new();

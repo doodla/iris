@@ -86,12 +86,15 @@ compiler alone):
 - **Downloads use the shared credential-origin rule**, not a bespoke one: `http::download`
   already attaches `Provider::credential_header()` only when the download URL's scheme+host+port
   match the provider's configured base URL, and follows redirects manually so a redirect off that
-  origin drops the credential. `poll` records every output URI of a finished job as given (after
-  at most a structural check: a URL, http(s), no userinfo or fragment), so a job the provider
-  finished is always `succeeded`. Which URIs Iris is willing to fetch is decided at download time,
-  against the base URL configured then, by `VideoProvider::check_output_uri` (see
-  `providers/gemini/veo.rs::validate_output_uri` for the pattern: same origin, a narrow allowed
-  path shape); a refusal fails that output's download, never the job.
+  origin drops the credential. `poll` returns every output URI of a finished job as given, in
+  sample order. The job record then fails only an output whose URI no download could ever use
+  (not a URL, not http(s), or with userinfo or a fragment: `provider_bad_response` on that output,
+  warning `output_item_unusable`) and keeps the others; a finished job is `failed` only when the
+  provider reports an error or none of its outputs has a usable URI. Which of the usable URIs Iris
+  is willing to fetch is decided at download time, against the base URL configured then, by
+  `VideoProvider::check_output_uri` (see `providers/gemini/veo.rs::validate_output_uri` for the
+  pattern: same origin, a narrow allowed path shape); a refusal fails that output's download, never
+  the job.
 - **Redact before an error can leak.** Route provider error text through `redact::scrub` (removes
   configured credential values) before it reaches `IrisError` — see
   `providers/openai/client.rs::scrub_credential` for the reference pass over every string field of

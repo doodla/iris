@@ -139,10 +139,12 @@ window — and is reported as `submission_unknown` the next time anything touche
 
 A finished operation with output URIs is `succeeded` with every URI recorded (the raw URI only in
 the private record): whether Iris trusts a URI enough to fetch it is a download decision, made anew
-by every download (see [Downloads](#downloads)). Only a provider-reported error (including a
-safety block), a finished operation without any output, or an output "URI" that is not even an
-http(s) URL without user information or a fragment (`provider_bad_response`) makes a job
-`failed`.
+by every download (see [Downloads](#downloads)). An output whose "URI" is not even an http(s) URL
+without user information or a fragment can never be downloaded: that output alone is recorded
+`failed` with `provider_bad_response` (warning `output_item_unusable`), is never offered for
+download, and the job's other outputs are kept. Only a provider-reported error (including a safety
+block), a finished operation without any output, or one whose every output URI is unusable
+(`provider_bad_response`) makes a job `failed`.
 
 **There is deliberately no transition that turns a `running` or `succeeded` job into `failed`
 because of something *local*.** Ctrl-C, a wait-limit expiry, a local network error while polling,

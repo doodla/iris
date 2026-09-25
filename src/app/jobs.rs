@@ -19,7 +19,7 @@ use url::Url;
 
 use crate::artifacts::{self, DownloadDecision, FinalizeMode, Naming, PartFile, PathRequest, SavedArtifact};
 use crate::config::SettingSource;
-use crate::domain::{DownloadState, JobStatus, Operation, ProviderId, Warning};
+use crate::domain::{JobStatus, Operation, ProviderId, Warning};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{self, AuthHeader, DownloadError, DownloadRequest};
 use crate::jobs::{self, JobId, JobOutput, JobRecord, PollApplied};
@@ -251,8 +251,9 @@ pub(crate) fn next_steps(rec: &JobRecord) -> Vec<String> {
     }
 }
 
+/// Outputs a download may still get (`pending` or `failed`, with a usable URI).
 fn has_downloadable(rec: &JobRecord) -> bool {
-    rec.outputs().iter().any(|o| matches!(o.download_state, DownloadState::Pending | DownloadState::Failed))
+    rec.outputs().iter().any(JobOutput::awaits_download)
 }
 
 /// Warning `retention_limited` for a succeeded job with outputs still to download.
@@ -649,6 +650,7 @@ async fn download_outputs(
     // is present before any output directory is created.
     let needs_credential = rec.outputs().iter().zip(&decisions).any(|(out, decision)| {
         matches!(decision, DownloadDecision::Fetch | DownloadDecision::Refetch)
+            && out.unusable_reason().is_none()
             && Url::parse(&out.remote_uri).is_ok_and(|u| http::same_origin(&u, &base_url))
     });
     if needs_credential {
@@ -670,6 +672,18 @@ async fn download_outputs(
 
     let mut remote_failure: Option<IrisError> = None;
     for ((out, planned), &decision) in rec.outputs().iter().zip(&plan.paths).zip(&decisions) {
+        // The provider gave no usable URI for this output (recorded `failed` when
+        // the job finished): nothing can fetch it, and the others are unaffected.
+        if let Some(why) = out.unusable_reason() {
+            warnings.push(Warning::new(
+                "output_item_unusable",
+                format!(
+                    "output {} of job {id} cannot be downloaded: the provider's URI for it is unusable ({why})",
+                    out.index
+                ),
+            ));
+            continue;
+        }
         let recorded = out.recorded_file();
         // Where a fetch saves the output: the planned target, or, to replace the
         // file saved earlier, its recorded path (which may carry an adjusted
