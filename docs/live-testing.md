@@ -76,10 +76,33 @@ says so with an `output_extension_adjusted` warning.
 - If access, quota, billing, or budget blocks a step, finish the others, name exactly what stayed
   unverified, and keep offline (mock) evidence and live evidence labeled as what they are.
 
-## Last live run
+## Last live runs
 
-Run on 2026-09-24 against version 0.1.0, by hand through the release binary, following the steps
-above. Costs are Iris's usage-based estimates, not invoices.
+Both runs were done by hand through a release build, following the steps above. Costs are Iris's
+usage-based estimates, not invoices.
+
+### 2026-09-25, commit e284248
+
+The final code of the first release candidate. The paid image steps were repeated; the Veo steps
+reused the job from the earlier run instead of submitting a second video.
+
+| Step | Model and settings | Result | Estimated cost |
+|---|---|---|---|
+| 1 OpenAI generate | `gpt-image-2.5-sunburst`, 1024x1024, low | 1024×1024 PNG, decoded; 196 output tokens | $0.0059 |
+| 2 Gemini generate | `gemini-3.1-flash-image`, 512, 1:1 | 512×512 JPEG saved as `.jpg` with no warning | $0.0463 |
+| 3a OpenAI edit | step 1 image as input, 1024x1024, low | 1024×1024 PNG, decoded | $0.0142 |
+| 3b Gemini edit | step 2 image as reference, 512 | 512×512 JPEG, valid | $0.0456 |
+| 5 Resume | `jobs status` on the earlier job, with its record reset to `running` so the poll path runs | one poll of the real operation → `succeeded`; retention reported as "at least until" submission + 48 h | free |
+| 6 Download | `jobs download` in a new process | fetched directly from the API host (no redirect); SHA-256 identical to the earlier run | free |
+| 7 Repeat | `jobs download` again, then `-d` to another directory | `already_downloaded` with no request; local copy with no request | free |
+| 8 JSON | all steps in `--json` mode | one envelope per command | — |
+
+A record written by the earlier build was also read unchanged by this one. Estimated spend: about
+$0.11. No key values were found in any saved output, log, or job record.
+
+### 2026-09-24, commit 9978fe9
+
+The first full run, including the only Veo submission.
 
 | Step | Model and settings | Result | Estimated cost |
 |---|---|---|---|
@@ -93,7 +116,10 @@ above. Costs are Iris's usage-based estimates, not invoices.
 | 7 Repeat | `jobs download` ×3 | `already_downloaded`; local copy; re-fetch gave an identical SHA-256; one submission total | free |
 | 8 JSON | all steps in `--json` mode | one envelope per command | — |
 
-Total estimated spend: about $0.31. A scan of every saved output, log, and job record found no key
-values. Observed facts that the offline tests cannot show: Gemini returned JPEG for both calls,
-Veo honored the 4-second duration (so the charge matches the estimate), and the Veo file download
-was served directly by the API host with no redirect.
+Estimated spend: about $0.31. No key values were found in any saved output, log, or job record.
+
+Observed facts that the offline tests cannot show: Gemini returned JPEG for every call, Veo honored
+the 4-second duration (so the charge matches the estimate), and the Veo file download was served
+directly by the API host with no redirect. Not verified live: a Veo submission with the final code
+(the submit request itself is unchanged since the earlier run and covered by the offline tests),
+and anything on macOS.
