@@ -40,13 +40,15 @@ const PAID_SUBMIT_ATTEMPTS: u32 = 3;
 const MAX_RETRY_WAIT: Duration = Duration::from_secs(60);
 
 /// Worst-case wall-clock time of one `PaidSubmit` call with `timeouts`:
-/// `attempts × (connect + submit timeout) + (attempts − 1) × longest retry wait`.
-/// With the default timeouts this is 3 × (15s + 60s) + 2 × 60s = 345s.
+/// `attempts × (connect + longest submit attempt) + (attempts − 1) × longest retry
+/// wait`, where the longest attempt is the submit timeout plus the largest upload
+/// allowance ([`Timeouts::max_submit_attempt`]). With the default timeouts this is
+/// 3 × (15s + 60s + 600s) + 2 × 60s = 2145s.
 ///
 /// This is the "submit timeout" of the stale-`submitting` rule: a record is only
 /// declared abandoned once no live submitter can still be waiting for its answer.
 pub fn paid_submit_budget(timeouts: &Timeouts) -> Duration {
-    let per_attempt = timeouts.connect.saturating_add(timeouts.submit);
+    let per_attempt = timeouts.connect.saturating_add(timeouts.max_submit_attempt());
     per_attempt
         .saturating_mul(PAID_SUBMIT_ATTEMPTS)
         .saturating_add(MAX_RETRY_WAIT.saturating_mul(PAID_SUBMIT_ATTEMPTS - 1))

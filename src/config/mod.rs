@@ -65,6 +65,8 @@ pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(10);
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// Default per-request timeout for synchronous generation.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
+/// Default per-request timeout for an async job submission (Veo).
+pub const DEFAULT_SUBMIT_TIMEOUT: Duration = Duration::from_secs(60);
 /// Default tracing filter.
 pub const DEFAULT_LOG_FILTER: &str = "warn";
 /// Warning code: a provider base URL differs from the default, so its API key is
@@ -108,8 +110,12 @@ pub struct ProviderSettings {
     pub image_model: Resolved<Option<String>>,
     /// Default video model (canonical catalog id); `None` if the provider has none.
     pub video_model: Resolved<Option<String>>,
-    /// Timeout of one synchronous generation request.
+    /// Timeout of one synchronous generation request (before the upload allowance,
+    /// [`crate::http::upload_allowance`]).
     pub request_timeout: Resolved<Duration>,
+    /// Timeout of one async job submission request (before the upload allowance).
+    /// Only providers with video models accept a configured value.
+    pub submit_timeout: Resolved<Duration>,
 }
 
 /// Every resolved non-secret setting, plus the credentials found in the environment.
@@ -269,9 +275,11 @@ impl Settings {
     }
 
     /// Timeouts for a provider: default timeouts with `request_timeout` as the
-    /// synchronous generation timeout.
+    /// synchronous generation timeout and `submit_timeout` as the job submission
+    /// timeout.
     pub fn timeouts(&self, provider: ProviderId) -> Timeouts {
-        Timeouts { generate: self.provider(provider).request_timeout.value, ..Timeouts::default() }
+        let p = self.provider(provider);
+        Timeouts { generate: p.request_timeout.value, submit: p.submit_timeout.value, ..Timeouts::default() }
     }
 
     /// Settings for [`crate::http::HttpClient::new`]. The connect timeout is a
@@ -382,6 +390,15 @@ impl Settings {
                 &p.request_timeout.source,
                 None,
             ));
+            // Job submissions exist only for providers with video models.
+            if video_providers.contains(&p.provider) {
+                rows.push(row(
+                    &format!("{prefix}.submit_timeout"),
+                    dur(p.submit_timeout.value),
+                    &p.submit_timeout.source,
+                    None,
+                ));
+            }
         }
         rows.push(row(
             "log",
@@ -552,7 +569,27 @@ fn provider_settings(
             .transpose()?,
         || Ok(DEFAULT_REQUEST_TIMEOUT),
     )?;
-    Ok(ProviderSettings { provider, base_url, image_model, video_model, request_timeout })
+    let submits_jobs = catalog::providers_for(Operation::VideoGenerate).contains(&provider);
+    let submit_timeout = layered(
+        None,
+        None,
+        section
+            .submit_timeout
+            .as_ref()
+            .map(|v| {
+                if !submits_jobs {
+                    return Err(file::key_error(
+                        path,
+                        &key("submit_timeout"),
+                        format!("{provider} has no video models, so Iris never submits a job to it"),
+                    ));
+                }
+                file_duration(path, &key("submit_timeout"), v, positive)
+            })
+            .transpose()?,
+        || Ok(DEFAULT_SUBMIT_TIMEOUT),
+    )?;
+    Ok(ProviderSettings { provider, base_url, image_model, video_model, request_timeout, submit_timeout })
 }
 
 /// Pick the highest layer that is present.
@@ -740,6 +777,12 @@ mod tests {
         assert!(parse_base_url("https://user:pw@example.com").is_err());
         assert!(parse_base_url("https://example.com/?key=abc").is_err());
         assert!(parse_base_url("not a url").is_err());
+    }
+
+    #[test]
+    fn the_default_submit_timeout_is_the_http_default() {
+        assert_eq!(DEFAULT_SUBMIT_TIMEOUT, Timeouts::default().submit);
+        assert_eq!(DEFAULT_REQUEST_TIMEOUT, Timeouts::default().generate);
     }
 
     #[test]

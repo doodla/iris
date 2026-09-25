@@ -54,7 +54,7 @@ use reqwest::StatusCode;
 use reqwest::header::HeaderMap;
 use serde::de::DeserializeOwned;
 
-use super::HttpClient;
+use super::{HttpClient, upload_allowance};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::redact;
@@ -286,8 +286,9 @@ impl Verdict {
 pub struct Call {
     /// Retry rules for this call.
     pub class: RetryClass,
-    /// Total time limit of one attempt, from connecting until the body is read
-    /// (`Timeouts::generate` / `submit` / `poll`).
+    /// Time limit of one attempt, from connecting until the body is read
+    /// (`Timeouts::generate` / `submit` / `poll`), before the executor adds the
+    /// request body's [`upload_allowance`](super::upload_allowance).
     pub timeout: Duration,
     /// Response header carrying the provider's request id (e.g. `x-request-id`).
     pub request_id_header: Option<&'static str>,
@@ -596,8 +597,9 @@ impl HttpClient {
     /// Run one logical API call with the retry rules of `call.class`.
     ///
     /// * `build` is called once per attempt with the shared reqwest client and must
-    ///   return a fresh request (bodies are rebuilt, never reused). The executor adds
-    ///   the per-attempt timeout `call.timeout`.
+    ///   return a fresh request (bodies are rebuilt, never reused). The executor sets
+    ///   the per-attempt time limit: `call.timeout` plus the request body's
+    ///   [`upload_allowance`](super::upload_allowance).
     /// * `classify` is called for every non-2xx response and returns a [`Verdict`].
     /// * `Retry-After` (seconds or HTTP-date) and `retry-after-ms` headers, and a
     ///   verdict's own `retry_after`, are honored up to
@@ -638,13 +640,15 @@ impl HttpClient {
         loop {
             attempt += 1;
             let builder = build(&self.inner).map_err(HttpError::Error)?;
-            let (client, request) = builder.timeout(call.timeout).build_split();
-            let request = request.map_err(|e| {
+            let (client, request) = builder.build_split();
+            let mut request = request.map_err(|e| {
                 HttpError::Error(IrisError::internal(format!(
                     "could not build the HTTP request: {}",
                     describe_reqwest_error(e)
                 )))
             })?;
+            let body_bytes = request.body().and_then(reqwest::Body::as_bytes).map_or(0, |b| b.len() as u64);
+            *request.timeout_mut() = Some(call.timeout.saturating_add(upload_allowance(body_bytes)));
             let method = request.method().clone();
             let url = redact::redact_url(request.url().as_str());
             let started = Instant::now();

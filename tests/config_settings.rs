@@ -85,6 +85,8 @@ fn defaults_apply_when_nothing_is_configured_and_the_default_file_is_missing() {
     );
     assert_eq!(s.provider(ProviderId::OpenAi).request_timeout.value, Duration::from_secs(300));
     assert_eq!(s.provider(ProviderId::Gemini).request_timeout.value, Duration::from_secs(300));
+    assert_eq!(s.provider(ProviderId::Gemini).submit_timeout.value, Duration::from_secs(60));
+    assert_eq!(s.provider(ProviderId::Gemini).submit_timeout.source, SettingSource::Default);
     assert_eq!(
         s.provider(ProviderId::OpenAi).image_model.value,
         catalog::default_model(ProviderId::OpenAi, Operation::ImageGenerate).map(|m| m.id.to_string())
@@ -340,6 +342,10 @@ fn wrong_types_and_invalid_values_in_the_file_are_rejected_with_the_key() {
         ("output_dir = \"relative/dir\"\n", "output_dir"),
         ("[providers.gemini]\nimage_model = \"no-such-model\"\n", "providers.gemini.image_model"),
         ("[providers.openai]\nvideo_model = \"no-such-model\"\n", "providers.openai.video_model"),
+        ("[providers.gemini]\nsubmit_timeout = 0\n", "providers.gemini.submit_timeout"),
+        ("[providers.gemini]\nsubmit_timeout = \"soon\"\n", "providers.gemini.submit_timeout"),
+        // A provider without video models never submits a job: the key would do nothing.
+        ("[providers.openai]\nsubmit_timeout = \"5m\"\n", "providers.openai.submit_timeout"),
     ] {
         fx.write_default_config(text);
         let e = load(&fx.env()).unwrap_err();
@@ -518,6 +524,7 @@ fn describe_lists_every_setting_with_sources_and_never_secrets() {
             "providers.gemini.image_model",
             "providers.gemini.video_model",
             "providers.gemini.request_timeout",
+            "providers.gemini.submit_timeout",
             "log",
         ]
     );
@@ -650,4 +657,28 @@ fn every_provider_gets_its_config_table_base_url_variable_and_show_rows() {
         "{}",
         e.message
     );
+}
+
+/// `[providers.gemini] submit_timeout` sets the Veo submission timeout (before the
+/// upload allowance), and the stale-submission budget follows it.
+#[test]
+fn the_submit_timeout_is_configurable_and_moves_the_submit_budget() {
+    let fx = Fixture::new();
+    let default_budget =
+        iris::jobs::paid_submit_budget(&load(&fx.env()).unwrap().timeouts(ProviderId::Gemini));
+    fx.write_default_config("[providers.gemini]\nsubmit_timeout = \"5m\"\nrequest_timeout = 90\n");
+    let s = load(&fx.env()).unwrap();
+    let gemini = s.provider(ProviderId::Gemini);
+    assert_eq!(
+        (gemini.submit_timeout.value, gemini.submit_timeout.source.clone()),
+        (Duration::from_secs(300), SettingSource::File)
+    );
+    let t = s.timeouts(ProviderId::Gemini);
+    assert_eq!((t.submit, t.generate), (Duration::from_secs(300), Duration::from_secs(90)));
+    assert_eq!(s.timeouts(ProviderId::OpenAi).submit, Duration::from_secs(60));
+    let budget = iris::jobs::paid_submit_budget(&t);
+    assert_eq!(budget, default_budget + Duration::from_secs(3 * 240));
+    let row =
+        s.config_show().settings.into_iter().find(|r| r.key == "providers.gemini.submit_timeout").unwrap();
+    assert_eq!((row.value, row.source), (serde_json::json!("5m"), SettingSource::File));
 }

@@ -159,7 +159,29 @@ impl HttpClient {
     }
 }
 
-/// Per-provider timeouts.
+/// Upload rate the time limit of a request with a body allows for sending it:
+/// 256 KiB/s (about 2 Mbit/s), a slow uplink. See [`upload_allowance`].
+pub const UPLOAD_ALLOWANCE_RATE: u64 = 256 * 1024;
+
+/// Longest [`upload_allowance`]: 10 minutes, enough to send 150 MiB at
+/// [`UPLOAD_ALLOWANCE_RATE`] (a Veo request is below 100 MB; Gemini image requests
+/// below 20 MB). It bounds how long one attempt can last, which the stale-submission
+/// rule relies on ([`Timeouts::max_submit_attempt`]).
+pub const MAX_UPLOAD_ALLOWANCE: Duration = Duration::from_secs(600);
+
+/// Extra time [`HttpClient::execute`] adds to an attempt's time limit for sending a
+/// request body of `body_bytes`: the body's size at [`UPLOAD_ALLOWANCE_RATE`], at
+/// most [`MAX_UPLOAD_ALLOWANCE`]. A request with inline images (a Veo job with
+/// reference images, an image edit) can take minutes to upload on a slow link, and
+/// a paid request cut off mid-upload is an uncertain outcome; a small JSON body
+/// adds nothing noticeable.
+pub fn upload_allowance(body_bytes: u64) -> Duration {
+    let millis = u128::from(body_bytes) * 1000 / u128::from(UPLOAD_ALLOWANCE_RATE);
+    Duration::from_millis(u64::try_from(millis).unwrap_or(u64::MAX)).min(MAX_UPLOAD_ALLOWANCE)
+}
+
+/// Per-provider timeouts. The time limit of one attempt of a call with a request
+/// body is its timeout here plus the body's [`upload_allowance`].
 #[derive(Debug, Clone, Copy)]
 pub struct Timeouts {
     /// TCP/TLS connect timeout. Client-level: [`HttpClient::execute`] and
@@ -167,14 +189,25 @@ pub struct Timeouts {
     /// [`HttpSettings::connect_timeout`] when the client is built
     /// (`config::Settings::http_settings` derives it from here).
     pub connect: Duration,
-    /// Synchronous paid generation (image) request.
+    /// One attempt of a synchronous paid generation (image) request, before the
+    /// upload allowance (`request_timeout`).
     pub generate: Duration,
-    /// Async job submission request.
+    /// One attempt of an async job submission (Veo), before the upload allowance
+    /// (`submit_timeout`).
     pub submit: Duration,
     /// Status poll request.
     pub poll: Duration,
     /// Download read-idle timeout.
     pub download_idle: Duration,
+}
+
+impl Timeouts {
+    /// The longest one job-submission attempt can last, whatever its body:
+    /// [`Timeouts::submit`] plus [`MAX_UPLOAD_ALLOWANCE`] (the connect timeout comes
+    /// on top).
+    pub fn max_submit_attempt(&self) -> Duration {
+        self.submit.saturating_add(MAX_UPLOAD_ALLOWANCE)
+    }
 }
 
 impl Default for Timeouts {
@@ -277,6 +310,20 @@ mod tests {
         assert!(!same_origin(&u("https://api.openai.com/v1"), &u("http://api.openai.com/v1")));
         assert!(!same_origin(&u("https://api.openai.com/v1"), &u("https://files.openai.com/v1")));
         assert!(!same_origin(&u("http://127.0.0.1:8080"), &u("http://127.0.0.1:8081")));
+    }
+
+    #[test]
+    fn the_upload_allowance_grows_with_the_body_and_is_capped() {
+        assert_eq!(upload_allowance(0), Duration::ZERO);
+        assert_eq!(upload_allowance(2_000), Duration::from_millis(7));
+        assert_eq!(upload_allowance(256 * 1024), Duration::from_secs(1));
+        // A 23 MB Veo request with a large reference image: about 88 seconds more.
+        assert_eq!(upload_allowance(23_000_000).as_secs(), 87);
+        // The largest Veo request (below 100 MB) stays under the cap.
+        assert!(upload_allowance(100_000_000) < MAX_UPLOAD_ALLOWANCE);
+        assert_eq!(upload_allowance(u64::MAX), MAX_UPLOAD_ALLOWANCE);
+        let t = Timeouts::default();
+        assert_eq!(t.max_submit_attempt(), Duration::from_secs(660));
     }
 
     #[test]

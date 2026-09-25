@@ -77,7 +77,10 @@ impl Script {
 struct Server {
     base: String,
     connections: Arc<AtomicUsize>,
+    /// Response body bytes written (for `Reply::Endless`).
     written: Arc<AtomicUsize>,
+    /// Request body bytes read.
+    received: Arc<AtomicUsize>,
 }
 
 fn raw_server(scripts: Vec<Script>) -> Server {
@@ -85,7 +88,8 @@ fn raw_server(scripts: Vec<Script>) -> Server {
     let base = format!("http://{}", listener.local_addr().unwrap());
     let connections = Arc::new(AtomicUsize::new(0));
     let written = Arc::new(AtomicUsize::new(0));
-    let (conns, wrote) = (connections.clone(), written.clone());
+    let received = Arc::new(AtomicUsize::new(0));
+    let (conns, wrote, got) = (connections.clone(), written.clone(), received.clone());
     std::thread::spawn(move || {
         for script in scripts {
             let Ok((stream, _)) = listener.accept() else { return };
@@ -109,6 +113,7 @@ fn raw_server(scripts: Vec<Script>) -> Server {
                     break;
                 }
                 left -= want;
+                got.fetch_add(want, Ordering::SeqCst);
                 std::thread::sleep(script.pause);
             }
             let mut stream = stream;
@@ -146,7 +151,7 @@ fn raw_server(scripts: Vec<Script>) -> Server {
             let _ = stream.flush();
         }
     });
-    Server { base, connections, written }
+    Server { base, connections, written, received }
 }
 
 fn response(status: &str, body: &[u8]) -> Vec<u8> {
@@ -352,5 +357,57 @@ async fn veo_answers_over_the_limit_are_uncertain_on_submit_and_bad_on_poll() {
     let err = GeminiProvider::new().poll(OPERATION, &ctx).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{err:?}");
     assert_eq!(err.provider_status, Some(200));
+    assert_eq!(server.connections.load(Ordering::SeqCst), 1);
+}
+
+// ----- upload allowance ----------------------------------------------------------------
+
+/// A server that reads the request body in 32 KiB pieces, 50 ms apart (about
+/// 640 KiB/s), before answering `reply`.
+fn slow_reader(reply: Vec<u8>) -> Server {
+    raw_server(vec![Script {
+        reply: Reply::Bytes(reply),
+        read_chunk: 32 * 1024,
+        pause: Duration::from_millis(50),
+    }])
+}
+
+/// An attempt's time limit grows with its request body: a 1 MiB body read in about
+/// 1.6 s fits in a 1 s timeout plus its 4 s upload allowance, while a small body
+/// the server takes as long to answer does not.
+#[tokio::test]
+async fn a_slow_upload_gets_time_in_proportion_to_its_body() {
+    let call = Call::new(RetryClass::PaidSubmit, Duration::from_secs(1)).with_provider(ProviderId::OpenAi);
+    assert_eq!(iris::http::upload_allowance(MIB as u64), Duration::from_secs(4));
+
+    let server = slow_reader(response("200 OK", b"{}"));
+    let started = Instant::now();
+    let resp = post(&server, &call, vec![b'x'; MIB]).await.unwrap();
+    assert_eq!(resp.status.as_u16(), 200);
+    assert!(started.elapsed() > Duration::from_secs(1), "the upload was not slow: {:?}", started.elapsed());
+    assert_eq!(server.received.load(Ordering::SeqCst), MIB);
+
+    // 32 KiB earn 125 ms: the server's 1.5 s pause after reading it is too long.
+    let server = raw_server(vec![Script {
+        reply: Reply::Bytes(response("200 OK", b"{}")),
+        read_chunk: 32 * 1024,
+        pause: Duration::from_millis(1500),
+    }]);
+    let err = post(&server, &call, vec![b'x'; 32 * 1024]).await.unwrap_err();
+    let HttpError::Transport(t) = err else { panic!("expected a timeout, got {err:?}") };
+    assert_eq!((t.kind, t.after_send, t.attempts), (TransportKind::Timeout, true, 1));
+}
+
+/// Through the Veo adapter: a job with a large reference image is not cut off by
+/// the 1 s submit timeout while it uploads slowly (it would otherwise become
+/// `submission_uncertain`, a job that may exist but cannot be followed).
+#[tokio::test]
+async fn a_slow_veo_upload_is_not_cut_off_by_the_submit_timeout() {
+    let server = slow_reader(response("200 OK", format!("{{\"name\":\"{OPERATION}\"}}").as_bytes()));
+    let ctx = veo_ctx(&server.base, Duration::from_secs(1));
+    // 768 KiB of image, 1 MiB as base64: about 1.6 s at the server's pace.
+    let op = GeminiProvider::new().submit(&veo_request(768 * 1024), &ctx).await.unwrap();
+    assert_eq!(op.remote_id, OPERATION);
+    assert!(server.received.load(Ordering::SeqCst) > MIB);
     assert_eq!(server.connections.load(Ordering::SeqCst), 1);
 }

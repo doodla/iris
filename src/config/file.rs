@@ -56,6 +56,7 @@ pub(crate) struct ProviderSection {
     pub image_model: Option<String>,
     pub video_model: Option<String>,
     pub request_timeout: Option<toml::Value>,
+    pub submit_timeout: Option<toml::Value>,
 }
 
 /// A `config_invalid` error about the file at `path`.

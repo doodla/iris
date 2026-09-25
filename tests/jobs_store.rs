@@ -447,21 +447,22 @@ fn stale_submitting_records_are_reported_and_rewritten_as_submission_unknown() {
 
 #[test]
 fn default_stale_threshold_covers_a_worst_case_paid_submit() {
-    // 3 attempts × (15s connect + 60s submit) + 2 × 60s Retry-After = 345s.
+    // 3 attempts × (15s connect + 60s submit + 600s largest upload allowance)
+    // + 2 × 60s Retry-After = 2145s.
     let budget = paid_submit_budget(&Timeouts::default());
-    assert_eq!(budget, Duration::from_secs(345));
+    assert_eq!(budget, Duration::from_secs(2145));
     let slow = Timeouts { submit: Duration::from_secs(120), ..Timeouts::default() };
-    assert_eq!(paid_submit_budget(&slow), Duration::from_secs(3 * 135 + 120));
+    assert_eq!(paid_submit_budget(&slow), Duration::from_secs(3 * 735 + 120));
 
     let dir = tempfile::tempdir().unwrap();
     let store = JobStore::new(dir.path());
     assert_eq!(store.submit_budget(), budget);
     // Still inside a slow, retried submission (well past the bare 60s + 60s): not stale.
-    let slow_submit = JobRecord::new(new_job(), ago(300)).unwrap();
+    let slow_submit = JobRecord::new(new_job(), ago(2100)).unwrap();
     store.create(&slow_submit).unwrap();
     assert_eq!(store.load(slow_submit.job_id()).unwrap().status(), JobStatus::Submitting);
-    // Past budget + grace (405s): stale.
-    let dead = JobRecord::new(new_job(), ago(406)).unwrap();
+    // Past budget + grace (2205s): stale.
+    let dead = JobRecord::new(new_job(), ago(2206)).unwrap();
     store.create(&dead).unwrap();
     assert_eq!(store.load(dead.job_id()).unwrap().status(), JobStatus::SubmissionUnknown);
 }

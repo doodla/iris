@@ -238,9 +238,9 @@ The complete list, for a provider like the Seedance example.
 
 **Derived from those, with no further edits:** parsing `--provider seedance` and
 `image.provider = "seedance"`; the `[providers.seedance]` config table with the same keys as the
-others (`base_url`, `image_model`, `video_model`, `request_timeout`); the `IRIS_SEEDANCE_BASE_URL`
-override; its rows in `config show`; the `non_default_base_url` warning; `doctor`'s
-`credentials.seedance`, `base_url.seedance`, and `access.seedance.<model>` checks; the
+others (`base_url`, `image_model`, `video_model`, `request_timeout`, `submit_timeout`); the
+`IRIS_SEEDANCE_BASE_URL` override; its rows in `config show`; the `non_default_base_url` warning;
+`doctor`'s `credentials.seedance`, `base_url.seedance`, and `access.seedance.<model>` checks; the
 `providers list` entry; redaction of its key from every message; and the config file's refusal of
 credential-like keys, whose message lists every provider's variable. The offline test harness
 follows `ProviderId::ALL` as well: every `iris` process that `cargo test` starts has each

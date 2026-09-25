@@ -79,16 +79,19 @@ base_url = "https://generativelanguage.googleapis.com"   # origin; Iris appends 
 image_model = "gemini-3.1-flash-image"
 video_model = "veo-3.1-fast-generate-preview"
 request_timeout = "300s"
+submit_timeout = "60s"
 ```
 
-Each `[providers.<id>]` table takes the same four keys; there is one per provider (`openai`,
-`gemini`). **Unknown keys are rejected**, not ignored — a typo is caught immediately rather than
-silently doing nothing (a relative `--config` path resolves against the current directory,
-`/home/you` here):
+There is one `[providers.<id>]` table per provider (`openai`, `gemini`), with the same keys;
+`video_model` and `submit_timeout` apply only to a provider with video models (`gemini`), and
+setting them for another is `config_invalid`. See [Timeouts](#timeouts) for what
+`request_timeout` and `submit_timeout` cover. **Unknown keys are rejected**, not ignored — a typo
+is caught immediately rather than silently doing nothing (a relative `--config` path resolves
+against the current directory, `/home/you` here):
 
 ```console
 $ iris --config bad.toml config show
-error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`
+error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`, `submit_timeout`
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 $ echo $?
 2
@@ -124,7 +127,7 @@ complete output):
 
 ```console
 $ iris --config bad.toml doctor
-[error]   config: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
+[error]   config: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `image_model`, `video_model`, `request_timeout`, `submit_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
 Problems found (see [error] lines).
@@ -186,11 +189,38 @@ providers.gemini.base_url         http://127.0.0.1:8080/              env IRIS_G
 providers.gemini.image_model      gemini-3.1-flash-image              default
 providers.gemini.video_model      veo-3.1-fast-generate-preview       default
 providers.gemini.request_timeout  5m                                  default
+providers.gemini.submit_timeout   1m                                  default
 log                               warn                                default
 credentials (presence only):
   OPENAI_API_KEY: set
   GEMINI_API_KEY: set
 ```
+
+## Timeouts
+
+Each request Iris sends has its own time limit, per attempt (a retried request gets a fresh one).
+None of them is the caller's wait limit: that is `video.wait_timeout` (`--timeout`), and when it
+passes, the remote job continues (see [jobs.md](jobs.md)).
+
+| time limit | covers | default | setting |
+|---|---|---|---|
+| connect | establishing the connection of every request | 15 s | — |
+| `request_timeout` | one paid image request (`image generate`, `image edit`), from connecting until its answer, which carries the images, is read | 5 m | `providers.<id>.request_timeout` |
+| `submit_timeout` | one Veo job submission (`video generate`), until the answer naming the job arrives | 1 m | `providers.gemini.submit_timeout` |
+| status check | one status request (`jobs status`, `jobs wait`, `jobs download`, `video generate` while waiting) and one model-metadata read (`--check-access`) | 30 s | — |
+| download idle | the longest pause between two pieces of a download (a download as a whole has no time limit) | 1 m | — |
+
+**Upload allowance.** A request with a body — an image edit with its input images, a Veo job
+with reference or frame images — also gets the time needed to upload that body at 256 KiB/s
+(about 2 Mbit/s), at most 10 minutes more: a 23 MB Veo request gets `submit_timeout` + about
+90 s. A small JSON request gets nothing noticeable. A paid request cut off mid-upload has an
+unknown outcome (`submission_uncertain`, and for a video job `submission_unknown`), so if your
+uplink is slower than that, raise `request_timeout` or `submit_timeout` rather than retrying.
+
+A job record still `submitting` is only declared abandoned once no live submitter could still be
+waiting for its answer: three attempts at `submit_timeout` plus the largest upload allowance,
+plus the retry waits, plus a minute of grace — about 37 minutes with the defaults (see
+[jobs.md](jobs.md)).
 
 ## Base URL overrides
 
