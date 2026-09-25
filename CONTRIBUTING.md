@@ -60,6 +60,12 @@ release dry run: it builds the Linux musl binary, packages it, and smoke-tests t
 `install.sh` with it. The macOS jobs are hosted-only; the release dry run can be replayed locally
 as shown in [docs/install.md](docs/install.md#testing-the-installer-without-a-real-release).
 
+Packaging generates `THIRD-PARTY-LICENSES`, the license notices of every crate linked into the
+binary, with cargo-about (`about.toml`, `about.hbs`), and fails on any problem cargo-about
+reports. A new dependency whose license `deny.toml` allows needs no change there. If an update to
+`aws-lc-sys` or `aws-lc-rs` changes that crate's `LICENSE` file, read the new file and put its
+SHA-256 in `about.toml`, whose comments explain why those two files are listed.
+
 ## Tests
 
 - **The default test suite is entirely offline**: no credentials are read from your real
@@ -106,13 +112,14 @@ Pushing a `v*` tag starts the release workflow (`.github/workflows/release.yml`)
 the tag is `v` followed by the `Cargo.toml` version and `CHANGELOG.md` has that version's section;
 reruns formatting, Clippy, and the tests on the tagged commit; builds the Linux musl binary and
 both macOS binaries on their own runners; packages each as `iris-vX.Y.Z-<target>.tar.gz` (the
-binary, `LICENSE`, `README.md`, `CHANGELOG.md`, and `docs/`); and smoke-tests every archive,
-including installing it with `install.sh`. Only when all of that passes does it create the GitHub
-release, with the three archives, `SHA256SUMS`, and `install.sh`, and the version's `CHANGELOG.md`
-section as its notes; a version with a `-` suffix (such as `1.2.0-rc.1`) becomes a pre-release. If
-any job fails, nothing is published: re-run a job that failed for a transient reason, and otherwise
-fix the problem on `main` and release a new version rather than moving a pushed tag. Running the
-workflow by hand (workflow_dispatch) does everything except publishing.
+binary, `LICENSE`, `THIRD-PARTY-LICENSES`, `README.md`, `CHANGELOG.md`, and `docs/`); and
+smoke-tests every archive, including installing it with `install.sh`. Only when all of that passes
+does it create the GitHub release, with the three archives, `SHA256SUMS`, and `install.sh`, and the
+version's `CHANGELOG.md` section as its notes; a version with a `-` suffix (such as `1.2.0-rc.1`)
+becomes a pre-release. If any job fails, nothing is published: re-run a job that failed for a
+transient reason, and otherwise fix the problem on `main` and release a new version rather than
+moving a pushed tag. Running the workflow by hand (workflow_dispatch) does everything except
+publishing.
 
 ### The release toolchain
 

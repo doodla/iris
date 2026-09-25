@@ -184,6 +184,9 @@ jobs:
           # The commit checked out above, reported as version.git_commit, as
           # in a release build.
           IRIS_GIT_COMMIT: ${{ github.sha }}
+      - name: Install cargo-about (generates THIRD-PARTY-LICENSES)
+        # The exact version scripts/package-release.sh requires.
+        run: cargo install --locked --features cli cargo-about@0.9.2
       - name: Package twice; the archives must be identical
         run: |
           set -euo pipefail

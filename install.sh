@@ -23,10 +23,11 @@
 #   4. Downloads SHA256SUMS and iris-<tag>-<target>.tar.gz into a private
 #      temporary directory, removed on exit or interruption.
 #   5. Verifies the archive's SHA-256 against its line in SHA256SUMS.
-#   6. Accepts only the release layout: regular files iris, LICENSE, README.md
-#      and CHANGELOG.md, and a docs/ directory of regular files, in the single
-#      directory iris-<tag>-<target>/. Absolute paths, "..", links, other
-#      entries, or a missing iris are rejected.
+#   6. Accepts only the release layout: regular files iris, LICENSE,
+#      THIRD-PARTY-LICENSES, README.md and CHANGELOG.md, and a docs/ directory
+#      of regular files, in the single directory iris-<tag>-<target>/.
+#      Absolute paths, "..", links, other entries, or a missing iris are
+#      rejected.
 #   7. Extracts it and checks that `iris --version` runs on this machine.
 #   8. Copies iris, and only iris, into DIR under a temporary name, then
 #      renames it over any existing iris (atomic on one filesystem). DIR is
@@ -305,7 +306,8 @@ check_layout() {
   found_iris=no
   while IFS= read -r entry; do
     case $entry in
-      "$top" | "$top/" | "$top/LICENSE" | "$top/README.md" | "$top/CHANGELOG.md") ;;
+      "$top" | "$top/" | "$top/LICENSE" | "$top/THIRD-PARTY-LICENSES") ;;
+      "$top/README.md" | "$top/CHANGELOG.md") ;;
       "$top/docs" | "$top/docs/") ;;
       "$top/docs/"*) check_docs_entry "$entry" ;;
       "$top/iris") found_iris=yes ;;
@@ -322,7 +324,7 @@ check_layout() {
 }
 
 unexpected_entry() {
-  die "unexpected entry in $archive_name: '$1' (only $top/ with iris, LICENSE, README.md, CHANGELOG.md and docs/ is allowed)"
+  die "unexpected entry in $archive_name: '$1' (only $top/ with iris, LICENSE, THIRD-PARTY-LICENSES, README.md, CHANGELOG.md and docs/ is allowed)"
 }
 
 # Documentation may sit at any depth under docs/, but never behind an empty,

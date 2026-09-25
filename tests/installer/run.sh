@@ -422,6 +422,12 @@ version_cases() {
   expect_installed "$BIN/iris" 0.1.0 "$LINUX"
   end
 
+  begin "an archive without THIRD-PARTY-LICENSES installs (it is optional)"
+  run ok/nonotices --version v0.1.0
+  expect_status 0
+  expect_installed "$BIN/iris" 0.1.0 "$LINUX"
+  end
+
   begin "docs/ may contain subdirectories"
   run ok/nesteddocs --version v0.1.0
   expect_status 0
@@ -612,6 +618,7 @@ verification_cases() {
   bad_release noiris "$NAME does not contain $TOP/iris"
   bad_release extratop "unexpected entry in $NAME: 'other/'"
   bad_release extrafile "unexpected entry in $NAME: '$TOP/extra'"
+  bad_release noticesdir "unexpected entry in $NAME: '$TOP/THIRD-PARTY-LICENSES/'"
   bad_release wrongtop "unexpected entry in $NAME: 'iris-v0.1.0/'"
   bad_release notexec "the downloaded iris does not run on this machine"
   bad_release failing "the downloaded iris does not run on this machine"

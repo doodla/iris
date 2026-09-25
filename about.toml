@@ -1,0 +1,49 @@
+# cargo-about configuration for the third-party license notices that every
+# release archive ships as THIRD-PARTY-LICENSES (scripts/package-release.sh
+# generates it with about.hbs; docs/install.md).
+# Docs: https://embarkstudios.github.io/cargo-about/
+#
+# deny.toml decides which licenses Iris may depend on; this list mirrors its
+# [licenses] allow list. For a crate offered under several licenses, the notice
+# shows the first one here that the crate offers.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CDLA-Permissive-2.0",
+]
+# Only what goes into the release binary: build scripts' and tests'
+# dependencies are left out.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
+
+# option-ext (through dirs) is MPL-2.0; as in deny.toml, that license is
+# accepted for this crate only. about.hbs says where its source is available.
+[option-ext]
+accepted = ["MPL-2.0"]
+
+# aws-lc-sys and aws-lc-rs each ship one LICENSE file that combines several
+# licenses with the copyright notices of the code they contain (AWS-LC,
+# BoringSSL, OpenSSL and others). cargo-about cannot match such a file to a
+# single license and would fall back to the bare license texts, without those
+# notices, so these clarifications ship each file whole. The checksum pins the
+# file as reviewed: when an update changes it, packaging fails until the new
+# file has been read and its SHA-256 (`sha256sum LICENSE` in the crate's
+# source) entered here.
+[aws-lc-sys.clarify]
+license = "ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0)"
+
+[[aws-lc-sys.clarify.files]]
+path = "LICENSE"
+checksum = "728536b4160e051f86d7c9c388f704866b3d512cd7df97ac3516c65279523c4e"
+
+[aws-lc-rs.clarify]
+license = "ISC AND (Apache-2.0 OR ISC)"
+
+[[aws-lc-rs.clarify.files]]
+path = "LICENSE"
+checksum = "b50b376e7d24a0598488b730c3034ffcd0b58dd36c0913a24b9903a3cfd04bf7"

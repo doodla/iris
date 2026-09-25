@@ -163,6 +163,10 @@ jobs:
           IRIS_GIT_COMMIT: ${{ github.sha }}
         run: cargo build --release --locked --target ${{ matrix.target }}
 
+      - name: Install cargo-about (generates THIRD-PARTY-LICENSES)
+        # The exact version scripts/package-release.sh requires.
+        run: cargo install --locked --features cli cargo-about@0.9.2
+
       - name: Package release archive
         run: sh scripts/package-release.sh ${{ matrix.target }} dist
 

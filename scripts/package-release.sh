@@ -11,10 +11,17 @@
 #
 # and packages it into <output-dir>/iris-vX.Y.Z-<target-triple>.tar.gz (default
 # output-dir: "dist", relative to the repo root): a single top-level directory
-# containing the binary, LICENSE, README.md, CHANGELOG.md and the docs/
-# directory that README.md links to. Nothing else: no links or special files,
-# no absolute or ".." entries (the installer checks this too; see
-# docs/install.md).
+# containing the binary, LICENSE, THIRD-PARTY-LICENSES, README.md, CHANGELOG.md
+# and the docs/ directory that README.md links to. Nothing else: no links or
+# special files, no absolute or ".." entries (the installer checks this too;
+# see docs/install.md).
+#
+# THIRD-PARTY-LICENSES holds the licenses and copyright notices of the crates
+# linked into the binary for this target. It is generated here by cargo-about
+# (about.toml, about.hbs), which must be exactly the version pinned below:
+#   cargo install --locked --features cli cargo-about@<version>
+# It reads Cargo.lock (--locked) and the crates' published sources, which
+# cargo downloads if they are not already present.
 #
 # The archive is reproducible: the same inputs give the same bytes on the same
 # kind of host. Entry order, owner, group, permissions and timestamps are fixed
@@ -27,6 +34,10 @@
 # it resolves the repo root from its own location.
 
 set -eu
+
+# The cargo-about version the release workflow installs; another version could
+# render the notices differently, so packaging refuses it.
+cargo_about_version=0.9.2
 
 usage() {
     echo "usage: $0 <target-triple> [output-dir]" >&2
@@ -79,7 +90,7 @@ if [ ! -x "$bin_path" ]; then
 fi
 
 missing=""
-for f in LICENSE README.md CHANGELOG.md; do
+for f in LICENSE README.md CHANGELOG.md about.toml about.hbs; do
     if [ ! -f "$f" ]; then
         missing="$missing $f"
     fi
@@ -100,6 +111,13 @@ case $src_date in
         ;;
 esac
 
+about_version=$(cargo about --version 2>/dev/null || true)
+if [ "$about_version" != "cargo-about $cargo_about_version" ]; then
+    echo "package-release: THIRD-PARTY-LICENSES needs cargo-about $cargo_about_version (found: ${about_version:-none}); install it with:" >&2
+    echo "package-release:   cargo install --locked --features cli cargo-about@$cargo_about_version" >&2
+    exit 1
+fi
+
 archive_name="iris-v${version}-${target}"
 
 work_dir=$(mktemp -d "${TMPDIR:-/tmp}/iris-package.XXXXXX")
@@ -112,6 +130,27 @@ stage_dir="$work_dir/$archive_name"
 mkdir "$stage_dir"
 cp "$bin_path" "$stage_dir/iris"
 cp LICENSE README.md CHANGELOG.md "$stage_dir/"
+# The notices for exactly the crates linked into this target's binary. --fail
+# makes a crate whose license cannot be determined an error. Some problems,
+# such as a clarification in about.toml whose file no longer matches its
+# checksum, are only logged as warnings, so any warning or error in the log
+# (colored or not) fails packaging too, rather than leaving a gap in the notices.
+about_log="$work_dir/cargo-about.log"
+if ! cargo about generate --locked --fail --target "$target" --config about.toml \
+    --output-file "$stage_dir/THIRD-PARTY-LICENSES" about.hbs >"$about_log" 2>&1; then
+    cat "$about_log" >&2
+    echo "package-release: cargo-about could not generate THIRD-PARTY-LICENSES" >&2
+    exit 1
+fi
+cat "$about_log" >&2
+if tr -d '\033' <"$about_log" | grep -Eq '\[(\[[0-9;]*m)?(WARN|ERROR)(\[[0-9;]*m)?\]'; then
+    echo "package-release: cargo-about reported problems (above); fix them in about.toml before packaging" >&2
+    exit 1
+fi
+if [ ! -s "$stage_dir/THIRD-PARTY-LICENSES" ]; then
+    echo "package-release: cargo-about produced no THIRD-PARTY-LICENSES" >&2
+    exit 1
+fi
 # -P copies a link as a link, so the check below refuses it instead of
 # packaging whatever it points to.
 cp -RP docs "$stage_dir/docs"
@@ -168,7 +207,7 @@ gzip -n -c "$work_dir/archive.tar" >"$work_dir/archive.tar.gz"
 listing=$(tar --list --file "$work_dir/archive.tar.gz" | sed 's:/*$::' | LC_ALL=C sort)
 expected=$({
     printf '%s\n' "$archive_name" "$archive_name/iris" "$archive_name/LICENSE" \
-        "$archive_name/README.md" "$archive_name/CHANGELOG.md"
+        "$archive_name/THIRD-PARTY-LICENSES" "$archive_name/README.md" "$archive_name/CHANGELOG.md"
     find docs -print | sed "s|^|$archive_name/|"
 } | LC_ALL=C sort)
 if [ "$listing" != "$expected" ]; then

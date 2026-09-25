@@ -11,6 +11,8 @@
 #   badlatest    latest points at a tag that is not a version
 #   nodocs       v0.1.0 for Linux, without docs/ (it is optional)
 #   nesteddocs   v0.1.0 for Linux, with a subdirectory under docs/
+#   nonotices    v0.1.0 for Linux, without THIRD-PARTY-LICENSES (the layout
+#                of archives made before it was added)
 #   <bad case>   v0.1.0 for the Linux target only, broken as the name says; the
 #                SHA256SUMS line matches unless the checksum itself is the defect
 set -eu
@@ -63,6 +65,7 @@ stage() {
   mkdir -p "$1/docs"
   fake_iris "$1/iris" "${2#v}" "$3" "${4:-ok}"
   printf 'MIT License (fixture)\n' >"$1/LICENSE"
+  printf 'THIRD-PARTY SOFTWARE NOTICES AND LICENSES (fixture)\n' >"$1/THIRD-PARTY-LICENSES"
   printf '# iris (fixture)\n' >"$1/README.md"
   printf '# Changelog (fixture)\n' >"$1/CHANGELOG.md"
   printf '# Installing iris (fixture)\n' >"$1/docs/install.md"
@@ -115,6 +118,11 @@ stage "$WORK/nodocs/iris-v0.1.0-$LINUX" v0.1.0 "$LINUX"
 rm -r "$WORK/nodocs/iris-v0.1.0-$LINUX/docs"
 (cd "$WORK/nodocs" && tar -czf "$(release_dir nodocs v0.1.0)/iris-v0.1.0-$LINUX.tar.gz" "iris-v0.1.0-$LINUX")
 write_sums nodocs v0.1.0
+
+stage "$WORK/nonotices/iris-v0.1.0-$LINUX" v0.1.0 "$LINUX"
+rm "$WORK/nonotices/iris-v0.1.0-$LINUX/THIRD-PARTY-LICENSES"
+(cd "$WORK/nonotices" && tar -czf "$(release_dir nonotices v0.1.0)/iris-v0.1.0-$LINUX.tar.gz" "iris-v0.1.0-$LINUX")
+write_sums nonotices v0.1.0
 
 stage "$WORK/nesteddocs/iris-v0.1.0-$LINUX" v0.1.0 "$LINUX"
 mkdir "$WORK/nesteddocs/iris-v0.1.0-$LINUX/docs/assets"
@@ -221,6 +229,13 @@ stage "$WORK/extratop/$TOP" v0.1.0 "$LINUX"
 mkdir -p "$WORK/extratop/other"
 printf 'x\n' >"$WORK/extratop/other/file"
 bad_archive extratop "$WORK/extratop" "$TOP" other
+
+# THIRD-PARTY-LICENSES must be a file, not a directory of files.
+stage "$WORK/noticesdir/$TOP" v0.1.0 "$LINUX"
+rm "$WORK/noticesdir/$TOP/THIRD-PARTY-LICENSES"
+mkdir "$WORK/noticesdir/$TOP/THIRD-PARTY-LICENSES"
+printf 'x\n' >"$WORK/noticesdir/$TOP/THIRD-PARTY-LICENSES/MIT"
+bad_archive noticesdir "$WORK/noticesdir" "$TOP"
 
 stage "$WORK/extrafile/$TOP" v0.1.0 "$LINUX"
 printf 'x\n' >"$WORK/extrafile/$TOP/extra"

@@ -16,10 +16,14 @@ The musl target for Linux is the release target: musl gives a static binary that
 x86_64 Linux kernel, regardless of the host's glibc version or its absence.
 
 Each archive holds a single directory, `iris-vX.Y.Z-<target>/`, containing the `iris` executable,
-`LICENSE`, `README.md`, `CHANGELOG.md`, and `docs/` (this documentation, which the README links
-to). The installer installs only `iris`; the rest is there for a manual install and for reading
-offline. Unpacking an archive by hand works too: copy the `iris` executable anywhere on your
-`PATH`.
+`LICENSE` (Iris's MIT license), `THIRD-PARTY-LICENSES`, `README.md`, `CHANGELOG.md`, and `docs/`
+(this documentation, which the README links to). `THIRD-PARTY-LICENSES` lists the open-source
+crates compiled into that archive's `iris`, with the text of each one's license and its copyright
+notices, and gives the crates.io address where each crate's source is available — including
+`option-ext`, the one dependency under the MPL-2.0. It is generated for each target, with
+[cargo-about](https://github.com/EmbarkStudios/cargo-about), when the archive is packaged. The
+installer installs only `iris`; the rest is there for a manual install and for reading offline.
+Unpacking an archive by hand works too: copy the `iris` executable anywhere on your `PATH`.
 
 HTTPS requests (installer download, and every provider API call `iris` itself makes) use the
 **system's CA trust store**, not a bundled one. On a minimal container or base image, install
@@ -237,9 +241,12 @@ CI also runs the release path itself on every change: it builds the real
 and runs `scripts/smoke-test-release.sh`, which runs the packaged binary and then installs the
 archive with `install.sh` from a local server. The release workflow runs the same smoke test on
 every target before publishing. To replay the Linux run locally (it needs the musl target:
-`rustup target add x86_64-unknown-linux-musl`, plus your distribution's `musl-tools`):
+`rustup target add x86_64-unknown-linux-musl`, your distribution's `musl-tools`, and the exact
+cargo-about version that `scripts/package-release.sh` requires, which generates
+`THIRD-PARTY-LICENSES`):
 
 ```console
+$ cargo install --locked --features cli cargo-about@0.9.2
 $ cargo build --release --locked --target x86_64-unknown-linux-musl
 $ sh scripts/package-release.sh x86_64-unknown-linux-musl dist
 $ sh scripts/smoke-test-release.sh "$(sh scripts/check-tag-version.sh)" x86_64-unknown-linux-musl dist
