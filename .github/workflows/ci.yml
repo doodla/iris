@@ -113,6 +113,15 @@ jobs:
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: shellcheck
+      # With busybox installed, the BusyBox wget cases run on real BusyBox
+      # applets (as on Alpine); elsewhere a shim gives GNU wget BusyBox's exit
+      # codes.
+      - name: Install BusyBox
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y busybox-static
       # Offline installer tests: fixtures served from 127.0.0.1 only.
       - run: shellcheck -s sh install.sh
       - run: shellcheck scripts/*.sh tests/installer/*.sh

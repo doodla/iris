@@ -225,10 +225,12 @@ It covers platform detection (including unsupported systems and Rosetta), versio
 (`latest`, pinned, pre-release, invalid), network failures (HTTP errors, dropped, truncated, and
 refused connections, a `TERM` mid-download), checksum failures, archive validation (path
 traversal, links and special files, unexpected entries, a binary that does not run), install
-directories, `curl` versus `wget` and `sha256sum` versus `shasum`, never reading stdin, `PATH`
-hints, and upgrades that keep the old `iris` when anything fails. It prints one line per case and
-exits non-zero if any case fails. `INSTALLER_SHELL='bash --posix'` (or `dash`) runs the installer
-under another shell.
+directories, `curl` versus GNU and BusyBox `wget` and `sha256sum` versus `shasum`, never reading
+stdin, `PATH` hints, and upgrades that keep the old `iris` when anything fails. It prints one line
+per case and exits non-zero if any case fails. `INSTALLER_SHELL='bash --posix'` (or `dash`) runs
+the installer under another shell. The BusyBox cases use a `busybox` binary for every tool when
+one is on `PATH` (or named by `BUSYBOX=/path/to/busybox`), as on Alpine; otherwise they run GNU
+`wget` behind a shim with BusyBox's exit codes.
 
 CI also runs the release path itself on every change: it builds the real
 `x86_64-unknown-linux-musl` binary, packages it twice (the two archives must be byte-identical),

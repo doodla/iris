@@ -197,7 +197,8 @@ make_tmp_dir() {
 }
 
 # http_get URL FILE: fetch URL (following redirects) into FILE and set
-# http_status and final_url. Returns 1 if no HTTP response arrived at all.
+# http_status and final_url. Returns 1 if no complete HTTP response arrived:
+# no response at all, or a transfer cut off after a successful status.
 # A stalled connection fails after about a minute instead of hanging: curl
 # gives up below 1 KB/s for 60 s, wget after 60 s without data, twice.
 http_get() {
@@ -211,7 +212,7 @@ http_get() {
   else
     wget --quiet --server-response --tries=2 --timeout=60 \
       --output-document="$2" "$1" 2>"$tmp_dir/headers"
-    wget_status=$? # 0 = success, 8 = HTTP error status, else network failure
+    wget_status=$?
     http_status=
     final_url=$1
     while read -r field value _; do
@@ -220,8 +221,16 @@ http_get() {
         [Ll]ocation:) final_url=$value ;;
       esac
     done <"$tmp_dir/headers"
-    case $wget_status in 0 | 8) ;; *) return 1 ;; esac
-    [ -n "$http_status" ] || return 1
+    # The last status line decides, not wget's exit code: GNU wget exits 8 on
+    # an HTTP error status, but BusyBox wget exits 1, as it does on a network
+    # failure. An error status is a response for the caller to report; any
+    # other status counts only if wget succeeded, because a failure after it
+    # means the body, or the redirect's target, never fully arrived.
+    case $http_status in
+      '') return 1 ;;
+      [45][0-9][0-9]) ;;
+      *) [ "$wget_status" -eq 0 ] || return 1 ;;
+    esac
   fi
 }
 

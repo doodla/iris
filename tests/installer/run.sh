@@ -3,6 +3,8 @@
 #
 # Usage: sh tests/installer/run.sh
 #   INSTALLER_SHELL='bash --posix'  shell that runs install.sh (default: sh)
+#   BUSYBOX=/path/to/busybox        busybox for the BusyBox wget cases
+#                                   (default: busybox on PATH, if any)
 #   KEEP_TEST_DIR=1                 keep the work directory for debugging
 #
 # Builds fake releases (make-fixtures.sh), serves them on 127.0.0.1 only
@@ -109,6 +111,32 @@ make_toolboxes() {
   toolbox nofetch "$HASH" tar gzip mktemp mkdir cp chmod mv rm
   broken_toolbox brokenchmod chmod
   broken_toolbox brokenmv mv
+  make_busybox_toolbox
+}
+
+# A curl-less system like Alpine: BusyBox wget, which exits 1 on an HTTP error
+# status (GNU wget exits 8), just as it does on a network failure. With a
+# busybox binary ($BUSYBOX, else busybox on PATH), every tool the installer
+# uses is a BusyBox applet. Otherwise GNU wget stands in, behind a shim that
+# turns every failing exit code into 1 as BusyBox does.
+make_busybox_toolbox() {
+  BUSYBOX_KIND=
+  tb=$W/tools/busybox
+  bb=${BUSYBOX:-$(command -v busybox 2>/dev/null)}
+  if [ -n "$bb" ] && [ -x "$bb" ] && "$bb" wget --help >/dev/null 2>&1; then
+    case $bb in /*) ;; *) bb=$(CDPATH='' cd -- "$(dirname -- "$bb")" && pwd)/$(basename -- "$bb") ;; esac
+    mkdir -p "$tb"
+    for applet in wget sha256sum tar gzip mktemp mkdir cp chmod mv rm; do
+      ln -s "$bb" "$tb/$applet"
+    done
+    BUSYBOX_KIND="$("$bb" 2>&1 | sed -n '1s/ multi-call binary.*//p') applets"
+  elif gnu_wget=$(command -v wget 2>/dev/null); then
+    toolbox busybox "$HASH" tar gzip mktemp mkdir cp chmod mv rm
+    printf '#!/bin/sh\n# BusyBox-style exit codes: 1 for any failure.\n"%s" "$@" || exit 1\n' \
+      "$gnu_wget" >"$tb/wget"
+    chmod 755 "$tb/wget"
+    BUSYBOX_KIND="GNU wget with BusyBox exit codes"
+  fi
 }
 
 start_server() {
@@ -692,6 +720,66 @@ tool_cases() {
   else
     echo "skip shasum cases: shasum is not installed on this host"
   fi
+
+  if [ -n "$BUSYBOX_KIND" ]; then
+    begin "BusyBox wget ($BUSYBOX_KIND): latest via redirect"
+    TOOLS=$W/tools/busybox
+    run ok/good
+    expect_status 0
+    expect_installed "$BIN/iris" 0.2.0 "$LINUX"
+    end
+
+    begin "BusyBox wget: missing release is reported as HTTP 404, not a network error"
+    TOOLS=$W/tools/busybox
+    run ok/good --version v9.9.9
+    expect_status 1
+    expect_err "not found (HTTP 404): $SERVER/ok/good/download/v9.9.9/SHA256SUMS"
+    expect_no_err "network error"
+    end
+
+    begin "BusyBox wget: no latest release is reported as HTTP 404"
+    TOOLS=$W/tools/busybox
+    run ok/nolatest
+    expect_status 1
+    expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404)"
+    expect_no_err "network error"
+    end
+
+    begin "BusyBox wget: server error 500 is reported as HTTP 500"
+    TOOLS=$W/tools/busybox
+    run 500/good --version v0.1.0
+    expect_status 1
+    expect_err "download failed (HTTP 500): $SERVER/500/good/download/v0.1.0/SHA256SUMS"
+    expect_no_err "network error"
+    end
+
+    begin "BusyBox wget: connection dropped without a response"
+    TOOLS=$W/tools/busybox
+    run drop/good --version v0.1.0
+    expect_status 1
+    expect_err "network error: could not download $SERVER/drop/good/download/v0.1.0/SHA256SUMS"
+    end
+
+    begin "BusyBox wget: connection refused"
+    TOOLS=$W/tools/busybox
+    run http://127.0.0.1:1/releases --version v0.1.0
+    expect_status 1
+    expect_err "network error: could not download http://127.0.0.1:1/releases/download/v0.1.0/SHA256SUMS"
+    end
+
+    # A body cut off after "200 OK" must not pass as a response: BusyBox
+    # reports it as a failure (exit 1), after the status line.
+    begin "BusyBox wget: archive download cut off halfway: old iris kept"
+    TOOLS=$W/tools/busybox
+    seed_old "$BIN"
+    run truncate/good --version v0.1.0
+    expect_status 1
+    expect_err "network error: could not download $SERVER/truncate/good/download/v0.1.0/$NAME"
+    expect_old_kept "$BIN"
+    end
+  else
+    echo "skip BusyBox wget cases: neither busybox nor wget is installed on this host"
+  fi
 }
 
 stdin_cases() {
@@ -865,7 +953,8 @@ start_server
 
 printf 'installer: %s\ninstaller shell: %s\nserver: %s\n' \
   "$INSTALLER" "${INSTALLER_SHELL:-sh} ($(command -v "${ishell_cmd}"))" "$SERVER"
-printf 'host: %s; %s; %s\n\n' "$(uname -sm)" "$(curl --version | sed -n 1p)" "$(tar --version | sed -n 1p)"
+printf 'host: %s; %s; %s\n' "$(uname -sm)" "$(curl --version | sed -n 1p)" "$(tar --version | sed -n 1p)"
+printf 'BusyBox wget cases: %s\n\n' "${BUSYBOX_KIND:-skipped}"
 
 platform_cases
 version_cases
