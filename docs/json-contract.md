@@ -20,7 +20,9 @@ $ iris --json schema                                 # the same schema wrapped a
 ```
 
 A test in the repository asserts the committed file equals freshly regenerated output, so it can
-never go stale relative to a release.
+never go stale relative to a release. Its `$id` is
+`https://raw.githubusercontent.com/doodla/iris/main/schema/iris-output.v1.schema.json`, and it
+describes `schema_version` 1 only (`schema_version` is `const: 1`).
 
 The schema encodes the contract, not only the shapes of the types:
 
@@ -29,10 +31,14 @@ The schema encodes the contract, not only the shapes of the types:
 - `ok: true` requires a non-null `result` and a null `error`, and `ok: false` the reverse;
 - a successful envelope's `result` must have its `command`'s result type (the plan for a
   generation command's `--dry-run`, the help result for `command: null`);
-- an error's `category` must be the one its `code` maps to (table below).
-
-Warning codes are deliberately not enumerated: the set is additive (see
-[Warning codes](#warning-codes)).
+- an error's `category` must be the one its `code` maps to (table below) for every code the
+  schema lists, `internal_error` included;
+- error `code`, `command`, and warning `code` are **open sets**: the schema lists the known values
+  (`anyOf` an `enum` of them) and also accepts any other value of the same form, a snake_case code
+  (`^[a-z][a-z0-9_]*$`) or, for `command`, snake_case codes joined by dots. Adding a value is an
+  additive change (below), so an envelope from a later Iris with the same `schema_version` still
+  validates against this file. Every other enumeration (`category`, statuses, providers,
+  operations, ...) is closed.
 
 ### Schema versioning policy
 
@@ -41,7 +47,9 @@ the envelope shape, every result type, the error object, and the stable code tab
 
 - **Additive changes never bump it**: a new optional field, a new warning code, a new error code
   (unknown codes already deserialize as `internal_error`/`internal` for forward compatibility —
-  see [Error object](#error-object)), a new `command` value.
+  see [Error object](#error-object)), a new `command` value. The published schema accepts such
+  values (the open sets above); a consumer should treat an error code it does not know by its
+  `category` and exit code, and a warning code it does not know as informational text.
 - **Renames, removals, or semantic changes to an existing field or code bump it.** A consumer
   should check `schema_version` once and treat a value it does not recognize as "read what you
   understand, and don't assume anything about fields you don't."
@@ -61,8 +69,8 @@ the envelope shape, every result type, the error object, and the stable code tab
 
 - `command` is one of: `image.generate`, `image.edit`, `video.generate`, `jobs.list`,
   `jobs.status`, `jobs.wait`, `jobs.download`, `jobs.delete`, `models.list`, `models.show`,
-  `providers.list`, `config.show`, `config.path`, `doctor`, `schema`, `completions`, `version` —
-  or `null` when argument parsing itself failed before a command was identified (clap usage
+  `providers.list`, `config.show`, `config.path`, `doctor`, `schema`, `completions`, `version`
+  (a later version may add commands) — or `null` when argument parsing itself failed before a command was identified (clap usage
   errors become this same envelope, at exit code 2, whenever `--json` appears anywhere in argv).
   `--help` combined with `--json` produces `ok: true` with a help result and `command: null` (the
   help text is not any one command's result). `--version` combined with `--json` instead produces

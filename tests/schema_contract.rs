@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use iris::domain::WarningCode;
 use iris::error::{ErrorCategory, ErrorCode};
-use iris::output::{SCHEMA_VERSION, human};
+use iris::output::{SCHEMA_VERSION, envelope, human};
 use serde_json::Value;
 use support::*;
 use wiremock::matchers::method;
@@ -77,34 +77,98 @@ fn the_schema_is_valid_and_enumerates_the_stable_codes() {
     let schema = committed_schema();
     jsonschema::validator_for(schema).expect("the committed schema is a valid JSON Schema");
     assert_eq!(schema["$schema"], "https://json-schema.org/draft/2020-12/schema");
+    assert_eq!(schema["$id"], envelope::SCHEMA_ID);
+    assert!(envelope::SCHEMA_ID.ends_with("/schema/iris-output.v1.schema.json"));
     assert_eq!(SCHEMA_VERSION, 1);
+    assert_eq!(schema["properties"]["schema_version"]["const"], 1);
 
-    let enum_of = |def: &str| -> BTreeSet<String> {
-        let d = &schema["$defs"][def];
-        let values = d.get("enum").and_then(Value::as_array).cloned().unwrap_or_else(|| {
-            d["oneOf"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .flat_map(|v| v["enum"].as_array().cloned().unwrap_or_default())
-                .collect()
-        });
-        values.iter().map(|v| v.as_str().unwrap().to_string()).collect()
-    };
     let codes: BTreeSet<String> = ErrorCode::ALL.iter().map(|c| c.as_str().to_string()).collect();
-    assert_eq!(enum_of("ErrorCode"), codes);
+    assert_eq!(known_values(&schema["$defs"]["ErrorCode"]), codes);
     let categories: BTreeSet<String> = ErrorCategory::ALL
         .iter()
         .map(|c| serde_json::to_value(c).unwrap().as_str().unwrap().to_string())
         .collect();
-    assert_eq!(enum_of("ErrorCategory"), categories);
+    let listed: BTreeSet<String> = schema["$defs"]["ErrorCategory"]["enum"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v.as_str().unwrap().into())
+        .collect();
+    assert_eq!(listed, categories);
     let commands: BTreeSet<String> = "image.generate image.edit video.generate jobs.list jobs.status jobs.wait \
                                       jobs.download jobs.delete models.list models.show providers.list config.show \
                                       config.path doctor schema completions version"
         .split_whitespace()
         .map(str::to_string)
         .collect();
-    assert_eq!(enum_of("CommandName"), commands, "docs/json-contract.md command names");
+    assert_eq!(
+        known_values(&schema["$defs"]["CommandName"]),
+        commands,
+        "docs/json-contract.md command names"
+    );
+    let warnings: BTreeSet<String> = WarningCode::ALL.iter().map(|c| c.as_str().to_string()).collect();
+    assert_eq!(known_values(&schema["$defs"]["Warning"]["properties"]["code"]), warnings);
+}
+
+/// The known values of an open set: `anyOf: [{enum: [...]}, {pattern}]`.
+fn known_values(open_set: &Value) -> BTreeSet<String> {
+    let branches = open_set["anyOf"].as_array().unwrap_or_else(|| panic!("not an open set: {open_set}"));
+    assert_eq!(branches.len(), 2, "{open_set}");
+    assert!(branches[1]["pattern"].is_string(), "{open_set}");
+    branches[0]["enum"].as_array().unwrap().iter().map(|v| v.as_str().unwrap().to_string()).collect()
+}
+
+/// Error codes, commands, and warning codes are open sets, so adding one stays an
+/// additive change: an envelope of a later 1.x Iris with a value this schema does
+/// not list still validates, as long as it has the documented form. Everything else
+/// stays closed: a malformed value and another `schema_version` are rejected.
+#[test]
+fn open_sets_accept_later_values_of_the_documented_form_only() {
+    let validator = jsonschema::validator_for(committed_schema()).expect("valid schema");
+    let error = |code: &str, category: &str| {
+        serde_json::json!({
+            "code": code, "category": category, "message": "m", "retryable": null,
+            "retry_after_seconds": null, "hint": null, "provider": null, "provider_status": null,
+            "provider_code": null, "provider_request_id": null, "job_id": null, "remote_operation_id": null,
+            "job_status": null, "details": null
+        })
+    };
+    let failure = |command: Value, error: Value, warning: &str| {
+        serde_json::json!({
+            "schema_version": 1, "ok": false, "command": command, "result": null, "error": error,
+            "warnings": [{"code": warning, "message": "m"}]
+        })
+    };
+    let known = failure("jobs.list".into(), error("quota_exceeded", "quota"), "preview_model");
+    assert!(validator.is_valid(&known));
+    assert!(validator.is_valid(&failure(
+        "videos.extend".into(),
+        error("a_future_code", "provider"),
+        "a_future_warning_2"
+    )));
+    let success = serde_json::json!({
+        "schema_version": 1, "ok": true, "command": "jobs.archive", "result": {"jobs": []}, "error": null,
+        "warnings": []
+    });
+    assert!(validator.is_valid(&success), "a later command's result is one of the result types");
+
+    for malformed in ["", "Quota", "a-b", "1st", "a b", "a.b"] {
+        let v = failure("jobs.list".into(), error(malformed, "quota"), "preview_model");
+        assert!(!validator.is_valid(&v), "error code {malformed:?}");
+        let v = failure("jobs.list".into(), error("quota_exceeded", "quota"), malformed);
+        assert!(!validator.is_valid(&v), "warning code {malformed:?}");
+    }
+    for malformed in ["", "Jobs.list", "jobs..list", "jobs.", ".jobs", "jobs list", "jobs-list.x"] {
+        let v = failure(malformed.into(), error("quota_exceeded", "quota"), "preview_model");
+        assert!(!validator.is_valid(&v), "command {malformed:?}");
+    }
+    for version in [0, 2] {
+        let mut v = known.clone();
+        v["schema_version"] = version.into();
+        assert!(!validator.is_valid(&v), "schema_version {version}");
+    }
+    // The category rule still holds for every known code.
+    assert!(!validator.is_valid(&failure("jobs.list".into(), error("quota_exceeded", "provider"), "x")));
 }
 
 /// Run every command of the tree in JSON mode (successes and failures); `run_cli`
@@ -197,7 +261,7 @@ fn the_contract_check_rejects_malformed_envelopes() {
     bad["ok"] = Value::String("yes".into());
     assert!(rejects(bad));
     let mut bad = good.clone();
-    bad["command"] = Value::String("jobs.frobnicate".into());
+    bad["command"] = Value::String("Jobs.List".into());
     assert!(rejects(bad));
     let mut bad = good.clone();
     bad["result"] = serde_json::json!({"deleted": [], "remote_effect": "none", "note": ""});
@@ -207,7 +271,7 @@ fn the_contract_check_rejects_malformed_envelopes() {
     assert!(rejects(bad));
     let bad = serde_json::json!({
         "schema_version": 1, "ok": false, "command": null, "result": null,
-        "error": {"code": "not_a_code", "category": "usage", "message": "m"}, "warnings": []
+        "error": {"code": "Not A Code", "category": "usage", "message": "m"}, "warnings": []
     });
     assert!(rejects(bad));
 }
@@ -316,18 +380,11 @@ fn the_schema_alone_rejects_envelopes_that_break_the_contract() {
 fn every_command_maps_to_result_types_in_the_schema() {
     use iris::output::CommandName;
     let schema = committed_schema();
-    let commands = schema["$defs"]["CommandName"]["enum"].as_array().cloned().unwrap_or_else(|| {
-        schema["$defs"]["CommandName"]["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .flat_map(|v| v["enum"].as_array().cloned().unwrap_or_else(|| vec![v["const"].clone()]))
-            .collect()
-    });
+    let commands = known_values(&schema["$defs"]["CommandName"]);
     assert_eq!(commands.len(), CommandName::ALL.len());
     for command in CommandName::ALL {
         let name = serde_json::to_value(command).unwrap();
-        assert!(commands.contains(&name), "{name}");
+        assert!(commands.contains(name.as_str().unwrap()), "{name}");
         for def in command.result_types() {
             assert!(schema["$defs"].get(&def).is_some(), "{name}: no $defs/{def}");
         }

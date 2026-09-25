@@ -3,7 +3,7 @@
 use schemars::JsonSchema;
 use serde::Serialize;
 
-use crate::domain::{JobStatus, ProviderId, Warning};
+use crate::domain::{JobStatus, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCategory, ErrorCode, IrisError};
 use crate::redact;
 
@@ -11,6 +11,19 @@ use super::results::*;
 
 /// Major version of the JSON output contract.
 pub const SCHEMA_VERSION: u32 = 1;
+
+/// The published schema's `$id`: where the committed file of this major version is
+/// served from.
+pub const SCHEMA_ID: &str =
+    "https://raw.githubusercontent.com/doodla/iris/main/schema/iris-output.v1.schema.json";
+
+/// The form of every error code and warning code. Both are open sets: a later
+/// version of the same `schema_version` may add values of this form.
+pub const CODE_PATTERN: &str = "^[a-z][a-z0-9_]*$";
+
+/// The form of every envelope `command`: codes joined by dots (`image.generate`).
+/// An open set like the codes.
+pub const COMMAND_PATTERN: &str = "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$";
 
 /// Command identifiers used in the envelope's `command` field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
@@ -239,13 +252,17 @@ pub fn schema() -> serde_json::Value {
 
 /// Rules of the documented contract beyond the shapes of the types:
 ///
+/// * the document's `$id`, and `schema_version` fixed at [`SCHEMA_VERSION`];
 /// * `ok: true` ⇔ `result` is not null and `error` is null (`ok: false` ⇔ the
 ///   reverse);
 /// * a successful envelope's `result` has its command's type
 ///   ([`CommandName::result_types`]), and one with `command: null` is `--help`;
 /// * an error's `category` is the one of its `code` (an error read back from a job
 ///   record written by a newer Iris shows an unknown code as `internal_error` with
-///   category `internal`, keeping the original in `details.recorded_code`).
+///   category `internal`, keeping the original in `details.recorded_code`);
+/// * error codes, commands, and warning codes are open sets (see [`open_set`]):
+///   adding a value is an additive change, which a consumer validating with this
+///   version's schema keeps accepting; the rules above apply to the known values.
 fn add_contract_rules(schema: &mut serde_json::Value) {
     use serde_json::json;
     let def = |name: &str| json!({ "$ref": format!("#/$defs/{name}") });
@@ -281,4 +298,43 @@ fn add_contract_rules(schema: &mut serde_json::Value) {
         .collect();
     let name = ErrorBody::schema_name();
     schema["$defs"][name.as_ref()]["allOf"] = serde_json::Value::Array(categories);
+
+    schema["$id"] = json!(SCHEMA_ID);
+    schema["properties"]["schema_version"] = json!({
+        "description": "Major version of the JSON output contract; this schema describes version 1.",
+        "type": "integer",
+        "const": SCHEMA_VERSION,
+    });
+    let codes: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
+    schema["$defs"][ErrorCode::schema_name().as_ref()] = open_set(
+        "Stable, public error code (docs/json-contract.md): one of the listed codes, or a code a later version \
+         of this schema_version adds.",
+        &codes,
+        CODE_PATTERN,
+    );
+    let commands: Vec<serde_json::Value> =
+        CommandName::ALL.iter().map(|c| serde_json::to_value(c).expect("command names serialize")).collect();
+    let commands: Vec<&str> = commands.iter().filter_map(serde_json::Value::as_str).collect();
+    schema["$defs"][CommandName::schema_name().as_ref()] = open_set(
+        "Command identifier: one of the listed commands, or a command a later version of this schema_version adds.",
+        &commands,
+        COMMAND_PATTERN,
+    );
+    let warnings: Vec<&str> = WarningCode::ALL.iter().map(|c| c.as_str()).collect();
+    schema["$defs"][Warning::schema_name().as_ref()]["properties"]["code"] = open_set(
+        "Stable warning code (docs/json-contract.md): one of the listed codes, or a code a later version of this \
+         schema_version adds. Treat a code you do not know as informational text.",
+        &warnings,
+        CODE_PATTERN,
+    );
+}
+
+/// An open set of strings: the `known` values are listed (for readers and code
+/// generators), and any other value of the form `pattern` is accepted too.
+fn open_set(description: &str, known: &[&str], pattern: &str) -> serde_json::Value {
+    serde_json::json!({
+        "description": description,
+        "type": "string",
+        "anyOf": [{ "enum": known }, { "pattern": pattern }],
+    })
 }

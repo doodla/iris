@@ -115,26 +115,33 @@
       "type": "string"
     },
     "CommandName": {
-      "description": "Command identifiers used in the envelope's `command` field.",
-      "enum": [
-        "image.generate",
-        "image.edit",
-        "video.generate",
-        "jobs.list",
-        "jobs.status",
-        "jobs.wait",
-        "jobs.download",
-        "jobs.delete",
-        "models.list",
-        "models.show",
-        "providers.list",
-        "config.show",
-        "config.path",
-        "doctor",
-        "schema",
-        "completions",
-        "version"
+      "anyOf": [
+        {
+          "enum": [
+            "image.generate",
+            "image.edit",
+            "video.generate",
+            "jobs.list",
+            "jobs.status",
+            "jobs.wait",
+            "jobs.download",
+            "jobs.delete",
+            "models.list",
+            "models.show",
+            "providers.list",
+            "config.show",
+            "config.path",
+            "doctor",
+            "schema",
+            "completions",
+            "version"
+          ]
+        },
+        {
+          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
+        }
       ],
+      "description": "Command identifier: one of the listed commands, or a command a later version of this schema_version adds.",
       "type": "string"
     },
     "CompletionsResult": {
@@ -1067,40 +1074,47 @@
       "type": "string"
     },
     "ErrorCode": {
-      "description": "Stable, public error codes.\n\nDeserialization is tolerant: a code this binary does not know (written by a newer\nIris into a persisted job record) reads as `internal_error` instead of failing.",
-      "enum": [
-        "usage_error",
-        "invalid_argument",
-        "unsupported_operation",
-        "unsupported_option",
-        "unknown_model",
-        "unknown_provider",
-        "input_file_invalid",
-        "config_invalid",
-        "output_exists",
-        "job_not_found",
-        "missing_credentials",
-        "authentication_failed",
-        "permission_denied",
-        "quota_exceeded",
-        "rate_limited",
-        "content_blocked",
-        "provider_error",
-        "provider_bad_response",
-        "remote_job_failed",
-        "network_error",
-        "request_timeout",
-        "download_failed",
-        "artifact_expired",
-        "invalid_media",
-        "state_invalid",
-        "io_error",
-        "internal_error",
-        "wait_timeout",
-        "job_not_ready",
-        "submission_uncertain",
-        "interrupted"
+      "anyOf": [
+        {
+          "enum": [
+            "usage_error",
+            "invalid_argument",
+            "unsupported_operation",
+            "unsupported_option",
+            "unknown_model",
+            "unknown_provider",
+            "input_file_invalid",
+            "config_invalid",
+            "output_exists",
+            "job_not_found",
+            "missing_credentials",
+            "authentication_failed",
+            "permission_denied",
+            "quota_exceeded",
+            "rate_limited",
+            "content_blocked",
+            "provider_error",
+            "provider_bad_response",
+            "remote_job_failed",
+            "network_error",
+            "request_timeout",
+            "download_failed",
+            "artifact_expired",
+            "invalid_media",
+            "state_invalid",
+            "io_error",
+            "internal_error",
+            "wait_timeout",
+            "job_not_ready",
+            "submission_uncertain",
+            "interrupted"
+          ]
+        },
+        {
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
       ],
+      "description": "Stable, public error code (docs/json-contract.md): one of the listed codes, or a code a later version of this schema_version adds.",
       "type": "string"
     },
     "HelpResult": {
@@ -2212,7 +2226,32 @@
       "description": "A non-fatal notice attached to a result.",
       "properties": {
         "code": {
-          "description": "Stable snake_case warning code (additive set; see docs/json-contract.md).",
+          "anyOf": [
+            {
+              "enum": [
+                "unverified_model_capabilities",
+                "output_extension_adjusted",
+                "output_renamed",
+                "output_format_mismatch",
+                "cost_estimate_unavailable",
+                "job_record_unreadable",
+                "provider_text_output",
+                "already_downloaded",
+                "retention_limited",
+                "preview_model",
+                "non_default_base_url",
+                "content_filtered",
+                "unexpected_output_count",
+                "status_refresh_failed",
+                "output_item_unusable",
+                "output_saved_elsewhere"
+              ]
+            },
+            {
+              "pattern": "^[a-z][a-z0-9_]*$"
+            }
+          ],
+          "description": "Stable warning code (docs/json-contract.md): one of the listed codes, or a code a later version of this schema_version adds. Treat a code you do not know as informational text.",
           "type": "string"
         },
         "message": {
@@ -2226,6 +2265,7 @@
       "type": "object"
     }
   },
+  "$id": "https://raw.githubusercontent.com/doodla/iris/main/schema/iris-output.v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "allOf": [
     {
@@ -2736,8 +2776,8 @@
       ]
     },
     "schema_version": {
-      "format": "uint32",
-      "minimum": 0,
+      "const": 1,
+      "description": "Major version of the JSON output contract; this schema describes version 1.",
       "type": "integer"
     },
     "warnings": {
