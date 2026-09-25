@@ -434,7 +434,8 @@ reason.
 
 - **Minimum Rust version 1.89, edition 2024.** 1.89 is the first release with
   `std::fs::File::lock`, which replaces a locking crate; edition 2024 needs 1.85, and no
-  dependency declares a newer minimum. A CI job builds and runs the tests with 1.89 so the claim
+  dependency declares a newer minimum. A CI job type-checks the crate and its tests
+  (`cargo check --all-targets`) with the `rust-version` that `Cargo.toml` declares, so the claim
   stays true.
 - **`dirs` rather than `directories`.** `directories`' GitHub repository is archived and has had
   no release since January 2025; `dirs` is maintained (7.0.0, September 2026) and gives exactly
