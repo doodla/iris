@@ -129,15 +129,18 @@ fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
 }
 
 /// A paid request may have reached OpenAI but no complete answer arrived (timeout,
-/// reset, truncated body): `submission_uncertain` (exit 5, not retryable) with
-/// `details.charge_possible`, `details.transport` (`timeout` or `other`, never
-/// relabeled), and the client request id. Never retried (see docs/jobs.md).
+/// reset, truncated body, or an answer over the size limit): `submission_uncertain`
+/// (exit 5, not retryable) with `details.charge_possible`, `details.transport`
+/// (`timeout` or `other`, never relabeled), and the client request id. Never
+/// retried (see docs/jobs.md).
 fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError {
     let mut err = t.to_iris();
     err.code = ErrorCode::SubmissionUncertain;
     err.retryable = Some(false);
-    let what = match t.kind {
-        crate::http::TransportKind::Timeout => "the time limit passed",
+    let what = match (t.kind, t.status) {
+        (crate::http::TransportKind::Timeout, _) => "the time limit passed",
+        // The status line arrived: the answer was cut off or longer than Iris reads.
+        (_, Some(_)) => "the answer could not be read in full",
         _ => "the connection failed after the request was sent",
     };
     err.message = format!(

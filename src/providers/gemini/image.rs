@@ -193,9 +193,10 @@ fn str_option<'a>(name: &str, value: &'a crate::catalog::OptionValue) -> Result<
 
 /// Paid synchronous call failures (see docs/json-contract.md). None is retried.
 ///
-/// * A transport failure after sending (timeout, reset, truncated body) is
-///   `submission_uncertain`: the request may have been processed and billed, and
-///   Iris cannot find out. It keeps `details.transport` and `details.charge_possible`.
+/// * A transport failure after sending (timeout, reset, truncated body, or an
+///   answer over the size limit) is `submission_uncertain`: the request may have
+///   been processed and billed, and Iris cannot find out. It keeps
+///   `details.transport` and `details.charge_possible`.
 /// * An HTTP error answer keeps its mapped code (e.g. `provider_error`, retryable, for
 ///   a 5xx) without `charge_possible`: Google's billing documentation says requests
 ///   that fail with 400 or 500 errors are not charged.
@@ -205,8 +206,10 @@ fn paid_call_error(err: HttpError) -> IrisError {
             let mut e = t.to_iris();
             e.code = ErrorCode::SubmissionUncertain;
             e.retryable = Some(false);
-            let what = match t.kind {
-                TransportKind::Timeout => "the time limit passed",
+            let what = match (t.kind, t.status) {
+                (TransportKind::Timeout, _) => "the time limit passed",
+                // The status line arrived: the answer was cut off or longer than Iris reads.
+                (_, Some(_)) => "the answer could not be read in full",
                 _ => "the connection failed after the request was sent",
             };
             e.message = format!(

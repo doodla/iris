@@ -1419,15 +1419,23 @@ fn read_request(stream: &mut std::net::TcpStream) -> Option<String> {
 
 #[tokio::test]
 async fn a_connection_lost_after_sending_is_submission_uncertain_not_a_timeout() {
-    let cases: [(&str, &'static [u8]); 2] = [
-        ("closed after the request, before any response", b""),
+    // (case, reply, what the message says happened, the status that arrived)
+    let cases: [(&str, &'static [u8], &str, Option<u16>); 2] = [
+        (
+            "closed after the request, before any response",
+            b"",
+            "the connection failed after the request was sent",
+            None,
+        ),
         (
             "2xx headers, then a truncated body",
             b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 5000\r\n\
               x-request-id: req_trunc\r\n\r\n{\"created\": 1, \"data\": [{\"b64_json\": \"iVBOR",
+            "the answer could not be read in full",
+            Some(200),
         ),
     ];
-    for (name, reply) in cases {
+    for (name, reply, what, status) in cases {
         let (base, connections, heads) = raw_server(reply);
         let err = OpenAiProvider::new()
             .generate(&generate_request(ResolvedOptions::new()), &ctx_for(&base))
@@ -1435,8 +1443,10 @@ async fn a_connection_lost_after_sending_is_submission_uncertain_not_a_timeout()
             .expect_err(name);
         assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{name}: {}", err.message);
         assert_eq!(err.retryable, Some(false), "{name}");
-        // Nothing timed out: the connection failed, and the transport detail says so.
+        // Nothing timed out: the connection failed or the answer was cut off, and the
+        // transport detail says so.
         assert_eq!(err.details.get("transport"), Some(&json!("other")), "{name}");
+        assert_eq!(err.provider_status, status, "{name}");
         assert_eq!(err.provider, Some(ProviderId::OpenAi), "{name}");
         assert_eq!(err.details.get("charge_possible"), Some(&json!(true)), "{name}");
         let hint = err.hint.as_deref().unwrap();
@@ -1444,7 +1454,7 @@ async fn a_connection_lost_after_sending_is_submission_uncertain_not_a_timeout()
             hint.contains("Iris did not retry automatically; the provider may have billed this request"),
             "{name}: {hint}"
         );
-        assert!(err.message.contains("after the request was sent"), "{name}: {}", err.message);
+        assert!(err.message.contains(&format!("({what}; ")), "{name}: {}", err.message);
         assert_eq!(
             connections.load(Ordering::SeqCst),
             1,

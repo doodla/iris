@@ -1,8 +1,8 @@
 //! Size and time limits of the HTTP executor: bounded response bodies and the
 //! upload allowance of request time limits. Most tests use raw 127.0.0.1 socket
 //! servers, which can stream an endless body or read a request slowly; some go
-//! through the Veo adapter to check how a paid submission reports them. Offline;
-//! fake key only.
+//! through the Veo and image adapters to check how a paid submission reports them.
+//! Offline; fake key only.
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -13,13 +13,16 @@ use std::time::{Duration, Instant};
 
 use iris::catalog::ResolvedOptions;
 use iris::domain::ProviderId;
-use iris::error::ErrorCode;
+use iris::error::{ErrorCode, IrisError};
 use iris::http::{
     Call, HttpClient, HttpError, HttpResponse, HttpSettings, JSON_BODY_LIMIT, MEDIA_BODY_LIMIT, RetryClass,
     RetryPolicy, Timeouts, TransportKind, Verdict,
 };
 use iris::providers::gemini::GeminiProvider;
-use iris::providers::{InputImage, InputRole, ProviderContext, VideoProvider, VideoRequest};
+use iris::providers::openai::OpenAiProvider;
+use iris::providers::{
+    ImageProvider, ImageRequest, InputImage, InputRole, ProviderContext, VideoProvider, VideoRequest,
+};
 use iris::secret::Secret;
 use serde_json::json;
 
@@ -180,9 +183,9 @@ fn read_call() -> Call {
     Call::new(RetryClass::IdempotentRead, Duration::from_secs(20)).with_provider(ProviderId::Gemini)
 }
 
-// ----- Veo adapter fixtures ----------------------------------------------------------
+// ----- adapter fixtures --------------------------------------------------------------
 
-fn veo_ctx(base: &str, submit: Duration) -> ProviderContext {
+fn adapter_ctx(base: &str, submit: Duration) -> ProviderContext {
     ProviderContext {
         http: client(),
         base_url: url::Url::parse(base).unwrap(),
@@ -341,7 +344,7 @@ async fn veo_answers_over_the_limit_are_uncertain_on_submit_and_bad_on_poll() {
     let prefix = format!("{{\"name\":\"{OPERATION}\",\"padding\":\"").into_bytes();
     let server =
         raw_server(vec![Script::reply(Reply::Endless { prefix: prefix.clone(), max_total: 256 * MIB })]);
-    let ctx = veo_ctx(&server.base, Duration::from_secs(20));
+    let ctx = adapter_ctx(&server.base, Duration::from_secs(20));
     let err = GeminiProvider::new().submit(&veo_request(0), &ctx).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{err:?}");
     assert_eq!(err.retryable, Some(false));
@@ -353,7 +356,7 @@ async fn veo_answers_over_the_limit_are_uncertain_on_submit_and_bad_on_poll() {
     );
 
     let server = raw_server(vec![Script::reply(Reply::Endless { prefix, max_total: 256 * MIB })]);
-    let ctx = veo_ctx(&server.base, Duration::from_secs(20));
+    let ctx = adapter_ctx(&server.base, Duration::from_secs(20));
     let err = GeminiProvider::new().poll(OPERATION, &ctx).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse, "{err:?}");
     assert_eq!(err.provider_status, Some(200));
@@ -404,10 +407,112 @@ async fn a_slow_upload_gets_time_in_proportion_to_its_body() {
 #[tokio::test]
 async fn a_slow_veo_upload_is_not_cut_off_by_the_submit_timeout() {
     let server = slow_reader(response("200 OK", format!("{{\"name\":\"{OPERATION}\"}}").as_bytes()));
-    let ctx = veo_ctx(&server.base, Duration::from_secs(1));
+    let ctx = adapter_ctx(&server.base, Duration::from_secs(1));
     // 768 KiB of image, 1 MiB as base64: about 1.6 s at the server's pace.
     let op = GeminiProvider::new().submit(&veo_request(768 * 1024), &ctx).await.unwrap();
     assert_eq!(op.remote_id, OPERATION);
     assert!(server.received.load(Ordering::SeqCst) > MIB);
     assert_eq!(server.connections.load(Ordering::SeqCst), 1);
+}
+
+// ----- paid image answers that cannot be read in full -------------------------------------
+
+/// A `200` head declaring a body far over the 512 MiB image-answer limit (it is
+/// refused before anything of the body is read).
+fn oversized_answer() -> Reply {
+    let head = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 5000000000\r\n\r\n";
+    Reply::DeclaredOnly { head: head.to_vec(), hold: Duration::from_secs(5) }
+}
+
+/// A `200` head declaring 5000 bytes, then only the start of the body.
+fn cut_off_answer() -> Reply {
+    let head = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: 5000\r\n\r\n";
+    Reply::Bytes([head.as_slice(), b"{\"data\":[{\"b64_json\":\"iVBOR"].concat())
+}
+
+/// One image generation through `provider`'s adapter against `server`.
+async fn generate_image(provider: ProviderId, server: &Server) -> IrisError {
+    let (model, base) = match provider {
+        ProviderId::OpenAi => ("gpt-image-2.5-sunburst", format!("{}/v1", server.base)),
+        _ => ("gemini-3.1-flash-image", server.base.clone()),
+    };
+    let req = ImageRequest {
+        model: model.to_string(),
+        prompt: "a lighthouse at dusk, watercolor".to_string(),
+        images: Vec::new(),
+        mask: None,
+        options: ResolvedOptions::new(),
+    };
+    let ctx = adapter_ctx(&base, Duration::from_secs(20));
+    let result = match provider {
+        ProviderId::OpenAi => OpenAiProvider::new().generate(&req, &ctx).await,
+        _ => GeminiProvider::new().generate(&req, &ctx).await,
+    };
+    result.expect_err("expected an error")
+}
+
+/// One way a paid answer fails to arrive whole, and what the error says happened.
+#[derive(Clone, Copy)]
+struct Unread {
+    name: &'static str,
+    reply: fn() -> Reply,
+    what: &'static str,
+    /// The status that arrived (and is reported as `provider_status`).
+    status: Option<u16>,
+    /// More the message must say.
+    also: Option<&'static str>,
+}
+
+/// Both image adapters say what happened to a paid call whose answer never arrived
+/// whole: no answer at all is a connection that failed; an answer whose status line
+/// arrived but whose body was cut off, or was longer than Iris reads, "could not be
+/// read in full" (the provider answered; the connection did not fail). Each is
+/// `submission_uncertain` with the status that arrived, and is never resent.
+#[tokio::test]
+async fn image_answers_that_never_arrive_whole_are_uncertain_and_say_what_happened() {
+    let read_in_full = "the answer could not be read in full";
+    let cases = [
+        Unread {
+            name: "no answer",
+            reply: || Reply::Bytes(Vec::new()),
+            what: "the connection failed after the request was sent",
+            status: None,
+            also: None,
+        },
+        Unread {
+            name: "a cut-off answer",
+            reply: cut_off_answer,
+            what: read_in_full,
+            status: Some(200),
+            also: None,
+        },
+        Unread {
+            name: "an answer over the limit",
+            reply: oversized_answer,
+            what: read_in_full,
+            status: Some(200),
+            also: Some("over Iris's 512 MiB limit"),
+        },
+    ];
+    for provider in [ProviderId::OpenAi, ProviderId::Gemini] {
+        for Unread { name, reply, what, status, also } in cases {
+            let case = format!("{}, {name}", provider.display_name());
+            let server = raw_server(vec![Script::reply(reply())]);
+            let err = generate_image(provider, &server).await;
+            assert_eq!(err.code, ErrorCode::SubmissionUncertain, "{case}: {err:?}");
+            assert_eq!(err.retryable, Some(false), "{case}");
+            assert_eq!(err.provider, Some(provider), "{case}");
+            assert_eq!(err.provider_status, status, "{case}");
+            assert_eq!(err.details.get("transport"), Some(&json!("other")), "{case}");
+            assert_eq!(err.details.get("charge_possible"), Some(&json!(true)), "{case}");
+            assert!(err.message.contains(&format!("({what}; ")), "{case}: {}", err.message);
+            if status.is_some() {
+                assert!(!err.message.contains("connection failed"), "{case}: {}", err.message);
+            }
+            if let Some(text) = also {
+                assert!(err.message.contains(text), "{case}: {}", err.message);
+            }
+            assert_eq!(server.connections.load(Ordering::SeqCst), 1, "{case}: never resent");
+        }
+    }
 }

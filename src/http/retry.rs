@@ -427,7 +427,9 @@ pub enum TransportKind {
     Connect,
     /// The time limit expired (the request may have been sent).
     Timeout,
-    /// Any other transport or body error (reset, protocol error, truncated body).
+    /// Any other transport or body error: a reset, a protocol error, a body cut
+    /// off, or (on a paid submission) a success answer longer than the call's body
+    /// limit. [`TransportError::status`] tells whether an answer had started.
     Other,
 }
 
@@ -451,7 +453,9 @@ pub struct TransportError {
     /// True when the request may have reached the provider (everything except a
     /// failed connection). For a paid submission this is the uncertainty window.
     pub after_send: bool,
-    /// Status of the response, if its headers arrived before the body failed.
+    /// Status of the response, if its headers arrived before the body failed (it
+    /// was cut off, timed out, or was longer than the call's body limit): then the
+    /// connection worked and the provider answered, but the answer is incomplete.
     pub status: Option<u16>,
     /// Attempts made, including the failed one.
     pub attempts: u32,
@@ -493,7 +497,13 @@ impl TransportError {
             ),
             TransportKind::Other => (
                 ErrorCode::NetworkError,
-                format!("the connection to {} failed{attempts}: {}", self.url, self.message),
+                match self.status {
+                    Some(_) => format!(
+                        "the answer from {} could not be read in full{attempts}: {}",
+                        self.url, self.message
+                    ),
+                    None => format!("the connection to {} failed{attempts}: {}", self.url, self.message),
+                },
             ),
         };
         let mut err = IrisError::new(code, message)
@@ -1203,5 +1213,35 @@ mod tests {
         let read = TransportError { class: RetryClass::IdempotentRead, ..base };
         assert!(!read.charge_possible());
         assert!(read.to_iris().details.get("charge_possible").is_none());
+    }
+
+    /// An `Other` failure after the status line arrived is an answer cut short, not
+    /// a failed connection; the status is kept however it is worded.
+    #[test]
+    fn other_transport_errors_say_whether_an_answer_had_started() {
+        let reset = TransportError {
+            kind: TransportKind::Other,
+            after_send: true,
+            status: None,
+            attempts: 1,
+            class: RetryClass::IdempotentRead,
+            provider: Some(ProviderId::Gemini),
+            url: "https://generativelanguage.googleapis.com/v1beta/operations/x".into(),
+            message: "connection reset by peer".into(),
+        };
+        let e = reset.to_iris();
+        assert_eq!(e.code, ErrorCode::NetworkError);
+        assert!(e.message.starts_with("the connection to https://"), "{}", e.message);
+        assert_eq!(e.provider_status, None);
+
+        let cut =
+            TransportError { status: Some(200), message: "error decoding response body".into(), ..reset };
+        let e = cut.to_iris();
+        assert_eq!(e.code, ErrorCode::NetworkError);
+        assert!(e.message.starts_with("the answer from https://"), "{}", e.message);
+        assert!(e.message.contains("could not be read in full"), "{}", e.message);
+        assert!(!e.message.contains("the connection to"), "{}", e.message);
+        assert_eq!(e.provider_status, Some(200));
+        assert_eq!(e.details.get("transport"), Some(&serde_json::Value::from("other")));
     }
 }
