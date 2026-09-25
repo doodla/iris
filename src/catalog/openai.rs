@@ -27,8 +27,8 @@ use crate::error::IrisError;
 use super::options::OptionValue;
 use super::round_usd;
 use super::types::{
-    Constraint, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, MaskSpec, ModelIdSyntax, ModelSpec,
-    OptionKind, OptionSpec, OutputSpec, PriceRule, RequestRules, ValidationInput,
+    Constraint, DeclinedName, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, MaskSpec,
+    ModelIdSyntax, ModelSpec, OptionKind, OptionSpec, OutputSpec, PriceRule, RequestRules, ValidationInput,
 };
 
 /// Official pricing page the rates below come from.
@@ -233,6 +233,39 @@ const OPTIONS_2: &[OptionSpec] = &[COUNT, SIZE, QUALITY_2, FORMAT, COMPRESSION, 
 /// low, where 1024x1024 needs 196); 1408x480 and 1424x480 need as many for fewer
 /// pixels. `tests/openai_catalog.rs` checks it against every valid size.
 const LOWEST: &[(&str, &str)] = &[("quality", "low"), ("size", "1440x480")];
+
+/// What to use instead of a GPT Image or DALL·E model Iris does not register: the
+/// guide says "For new integrations, use one of the GPT Image 2.5 models", and the
+/// deprecation notices name `gpt-image-2`.
+const INSTEAD: &[&str] = &["gpt-image-2.5-sunburst", "gpt-image-2.5-flare", "gpt-image-2"];
+
+/// OpenAI image names Iris gives no model. Dates and replacements are those of the
+/// deprecations page (<https://developers.openai.com/api/docs/deprecations>), checked
+/// 2026-09-24.
+pub const DECLINED: &[DeclinedName] = &[
+    DeclinedName {
+        names: &["gpt-image-1"],
+        families: &[],
+        reason: "OpenAI has deprecated gpt-image-1 (shutdown on 2026-10-23), naming gpt-image-2 as its \
+                 replacement, and recommends a GPT Image 2.5 model for new integrations",
+        instead: INSTEAD,
+    },
+    DeclinedName {
+        names: &["gpt-image-1.5", "gpt-image-1-mini", "chatgpt-image-latest"],
+        families: &[],
+        reason: "OpenAI has deprecated gpt-image-1.5, gpt-image-1-mini, and chatgpt-image-latest (shutdown on \
+                 2026-12-01), naming gpt-image-2 as their replacement, and recommends a GPT Image 2.5 model \
+                 for new integrations",
+        instead: INSTEAD,
+    },
+    DeclinedName {
+        names: &[],
+        families: &["dall-e", "dalle"],
+        reason: "OpenAI removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12 and recommends a GPT \
+                 Image 2.5 model for new integrations",
+        instead: INSTEAD,
+    },
+];
 
 /// The OpenAI models Iris knows.
 pub static MODELS: &[ModelSpec] = &[

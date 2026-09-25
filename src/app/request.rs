@@ -5,7 +5,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 
 use crate::artifacts::{media, paths};
 use crate::catalog::{
@@ -79,7 +79,9 @@ pub(crate) fn resolve_model(
     warnings: &mut Vec<Warning>,
 ) -> Result<(ResolvedModel, ModelSource), IrisError> {
     let (resolved, source) = match args.model.as_deref() {
-        Some(model) => (ctx.catalog.resolve(model, args.capabilities_from.as_deref())?, ModelSource::Flag),
+        Some(model) => {
+            (ctx.catalog.resolve(model, args.capabilities_from.as_deref(), op)?, ModelSource::Flag)
+        }
         None => {
             if args.capabilities_from.is_some() {
                 return Err(IrisError::usage(
@@ -128,7 +130,7 @@ fn configured_model(ctx: &AppContext, op: Operation) -> Result<ResolvedModel, Ir
     let Some(id) = &ctx.settings.model(op).value else {
         return Err(model_required(ctx, op));
     };
-    let resolved = ctx.catalog.resolve(id, None)?;
+    let resolved = ctx.catalog.resolve(id, None, op)?;
     if !resolved.spec.supports(op) {
         let supported: Vec<&str> = resolved.spec.operations.iter().map(|o| o.as_str()).collect();
         return Err(IrisError::new(
@@ -163,30 +165,7 @@ fn model_required(ctx: &AppContext, op: Operation) -> IrisError {
     .with_detail("operation", op.as_str())
     .with_detail("config_key", key)
     .with_detail("config_file", config_file)
-    .with_detail("candidates", candidates(ctx, op))
-}
-
-/// The models a generation command for `op` can use, in catalog order, as listed in
-/// an error's `details.candidates`: one object per model, `{model, provider,
-/// display_name, summary, aliases, lowest_estimate}` (the `lowest_estimate` of
-/// `models list`: the options of the cheapest single-output request and their
-/// estimate, null without an estimator).
-fn candidates(ctx: &AppContext, op: Operation) -> Vec<Value> {
-    ctx.catalog
-        .models()
-        .into_iter()
-        .filter(|m| m.supports(op))
-        .map(|m| {
-            json!({
-                "model": m.id,
-                "provider": m.provider,
-                "display_name": m.display_name,
-                "summary": m.summary,
-                "aliases": m.aliases,
-                "lowest_estimate": super::models::lowest_estimate(m),
-            })
-        })
-        .collect()
+    .with_detail("candidates", ctx.catalog.candidates(Some(op)))
 }
 
 /// Prompt checks that need the model: non-empty, and within the declared limit.

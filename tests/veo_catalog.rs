@@ -37,7 +37,9 @@ fn validate(id: &str, opts: &[(&str, &str)], inputs: Inputs) -> Result<(), Error
         references: inputs.refs,
         ..InputCounts::default()
     };
-    validate_request(spec(id), Operation::VideoGenerate, &raw, counts).map(|_| ()).map_err(|e| e.code)
+    validate_request(spec(id), Operation::VideoGenerate, &raw, counts, &catalog_support::builtin())
+        .map(|_| ())
+        .map_err(|e| e.code)
 }
 
 fn text() -> Inputs {
@@ -58,7 +60,14 @@ fn estimate_usd(id: &str, opts: &[(&str, &str)]) -> f64 {
         .iter()
         .map(|(n, v)| RawOption { name: n.to_string(), value: v.to_string(), source: OptionSource::Generic })
         .collect();
-    let options = validate_request(s, Operation::VideoGenerate, &raw, InputCounts::default()).unwrap();
+    let options = validate_request(
+        s,
+        Operation::VideoGenerate,
+        &raw,
+        InputCounts::default(),
+        &catalog_support::builtin(),
+    )
+    .unwrap();
     let e = (s.estimate.unwrap().estimate)(
         s,
         &EstimateInput { operation: Operation::VideoGenerate, options: &options, count: 1 },
@@ -115,12 +124,45 @@ fn the_three_veo_31_preview_models_are_declared() {
 }
 
 #[test]
-fn gemini_alone_has_video_models_and_shut_down_ids_are_unknown() {
+fn gemini_alone_has_video_models() {
     assert_eq!(catalog::providers_for(Operation::VideoGenerate), [ProviderId::Gemini]);
-    for gone in
-        ["veo-2.0-generate-001", "veo-3.0-generate-001", "veo-3.0-fast-generate-001", "veo-3.1-generate-001"]
-    {
-        assert_eq!(catalog::resolve(gone, None).unwrap_err().code, ErrorCode::UnknownModel, "{gone}");
+}
+
+/// Video names Iris declines are unknown models whose hint says why and what to use
+/// instead, never `--capabilities-from`: shut-down Veo 2.0 and 3.0 by any of the
+/// names people type, the Google Cloud `-001` ids (each pointing at its Gemini API
+/// counterpart), and Gemini Omni.
+#[test]
+fn declined_video_names_say_why_and_what_to_use_instead() {
+    let all_three = "use veo (veo-3.1-generate-preview), veo-fast (veo-3.1-fast-generate-preview), or veo-lite \
+                     (veo-3.1-lite-generate-preview)";
+    let shut_down = "the last of them on 2026-06-30";
+    let enterprise = "Gemini Enterprise Agent Platform (Vertex AI)";
+    for (name, why, instead) in [
+        ("veo-2.0-generate-001", shut_down, all_three),
+        ("veo-2", shut_down, all_three),
+        ("veo-3", shut_down, all_three),
+        ("veo-3-fast", shut_down, all_three),
+        ("veo-3.0-generate-001", shut_down, all_three),
+        ("veo-3.0-fast-generate-001", shut_down, all_three),
+        ("veo-3.0-generate-preview", shut_down, all_three),
+        ("veo-3.1-generate-001", enterprise, "use veo (veo-3.1-generate-preview)"),
+        ("veo-3.1-fast-generate-001", enterprise, "use veo-fast (veo-3.1-fast-generate-preview)"),
+        ("veo-3.1-lite-generate-001", enterprise, "use veo-lite (veo-3.1-lite-generate-preview)"),
+        ("gemini-omni-1.1-flash", "Interactions API", all_three),
+        ("gemini-omni-flash-preview", "Interactions API", all_three),
+        ("omni", "Interactions API", all_three),
+    ] {
+        assert!(catalog::find(name).is_none(), "{name}");
+        let err = catalog::resolve(name, None).unwrap_err();
+        assert_eq!(err.code, ErrorCode::UnknownModel, "{name}");
+        let hint = err.hint.as_deref().unwrap();
+        assert!(hint.contains(why) && hint.ends_with(instead), "{name}: {hint}");
+        assert!(!hint.contains("--capabilities-from"), "{hint}");
+    }
+    // Veo 3.1 names that are not ids are ordinary unknown names.
+    for name in ["veo-3.1", "veo-3.1-generate"] {
+        assert!(catalog::declined(name).is_none(), "{name}");
     }
 }
 

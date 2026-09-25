@@ -717,14 +717,17 @@ fn file_duration(
 /// the image operations, `video.model` for video): a catalog id or alias, matched
 /// exactly as `-m/--model` is, of a model that implements at least one of them.
 /// Returns the id `-m` would send for it: the canonical id for a nickname, a dated
-/// snapshot as given. A name Iris deliberately gives no model gets the hint `-m`
-/// gives it.
+/// snapshot as given. A name Iris declines gets the reason and replacements `-m`
+/// gives it, for the key's operations.
 fn file_model(file: &Path, value: &str, ops: &[Operation]) -> Result<String, IrisError> {
     let key = ops[0].model_config_key();
     let listed: Vec<String> = ops.iter().map(|op| format!("`iris models list --operation {op}`")).collect();
     let hint = format!("set {key} to a model listed by {}", listed.join(" or "));
     let Ok(resolved) = catalog::resolve(value, None) else {
-        let hint = catalog::declined_name_hint(value).map_or(hint, str::to_string);
+        let hint = match catalog::declined(value) {
+            Some(declined) => declined.hint(ops, &hint),
+            None => hint,
+        };
         return Err(file::key_error(file, key, format!("unknown model '{value}'")).with_hint(hint));
     };
     if !ops.iter().any(|op| resolved.spec.supports(*op)) {

@@ -14,8 +14,8 @@ use crate::domain::{Billing, CostEstimate, Operation, ProviderId};
 use crate::error::IrisError;
 
 use super::types::{
-    Constraint, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind, OptionSpec,
-    OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
+    Constraint, DeclinedName, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelSpec, OptionKind,
+    OptionSpec, OutputSpec, PriceRule, RequestRules, RequestSizeLimit, ValidationInput,
 };
 use super::{CATALOG_AS_OF, round_usd};
 
@@ -193,6 +193,51 @@ const fn per_second(description: &'static str, usd: f64) -> PriceRule {
 /// The cheapest single-output request of every Veo model: the shortest video at the
 /// lowest resolution (the price is per second, by resolution).
 const LOWEST: &[(&str, &str)] = &[("duration", "4"), ("resolution", "720p")];
+
+/// Video names Iris gives no model. Dates and replacements are those of the Gemini
+/// deprecations page (<https://ai.google.dev/gemini-api/docs/deprecations>), checked
+/// 2026-09-24; the Veo 3.1 `-001` ids (GA, and Lite in preview) are models of Google
+/// Cloud's Gemini Enterprise Agent Platform
+/// (<https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/veo/3-1-generate>),
+/// and Gemini Omni Flash is served by the Interactions API
+/// (<https://ai.google.dev/gemini-api/docs/omni>).
+pub const DECLINED: &[DeclinedName] = &[
+    DeclinedName {
+        names: &[],
+        families: &["veo-2", "veo-2.0", "veo-3", "veo-3.0"],
+        reason: "Google shut down Veo 2.0 and Veo 3.0 on the Gemini API, the last of them on 2026-06-30, \
+                 and names Veo 3.1 as the replacement",
+        instead: &["veo", "veo-fast", "veo-lite"],
+    },
+    DeclinedName {
+        names: &["veo-3.1-generate-001"],
+        families: &[],
+        reason: "veo-3.1-generate-001 is a model of Google Cloud's Gemini Enterprise Agent Platform \
+                 (Vertex AI), which uses other authentication and endpoints than the Gemini API",
+        instead: &["veo"],
+    },
+    DeclinedName {
+        names: &["veo-3.1-fast-generate-001"],
+        families: &[],
+        reason: "veo-3.1-fast-generate-001 is a model of Google Cloud's Gemini Enterprise Agent Platform \
+                 (Vertex AI), which uses other authentication and endpoints than the Gemini API",
+        instead: &["veo-fast"],
+    },
+    DeclinedName {
+        names: &["veo-3.1-lite-generate-001"],
+        families: &[],
+        reason: "veo-3.1-lite-generate-001 is a model of Google Cloud's Gemini Enterprise Agent Platform \
+                 (Vertex AI), which uses other authentication and endpoints than the Gemini API",
+        instead: &["veo-lite"],
+    },
+    DeclinedName {
+        names: &["omni"],
+        families: &["gemini-omni"],
+        reason: "Gemini Omni Flash is a video model of the Gemini Interactions API, which Iris does not \
+                 implement",
+        instead: &["veo", "veo-fast", "veo-lite"],
+    },
+];
 
 /// Built-in Veo models.
 pub static MODELS: &[ModelSpec] = &[

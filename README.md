@@ -221,20 +221,23 @@ file (`-f/--prompt-file PATH`, trailing whitespace trimmed), or standard input (
 which must not be a terminal).
 
 Every generation command names its model. `-m`/`--model` takes a model id or alias (`iris models
-list` shows every one Iris knows); without it, the command uses the model the config file names
-for its kind (`[image] model`, `[video] model`). Iris never picks one for you: with neither, the
+list` shows every one Iris knows); without it, the command uses the model the config file names for
+its kind (`[image] model`, `[video] model`). Iris never picks one for you: with neither, the
 command fails with `model_required` (exit 2) before anything is sent, and the error lists the
 models that support the command (see
-[docs/configuration.md](docs/configuration.md#choosing-the-model)). The provider is the model's;
-results say which of the two named it (`model_source`: `flag` or `config`). For a model Iris
-doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
+[docs/configuration.md](docs/configuration.md#choosing-the-model)). A model Iris does not know is
+`unknown_model` with the same list; a name Iris declines, such as `dall-e-3`, `veo-3`, or the bare
+`nano-banana` (Google's Nano Banana is `gemini-2.5-flash-image`), also says why and what to use
+instead. An option the model does not take is refused naming the models that take it. The provider
+is the model's; results say which of the two named it (`model_source`: `flag` or `config`). For a
+model Iris doesn't know yet, `--capabilities-from <KNOWN_MODEL>` declares that the unknown id has a
 known model's capabilities (sent to the provider as given, validated as that known model, and
 flagged with an `unverified_model_capabilities` warning) rather than refusing outright. Iris makes
 no cost estimate for such a model, since the known model's prices may not apply, and the id must
 use characters the provider's API accepts in a model id (for Gemini and Veo: letters, digits, `.`,
-`_`, and `-`), checked before anything is sent. Any option
-a model accepts but has no typed flag for is reachable through `-O key=value` (repeatable);
-`iris models show <model>` lists every option, typed or `-O`-only.
+`_`, and `-`), checked before anything is sent. Any option a model accepts but has no typed flag
+for is reachable through `-O key=value` (repeatable); `iris models show <model>` lists every
+option, typed or `-O`-only.
 
 Without `-o`/`-d`, Iris saves to the current directory under a predictable name: images as
 `iris-<ulid>.<ext>` (the extension follows the actual returned media type), and video job outputs

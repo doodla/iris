@@ -770,7 +770,220 @@ fn an_unknown_configured_model_is_config_invalid_with_a_hint_that_runs() {
         sb.iris().env("IRIS_CONFIG", &config).args(["image", "generate", "x", "--dry-run", "--json"]).run();
     let file = file.err(2, "config_invalid");
     assert_eq!(file["error"]["hint"], flag["error"]["hint"]);
-    assert_eq!(file["error"]["hint"].as_str(), iris::catalog::declined_name_hint("nano-banana"));
+    let nano_banana = iris::catalog::declined("nano-banana").unwrap();
+    assert_eq!(
+        file["error"]["hint"],
+        format!(
+            "{}; use nano-banana-2 (gemini-3.1-flash-image) or nano-banana-pro (gemini-3-pro-image)",
+            nano_banana.reason
+        )
+    );
+    // A declined name none of whose replacements fits the key: the key's own hint follows
+    // the reason.
+    let config = sb.config("declined-video.toml", "[video]\nmodel = \"dall-e-3\"\n");
+    let v = sb.iris().env("IRIS_CONFIG", &config).args(["config", "show", "--json"]).run();
+    let v = v.err(2, "config_invalid");
+    assert_eq!(
+        v["error"]["hint"],
+        format!(
+            "{}; set video.model to a model listed by `iris models list --operation video.generate`",
+            iris::catalog::declined("dall-e-3").unwrap().reason
+        )
+    );
+}
+
+/// The ids of an error's `details.candidates`.
+fn candidate_ids(v: &Value) -> Vec<String> {
+    let candidates = v["error"]["details"]["candidates"].as_array().unwrap_or_else(|| panic!("{v}"));
+    candidates.iter().map(|c| c["model"].as_str().unwrap().to_string()).collect()
+}
+
+/// The ids of the catalog models for `op`, or every model.
+fn catalog_ids(op: Option<&str>) -> Vec<String> {
+    iris::catalog::all()
+        .filter(|m| op.is_none_or(|op| m.supports(op.parse().unwrap())))
+        .map(|m| m.id.to_string())
+        .collect()
+}
+
+/// An unknown model is refused before anything is sent, with what to use instead:
+/// `details.candidates` lists the models of the command's operation (every model
+/// for `models show`), as `model_required` does. A name Iris declines gets a hint
+/// saying why and naming the replacements the command can use (or, when none can,
+/// where its models are listed), without `--capabilities-from`; any other name gets
+/// a hint naming the command that lists the models and, for `-m`,
+/// `--capabilities-from`.
+#[test]
+fn an_unknown_model_names_the_models_to_use_instead() {
+    let sb = Sandbox::new();
+    let api = answering_api();
+    let reason = |name: &str| iris::catalog::declined(name).unwrap().reason;
+    let dalle = "use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2";
+    let veo = "use veo (veo-3.1-generate-preview), veo-fast (veo-3.1-fast-generate-preview), or veo-lite \
+               (veo-3.1-lite-generate-preview)";
+    for (args, op, dalle_instead, veo_instead) in [
+        (
+            &["image", "generate", "a fox"][..],
+            "image.generate",
+            dalle.to_string(),
+            "run `iris models list --operation image.generate` and pass -m <MODEL>".to_string(),
+        ),
+        (
+            &["video", "generate", "waves"],
+            "video.generate",
+            "run `iris models list --operation video.generate` and pass -m <MODEL>".to_string(),
+            veo.to_string(),
+        ),
+    ] {
+        for (model, hint) in [
+            ("dall-e-3", format!("{}; {dalle_instead}", reason("dall-e-3"))),
+            ("veo-3", format!("{}; {veo_instead}", reason("veo-3"))),
+            (
+                "sora-2",
+                format!(
+                    "run `iris models list --operation {op}` and pass -m <MODEL>; to use a model Iris does not \
+                     know yet, add --capabilities-from <KNOWN_MODEL> to declare which known model's \
+                     capabilities it has"
+                ),
+            ),
+        ] {
+            let v = sb
+                .iris()
+                .openai(&api)
+                .gemini(&api)
+                .args(args)
+                .args(["-m", model, "--dry-run", "--json"])
+                .run()
+                .err(2, "unknown_model");
+            assert_eq!(v["error"]["message"], format!("unknown model '{model}'"));
+            assert!(v["error"]["provider_status"].is_null(), "{v}");
+            assert_eq!(candidate_ids(&v), catalog_ids(Some(op)), "{model} for {op}");
+            assert_eq!(v["error"]["hint"], hint, "{model} for {op}");
+        }
+    }
+    // A declined template gets the same reason, with the replacements for the operation.
+    let v = sb
+        .iris()
+        .args(["image", "generate", "x", "-m", "my-model", "--capabilities-from", "gpt-image-1", "--json"])
+        .run()
+        .err(2, "unknown_model");
+    assert_eq!(v["error"]["message"], "--capabilities-from 'gpt-image-1' is not a known model");
+    assert_eq!(v["error"]["hint"], format!("{}; {dalle}", reason("gpt-image-1")));
+    assert_eq!(candidate_ids(&v), catalog_ids(Some("image.generate")));
+    // `models show` has no operation: every model is a candidate, every replacement named.
+    for (model, hint) in [
+        ("imagen-4", format!("{}; use nano-banana-2 (gemini-3.1-flash-image)", reason("imagen-4"))),
+        ("veo-3", format!("{}; {veo}", reason("veo-3"))),
+        ("sora-2", "run `iris models list` to see the models Iris knows".to_string()),
+    ] {
+        let v = sb.iris().args(["models", "show", model, "--json"]).run().err(2, "unknown_model");
+        assert_eq!(v["error"]["hint"], hint);
+        assert_eq!(candidate_ids(&v), catalog_ids(None));
+    }
+    let human = sb.iris().args(["video", "generate", "waves", "-m", "veo-3", "--dry-run"]).run();
+    assert_eq!(human.code, 2);
+    assert!(
+        human.stderr.contains(
+            "hint: Google shut down Veo 2.0 and Veo 3.0 on the Gemini API, the last of them on \
+                               2026-06-30"
+        ),
+        "{}",
+        human.stderr
+    );
+    assert_eq!(api.total(), 0, "nothing was sent");
+}
+
+/// An option or input the model does not take is refused with the catalog models
+/// that do take it (`details.supported_by`, named by the hint with `-m`), and an
+/// enum value the option does not allow with the values it does (`details.allowed`);
+/// nothing is sent.
+#[test]
+fn a_refused_option_names_the_models_and_values_that_work() {
+    let sb = Sandbox::new();
+    let api = answering_api();
+    sb.write("a.png", png(16, 16));
+    let ids = |pick: fn(&iris::catalog::ModelSpec) -> bool| -> Vec<&str> {
+        iris::catalog::all().filter(|m| pick(m)).map(|m| m.id).collect()
+    };
+    let gemini_images = ids(|m| {
+        m.provider == iris::domain::ProviderId::Gemini && m.supports("image.generate".parse().unwrap())
+    });
+    let openai = ids(|m| m.provider == iris::domain::ProviderId::OpenAi);
+    let references = ids(|m| m.inputs.max_reference_images > 0);
+    for (args, option, supported_by, hint) in [
+        (
+            &["image", "generate", "x", "-m", OPENAI_IMAGE_MODEL, "--aspect-ratio", "16:9"][..],
+            "aspect_ratio",
+            gemini_images.clone(),
+            format!(
+                "--aspect-ratio is supported by: {}; pass -m <MODEL>; options supported by this model",
+                gemini_images.join(", ")
+            ),
+        ),
+        (
+            &["image", "generate", "x", "-m", "nano-banana-2", "-O", "compression=50"],
+            "compression",
+            openai.clone(),
+            format!(
+                "-O compression is supported by: {}; pass -m <MODEL>; options supported by this model",
+                openai.join(", ")
+            ),
+        ),
+        (
+            &["image", "generate", "x", "-m", "nano-banana-2", "-O", "nope=1"],
+            "nope",
+            Vec::new(),
+            "no model Iris knows supports -O nope for image.generate; options supported by this model"
+                .to_string(),
+        ),
+        (
+            &["image", "edit", "-i", "a.png", "x", "-m", "nano-banana-2", "--mask", "a.png"],
+            "mask",
+            openai.clone(),
+            format!("--mask is supported by: {}; pass -m <MODEL>", openai.join(", ")),
+        ),
+        (
+            &["video", "generate", "x", "-m", "veo-lite", "--ref", "a.png"],
+            "reference",
+            references.clone(),
+            format!("--ref (reference images) is supported by: {}; pass -m <MODEL>", references.join(", ")),
+        ),
+    ] {
+        let v = sb
+            .iris()
+            .openai(&api)
+            .gemini(&api)
+            .args(args)
+            .args(["--dry-run", "--json"])
+            .run()
+            .err(2, "unsupported_option");
+        assert_eq!(v["error"]["details"]["option"], option, "{v}");
+        assert_eq!(v["error"]["details"]["supported_by"], serde_json::json!(supported_by), "{v}");
+        assert!(v["error"]["hint"].as_str().unwrap().starts_with(&hint), "{v}");
+    }
+    let v = sb
+        .iris()
+        .args([
+            "image",
+            "generate",
+            "x",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            "--quality",
+            "ultra",
+            "--dry-run",
+            "--json",
+        ])
+        .run()
+        .err(2, "invalid_argument");
+    let iris::catalog::OptionKind::Enum(qualities) =
+        iris::catalog::find(OPENAI_IMAGE_MODEL).unwrap().option("quality").unwrap().kind
+    else {
+        panic!("quality is an enum");
+    };
+    assert_eq!(v["error"]["details"]["option"], "quality");
+    assert_eq!(v["error"]["details"]["allowed"], serde_json::json!(qualities));
+    assert_eq!(api.total(), 0, "nothing was sent");
 }
 
 /// `doctor --check-access` checks every catalog model of each provider whose key is

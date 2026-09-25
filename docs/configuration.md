@@ -125,7 +125,7 @@ error[config_invalid]: config file /home/you/bad4.toml: `video.model`: model 'ge
 
 `iris models list` and `iris models show` (without `--check-access`) never read the config file,
 so while the file is invalid you can still list the models these hints name and inspect each one's
-options and prices. A name Iris deliberately gives no model, such as `nano-banana`, gets the same
+options and prices. A name Iris declines, such as `nano-banana` or `dall-e-3`, gets the same
 hint as with `-m` (see [decisions.md](decisions.md#built-in-models)).
 
 `iris doctor` still runs the checks that do not need a valid configuration when the config file
@@ -229,7 +229,11 @@ With `--json`, the error's `details` hold the `operation`, the `config_key` (`im
 `video.model`), the resolved `config_file`, and the `candidates`: one `{model, provider,
 display_name, summary, aliases, lowest_estimate}` object per catalog model that supports the
 operation, in catalog order, with what the model is for and its cheapest single-output request
-with that request's estimated cost (see [json-contract.md](json-contract.md#error-object)).
+with that request's estimated cost (see [json-contract.md](json-contract.md#error-object)). An
+`-m` naming no catalog model is `unknown_model` (exit 2) with the same `candidates`; a name Iris
+declines (a model its provider deprecated, shut down, limited, or serves only elsewhere, such as
+`dall-e-3` or `veo-3`) has a hint that says why and what to use instead (see
+[decisions.md](decisions.md#built-in-models)).
 
 A configured model must be a catalog id or alias of its table's kind (`image.model` an image
 model, `video.model` a video model); anything else is `config_invalid` naming the key when the

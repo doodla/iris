@@ -70,13 +70,7 @@ pub fn show(
     model: &str,
     warnings: &mut Vec<Warning>,
 ) -> Result<ModelShowResult, IrisError> {
-    let spec = catalog.find(model).ok_or_else(|| {
-        let known: Vec<&str> = catalog.models().iter().map(|m| m.id).collect();
-        let hint = crate::catalog::declined_name_hint(model).map(str::to_string).unwrap_or_else(|| {
-            format!("known models: {}", if known.is_empty() { "none".to_string() } else { known.join(", ") })
-        });
-        IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'")).with_hint(hint)
-    })?;
+    let spec = catalog.find(model).ok_or_else(|| catalog.unknown(model))?;
     if spec.lifecycle == crate::catalog::Lifecycle::Preview {
         warnings.push(Warning::new(
             WarningCode::PreviewModel,

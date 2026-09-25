@@ -11,8 +11,8 @@
 use crate::domain::{Billing, CostEstimate, Operation, ProviderId, Usage};
 
 use super::types::{
-    EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec, OptionKind, OptionSpec,
-    OutputSpec, PriceRule, RequestSizeLimit,
+    DeclinedName, EstimateInput, Estimator, InputSpec, Lifecycle, Limits, ModelIdSyntax, ModelSpec,
+    OptionKind, OptionSpec, OutputSpec, PriceRule, RequestSizeLimit,
 };
 use super::{CATALOG_AS_OF, round_usd};
 
@@ -220,15 +220,49 @@ const PRO_PRICING: &[PriceRule] = &[
     price("Text and thinking output tokens", "1M tokens", 12.00),
 ];
 
-/// Names Iris deliberately accepts for no model, each with what to use instead.
-/// Google's "Nano Banana" is `gemini-2.5-flash-image`, which Iris does not register,
-/// so accepting the bare nickname for another model (it once named Nano Banana 2)
-/// would silently run a differently branded model than the one asked for.
-pub const DECLINED_NAMES: &[(&str, &str)] = &[(
-    "nano-banana",
-    "Google's \"Nano Banana\" is gemini-2.5-flash-image, which Iris does not register; use nano-banana-2 \
-     (gemini-3.1-flash-image) or nano-banana-pro (gemini-3-pro-image)",
-)];
+/// Gemini image names Iris gives no model. Dates and replacements are those of the
+/// deprecations page (<https://ai.google.dev/gemini-api/docs/deprecations>) and the
+/// models page's note on the 2.5 models, checked 2026-09-24. Google's "Nano Banana"
+/// is `gemini-2.5-flash-image`, so the bare nickname is declined too: accepting it
+/// for another model would silently run a differently branded model than the one
+/// asked for.
+pub const DECLINED: &[DeclinedName] = &[
+    DeclinedName {
+        names: &["nano-banana", "gemini-2.5-flash-image"],
+        families: &[],
+        reason: "Google's \"Nano Banana\" is gemini-2.5-flash-image, which Google has limited to projects that \
+                 already used it since 2026-09-18, so Iris does not register it",
+        instead: &["nano-banana-2", "nano-banana-pro"],
+    },
+    DeclinedName {
+        names: &["gemini-3.1-flash-image-preview"],
+        families: &[],
+        reason: "Google shut down gemini-3.1-flash-image-preview on 2026-06-25 and names gemini-3.1-flash-image \
+                 as its replacement",
+        instead: &["gemini-3.1-flash-image"],
+    },
+    DeclinedName {
+        names: &["gemini-3-pro-image-preview"],
+        families: &[],
+        reason: "Google shut down gemini-3-pro-image-preview on 2026-06-25 and names gemini-3-pro-image as its \
+                 replacement",
+        instead: &["gemini-3-pro-image"],
+    },
+    DeclinedName {
+        names: &["gemini-2.5-flash-image-preview"],
+        families: &[],
+        reason: "Google shut down gemini-2.5-flash-image-preview on 2026-01-15, and its replacement, \
+                 gemini-2.5-flash-image, is limited to projects that already used it",
+        instead: &["nano-banana-2", "nano-banana-pro"],
+    },
+    DeclinedName {
+        names: &[],
+        families: &["imagen"],
+        reason: "Google shut down every Imagen model on the Gemini API, Imagen 4 on 2026-08-17, and names \
+                 gemini-3.1-flash-image as the replacement",
+        instead: &["nano-banana-2"],
+    },
+];
 
 /// The cheapest single-output request of Nano Banana 2: the smallest resolution
 /// (the per-image price depends only on it).

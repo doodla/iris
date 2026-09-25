@@ -82,7 +82,7 @@ async fn generate(
         references: args.references.len(),
         ..InputCounts::default()
     };
-    let opts = catalog::validate_request(spec, op, &common.options, counts)?;
+    let opts = catalog::validate_request(spec, op, &common.options, counts, &ctx.catalog.models())?;
     request::check_prompt(spec, &common.prompt)?;
     let first_frame = args
         .first_frame

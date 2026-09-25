@@ -15,6 +15,11 @@ use iris::domain::Operation;
 /// Input names a constraint may refer to (the plan's input roles).
 pub const INPUT_NAMES: &[&str] = &["image", "mask", "first_frame", "last_frame", "reference"];
 
+/// The built-in catalog, as `validate_request` takes it.
+pub fn builtin() -> Vec<&'static ModelSpec> {
+    iris::catalog::all().collect()
+}
+
 /// An option as `-O name=value` gives it.
 fn raw(name: &str, value: &str) -> RawOption {
     RawOption { name: name.to_string(), value: value.to_string(), source: OptionSource::Generic }
@@ -153,7 +158,7 @@ pub fn assert_constraints_cover_the_validator(spec: &ModelSpec) {
     for op in spec.operations {
         for raw in &option_combinations(spec, *op, &[]) {
             for counts in input_combinations(spec, *op) {
-                let Err(e) = validate_request(spec, *op, raw, counts) else { continue };
+                let Err(e) = validate_request(spec, *op, raw, counts, &builtin()) else { continue };
                 let constraint = e.details.get("constraint").and_then(|c| c.as_str()).unwrap_or_else(|| {
                     panic!(
                         "{} {op}: {raw:?} {counts:?} was rejected by a rule that is not a declared constraint: \
@@ -205,7 +210,7 @@ pub fn assert_lowest_estimate_is_the_cheapest(spec: &ModelSpec) {
     let mut tried = 0;
     for &op in spec.operations {
         let minimal = input_combinations(spec, op)[0];
-        let resolved = validate_request(spec, op, &declared, minimal)
+        let resolved = validate_request(spec, op, &declared, minimal, &builtin())
             .unwrap_or_else(|e| panic!("{} {op}: the cheapest request is invalid: {}", spec.id, e.message));
         assert_eq!(resolved, options, "{} {op}", spec.id);
         assert_eq!(output_count(spec, op, &resolved), 1, "{} {op}: one output", spec.id);
@@ -213,7 +218,7 @@ pub fn assert_lowest_estimate_is_the_cheapest(spec: &ModelSpec) {
 
         for raw in option_combinations(spec, op, estimator.lowest) {
             for counts in input_combinations(spec, op) {
-                let Ok(options) = validate_request(spec, op, &raw, counts) else { continue };
+                let Ok(options) = validate_request(spec, op, &raw, counts, &builtin()) else { continue };
                 if output_count(spec, op, &options) != 1 {
                     continue;
                 }

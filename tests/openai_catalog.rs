@@ -36,7 +36,7 @@ fn validate(
     } else {
         InputCounts::default()
     };
-    catalog::validate_request(model(id), op, &raw(pairs), inputs)
+    catalog::validate_request(model(id), op, &raw(pairs), inputs, &catalog_support::builtin())
 }
 
 fn estimate(id: &str, pairs: &[(&str, &str)], count: u32) -> Result<iris::domain::CostEstimate, String> {
@@ -83,13 +83,38 @@ fn dated_snapshots_are_aliases_of_their_base_model_and_retired_models_are_unknow
         let resolved = catalog::resolve(alias, None).unwrap();
         assert_eq!(resolved.spec.id, base);
     }
-    for retired in
-        ["gpt-image-1", "gpt-image-1.5", "gpt-image-1-mini", "chatgpt-image-latest", "dall-e-3", "dall-e-2"]
-    {
-        assert!(catalog::find(retired).is_none(), "{retired} must not be registered (deprecated or removed)");
-        let err = catalog::resolve(retired, None).unwrap_err();
+}
+
+/// Deprecated and removed OpenAI image models, and their dated snapshots, are
+/// unknown models whose hint says why, with OpenAI's date, and what to use instead
+/// (the GPT Image 2.5 models OpenAI recommends for new integrations, and
+/// gpt-image-2, the replacement its notices name), never `--capabilities-from`.
+#[test]
+fn declined_openai_names_say_why_and_what_to_use_instead() {
+    let instead = "use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2";
+    for (name, why) in [
+        ("gpt-image-1", "deprecated gpt-image-1 (shutdown on 2026-10-23)"),
+        ("gpt-image-1.5", "(shutdown on 2026-12-01)"),
+        ("gpt-image-1-mini", "(shutdown on 2026-12-01)"),
+        ("chatgpt-image-latest", "(shutdown on 2026-12-01)"),
+        // Dated snapshots of a declined name are declined with it.
+        ("gpt-image-1.5-2025-12-16", "(shutdown on 2026-12-01)"),
+        ("gpt-image-1-2025-04-15", "deprecated gpt-image-1 (shutdown on 2026-10-23)"),
+        ("dall-e-3", "removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12"),
+        ("dall-e-2", "removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12"),
+        ("DALL-E-3", "removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12"),
+        ("dalle-3", "removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12"),
+        ("dall-e", "removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12"),
+    ] {
+        assert!(catalog::find(name).is_none(), "{name} must not be registered (deprecated or removed)");
+        let err = catalog::resolve(name, None).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnknownModel);
+        let hint = err.hint.as_deref().unwrap();
+        assert!(hint.contains(why) && hint.ends_with(instead), "{name}: {hint}");
+        assert!(!hint.contains("--capabilities-from"), "{hint}");
     }
+    // A name only close to them is an ordinary unknown name.
+    assert!(catalog::declined("gpt-image-2.5").is_none());
 }
 
 #[test]
@@ -297,9 +322,13 @@ fn values_outside_the_declared_sets_and_undeclared_options_are_rejected_before_s
 fn edit_accepts_up_to_16_images_and_a_mask() {
     let spec = model("gpt-image-2.5-sunburst");
     let ok = InputCounts { images: 16, mask: true, ..Default::default() };
-    assert!(catalog::validate_request(spec, Operation::ImageEdit, &[], ok).is_ok());
+    assert!(
+        catalog::validate_request(spec, Operation::ImageEdit, &[], ok, &catalog_support::builtin()).is_ok()
+    );
     let too_many = InputCounts { images: 17, ..Default::default() };
-    let err = catalog::validate_request(spec, Operation::ImageEdit, &[], too_many).unwrap_err();
+    let err =
+        catalog::validate_request(spec, Operation::ImageEdit, &[], too_many, &catalog_support::builtin())
+            .unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);
 }
 

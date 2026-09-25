@@ -268,6 +268,27 @@ pub struct EstimateInput<'a> {
     pub count: u32,
 }
 
+/// A model name Iris deliberately gives no model: a model its provider deprecated,
+/// shut down, limited, or serves only elsewhere, a family of them, or a nickname of
+/// one (docs/decisions.md, "Built-in models"). `-m` with such a name is
+/// `unknown_model` with a hint that says why and what to use instead, never
+/// `--capabilities-from`, which would send the name anyway. Each provider's catalog
+/// module declares its own, from the provider documentation cited there.
+#[derive(Debug, Clone, Copy)]
+pub struct DeclinedName {
+    /// Names matched exactly, and their dated snapshots (`<name>-YYYY-MM-DD`), ignoring
+    /// ASCII case.
+    pub names: &'static [&'static str],
+    /// Family stems: a stem matches itself and every name that continues it with
+    /// `-` (ignoring ASCII case), so `veo-3` matches `veo-3` and `veo-3-fast`, and
+    /// `veo-3.0` matches `veo-3.0-generate-001`.
+    pub families: &'static [&'static str],
+    /// Why Iris registers no model for it, as the provider documents it.
+    pub reason: &'static str,
+    /// Catalog ids or aliases to use instead, most fitting first.
+    pub instead: &'static [&'static str],
+}
+
 /// Static declaration of one model.
 #[derive(Debug, Clone, Copy)]
 pub struct ModelSpec {

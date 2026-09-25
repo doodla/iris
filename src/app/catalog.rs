@@ -5,9 +5,11 @@
 //! [`crate::catalog`] (`find_in`, `resolve_in`) over [`Catalog::models`], so both
 //! follow the same rules.
 
+use serde_json::{Value, json};
+
 use crate::catalog::{self, ModelSpec, ResolvedModel};
 use crate::domain::{Operation, ProviderId};
-use crate::error::IrisError;
+use crate::error::{ErrorCode, IrisError};
 
 /// The models known to this app instance.
 #[derive(Debug, Clone, Default)]
@@ -49,10 +51,51 @@ impl Catalog {
             .collect()
     }
 
-    /// Resolve `--model` / `--capabilities-from` (see [`crate::catalog::resolve`] for
-    /// the rules).
-    pub fn resolve(&self, model: &str, capabilities_from: Option<&str>) -> Result<ResolvedModel, IrisError> {
-        catalog::resolve_in(&self.models(), model, capabilities_from)
+    /// Resolve `--model` / `--capabilities-from` for a command running `op` (see
+    /// [`crate::catalog::resolve`] for the rules). An `unknown_model` error lists the
+    /// models for `op` in `details.candidates` ([`Catalog::candidates`]).
+    pub fn resolve(
+        &self,
+        model: &str,
+        capabilities_from: Option<&str>,
+        op: Operation,
+    ) -> Result<ResolvedModel, IrisError> {
+        catalog::resolve_in(&self.models(), model, capabilities_from, Some(op)).map_err(|e| {
+            if e.code == ErrorCode::UnknownModel {
+                e.with_detail("candidates", self.candidates(Some(op)))
+            } else {
+                e
+            }
+        })
+    }
+
+    /// The `unknown_model` error of `models show` for `name`, which names no model:
+    /// every model is a candidate.
+    pub fn unknown(&self, name: &str) -> IrisError {
+        catalog::unknown_model(name, false, None).with_detail("candidates", self.candidates(None))
+    }
+
+    /// The models a command for `op` (every model without one) can use, in catalog
+    /// order, as the `model_required` and `unknown_model` errors list them in
+    /// `details.candidates`: one object per model, `{model, provider, display_name,
+    /// summary, aliases, lowest_estimate}` (the `lowest_estimate` of `models list`:
+    /// the options of the cheapest single-output request and their estimate, null
+    /// without an estimator).
+    pub fn candidates(&self, op: Option<Operation>) -> Vec<Value> {
+        self.models()
+            .into_iter()
+            .filter(|m| op.is_none_or(|op| m.supports(op)))
+            .map(|m| {
+                json!({
+                    "model": m.id,
+                    "provider": m.provider,
+                    "display_name": m.display_name,
+                    "summary": m.summary,
+                    "aliases": m.aliases,
+                    "lowest_estimate": super::models::lowest_estimate(m),
+                })
+            })
+            .collect()
     }
 }
 
@@ -69,7 +112,8 @@ mod tests {
             catalog::all().flat_map(|m| std::iter::once(m.id).chain(m.aliases.iter().copied())).collect();
         for model in ids.iter().copied().chain(["no-such-model", "bad id!", ""]) {
             for caps in [None, Some("no-such-template")].into_iter().chain(ids.iter().copied().map(Some)) {
-                match (builtin.resolve(model, caps), custom.resolve(model, caps)) {
+                let op = Operation::ImageGenerate;
+                match (builtin.resolve(model, caps, op), custom.resolve(model, caps, op)) {
                     (Ok(a), Ok(b)) => {
                         assert_eq!(a.id, b.id);
                         assert_eq!(a.spec.id, b.spec.id);
@@ -78,6 +122,8 @@ mod tests {
                     (Err(a), Err(b)) => {
                         assert_eq!(a.code, b.code, "{model} {caps:?}");
                         assert_eq!(a.message, b.message);
+                        assert_eq!(a.hint, b.hint);
+                        assert_eq!(a.details, b.details);
                     }
                     (a, b) => panic!("disagreement for {model} {caps:?}: {:?} vs {:?}", a.is_ok(), b.is_ok()),
                 }

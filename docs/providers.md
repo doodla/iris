@@ -144,6 +144,15 @@ pub static MODELS: &[ModelSpec] = &[
         estimate_usage: None,                           // post-call estimate from reported usage, if any
     },
 ];
+
+/// Names Iris gives no model (retired or other-platform ids, a family of them, or a
+/// nickname), with the provider's reason and date and the models to use instead.
+pub const DECLINED: &[DeclinedName] = &[DeclinedName {
+    names: &[],
+    families: &["seedance-1.0"],                        // matches seedance-1.0 and seedance-1.0-…
+    reason: "… shut down seedance-1.0 on …",           // as the provider documents it
+    instead: &["seedance-1-pro"],                       // catalog ids or aliases
+}];
 ```
 
 Then:
@@ -165,7 +174,8 @@ Then:
    iterates the registry, and all of them read these methods, so they pick the provider up
    without further edits (see [the checklist below](#checklist-everything-a-new-provider-touches)).
    Then add the catalog module to `src/catalog/mod.rs`: `pub mod seedance;`, its `MODELS` in the
-   `all()` chain, and a `model_id_syntax` arm for the ids its adapter can send.
+   `all()` chain, its `DECLINED` names in the `declined_names()` chain (below), and a
+   `model_id_syntax` arm for the ids its adapter can send.
 2. Give the adapter a `CredentialHeader` (header name and value prefix, e.g. `Authorization` /
    `Bearer `) matching how the provider documents authentication.
 3. Declare every option the model accepts as an `OptionSpec` (`OptionKind::Enum`, `Integer { min,
@@ -263,8 +273,8 @@ The complete list, for a provider like the Seedance example.
 
 - `src/providers/seedance/` (the adapter), `pub mod seedance;` and one `Registry::builtin()` line
   in `src/providers/mod.rs`.
-- `src/catalog/seedance.rs`, and in `src/catalog/mod.rs` its `pub mod`, its models in `all()`, and a
-  `model_id_syntax` arm.
+- `src/catalog/seedance.rs`, and in `src/catalog/mod.rs` its `pub mod`, its models in `all()`, its
+  declined names in `declined_names()`, and a `model_id_syntax` arm.
 - `ProviderId` in `src/domain.rs`: the variant, the `ALL` entry, and one arm in each of `as_str`,
   `display_name`, `credential_env`, `default_base_url`, and `base_url_env`. The compiler checks
   the arms; the `domain` unit tests check the `ALL` entry and that the names agree (step 3).

@@ -43,7 +43,14 @@ fn validate(
     images: usize,
 ) -> Result<ResolvedOptions, ErrorCode> {
     let raw: Vec<RawOption> = opts.iter().map(|(n, v)| raw(n, v)).collect();
-    validate_request(spec(id), op, &raw, InputCounts { images, ..InputCounts::default() }).map_err(|e| e.code)
+    validate_request(
+        spec(id),
+        op,
+        &raw,
+        InputCounts { images, ..InputCounts::default() },
+        &catalog_support::builtin(),
+    )
+    .map_err(|e| e.code)
 }
 
 fn estimate(id: &str, opts: &[(&str, &str)]) -> iris::domain::CostEstimate {
@@ -123,31 +130,57 @@ fn nicknames_resolve_and_shut_down_ids_are_unknown() {
     }
 }
 
-/// Google's "Nano Banana" is gemini-2.5-flash-image, which Iris does not register, so
-/// the bare nickname names no model (it must not silently run Nano Banana 2); the
-/// error says which names to use instead, and other unknown names keep the usual hint.
+/// Gemini image names Iris declines are unknown models whose hint says why, with
+/// Google's date, and what to use instead, never `--capabilities-from`: the bare
+/// "Nano Banana" nickname (Google's is gemini-2.5-flash-image, so it must not
+/// silently run Nano Banana 2), the preview ids, and every Imagen model, by the
+/// names people type too.
 #[test]
-fn the_bare_nano_banana_nickname_names_no_model() {
-    assert!(catalog::find("nano-banana").is_none());
-    let names_the_alternatives = |hint: Option<&str>| {
-        let hint = hint.unwrap_or_default();
-        assert!(
-            hint.contains("gemini-2.5-flash-image")
-                && hint.contains("nano-banana-2")
-                && hint.contains("nano-banana-pro"),
-            "{hint}"
-        );
-    };
-    for name in ["nano-banana", "Nano-Banana"] {
+fn declined_gemini_names_say_why_and_what_to_use_instead() {
+    let nano_banana = "use nano-banana-2 (gemini-3.1-flash-image) or nano-banana-pro (gemini-3-pro-image)";
+    for (name, why, instead) in [
+        ("nano-banana", "limited to projects that already used it since 2026-09-18", nano_banana),
+        ("Nano-Banana", "limited to projects that already used it since 2026-09-18", nano_banana),
+        ("gemini-2.5-flash-image", "limited to projects that already used it since 2026-09-18", nano_banana),
+        (
+            "gemini-3.1-flash-image-preview",
+            "shut down gemini-3.1-flash-image-preview on 2026-06-25",
+            "use gemini-3.1-flash-image",
+        ),
+        (
+            "gemini-3-pro-image-preview",
+            "shut down gemini-3-pro-image-preview on 2026-06-25",
+            "use gemini-3-pro-image",
+        ),
+        (
+            "gemini-2.5-flash-image-preview",
+            "shut down gemini-2.5-flash-image-preview on 2026-01-15",
+            nano_banana,
+        ),
+        ("imagen", "Imagen 4 on 2026-08-17", "use nano-banana-2 (gemini-3.1-flash-image)"),
+        ("imagen-4", "Imagen 4 on 2026-08-17", "use nano-banana-2 (gemini-3.1-flash-image)"),
+        (
+            "imagen-4.0-ultra-generate-001",
+            "Imagen 4 on 2026-08-17",
+            "use nano-banana-2 (gemini-3.1-flash-image)",
+        ),
+        ("imagen-3.0-generate-002", "Imagen 4 on 2026-08-17", "use nano-banana-2 (gemini-3.1-flash-image)"),
+    ] {
+        assert!(catalog::find(name).is_none(), "{name}");
         let err = catalog::resolve(name, None).unwrap_err();
         assert_eq!(err.code, ErrorCode::UnknownModel, "{name}");
-        names_the_alternatives(err.hint.as_deref());
+        let hint = err.hint.as_deref().unwrap();
+        assert!(hint.contains(why) && hint.ends_with(instead), "{name}: {hint}");
+        assert!(!hint.contains("--capabilities-from"), "{hint}");
     }
+    // Declined as a --capabilities-from template too.
     let err = catalog::resolve("gemini-9-image", Some("nano-banana")).unwrap_err();
     assert_eq!(err.code, ErrorCode::UnknownModel);
-    names_the_alternatives(err.hint.as_deref());
-    let err = catalog::resolve("banana", None).unwrap_err();
-    assert!(err.hint.as_deref().unwrap().starts_with("known models: "), "{:?}", err.hint);
+    assert_eq!(err.hint.as_deref().map(|h| h.ends_with(nano_banana)), Some(true), "{:?}", err.hint);
+    // Names that only look alike stay ordinary unknown names.
+    for name in ["banana", "nano-banana-3", "imagenx"] {
+        assert!(catalog::declined(name).is_none(), "{name}");
+    }
 }
 
 #[test]
@@ -167,13 +200,21 @@ fn inputs_accept_fourteen_references_of_the_documented_types_and_no_mask() {
     assert_eq!(validate(FLASH, Operation::ImageEdit, &[], 15), Err(ErrorCode::InvalidArgument));
     let mask = InputCounts { images: 1, mask: true, ..InputCounts::default() };
     assert_eq!(
-        validate_request(spec(FLASH), Operation::ImageEdit, &[], mask).unwrap_err().code,
+        validate_request(spec(FLASH), Operation::ImageEdit, &[], mask, &catalog_support::builtin())
+            .unwrap_err()
+            .code,
         ErrorCode::UnsupportedOption
     );
     assert_eq!(
-        validate_request(spec(FLASH), Operation::VideoGenerate, &[], InputCounts::default())
-            .unwrap_err()
-            .code,
+        validate_request(
+            spec(FLASH),
+            Operation::VideoGenerate,
+            &[],
+            InputCounts::default(),
+            &catalog_support::builtin()
+        )
+        .unwrap_err()
+        .code,
         ErrorCode::UnsupportedOperation
     );
 }

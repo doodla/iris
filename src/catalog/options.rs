@@ -151,12 +151,18 @@ pub struct InputCounts {
 /// Validate a request's operation, options, and input counts against `spec`.
 ///
 /// Returns the explicitly-set options, typed. Never drops anything: every raw option
-/// is either accepted or produces an error.
+/// is either accepted or produces an error. An option or input `spec` does not take
+/// for `operation` is `unsupported_option` with `details.option` (the option's name,
+/// or the input's: `mask`, `first_frame`, `last_frame`, `reference`) and
+/// `details.supported_by`, the ids of the models of `catalog` (the models Iris
+/// knows) that take it, which the hint names; a value that is not one of an enum
+/// option's values is `invalid_argument` with `details.option` and `details.allowed`.
 pub fn validate_request(
     spec: &ModelSpec,
     operation: Operation,
     raw: &[RawOption],
     inputs: InputCounts,
+    catalog: &[&'static ModelSpec],
 ) -> Result<ResolvedOptions, IrisError> {
     if !spec.supports(operation) {
         let supported: Vec<&str> = spec.operations.iter().map(|o| o.as_str()).collect();
@@ -179,25 +185,35 @@ pub fn validate_request(
                 .map(|o| o.flag.map(str::to_string).unwrap_or_else(|| format!("-O {}", o.name)))
                 .collect();
             let list = if supported.is_empty() { "none".to_string() } else { supported.join(", ") };
+            let takes = |m: &ModelSpec| m.options_for(operation).any(|o| o.name == opt.name);
+            let supported_by = supported_by(catalog, operation, takes);
             return Err(IrisError::new(
                 ErrorCode::UnsupportedOption,
                 format!("model '{}' does not support {describe} for {operation}", spec.id),
             )
-            .with_hint(format!("options supported by this model for {operation}: {list}"))
-            .with_detail("option", opt.name.clone()));
+            .with_hint(format!(
+                "{}; options supported by this model for {operation}: {list}",
+                where_supported(&describe, operation, &supported_by)
+            ))
+            .with_detail("option", opt.name.clone())
+            .with_detail("supported_by", supported_by));
         };
         if resolved.contains(&opt.name) {
             return Err(IrisError::invalid(format!("option '{}' was given more than once", opt.name))
                 .with_detail("option", opt.name.clone()));
         }
         let value = OptionValue::parse(&option.kind, &opt.value).map_err(|why| {
-            IrisError::invalid(format!("invalid value '{}' for {describe}: {why}", opt.value))
-                .with_detail("option", opt.name.clone())
+            let e = IrisError::invalid(format!("invalid value '{}' for {describe}: {why}", opt.value))
+                .with_detail("option", opt.name.clone());
+            match option.kind {
+                OptionKind::Enum(values) => e.with_detail("allowed", values),
+                _ => e,
+            }
         })?;
         resolved.insert(opt.name.clone(), value);
     }
 
-    validate_inputs(spec, operation, inputs)?;
+    validate_inputs(spec, operation, inputs, catalog)?;
 
     if let Some(rules) = spec.validate {
         (rules.check)(&ValidationInput {
@@ -214,12 +230,41 @@ pub fn validate_request(
     Ok(resolved)
 }
 
-fn validate_inputs(spec: &ModelSpec, op: Operation, inputs: InputCounts) -> Result<(), IrisError> {
-    let unsupported = |what: &str| {
+/// The ids of the models of `catalog` that implement `op` and satisfy `takes`.
+fn supported_by(
+    catalog: &[&'static ModelSpec],
+    op: Operation,
+    takes: impl Fn(&ModelSpec) -> bool,
+) -> Vec<&'static str> {
+    catalog.iter().filter(|m| m.supports(op) && takes(m)).map(|m| m.id).collect()
+}
+
+/// The part of an `unsupported_option` hint that names the models taking `what`
+/// (as the user gave it: a flag, or `-O name`) for `op`.
+fn where_supported(what: &str, op: Operation, supported_by: &[&str]) -> String {
+    if supported_by.is_empty() {
+        format!("no model Iris knows supports {what} for {op}")
+    } else {
+        format!("{what} is supported by: {}; pass -m <MODEL>", supported_by.join(", "))
+    }
+}
+
+fn validate_inputs(
+    spec: &ModelSpec,
+    op: Operation,
+    inputs: InputCounts,
+    catalog: &[&'static ModelSpec],
+) -> Result<(), IrisError> {
+    // `name` is the input's name as the model's constraints use it.
+    let unsupported = |what: &str, name: &str, takes: fn(&ModelSpec) -> bool| {
+        let supported_by = supported_by(catalog, op, takes);
         IrisError::new(
             ErrorCode::UnsupportedOption,
             format!("model '{}' does not accept {what} for {op}", spec.id),
         )
+        .with_hint(where_supported(what, op, &supported_by))
+        .with_detail("option", name)
+        .with_detail("supported_by", supported_by)
     };
     match op {
         Operation::ImageGenerate => {
@@ -241,19 +286,21 @@ fn validate_inputs(spec: &ModelSpec, op: Operation, inputs: InputCounts) -> Resu
                 )));
             }
             if inputs.mask && spec.inputs.mask.is_none() {
-                return Err(unsupported("--mask"));
+                return Err(unsupported("--mask", "mask", |m| m.inputs.mask.is_some()));
             }
         }
         Operation::VideoGenerate => {
             if inputs.first_frame && !spec.inputs.first_frame {
-                return Err(unsupported("--image (first frame)"));
+                return Err(unsupported("--image (first frame)", "first_frame", |m| m.inputs.first_frame));
             }
             if inputs.last_frame && !spec.inputs.last_frame {
-                return Err(unsupported("--last-frame"));
+                return Err(unsupported("--last-frame", "last_frame", |m| m.inputs.last_frame));
             }
             let max = spec.inputs.max_reference_images as usize;
             if inputs.references > 0 && max == 0 {
-                return Err(unsupported("--ref reference images"));
+                return Err(unsupported("--ref (reference images)", "reference", |m| {
+                    m.inputs.max_reference_images > 0
+                }));
             }
             if inputs.references > max {
                 return Err(IrisError::invalid(format!(

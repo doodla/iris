@@ -199,7 +199,7 @@ wanted, and every result still says where its model came from.
 |---|---|---|
 | OpenAI | `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2` (dated snapshots as aliases) | `gpt-image-1`, `gpt-image-1.5`, `gpt-image-1-mini`, `chatgpt-image-latest`, `dall-e-2`, `dall-e-3` |
 | Gemini images | `gemini-3.1-flash-image` (Nano Banana 2), `gemini-3.1-flash-lite-image` (Nano Banana 2 Lite), `gemini-3-pro-image` (Nano Banana Pro) | `gemini-2.5-flash-image`, every Imagen model, the `*-preview` image ids |
-| Veo | `veo-3.1-fast-generate-preview`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview` | `veo-2.0-*`, `veo-3.0-*`, the Vertex AI / Gemini Enterprise GA ids, Gemini Omni |
+| Veo | `veo-3.1-fast-generate-preview`, `veo-3.1-generate-preview`, `veo-3.1-lite-generate-preview` | `veo-2.0-*`, `veo-3.0-*`, the Vertex AI / Gemini Enterprise `veo-3.1-*-001` ids, Gemini Omni |
 
 **Why.** OpenAI recommends `gpt-image-2.5-sunburst` for API use; Flare is the documented faster
 model at the same token rates. `gpt-image-1` shuts down on 2026-10-23, `gpt-image-1.5`,
@@ -208,16 +208,17 @@ model at the same token rates. `gpt-image-1` shuts down on 2026-10-23, `gpt-imag
 `gemini-3.1-flash-image` its go-to image model. `gemini-2.5-flash-image` has been limited to
 projects that already used it since 2026-09-18 and is listed with an earliest shutdown date of
 2026-10-02 (another Google page says the 2.5 models are not deprecated, so Iris names no
-shutdown date); Imagen shut down on 2026-08-17 and the preview image ids on 2026-06-25. On the
+shutdown date); Imagen 4 shut down on 2026-08-17 (the earlier Imagen models before it) and the
+Gemini 3 preview image ids on 2026-06-25 (`gemini-2.5-flash-image-preview` on 2026-01-15). On the
 Gemini API only the three Veo 3.1 preview models remain; Veo 2.0 and 3.0 shut down on
-2026-06-30, and the GA Veo 3.1 ids exist only on Google Cloud's enterprise platform, which uses
-other authentication and endpoints. The three trade price against options: Veo 3.1 and Veo 3.1
-Fast are documented to support every video option Iris offers, including 4k and reference images,
-with Fast at a quarter of Veo 3.1's per-second price at 720p and less than it at every resolution,
-while Veo 3.1 Lite costs least and offers neither 4k nor reference images. Reference images on
-Fast, which the official cookbook lists only for Veo 3.1, were confirmed by a live 4k request on
-2026-09-25. Gemini Omni Flash is a video model on the Interactions API and is out of scope for
-this version.
+2026-06-30, and the Veo 3.1 `-001` ids (GA, and Lite in preview) exist only on Google Cloud's
+enterprise platform, which uses other authentication and endpoints. The three trade price against
+options: Veo 3.1 and Veo 3.1 Fast are documented to support every video option Iris offers,
+including 4k and reference images, with Fast at a quarter of Veo 3.1's per-second price at 720p and
+less than it at every resolution, while Veo 3.1 Lite costs least and offers neither 4k nor
+reference images. Reference images on Fast, which the official cookbook lists only for Veo 3.1,
+were confirmed by a live 4k request on 2026-09-25. Gemini Omni Flash is a video model on the
+Interactions API and is out of scope for this version.
 
 A model id Iris does not know is refused unless `--capabilities-from <known model>` says which
 known model's capabilities it has; such a request is validated as that model but gets no cost
@@ -226,9 +227,21 @@ estimate, because the known model's prices need not apply.
 Aliases are dated snapshots or unambiguous nicknames (`nano-banana-2`, `nano-banana-pro`,
 `veo-fast`). The bare `nano-banana` is deliberately none: Google's "Nano Banana" is
 `gemini-2.5-flash-image`, which Iris does not register, so accepting it for Nano Banana 2 would
-silently run a differently branded model. `--model nano-banana` is `unknown_model` with a hint
-naming `nano-banana-2` and `nano-banana-pro`, and `model = "nano-banana"` in the config file is
-`config_invalid` with the same hint.
+silently run a differently branded model.
+
+Every name in the "not registered" column, and that nickname, is a name Iris declines: each
+provider's catalog module declares them with the provider's reason and date and the registered
+models to use instead. An exact name also matches its dated snapshots (`<name>-YYYY-MM-DD`),
+families match by prefix (`imagen-…`, `veo-2.0-…`, `veo-3.0-…`, `gemini-omni-…`, `dall-e-…`), and
+so do the short names people type for them (`imagen-4`, `veo-3`, `veo-3-fast`, `dalle-3`, `omni`).
+`--model dall-e-3` is `unknown_model` with a hint such as "OpenAI removed DALL·E (dall-e-2,
+dall-e-3) from the API on 2026-05-12 and recommends a GPT Image 2.5 model for new integrations; use
+gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2", and the same name in the config file
+is `config_invalid` with the same reason. The replacements named are those that support the
+command's operation (for the config file, the key's): a command that none of them fits, such as
+`video generate -m dall-e-3`, gets the reason and the command that lists the models it can use.
+Unlike any other unknown id, a declined name gets no `--capabilities-from` suggestion: it would
+send a model the provider deprecated, shut down, limited, or serves only elsewhere.
 
 **Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
 [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations) ·
@@ -238,6 +251,8 @@ naming `nano-banana-2` and `nano-banana-pro`, and `model = "nano-banana"` in the
 [Gemini deprecations](https://ai.google.dev/gemini-api/docs/deprecations) ·
 [Gemini changelog](https://ai.google.dev/gemini-api/docs/changelog) ·
 [Veo guide](https://ai.google.dev/gemini-api/docs/veo) ·
+[Veo 3.1 on the Gemini Enterprise Agent Platform](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/veo/3-1-generate) ·
+[Gemini Omni](https://ai.google.dev/gemini-api/docs/omni) ·
 [Gemini API pricing](https://ai.google.dev/gemini-api/docs/pricing)
 
 ### What each model is for, and what it costs at least

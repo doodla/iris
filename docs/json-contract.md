@@ -374,7 +374,7 @@ because the job id is assigned when the real run records the job.
 }
 ```
 
-Real example (`iris image generate` against a model whose model id Iris does not know):
+Real example (`iris image generate` with a model Iris does not know; `candidates` abridged):
 
 ```console
 $ iris image generate "x" --model does-not-exist --json
@@ -382,12 +382,44 @@ $ iris image generate "x" --model does-not-exist --json
 ```json
 {"command":"image.generate","error":{"category":"validation","code":"unknown_model",
  "message":"unknown model 'does-not-exist'",
- "hint":"known models: gpt-image-2.5-sunburst, gpt-image-2.5-flare, gpt-image-2, gemini-3.1-flash-image, gemini-3.1-flash-lite-image, gemini-3-pro-image, veo-3.1-fast-generate-preview, veo-3.1-generate-preview, veo-3.1-lite-generate-preview. To use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> to declare which known model's capabilities it has",
+ "hint":"run `iris models list --operation image.generate` and pass -m <MODEL>; to use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> to declare which known model's capabilities it has",
+ "details":{"candidates":[{"model":"gpt-image-2.5-sunburst","provider":"openai","...":"..."},
+                          "...one object per catalog model that supports the operation, as for model_required below"]},
  "retryable":false,"job_id":null,"job_status":null,"provider":null,"provider_code":null,
  "provider_request_id":null,"provider_status":null,"remote_operation_id":null,
- "retry_after_seconds":null,"details":null},
+ "retry_after_seconds":null},
  "ok":false,"result":null,"schema_version":1,"warnings":[]}
 ```
+
+`unknown_model` always lists in `details.candidates` the models the command can use: those that
+support its operation (every model for `models show`), in the form `model_required` uses below. A
+name Iris declines — a model its provider deprecated, shut down, limited, or serves only
+elsewhere, a family of them, or a nickname of one, such as `dall-e-3`, `gpt-image-1`, `imagen-4`,
+`veo-3`, or `nano-banana` (see [decisions.md](decisions.md#built-in-models) for the models and
+families) — gets a hint that says why, with the provider's date, and what to use instead that
+supports the command's operation (when none does, which command lists the ones that do), and no
+`--capabilities-from` suggestion:
+
+```json
+"hint":"OpenAI removed DALL·E (dall-e-2, dall-e-3) from the API on 2026-05-12 and recommends a GPT Image 2.5 model for new integrations; use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2"
+```
+
+An option the model does not take for the operation (a typed flag or `-O name=value`), or an
+input it does not take (`--mask`, a first or last frame, reference images), is `unsupported_option`
+with `details.option` (the option's name, or the input's: `mask`, `first_frame`, `last_frame`,
+`reference`) and `details.supported_by`, the ids of the catalog models that do take it for the
+operation (possibly empty), which the hint names:
+
+```json
+{"code":"unsupported_option","message":"model 'gpt-image-2.5-sunburst' does not support --aspect-ratio for image.generate",
+ "hint":"--aspect-ratio is supported by: gemini-3.1-flash-image, gemini-3.1-flash-lite-image, gemini-3-pro-image; pass -m <MODEL>; options supported by this model for image.generate: --count, --size, --quality, --format, -O compression, -O background, -O moderation",
+ "details":{"option":"aspect_ratio","supported_by":["gemini-3.1-flash-image","gemini-3.1-flash-lite-image","gemini-3-pro-image"]},
+ "...":"other Error fields omitted for brevity"}
+```
+
+A value that is not one of an enum option's values is `invalid_argument` with `details.option` and
+`details.allowed`, the values the model accepts (`--quality ultra` on `gpt-image-2`: `"allowed":
+["low", "medium", "high", "auto"]`).
 
 A generation command given no model — no `-m`/`--model`, and no `image.model` or `video.model` in
 the config file — fails with `model_required` (exit 2, category `usage`) before anything is sent,

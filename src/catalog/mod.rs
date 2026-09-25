@@ -1,7 +1,7 @@
 //! The model catalog: every model Iris knows, with declared capabilities.
 //!
 //! Provider modules (`openai`, `gemini`, `veo`) contribute their static
-//! declarations.
+//! declarations: the models, and the names Iris declines ([`DeclinedName`]).
 
 pub mod gemini;
 pub mod openai;
@@ -44,15 +44,91 @@ pub fn find_in(
     models.into_iter().find(|m| m.id == id_or_alias || m.aliases.contains(&id_or_alias))
 }
 
-/// What to use instead of `name` when it is a name Iris deliberately gives no model
-/// (such as a nickname of a model Iris does not register), if it is one. Matched
-/// case-insensitively; shown as the hint of the `unknown_model` error, and of the
+/// Every name Iris declines ([`DeclinedName`]), grouped by provider like [`all`].
+pub fn declined_names() -> impl Iterator<Item = &'static DeclinedName> {
+    openai::DECLINED.iter().chain(gemini::DECLINED.iter()).chain(veo::DECLINED.iter())
+}
+
+/// The declined name `name` is, if Iris deliberately gives it no model. Its
+/// [`hint`](DeclinedName::hint) is the hint of the `unknown_model` error, and of the
 /// `config_invalid` error for a configured model.
-pub fn declined_name_hint(name: &str) -> Option<&'static str> {
-    gemini::DECLINED_NAMES
-        .iter()
-        .find(|(declined, _)| declined.eq_ignore_ascii_case(name))
-        .map(|(_, hint)| *hint)
+pub fn declined(name: &str) -> Option<&'static DeclinedName> {
+    declined_names().find(|d| d.matches(name))
+}
+
+impl DeclinedName {
+    /// Whether `name` is one of [`Self::names`] or a dated snapshot of one, or
+    /// continues one of [`Self::families`], ignoring ASCII case.
+    pub fn matches(&self, name: &str) -> bool {
+        let name = name.to_ascii_lowercase();
+        self.names.iter().map(|n| n.to_ascii_lowercase()).any(|n| n == name || is_snapshot_of(&n, &name))
+            || self.families.iter().any(|stem| {
+                name.strip_prefix(&stem.to_ascii_lowercase())
+                    .is_some_and(|rest| rest.is_empty() || rest.starts_with('-'))
+            })
+    }
+
+    /// Why Iris registers no model for the name, and what to use instead for a
+    /// command running one of `ops` (any command when `ops` is empty, as for `models
+    /// show`): each replacement that supports one of them, as declared, with its
+    /// canonical id after a nickname (`nano-banana-2 (gemini-3.1-flash-image)`), or
+    /// `otherwise` when none does.
+    pub fn hint(&self, ops: &[Operation], otherwise: &str) -> String {
+        let instead: Vec<String> = self
+            .instead
+            .iter()
+            .filter_map(|name| find(name).map(|spec| (name, spec)))
+            .filter(|(_, spec)| ops.is_empty() || ops.iter().any(|op| spec.supports(*op)))
+            .map(|(name, spec)| {
+                if spec.id != *name && !is_snapshot_of(spec.id, name) {
+                    format!("{name} ({})", spec.id)
+                } else {
+                    name.to_string()
+                }
+            })
+            .collect();
+        let instead = match instead.as_slice() {
+            [] => return format!("{}; {otherwise}", self.reason),
+            [one] => one.clone(),
+            [first, second] => format!("{first} or {second}"),
+            [rest @ .., last] => format!("{}, or {last}", rest.join(", ")),
+        };
+        format!("{}; use {instead}", self.reason)
+    }
+}
+
+/// The `unknown_model` error for `name`, which no catalog id or alias names: the
+/// model a command was given (`-m/--model`, or `models show <MODEL>`), or, with
+/// `template`, the `--capabilities-from` model; `op` is the operation of the
+/// generation command given the name, if any. The hint names the command that lists
+/// the models for `op`. For a name Iris declines it first says why and what to use
+/// instead for `op` ([`DeclinedName::hint`]) and never suggests `--capabilities-from`;
+/// for any other `-m` it adds how to use a model Iris does not know yet. The app adds
+/// the models the command can use (`details.candidates`).
+pub fn unknown_model(name: &str, template: bool, op: Option<Operation>) -> IrisError {
+    let message = if template {
+        format!("--capabilities-from '{name}' is not a known model")
+    } else {
+        format!("unknown model '{name}'")
+    };
+    let listing = match op {
+        Some(op) if template => {
+            format!(
+                "run `iris models list --operation {op}` and pass one of its models to --capabilities-from"
+            )
+        }
+        Some(op) => format!("run `iris models list --operation {op}` and pass -m <MODEL>"),
+        None => "run `iris models list` to see the models Iris knows".to_string(),
+    };
+    let hint = match declined(name) {
+        Some(declined) => declined.hint(op.as_slice(), &listing),
+        None if op.is_some() && !template => format!(
+            "{listing}; to use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> to declare \
+             which known model's capabilities it has"
+        ),
+        None => listing,
+    };
+    IrisError::new(ErrorCode::UnknownModel, message).with_hint(hint)
 }
 
 /// The syntax of model ids `provider`'s adapter can send (checked for unknown ids
@@ -104,20 +180,22 @@ fn is_snapshot_of(base: &str, candidate: &str) -> bool {
 /// Resolve `--model` / `--capabilities-from` into a model.
 ///
 /// * Known id or alias → catalog spec.
-/// * Unknown id without `capabilities_from` → `unknown_model` (lists known models).
+/// * Unknown id without `capabilities_from` → `unknown_model` ([`unknown_model`]).
 /// * Unknown id with `capabilities_from` naming a known model → that model's spec,
 ///   sending the unknown id (caller emits warning `unverified_model_capabilities`).
 pub fn resolve(model: &str, capabilities_from: Option<&str>) -> Result<ResolvedModel, IrisError> {
     let models: Vec<&'static ModelSpec> = all().collect();
-    resolve_in(&models, model, capabilities_from)
+    resolve_in(&models, model, capabilities_from, None)
 }
 
 /// [`resolve`] over an explicit model list (the app's injectable catalog uses this so
-/// tests and production share one set of rules).
+/// tests and production share one set of rules), for a generation command running
+/// `op` when there is one (its `unknown_model` hint names the models for `op`).
 pub fn resolve_in(
     models: &[&'static ModelSpec],
     model: &str,
     capabilities_from: Option<&str>,
+    op: Option<Operation>,
 ) -> Result<ResolvedModel, IrisError> {
     let find = |id: &str| find_in(models.iter().copied(), id);
     if let Some(spec) = find(model) {
@@ -133,24 +211,10 @@ pub fn resolve_in(
     }
 
     let Some(template) = capabilities_from else {
-        let known: Vec<&str> = models.iter().map(|m| m.id).collect();
-        let hint = declined_name_hint(model).map(str::to_string).unwrap_or_else(|| {
-            format!(
-                "known models: {}. To use a model Iris does not know yet, add --capabilities-from <KNOWN_MODEL> \
-                 to declare which known model's capabilities it has",
-                known.join(", ")
-            )
-        });
-        return Err(
-            IrisError::new(ErrorCode::UnknownModel, format!("unknown model '{model}'")).with_hint(hint)
-        );
+        return Err(unknown_model(model, false, op));
     };
     let Some(spec) = find(template) else {
-        return Err(IrisError::new(
-            ErrorCode::UnknownModel,
-            format!("--capabilities-from '{template}' is not a known model"),
-        )
-        .with_hint(declined_name_hint(template).unwrap_or("run `iris models list`")));
+        return Err(unknown_model(template, true, op));
     };
     let syntax = model_id_syntax(spec.provider);
     if !syntax.accepts(model) {
@@ -245,5 +309,96 @@ mod tests {
         assert!(is_snapshot_of("gpt-image-2", "gpt-image-2-2026-04-21"));
         assert!(!is_snapshot_of("gpt-image-2", "gpt-image-2-2026-04"));
         assert!(!is_snapshot_of("gpt-image-2", "gpt-image-2.5-sunburst"));
+    }
+
+    /// Every declined name, its dated snapshots, and every family stem find their own
+    /// entry (no entry shadows another), none names a catalog model (catalog lookup
+    /// comes first, so such an entry could never apply), and every replacement is a
+    /// catalog model.
+    #[test]
+    fn declined_names_are_unambiguous_and_point_at_catalog_models() {
+        for entry in declined_names() {
+            assert!(!entry.instead.is_empty(), "{}", entry.reason);
+            let snapshots = entry.names.iter().map(|n| format!("{n}-2026-01-31"));
+            for name in entry.names.iter().chain(entry.families).map(|n| n.to_string()).chain(snapshots) {
+                assert!(std::ptr::eq(declined(&name).unwrap(), entry), "{name} finds another entry");
+                assert!(declined(&name.to_ascii_uppercase()).is_some(), "{name} ignoring case");
+                assert!(find(&name).is_none(), "{name} is a catalog model");
+            }
+            for name in entry.instead {
+                assert!(find(name).is_some(), "{name}, a replacement for {:?}", entry.names);
+            }
+            for ops in [&[][..], &[Operation::ImageGenerate], &[Operation::VideoGenerate]] {
+                let hint = entry.hint(ops, "otherwise");
+                assert!(hint.starts_with(entry.reason) && !hint.contains("--capabilities-from"), "{hint}");
+            }
+        }
+        for m in all() {
+            for name in std::iter::once(m.id).chain(m.aliases.iter().copied()) {
+                assert!(declined(name).is_none(), "catalog model {name} is declined");
+            }
+        }
+        // A family stem matches itself and its continuations with `-`, nothing else.
+        let veo = declined("veo-3").unwrap();
+        for name in ["veo-3", "veo-3-fast", "veo-3.0", "veo-3.0-generate-001", "VEO-3.0-FAST-GENERATE-001"] {
+            assert!(veo.matches(name), "{name}");
+        }
+        for name in ["veo-30", "veo-3.1", "veo-3.1-generate-preview", "xveo-3"] {
+            assert!(!veo.matches(name), "{name}");
+        }
+        // An exact name matches its dated snapshots, not other names that continue it.
+        let gpt_image_1 = declined("gpt-image-1").unwrap();
+        assert!(gpt_image_1.matches("gpt-image-1-2025-04-15"));
+        assert!(!gpt_image_1.matches("gpt-image-1-mini") && !gpt_image_1.matches("gpt-image-1-2025-04"));
+    }
+
+    /// An unknown name's hint says how to go on: for a declined name why, and what
+    /// to use instead that supports the command's operation (else where its models
+    /// are listed), never `--capabilities-from`; for any other `-m`, the models of the
+    /// command's operation and `--capabilities-from`; for a template or a name given
+    /// without a command's operation, where the models are listed.
+    #[test]
+    fn unknown_model_hints_name_the_way_forward() {
+        let models: Vec<&'static ModelSpec> = all().collect();
+        let op = Some(Operation::ImageGenerate);
+        let hint = |model: &str, template: Option<&str>, op| {
+            let err = resolve_in(&models, model, template, op).unwrap_err();
+            assert_eq!(err.code, ErrorCode::UnknownModel, "{model} {template:?}");
+            err.hint.clone().unwrap()
+        };
+        let dalle = declined("dall-e-3").unwrap();
+        let replacements =
+            format!("{}; use gpt-image-2.5-sunburst, gpt-image-2.5-flare, or gpt-image-2", dalle.reason);
+        assert_eq!(hint("dall-e-3", None, op), replacements);
+        assert_eq!(hint("dall-e-3", None, None), replacements);
+        assert_eq!(hint("my-model", Some("dall-e-3"), op), replacements);
+        // None of them makes videos: the hint points at the video models instead.
+        let video = Some(Operation::VideoGenerate);
+        assert_eq!(
+            hint("dall-e-3", None, video),
+            format!(
+                "{}; run `iris models list --operation video.generate` and pass -m <MODEL>",
+                dalle.reason
+            )
+        );
+        assert_eq!(
+            hint("my-model", Some("dall-e-3"), video),
+            format!(
+                "{}; run `iris models list --operation video.generate` and pass one of its models to \
+                 --capabilities-from",
+                dalle.reason
+            )
+        );
+        assert_eq!(
+            hint("sora-2", None, op),
+            "run `iris models list --operation image.generate` and pass -m <MODEL>; to use a model Iris does \
+             not know yet, add --capabilities-from <KNOWN_MODEL> to declare which known model's capabilities it \
+             has"
+        );
+        assert_eq!(
+            hint("my-model", Some("sora-2"), op),
+            "run `iris models list --operation image.generate` and pass one of its models to --capabilities-from"
+        );
+        assert_eq!(hint("sora-2", None, None), "run `iris models list` to see the models Iris knows");
     }
 }

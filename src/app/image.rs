@@ -75,7 +75,7 @@ async fn run_checked(
     let counts =
         InputCounts { images: args.images.len(), mask: args.mask.is_some(), ..InputCounts::default() };
     let mut raw = common.options.clone();
-    let mut opts = catalog::validate_request(spec, op, &raw, counts)?;
+    let mut opts = catalog::validate_request(spec, op, &raw, counts, &ctx.catalog.models())?;
     request::check_prompt(spec, &common.prompt)?;
 
     let images = args
@@ -117,7 +117,7 @@ async fn run_checked(
             value: implied.to_string(),
             source: OptionSource::Flag("-o/--output extension"),
         });
-        opts = catalog::validate_request(spec, op, &raw, counts)?;
+        opts = catalog::validate_request(spec, op, &raw, counts, &ctx.catalog.models())?;
     }
     warnings.extend(plan.warnings.iter().cloned());
     if let Some(output) = output_path
