@@ -682,3 +682,34 @@ fn the_submit_timeout_is_configurable_and_moves_the_submit_budget() {
         s.config_show().settings.into_iter().find(|r| r.key == "providers.gemini.submit_timeout").unwrap();
     assert_eq!((row.value, row.source), (serde_json::json!("5m"), SettingSource::File));
 }
+
+/// Plain http only for loopback hosts, from any layer; the warning helper used by
+/// credentialed commands adds a provider's warning once, and only when its base
+/// URL is not the default.
+#[test]
+fn plain_http_base_urls_must_be_loopback_and_are_warned_about_once() {
+    let fx = Fixture::new();
+    let e = load(&fx.env().with_var("IRIS_OPENAI_BASE_URL", "http://api.example.invalid/v1")).unwrap_err();
+    assert_eq!(e.code, ErrorCode::ConfigInvalid);
+    assert_eq!(e.details.get("env_var").and_then(|v| v.as_str()), Some("IRIS_OPENAI_BASE_URL"));
+    assert!(e.message.contains("loopback"), "{}", e.message);
+    fx.write_default_config("[providers.gemini]\nbase_url = \"http://192.168.1.20:8080\"\n");
+    let e = load(&fx.env()).unwrap_err();
+    assert_eq!(e.details.get("key").and_then(|v| v.as_str()), Some("providers.gemini.base_url"));
+    fx.write_default_config("");
+
+    let s = load(&fx.env()).unwrap();
+    let mut warnings = Vec::new();
+    s.warn_non_default_base_url(ProviderId::Gemini, &mut warnings);
+    assert!(warnings.is_empty(), "the default base URL is not flagged");
+
+    let s = load(&fx.env().with_var("IRIS_GEMINI_BASE_URL", "http://localhost:8080")).unwrap();
+    for _ in 0..3 {
+        s.warn_non_default_base_url(ProviderId::Gemini, &mut warnings);
+        s.warn_non_default_base_url(ProviderId::OpenAi, &mut warnings);
+    }
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert_eq!(warnings[0].code, WARNING_NON_DEFAULT_BASE_URL);
+    assert!(warnings[0].message.contains("GEMINI_API_KEY is sent to that host over unencrypted HTTP"));
+    assert_eq!(Some(warnings[0].clone()), s.base_url_warning(ProviderId::Gemini));
+}

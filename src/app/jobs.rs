@@ -415,6 +415,7 @@ async fn poll_once(
     let provider = rec.provider();
     let video = video_adapter(ctx, provider)?;
     let pctx = ctx.provider_context(provider)?;
+    ctx.settings.warn_non_default_base_url(provider, warnings);
     let status = tokio::select! {
         result = video.poll(remote, &pctx) => result?,
         () = ctx.interrupt.after(seen) => return Err(interrupted_wait(ctx, rec)),
@@ -479,6 +480,7 @@ async fn wait_until_terminal(
                 let provider = rec.provider();
                 let video = video_adapter(ctx, provider)?;
                 let pctx = ctx.provider_context(provider).map_err(|e| with_job_context(e, &rec))?;
+                ctx.settings.warn_non_default_base_url(provider, warnings);
                 let Some(remote) = rec.remote_operation_id().map(str::to_string) else {
                     return Err(with_job_context(
                         IrisError::internal(format!("job {id} is running but has no operation id")),
@@ -645,6 +647,7 @@ async fn download_outputs(
     });
     if needs_credential {
         ctx.settings.require_credential(provider).map_err(|e| with_job_context(e, &rec))?;
+        ctx.settings.warn_non_default_base_url(provider, warnings);
     }
     artifacts::preflight_dirs(&plan.paths, true).map_err(|e| with_job_context(e, &rec))?;
     let access = Access {

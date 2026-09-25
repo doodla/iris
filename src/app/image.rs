@@ -151,6 +151,7 @@ async fn run_checked(
     // The credential is checked after every local check but before any output
     // directory is created, so a missing key leaves nothing on disk.
     let pctx = ctx.provider_context(provider)?;
+    ctx.settings.warn_non_default_base_url(provider, warnings);
     artifacts::preflight_dirs(&plan.paths, true)?;
     let req = ImageRequest {
         model: resolved.id.clone(),

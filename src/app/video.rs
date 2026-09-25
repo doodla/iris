@@ -158,6 +158,7 @@ pub async fn run(
     // job record exists.
     video.validate(&req)?;
     let pctx = ctx.provider_context(provider)?;
+    ctx.settings.warn_non_default_base_url(provider, warnings);
     artifacts::preflight_dirs(&plan.paths, true)?;
 
     // Persist the record BEFORE the paid request.

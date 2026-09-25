@@ -79,6 +79,7 @@ pub async fn show(
     let (account_access, checked_at) = if check_access {
         let adapter = ctx.provider(provider)?;
         let pctx = ctx.provider_context(provider)?;
+        ctx.settings.warn_non_default_base_url(provider, warnings);
         ctx.interrupt.arm();
         let seen = ctx.interrupt.count();
         let access = tokio::select! {

@@ -227,9 +227,19 @@ plus the retry waits, plus a minute of grace — about 37 minutes with the defau
 `providers.openai.base_url` / `providers.gemini.base_url` (and their `IRIS_*_BASE_URL`
 environment variables) exist for testing and for routing through a proxy — this is how Iris's own
 offline tests and this documentation's mock-server transcripts run without touching a real
-provider. **Your credential is sent to whatever base URL is configured**, so `config show` and
-`doctor` both flag a non-default base URL with a `non_default_base_url` warning, naming exactly
-where the key would go:
+provider. **Your credential is sent to whatever base URL is configured**, so:
+
+- A base URL must use `https`. Plain `http` is accepted only for a loopback host — `localhost`, an
+  address in `127.0.0.0/8`, or `[::1]` (a mock server or proxy on your own machine) — because
+  anywhere else the key would cross a network unencrypted. Any other `http://` base URL is
+  `config_invalid` naming the variable or config key, before any command runs. Downloads follow
+  the same rule: every hop must be `https`, except between loopback hosts when the base URL itself
+  is a loopback `http` one.
+- Every command that sends a provider's key to a non-default base URL — `image generate`/`edit`,
+  `video generate`, `jobs status`/`wait`/`download` when they reach the provider, and
+  `models show --check-access` — reports a `non_default_base_url` warning, once per provider,
+  naming exactly where the key goes (a command that sends no key, like `--dry-run` or
+  `jobs status --no-refresh`, does not). `config show` and `doctor` flag every overridden base URL:
 
 ```console
 $ iris doctor

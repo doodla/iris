@@ -278,6 +278,19 @@ pub fn same_origin(a: &url::Url, b: &url::Url) -> bool {
     oa.is_tuple() && oa == ob
 }
 
+/// True when `url`'s host is this machine's loopback interface: `localhost`, an
+/// IPv4 address in 127.0.0.0/8, or `::1`. Plain `http` is allowed only for such
+/// hosts (a local mock server or proxy), because traffic to any other host
+/// crosses a network where an unencrypted API key could be read.
+pub fn is_loopback(url: &url::Url) -> bool {
+    match url.host() {
+        Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+        Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -324,6 +337,34 @@ mod tests {
         assert_eq!(upload_allowance(u64::MAX), MAX_UPLOAD_ALLOWANCE);
         let t = Timeouts::default();
         assert_eq!(t.max_submit_attempt(), Duration::from_secs(660));
+    }
+
+    #[test]
+    fn loopback_hosts_are_localhost_127_0_0_0_8_and_ipv6_one() {
+        let u = |s: &str| url::Url::parse(s).unwrap();
+        for yes in [
+            "http://localhost:8080/v1",
+            "http://LOCALHOST",
+            "http://127.0.0.1:9",
+            "http://127.1.2.3",
+            "http://127.1/x",
+            "http://[::1]:8080",
+        ] {
+            assert!(is_loopback(&u(yes)), "{yes}");
+        }
+        for no in [
+            "http://api.example.invalid",
+            "http://localhost.example.com",
+            "http://mylocalhost",
+            "http://10.0.0.1",
+            "http://128.0.0.1",
+            "http://0.0.0.0",
+            "http://[::ffff:127.0.0.1]",
+            "http://[::2]",
+            "http://192.168.1.10",
+        ] {
+            assert!(!is_loopback(&u(no)), "{no}");
+        }
     }
 
     #[test]

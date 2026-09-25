@@ -49,8 +49,9 @@ pub struct DownloadRequest<'a> {
     /// The handle's position is shared: afterwards it is at the end of the data.
     pub dest: &'a std::fs::File,
     /// The provider's configured base URL. Its origin is the only origin that ever
-    /// receives `auth`; if its scheme is `http` (local mock servers), `http` hops
-    /// are allowed, otherwise every hop must be `https`.
+    /// receives `auth`. Every hop must be `https`, except that a plain `http` base
+    /// URL on a loopback host (a local mock server or proxy) allows `http` hops to
+    /// loopback hosts (see [`hop_allowed`]).
     pub base_url: &'a Url,
     /// Credential header, attached only to hops whose origin equals `base_url`'s.
     pub auth: Option<&'a AuthHeader>,
@@ -292,15 +293,17 @@ impl std::fmt::Display for DownloadError {
 
 impl std::error::Error for DownloadError {}
 
-/// Whether a download hop to `url` is allowed: `https` always; `http` only when the
-/// configured `base_url` is itself `http` (local mock servers). Other schemes never.
+/// Whether a download hop to `url` is allowed: `https` always; `http` only between
+/// loopback hosts, i.e. when the configured `base_url` is itself `http` on a
+/// loopback host (a local mock server or proxy) and `url` is on a loopback host
+/// too ([`is_loopback`](super::is_loopback)). Other schemes never.
 pub fn hop_allowed(url: &Url, base_url: &Url) -> bool {
     if url.host().is_none() {
         return false;
     }
     match url.scheme() {
         "https" => true,
-        "http" => base_url.scheme() == "http",
+        "http" => base_url.scheme() == "http" && super::is_loopback(base_url) && super::is_loopback(url),
         _ => false,
     }
 }
@@ -468,7 +471,8 @@ async fn fetch_into(
         if !hop_allowed(&url, req.base_url) {
             return Err(AttemptError::Final(DownloadError::Refused {
                 message: format!(
-                    "refusing to download from {shown}: only https URLs are allowed{}",
+                    "refusing to download from {shown}: only https URLs are allowed (plain http only \
+                     between loopback hosts){}",
                     if redirects > 0 { " (reached through a redirect)" } else { "" }
                 ),
             }));
@@ -645,13 +649,21 @@ mod tests {
     }
 
     #[test]
-    fn https_only_unless_the_base_url_is_http() {
+    fn https_only_except_between_loopback_hosts() {
         let https_base = u("https://generativelanguage.googleapis.com");
         let http_base = u("http://127.0.0.1:9000");
         assert!(hop_allowed(&u("https://storage.googleapis.com/x"), &https_base));
         assert!(!hop_allowed(&u("http://storage.googleapis.com/x"), &https_base));
+        assert!(!hop_allowed(&u("http://127.0.0.1:9001/x"), &https_base));
         assert!(hop_allowed(&u("http://127.0.0.1:9001/x"), &http_base));
+        assert!(hop_allowed(&u("http://localhost:9001/x"), &http_base));
+        assert!(hop_allowed(&u("http://[::1]:9001/x"), &http_base));
         assert!(hop_allowed(&u("https://example.com/x"), &http_base));
+        // Plain http never leaves the machine, even from a loopback base.
+        assert!(!hop_allowed(&u("http://example.com/x"), &http_base));
+        assert!(!hop_allowed(&u("http://10.0.0.5/x"), &http_base));
+        // A plain-http base on another host (never accepted as configuration) allows nothing more.
+        assert!(!hop_allowed(&u("http://127.0.0.1:9001/x"), &u("http://proxy.example")));
         assert!(!hop_allowed(&u("ftp://example.com/x"), &http_base));
         assert!(!hop_allowed(&u("file:///etc/passwd"), &http_base));
         assert!(!hop_allowed(&u("data:text/plain,hi"), &http_base));

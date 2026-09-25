@@ -441,28 +441,45 @@ impl Settings {
     /// [`WARNING_NON_DEFAULT_BASE_URL`] per provider whose base URL is not the
     /// default (its API key is sent there). `config show` and `doctor` print these.
     pub fn warnings(&self) -> Vec<Warning> {
-        self.providers()
-            .filter(|p| p.base_url.value.as_str() != default_base_url(p.provider).as_str())
-            .map(|p| {
-                let origin = match p.base_url.source {
-                    SettingSource::Env => format!("from {}", p.provider.base_url_env()),
-                    SettingSource::File => "from the config file".to_string(),
-                    SettingSource::Flag => "from a flag".to_string(),
-                    SettingSource::Default => "default".to_string(),
-                };
-                let insecure =
-                    if p.base_url.value.scheme() == "http" { " over unencrypted HTTP" } else { "" };
-                Warning::new(
-                    WARNING_NON_DEFAULT_BASE_URL,
-                    format!(
-                        "providers.{}.base_url is {} ({origin}); {} is sent to that host{insecure}",
-                        p.provider.as_str(),
-                        redact::redact_url(p.base_url.value.as_str()),
-                        p.provider.credential_env()
-                    ),
-                )
-            })
-            .collect()
+        self.providers().filter_map(|p| self.base_url_warning(p.provider)).collect()
+    }
+
+    /// The [`WARNING_NON_DEFAULT_BASE_URL`] warning for `provider`, if its base URL
+    /// is not the default: it names the host its API key is sent to.
+    pub fn base_url_warning(&self, provider: ProviderId) -> Option<Warning> {
+        let p = self.provider(provider);
+        if p.base_url.value.as_str() == default_base_url(provider).as_str() {
+            return None;
+        }
+        let origin = match p.base_url.source {
+            SettingSource::Env => format!("from {}", provider.base_url_env()),
+            SettingSource::File => "from the config file".to_string(),
+            SettingSource::Flag => "from a flag".to_string(),
+            SettingSource::Default => "default".to_string(),
+        };
+        let insecure = if p.base_url.value.scheme() == "http" { " over unencrypted HTTP" } else { "" };
+        Some(Warning::new(
+            WARNING_NON_DEFAULT_BASE_URL,
+            format!(
+                "providers.{}.base_url is {} ({origin}); {} is sent to that host{insecure}",
+                provider.as_str(),
+                redact::redact_url(p.base_url.value.as_str()),
+                provider.credential_env()
+            ),
+        ))
+    }
+
+    /// Add `provider`'s [`WARNING_NON_DEFAULT_BASE_URL`] warning to `warnings`
+    /// (once, however often it is called) when its base URL is not the default.
+    /// Every command that attaches `provider`'s credential to a request calls this
+    /// first, so each use of a key at a non-default host is reported, not only
+    /// `config show` and `doctor`.
+    pub fn warn_non_default_base_url(&self, provider: ProviderId, warnings: &mut Vec<Warning>) {
+        if let Some(warning) = self.base_url_warning(provider)
+            && !warnings.contains(&warning)
+        {
+            warnings.push(warning);
+        }
     }
 }
 
@@ -494,8 +511,10 @@ pub fn parse_bool(text: &str) -> Result<bool, String> {
     }
 }
 
-/// Validate a provider base URL: `http` or `https`, a host, no userinfo, query, or
-/// fragment. A trailing `/` on a non-root path is removed.
+/// Validate a provider base URL: `https`, or plain `http` for a loopback host only
+/// (`localhost`, 127.0.0.0/8, `::1`: a local mock server or proxy, see
+/// [`crate::http::is_loopback`]); a host; no userinfo, query, or fragment. A
+/// trailing `/` on a non-root path is removed.
 pub fn parse_base_url(text: &str) -> Result<Url, String> {
     let mut url = Url::parse(text.trim()).map_err(|e| format!("invalid URL ({e})"))?;
     if !matches!(url.scheme(), "http" | "https") {
@@ -503,6 +522,13 @@ pub fn parse_base_url(text: &str) -> Result<Url, String> {
     }
     if url.host().is_none() {
         return Err("the URL has no host".to_string());
+    }
+    if url.scheme() == "http" && !crate::http::is_loopback(&url) {
+        return Err(format!(
+            "plain http is allowed only for a loopback host (localhost, 127.0.0.0/8, ::1), not '{}'; use \
+             https, or the API key would cross the network unencrypted",
+            url.host_str().unwrap_or_default()
+        ));
     }
     if !url.username().is_empty() || url.password().is_some() {
         return Err("the URL must not contain a user name or password".to_string());
@@ -773,6 +799,17 @@ mod tests {
             "https://api.openai.com/v1"
         );
         assert_eq!(parse_base_url("http://127.0.0.1:8080").unwrap().as_str(), "http://127.0.0.1:8080/");
+        assert_eq!(parse_base_url("http://localhost:8080/v1").unwrap().as_str(), "http://localhost:8080/v1");
+        assert_eq!(parse_base_url("http://[::1]:8080").unwrap().as_str(), "http://[::1]:8080/");
+        assert_eq!(
+            parse_base_url("https://proxy.example/gemini/").unwrap().as_str(),
+            "https://proxy.example/gemini"
+        );
+        for insecure in ["http://api.example.invalid", "http://10.0.0.1:8080/v1", "http://localhost.example"]
+        {
+            let e = parse_base_url(insecure).unwrap_err();
+            assert!(e.contains("loopback"), "{insecure}: {e}");
+        }
         assert!(parse_base_url("ftp://example.com").is_err());
         assert!(parse_base_url("https://user:pw@example.com").is_err());
         assert!(parse_base_url("https://example.com/?key=abc").is_err());
