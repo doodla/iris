@@ -109,9 +109,8 @@ header, documentation link, the free `check_access` metadata call) and opts into
 ```rust
 #[async_trait]
 pub trait Provider: Send + Sync {
+    /// Its default base URL and credential variable are the `ProviderId`'s.
     fn id(&self) -> ProviderId;
-    /// Defaults to `self.id().default_base_url()`, the one definition config also uses.
-    fn default_base_url(&self) -> &'static str { self.id().default_base_url() }
     fn credential_header(&self) -> CredentialHeader;
     /// The provider's official documentation (shown by `providers list`).
     fn docs_url(&self) -> &'static str;
