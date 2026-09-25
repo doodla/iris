@@ -90,6 +90,9 @@ pub struct VideoRequest {
 /// One generated image returned inline by a synchronous provider.
 #[derive(Clone)]
 pub struct GeneratedImage {
+    /// Position among the returned items ("response item N"), which differs from the
+    /// artifact index once an earlier item was not a usable image.
+    pub item: usize,
     /// Media type sniffed from the bytes (the provider's label may differ; see
     /// `output_format_mismatch`).
     pub media_type: String,
@@ -99,9 +102,28 @@ pub struct GeneratedImage {
 impl std::fmt::Debug for GeneratedImage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("GeneratedImage")
+            .field("item", &self.item)
             .field("media_type", &self.media_type)
             .field("bytes", &self.bytes.len())
             .finish()
+    }
+}
+
+/// The content of a returned item that is not a usable image (not base64, not a
+/// recognized image, or not an image at all), kept as received so that the app can
+/// save it: a paid output that reached Iris is never discarded. The reason is in
+/// the item's `output_item_unusable` warning, or in the error when no item was usable.
+#[derive(Clone, PartialEq, Eq)]
+pub struct UnusableOutput {
+    /// Position among the returned items ("response item N").
+    pub item: usize,
+    /// The decoded bytes, or the payload text itself when it was not valid base64.
+    pub bytes: Vec<u8>,
+}
+
+impl std::fmt::Debug for UnusableOutput {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UnusableOutput").field("item", &self.item).field("bytes", &self.bytes.len()).finish()
     }
 }
 
@@ -109,11 +131,37 @@ impl std::fmt::Debug for GeneratedImage {
 #[derive(Debug, Clone, Default)]
 pub struct ImageOutput {
     pub images: Vec<GeneratedImage>,
+    /// Returned items with content that are not usable images (each also named by
+    /// an `output_item_unusable` warning). The app saves them as received.
+    pub unusable: Vec<UnusableOutput>,
     /// Text returned alongside images (Gemini text parts, OpenAI revised prompt).
     pub text: Option<String>,
     pub usage: Option<Usage>,
     pub provider_request_id: Option<String>,
     pub warnings: Vec<Warning>,
+}
+
+/// A failed synchronous image call. When a completed (paid) response held items but
+/// none was a usable image, `unusable` carries their content so that the app can
+/// save it before reporting `error`; for every other failure it is empty. Derefs to
+/// the error.
+#[derive(Debug, Clone)]
+pub struct ImageFailure {
+    pub error: IrisError,
+    pub unusable: Vec<UnusableOutput>,
+}
+
+impl From<IrisError> for ImageFailure {
+    fn from(error: IrisError) -> Self {
+        ImageFailure { error, unusable: Vec::new() }
+    }
+}
+
+impl std::ops::Deref for ImageFailure {
+    type Target = IrisError;
+    fn deref(&self) -> &IrisError {
+        &self.error
+    }
 }
 
 /// A provider accepted an asynchronous job.
@@ -215,11 +263,13 @@ pub trait Provider: Send + Sync {
 }
 
 /// Synchronous image generation/editing. Paid, non-idempotent: implementations use the
-/// `PaidSubmit` retry class and never retry ambiguous failures.
+/// `PaidSubmit` retry class and never retry ambiguous failures. Every returned item
+/// reaches the app: usable images in `images`, other content in `unusable` (of the
+/// output, or of the failure when no item was usable).
 #[async_trait]
 pub trait ImageProvider: Send + Sync {
-    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError>;
-    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError>;
+    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure>;
+    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure>;
 }
 
 /// Provider-native asynchronous video jobs.

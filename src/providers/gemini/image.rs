@@ -18,7 +18,9 @@ use crate::catalog::gemini::MAX_REQUEST_BYTES;
 use crate::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass, TransportKind};
-use crate::providers::{GeneratedImage, ImageOutput, ImageRequest, ProviderContext};
+use crate::providers::{
+    GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, UnusableOutput,
+};
 use crate::redact;
 
 /// `finishReason` values meaning the output was blocked (per the Gemini API's error codes).
@@ -35,7 +37,11 @@ const BLOCKING_FINISH_REASONS: &[&str] = &[
 ];
 
 /// Run `image.generate` or `image.edit` (`op`) against `generateContent`.
-pub async fn run(op: Operation, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+pub async fn run(
+    op: Operation,
+    req: &ImageRequest,
+    ctx: &ProviderContext,
+) -> Result<ImageOutput, ImageFailure> {
     check_request_shape(op, req)?;
     client::validate_model_id(&req.model)?;
     let body = encode_request(req)?;
@@ -241,6 +247,9 @@ struct Unusable {
     declared: Option<String>,
     /// Sniffed type of content that is not an image (e.g. a video), if any.
     sniffed: Option<&'static str>,
+    /// The item's content as received: decoded bytes, or the data text when it is
+    /// not base64; `None` when it carried no data.
+    content: Option<Vec<u8>>,
 }
 
 /// Interpret a successful `generateContent` answer.
@@ -249,16 +258,17 @@ struct Unusable {
 /// Each is judged by its bytes, never by its label, and paid output is never
 /// discarded because of another item: a valid image is kept under its sniffed type
 /// (with `output_format_mismatch` when the label differs or is missing); an item that
-/// is not a usable image is skipped with `output_item_unusable`. Only an answer
-/// without any usable image is an error. Warnings name items by their position among
-/// the returned inline items ("response item N"), which differs from the artifact
-/// index once an earlier item was skipped.
+/// is not a usable image is skipped with `output_item_unusable`, its content handed
+/// to the app in `unusable` to be saved as received. Only an answer without any
+/// usable image is an error (with that content in the failure). Warnings name items
+/// by their position among the returned inline items ("response item N"), which
+/// differs from the artifact index once an earlier item was skipped.
 fn interpret(
     resp: GenerateContentResponse,
     status: u16,
     requested: usize,
     header_request_id: Option<String>,
-) -> Result<ImageOutput, IrisError> {
+) -> Result<ImageOutput, ImageFailure> {
     let request_id =
         header_request_id.or_else(|| resp.response_id.as_deref().and_then(crate::http::sanitize_request_id));
     let mut images = Vec::new();
@@ -283,9 +293,16 @@ fn interpret(
                 images.push(image);
                 mismatches.extend(mismatch);
             }
-            Err(problem) => unusable.push(problem),
+            Err(problem) => unusable.push((index, problem)),
         }
     }
+    let kept: Vec<UnusableOutput> = unusable
+        .iter_mut()
+        .filter_map(|(item, problem)| {
+            problem.content.take().map(|bytes| UnusableOutput { item: *item, bytes })
+        })
+        .collect();
+    let unusable: Vec<Unusable> = unusable.into_iter().map(|(_, problem)| problem).collect();
 
     let text = (!texts.is_empty()).then(|| texts.join("\n"));
     let usage = resp.usage_metadata.as_ref().and_then(usage_from_metadata);
@@ -304,7 +321,7 @@ fn interpret(
             if let Some(sniffed) = first.sniffed {
                 err = err.with_detail("sniffed_media_type", sniffed);
             }
-            return Err(err);
+            return Err(ImageFailure { error: err, unusable: kept });
         }
         let mut err = no_image_error(&resp, text.as_deref())
             .with_provider_status(status)
@@ -313,7 +330,7 @@ fn interpret(
         if let Some(usage) = usage.as_ref().and_then(|u| serde_json::to_value(u).ok()) {
             err = err.with_detail("usage", usage);
         }
-        return Err(err);
+        return Err(err.into());
     }
 
     let mut warnings = Vec::new();
@@ -340,7 +357,7 @@ fn interpret(
             ),
         ));
     }
-    Ok(ImageOutput { images, text, usage, provider_request_id: request_id, warnings })
+    Ok(ImageOutput { images, unusable: kept, text, usage, provider_request_id: request_id, warnings })
 }
 
 /// Decode one returned inline item (item `index`, labeled `declared`) and type it by
@@ -353,30 +370,35 @@ fn decode_image(
     data: &str,
 ) -> Result<(GeneratedImage, Option<Warning>), Unusable> {
     let label = declared.map(client::safe_text);
-    let unusable =
-        |why: String, sniffed: Option<&'static str>| Unusable { why, declared: label.clone(), sniffed };
+    let unusable = |why: String, sniffed: Option<&'static str>, content: Option<Vec<u8>>| Unusable {
+        why,
+        declared: label.clone(),
+        sniffed,
+        content,
+    };
     let labeled = match &label {
         Some(l) => format!("labeled {l}"),
         None => "without a media type".to_string(),
     };
     if data.trim().is_empty() {
-        return Err(unusable(format!("response item {index} ({labeled}) has no data"), None));
+        return Err(unusable(format!("response item {index} ({labeled}) has no data"), None, None));
     }
     let bytes = STANDARD_PAD_INDIFFERENT
         .decode(data)
         .or_else(|_| URL_SAFE_PAD_INDIFFERENT.decode(data))
-        .map_err(|_| unusable(format!("response item {index} ({labeled}) is not valid base64"), None))?;
+        .map_err(|_| {
+            let why = format!("response item {index} ({labeled}) is not valid base64");
+            unusable(why, None, Some(data.as_bytes().to_vec()))
+        })?;
     let sniffed = match media::sniff(&bytes) {
         Some(t) if media::is_image(t) => t,
         other => {
-            return Err(unusable(
-                format!(
-                    "response item {index} ({} bytes {labeled}) is {}",
-                    bytes.len(),
-                    other.map_or("not a recognized image".to_string(), |t| format!("{t}, not an image"))
-                ),
-                other,
-            ));
+            let why = format!(
+                "response item {index} ({} bytes {labeled}) is {}",
+                bytes.len(),
+                other.map_or("not a recognized image".to_string(), |t| format!("{t}, not an image"))
+            );
+            return Err(unusable(why, other, Some(bytes)));
         }
     };
     let matches_label = declared.is_some_and(|d| media::is_image(d) && media::accepts(&[d], sniffed));
@@ -389,7 +411,7 @@ fn decode_image(
             ),
         )
     });
-    Ok((GeneratedImage { media_type: sniffed.to_string(), bytes }, warning))
+    Ok((GeneratedImage { item: index, media_type: sniffed.to_string(), bytes }, warning))
 }
 
 /// Normalize `usageMetadata`: input = prompt tokens; output = candidate plus

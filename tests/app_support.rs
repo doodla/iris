@@ -26,8 +26,9 @@ use iris::domain::{CostEstimate, Operation, ProviderId, Usage, Warning};
 use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy};
 use iris::providers::{
-    AccountAccess, CredentialHeader, GeneratedImage, ImageOutput, ImageProvider, ImageRequest, Provider,
-    ProviderContext, Registry, RemoteArtifact, RemoteStatus, SubmittedOperation, VideoProvider, VideoRequest,
+    AccountAccess, CredentialHeader, GeneratedImage, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
+    Provider, ProviderContext, Registry, RemoteArtifact, RemoteStatus, SubmittedOperation, VideoProvider,
+    VideoRequest,
 };
 use tokio::sync::Notify;
 
@@ -320,7 +321,7 @@ pub fn fake_catalog() -> Catalog {
 #[derive(Default)]
 pub struct FakeImages {
     /// Results returned in order; when empty, one 8x8 PNG.
-    pub results: Mutex<VecDeque<Result<ImageOutput, IrisError>>>,
+    pub results: Mutex<VecDeque<Result<ImageOutput, ImageFailure>>>,
     pub calls: AtomicUsize,
     pub last_request: Mutex<Option<ImageRequest>>,
     /// The operation of the last call: which trait method was called.
@@ -333,16 +334,20 @@ pub struct FakeImages {
 
 #[async_trait]
 impl ImageProvider for FakeImages {
-    async fn generate(&self, req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+    async fn generate(
+        &self,
+        req: &ImageRequest,
+        _ctx: &ProviderContext,
+    ) -> Result<ImageOutput, ImageFailure> {
         self.answer(Operation::ImageGenerate, req).await
     }
-    async fn edit(&self, req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+    async fn edit(&self, req: &ImageRequest, _ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
         self.answer(Operation::ImageEdit, req).await
     }
 }
 
 impl FakeImages {
-    async fn answer(&self, op: Operation, req: &ImageRequest) -> Result<ImageOutput, IrisError> {
+    async fn answer(&self, op: Operation, req: &ImageRequest) -> Result<ImageOutput, ImageFailure> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         *self.last_request.lock().unwrap() = Some(req.clone());
         *self.last_operation.lock().unwrap() = Some(op);
@@ -356,7 +361,12 @@ impl FakeImages {
     }
 
     pub fn push(&self, result: Result<ImageOutput, IrisError>) {
-        self.results.lock().unwrap().push_back(result);
+        self.results.lock().unwrap().push_back(result.map_err(ImageFailure::from));
+    }
+
+    /// Answer the next call with a failure that carries returned content.
+    pub fn push_failure(&self, failure: ImageFailure) {
+        self.results.lock().unwrap().push_back(Err(failure));
     }
 }
 
@@ -522,11 +532,13 @@ pub fn image_output(images: Vec<Vec<u8>>) -> ImageOutput {
     ImageOutput {
         images: images
             .into_iter()
-            .map(|bytes| {
+            .enumerate()
+            .map(|(item, bytes)| {
                 let media_type = iris::artifacts::media::sniff(&bytes).unwrap_or("image/png").to_string();
-                GeneratedImage { media_type, bytes }
+                GeneratedImage { item, media_type, bytes }
             })
             .collect(),
+        unusable: Vec::new(),
         text: None,
         usage: None,
         provider_request_id: Some("req_fake_1".into()),

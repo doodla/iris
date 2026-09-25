@@ -564,7 +564,7 @@ the code's registry); the `message` says what happened in the case at hand:
 | `unexpected_output_count` | the provider returned another number of items than requested; every usable image was kept |
 | `status_refresh_failed` | the job's remote status could not be refreshed; the last known status is shown |
 | `output_item_unusable` | a returned item is not a usable image and was skipped; every usable image was kept |
-| `output_saved_elsewhere` | paid output could not be saved where it was requested and was saved in the state directory instead |
+| `output_saved_elsewhere` | paid output was saved in the state directory instead of where it was requested: an image that could not be written there (also listed in `artifacts`), or the content of a returned item that is not a usable image, kept as received (`.bin`, not an artifact) |
 | `output_extension_may_change` | (plan time, dry run and real run) the model has no `format` option, so the provider chooses the image type: the `-o` extension may be replaced by the returned type's (then reported with `output_extension_adjusted`) |
 
 Paid image output is judged by its bytes, never by the provider's label, and one bad item never
@@ -577,15 +577,27 @@ artifact `index` once an earlier item was skipped; `unexpected_output_count` cou
 not. Only a response with no usable image at all fails, as `provider_bad_response` with
 `details.charge_possible: true`.
 
+Returned content that is not a valid image is paid output too, and is never thrown away: the
+content of a skipped item (the decoded bytes, or the payload as received when it is not valid
+base64), and an item that looked like an image but does not decode (the command then fails with
+`invalid_media`), is kept unchanged in `<state_dir>/unsaved/<id>-<n>.bin`, where `<id>` is shared
+by every file one command keeps and `n` is the item's position in the response. Each such file gets
+an `output_saved_elsewhere` warning naming it, in a failed command's envelope too (human mode prints
+warnings, not `details`). These files hold no valid image and are never listed in `artifacts`. If
+the file cannot be written either, a successful command says so in an `output_item_unusable`
+warning, and a failed one in `details.fallback_error`.
+
 If a valid image cannot be written where it was requested after the paid call (an I/O failure
 after preflight, e.g. a full disk or an output directory removed meanwhile), Iris writes it to
 `<state_dir>/unsaved/<id>-<index>.<ext>` instead (a private directory; `iris config path` shows
 the state directory), lists that path in the result's `artifacts`, and adds an
-`output_saved_elsewhere` warning naming it. If an image cannot be saved at all (content that is
-not a valid image stays `invalid_media`; or the fallback location fails too), the error carries
-`details.charge_possible: true`, `details.saved` (every image that was saved, wherever),
-`details.fallback_paths` (those saved under `unsaved/`), and `details.index` of the first image
-that was lost.
+`output_saved_elsewhere` warning naming it. If saving fails anyway (content that does not decode,
+or an image that cannot be saved even there), the error carries `details.charge_possible: true`,
+`details.saved` (every image that was saved, wherever), `details.index` (the artifact index of the
+first image that could not be saved as an image), and `details.fallback_paths`: every file kept
+under `unsaved/`, images and `.bin` content alike. A `provider_bad_response` for a response without
+a usable image carries `details.fallback_paths` too when the response held content to keep.
+`details.fallback_error` says why a file could not be kept either.
 
 Real example — an output path with no extension and a `--format` that didn't match what the
 provider actually returned (three warnings from one request, all real, from a mock-server run: the

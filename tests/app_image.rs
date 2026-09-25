@@ -15,6 +15,7 @@ use iris::catalog::{OptionSource, OptionValue, RawOption};
 use iris::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use iris::error::{ErrorCode, IrisError};
 use iris::output::results::{ImageResult, PlanResult};
+use iris::providers::{GeneratedImage, ImageFailure, ImageOutput, UnusableOutput};
 use support::*;
 
 fn args(prompt: &str) -> ImageArgs {
@@ -364,23 +365,164 @@ async fn extra_images_text_and_provider_warnings_are_all_kept() {
     assert!(has_warning(&warnings, "provider_text_output"));
 }
 
+/// Content the provider labeled an image that does not decode is still paid output:
+/// the command fails with `invalid_media`, and the bytes are kept as received in the
+/// state directory (`details.fallback_paths`, and a warning naming the file), never
+/// at the requested path.
 #[tokio::test]
-async fn invalid_media_from_the_provider_is_not_saved() {
+async fn invalid_media_from_the_provider_is_kept_as_received() {
     let f = Fixture::new();
-    f.openai.images().push(Ok(image_output(vec![b"{\"error\": \"nope\"}".to_vec()])));
+    let content = b"{\"error\": \"nope\"}".to_vec();
+    f.openai.images().push(Ok(image_output(vec![content.clone()])));
     let mut a = args("x");
     a.common.output = Some(f.sandbox.path("bad.png"));
-    let (r, _) = f.run(Operation::ImageGenerate, a).await;
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
     let e = r.unwrap_err();
     assert_eq!(e.code, ErrorCode::InvalidMedia);
     assert_eq!(e.provider_request_id.as_deref(), Some("req_fake_1"));
     assert_eq!(e.details.get("charge_possible"), Some(&serde_json::json!(true)), "{:?}", e.details);
     assert_eq!(e.details.get("saved"), Some(&serde_json::json!([])));
-    assert_eq!(e.details.get("fallback_paths"), Some(&serde_json::json!([])));
+    let fallback = e.details["fallback_paths"].as_array().unwrap();
+    assert_eq!(fallback.len(), 1, "{:?}", e.details);
+    let raw = PathBuf::from(fallback[0].as_str().unwrap());
+    assert_eq!(raw.parent().unwrap(), f.sandbox.state().join("unsaved"));
+    assert!(raw.extension().is_some_and(|ext| ext == "bin"), "{}", raw.display());
+    assert_eq!(std::fs::read(&raw).unwrap(), content);
+    let named = warnings
+        .iter()
+        .filter(|w| w.is(WarningCode::OutputSavedElsewhere))
+        .any(|w| w.message.contains(raw.to_str().unwrap()) && w.message.contains("response item 0"));
+    assert!(named, "{warnings:?}");
     assert!(e.hint.as_deref().unwrap().contains("may have billed"), "{:?}", e.hint);
     assert_ne!(e.retryable, Some(true));
     assert!(files_in(&f.sandbox.work()).is_empty(), "{:?}", files_in(&f.sandbox.work()));
-    assert!(!f.sandbox.state().join("unsaved").exists(), "content that is not an image is not kept");
+}
+
+/// Returned items that are not usable images reach the app as raw content: next to
+/// usable images they are kept in the state directory with a warning naming the
+/// file (they are not artifacts); with no usable image, the error lists them.
+#[tokio::test]
+async fn content_that_is_not_an_image_is_kept_as_received() {
+    let f = Fixture::new();
+    let unusable = |item: usize, bytes: &[u8]| UnusableOutput { item, bytes: bytes.to_vec() };
+
+    let mut out = image_output(vec![png(4, 4)]);
+    out.unusable = vec![unusable(1, b"not an image"), unusable(2, b"%%%not base64%%%")];
+    f.openai.images().push(Ok(out));
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("ok.png"));
+    a.common.options = vec![flag("count", "3", "--count")];
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let res = completed(r.unwrap());
+    assert_eq!(res.artifacts.len(), 1, "only images are artifacts");
+    let kept: Vec<&Warning> = warnings.iter().filter(|w| w.is(WarningCode::OutputSavedElsewhere)).collect();
+    assert_eq!(kept.len(), 2, "{warnings:?}");
+    let unsaved = f.sandbox.state().join("unsaved");
+    let mut raw = files_in(&unsaved);
+    raw.sort();
+    assert_eq!(raw.len(), 2, "{raw:?}");
+    for (name, (item, content)) in raw.iter().zip([(1, &b"not an image"[..]), (2, b"%%%not base64%%%")]) {
+        assert!(name.ends_with(&format!("-{item}.bin")), "{name}");
+        assert_eq!(std::fs::read(unsaved.join(name)).unwrap(), content);
+        assert!(kept.iter().any(|w| w.message.contains(&*unsaved.join(name).to_string_lossy())), "{kept:?}");
+    }
+
+    // No usable image: the provider's error, with every kept file.
+    f.openai.images().push_failure(ImageFailure {
+        error: IrisError::new(ErrorCode::ProviderBadResponse, "no usable image")
+            .with_provider(ProviderId::OpenAi)
+            .with_detail("charge_possible", true),
+        unusable: vec![unusable(0, b"first"), unusable(1, b"second")],
+    });
+    let (r, warnings) = f.run(Operation::ImageGenerate, args("x")).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::ProviderBadResponse);
+    assert_ne!(e.retryable, Some(true));
+    let fallback: Vec<PathBuf> = e.details["fallback_paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| PathBuf::from(p.as_str().unwrap()))
+        .collect();
+    assert_eq!(fallback.len(), 2, "{:?}", e.details);
+    assert_eq!(std::fs::read(&fallback[0]).unwrap(), b"first");
+    assert_eq!(std::fs::read(&fallback[1]).unwrap(), b"second");
+    // Warnings name the files too: the only place human mode shows them.
+    for path in &fallback {
+        let named = warnings
+            .iter()
+            .any(|w| w.is(WarningCode::OutputSavedElsewhere) && w.message.contains(path.to_str().unwrap()));
+        assert!(named, "{warnings:?}");
+    }
+    assert_eq!(files_in(&f.sandbox.work()), ["ok.png"], "nothing new at the requested location");
+}
+
+/// Every kept file is named by the item's position in the response, so content
+/// from a skipped item and from an image that does not decode never compete for a
+/// name, and a failing command lists both.
+#[tokio::test]
+async fn kept_content_is_named_by_response_position_and_all_of_it_is_listed() {
+    let f = Fixture::new();
+    // Item 0 was skipped by the adapter; item 1 looked like a PNG but is truncated.
+    let truncated = png(4, 4)[..40].to_vec();
+    let out = ImageOutput {
+        images: vec![GeneratedImage { item: 1, media_type: "image/png".into(), bytes: truncated.clone() }],
+        unusable: vec![UnusableOutput { item: 0, bytes: b"skipped".to_vec() }],
+        ..image_output(Vec::new())
+    };
+    f.openai.images().push(Ok(out));
+    let (r, warnings) = f.run(Operation::ImageGenerate, args("x")).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.code, ErrorCode::InvalidMedia);
+    assert_eq!(e.details["index"], 0, "the artifact index of the image that could not be saved");
+    let fallback: Vec<String> = e.details["fallback_paths"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p.as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(fallback.len(), 2, "{:?}", e.details);
+    assert!(fallback[0].ends_with("-0.bin"), "{fallback:?}");
+    assert!(fallback[1].ends_with("-1.bin"), "{fallback:?}");
+    assert_eq!(std::fs::read(&fallback[0]).unwrap(), b"skipped");
+    assert_eq!(std::fs::read(&fallback[1]).unwrap(), truncated);
+    assert_eq!(files_in(&f.sandbox.state().join("unsaved")).len(), 2, "no renamed duplicates");
+    let elsewhere = warnings.iter().filter(|w| w.is(WarningCode::OutputSavedElsewhere)).count();
+    assert_eq!(elsewhere, 2, "{warnings:?}");
+}
+
+/// If the state directory cannot take the content either, a success says so in a
+/// warning and a failure in `details.fallback_error`; neither is hidden.
+#[tokio::test]
+async fn content_that_cannot_be_kept_either_is_reported() {
+    let f = Fixture::new();
+    std::fs::create_dir_all(f.sandbox.state()).unwrap();
+    std::fs::write(f.sandbox.state().join("unsaved"), b"not a directory").unwrap();
+
+    let mut out = image_output(vec![png(4, 4)]);
+    out.unusable = vec![UnusableOutput { item: 1, bytes: b"lost".to_vec() }];
+    f.openai.images().push(Ok(out));
+    let mut a = args("x");
+    a.common.output = Some(f.sandbox.path("ok.png"));
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    assert_eq!(completed(r.unwrap()).artifacts.len(), 1, "the image itself is saved where requested");
+    let said = warnings
+        .iter()
+        .any(|w| w.is(WarningCode::OutputItemUnusable) && w.message.contains("could not be kept either"));
+    assert!(said, "{warnings:?}");
+    assert!(!warnings.iter().any(|w| w.is(WarningCode::OutputSavedElsewhere)), "{warnings:?}");
+
+    f.openai.images().push_failure(ImageFailure {
+        error: IrisError::new(ErrorCode::ProviderBadResponse, "no usable image")
+            .with_provider(ProviderId::OpenAi)
+            .with_detail("charge_possible", true),
+        unusable: vec![UnusableOutput { item: 0, bytes: b"lost".to_vec() }],
+    });
+    let (r, _) = f.run(Operation::ImageGenerate, args("x")).await;
+    let e = r.unwrap_err();
+    assert_eq!(e.details["fallback_paths"], serde_json::json!([]), "{:?}", e.details);
+    assert!(e.details["fallback_error"].as_str().is_some(), "{:?}", e.details);
+    assert_ne!(e.retryable, Some(true));
 }
 
 /// Make the next call replace the (preflighted) directory `dir` with a regular
@@ -444,10 +586,13 @@ async fn a_save_error_lists_the_images_kept_elsewhere_and_says_it_may_be_charged
     assert_eq!(e.details.get("index"), Some(&serde_json::json!(1)));
     assert_eq!(e.details.get("charge_possible"), Some(&serde_json::json!(true)));
     let fallback = e.details["fallback_paths"].as_array().unwrap();
-    assert_eq!(fallback.len(), 1, "{:?}", e.details);
+    assert_eq!(fallback.len(), 2, "the image and the raw content: {:?}", e.details);
     let kept = PathBuf::from(fallback[0].as_str().unwrap());
     assert_eq!(std::fs::read(&kept).unwrap(), image);
-    assert_eq!(e.details["saved"], serde_json::json!([kept.to_str().unwrap()]));
+    let raw = PathBuf::from(fallback[1].as_str().unwrap());
+    assert!(raw.to_str().unwrap().ends_with("-1.bin"), "{}", raw.display());
+    assert_eq!(std::fs::read(&raw).unwrap(), b"{\"error\": 1}", "kept exactly as received");
+    assert_eq!(e.details["saved"], serde_json::json!([kept.to_str().unwrap()]), "saved lists images only");
     assert!(has_warning(&warnings, "output_saved_elsewhere"));
     assert_eq!(e.provider_request_id.as_deref(), Some("req_fake_1"));
 }

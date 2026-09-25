@@ -18,8 +18,8 @@ use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy, Timeouts};
 use iris::providers::openai::OpenAiProvider;
 use iris::providers::{
-    AccountAccess, ImageOutput, ImageProvider, ImageRequest, InputImage, InputRole, Provider,
-    ProviderContext, Registry,
+    AccountAccess, ImageFailure, ImageOutput, ImageProvider, ImageRequest, InputImage, InputRole, Provider,
+    ProviderContext, Registry, UnusableOutput,
 };
 use iris::secret::Secret;
 use serde_json::{Value, json};
@@ -199,12 +199,12 @@ fn header<'a>(req: &'a Request, name: &str) -> Option<&'a str> {
     req.headers.get(name).and_then(|v| v.to_str().ok())
 }
 
-async fn generate(server: &MockServer, opts: ResolvedOptions) -> Result<ImageOutput, IrisError> {
+async fn generate(server: &MockServer, opts: ResolvedOptions) -> Result<ImageOutput, ImageFailure> {
     OpenAiProvider::new().generate(&generate_request(opts), &ctx(server)).await
 }
 
 async fn generate_err(server: &MockServer) -> IrisError {
-    generate(server, ResolvedOptions::new()).await.expect_err("expected an error")
+    generate(server, ResolvedOptions::new()).await.expect_err("expected an error").error
 }
 
 // ---------------------------------------------------------------- provider metadata
@@ -432,7 +432,7 @@ async fn generate_and_edit_refuse_requests_they_cannot_express_without_sending()
 
 async fn edit_err(server: &MockServer, images: Vec<InputImage>, mask: Option<InputImage>) -> IrisError {
     let req = edit_request(images, mask, ResolvedOptions::new());
-    OpenAiProvider::new().edit(&req, &ctx(server)).await.expect_err("expected a local rejection")
+    OpenAiProvider::new().edit(&req, &ctx(server)).await.expect_err("expected a local rejection").error
 }
 
 #[tokio::test]
@@ -730,6 +730,19 @@ async fn unusable_success_bodies_are_provider_bad_response_and_never_retried() {
         assert_eq!(err.details.get("charge_possible"), Some(&json!(true)), "{name}");
         assert!(!err.message.contains("sig=abc"), "{name}: {}", err.message);
         assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
+        // Paid content that reached Iris goes to the app as received, to be kept.
+        let content: &[u8] = match name {
+            "bad base64" => b"@@not base64@@",
+            "not an image" => b"{\"error\":1}",
+            "a video, not an image" => mp4_head,
+            _ => b"",
+        };
+        let expected: Vec<UnusableOutput> = if content.is_empty() {
+            Vec::new()
+        } else {
+            vec![UnusableOutput { item: 0, bytes: content.to_vec() }]
+        };
+        assert_eq!(err.unusable, expected, "{name}");
     }
     // The video case says what the content was.
     let server = MockServer::start().await;
@@ -779,6 +792,15 @@ async fn one_unusable_item_never_drops_the_usable_images() {
             "{name}: {message}"
         );
         assert!(!message.contains("sig=abc"), "{name}: {message}");
+        let content: Option<Vec<u8>> = match name {
+            "bad base64" => Some(b"@@not base64@@".to_vec()),
+            "an error body" => Some(b"{\"error\":1}".to_vec()),
+            "a video" => Some(mp4_head.to_vec()),
+            _ => None,
+        };
+        let expected: Vec<UnusableOutput> =
+            content.into_iter().map(|bytes| UnusableOutput { item: at, bytes }).collect();
+        assert_eq!(out.unusable, expected, "{name}: the skipped item's content, as received");
         assert_eq!(out.usage.as_ref().and_then(|u| u.output_tokens), Some(9), "{name}: usage is kept");
         assert_eq!(out.provider_request_id.as_deref(), Some("req_ok_123"), "{name}");
         assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
@@ -808,6 +830,7 @@ async fn one_unusable_item_never_drops_the_usable_images() {
         err.message
     );
     assert_eq!(err.details.get("charge_possible"), Some(&json!(true)));
+    assert_eq!(err.unusable, [UnusableOutput { item: 1, bytes: b"@@".to_vec() }]);
 }
 
 #[tokio::test]

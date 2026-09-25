@@ -239,7 +239,7 @@ file at the target path is refused as `output_exists` unless `--overwrite` is pa
 silently replaces a file. A paid image is never thrown away either: if it cannot be written where
 you asked after the request was made (say the disk filled up or the directory was removed), Iris
 saves it under `<state dir>/unsaved/` instead and reports the path (`iris config path` shows the
-state dir).
+state dir). Returned content that is not a valid image is kept there too, as received (`.bin`).
 
 The extension of `-o` also picks the image type for models that take a format (OpenAI's `-o
 fox.jpg` requests JPEG). Gemini image models take none: the provider chooses the type (live runs

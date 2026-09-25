@@ -449,7 +449,7 @@ async fn generate_image(provider: ProviderId, server: &Server) -> IrisError {
         ProviderId::OpenAi => OpenAiProvider::new().generate(&req, &ctx).await,
         _ => GeminiProvider::new().generate(&req, &ctx).await,
     };
-    result.expect_err("expected an error")
+    result.expect_err("expected an error").error
 }
 
 /// One way a paid answer fails to arrive whole, and what the error says happened.

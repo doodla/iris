@@ -11,8 +11,8 @@ use iris::error::{ErrorCode, IrisError};
 use iris::http::{HttpClient, HttpSettings, RetryPolicy, Timeouts};
 use iris::providers::gemini::GeminiProvider;
 use iris::providers::{
-    AccountAccess, ImageOutput, ImageProvider, ImageRequest, InputImage, InputRole, Provider,
-    ProviderContext, Registry, VideoProvider,
+    AccountAccess, ImageFailure, ImageOutput, ImageProvider, ImageRequest, InputImage, InputRole, Provider,
+    ProviderContext, Registry, UnusableOutput, VideoProvider,
 };
 use iris::secret::Secret;
 use serde_json::{Value, json};
@@ -151,7 +151,7 @@ fn assert_header_auth(reqs: &[Request]) {
     }
 }
 
-async fn generate(server: &MockServer, req: &ImageRequest) -> Result<ImageOutput, IrisError> {
+async fn generate(server: &MockServer, req: &ImageRequest) -> Result<ImageOutput, ImageFailure> {
     GeminiProvider::new().generate(req, &ctx(server)).await
 }
 
@@ -364,7 +364,8 @@ async fn no_image_error(body: Value) -> IrisError {
     let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
     assert_eq!(requests(&server).await.len(), 1, "a 200 without an image is never retried");
     assert_eq!(err.provider, Some(ProviderId::Gemini));
-    err
+    assert!(err.unusable.is_empty(), "no inline item came back");
+    err.error
 }
 
 #[tokio::test]
@@ -492,12 +493,17 @@ async fn one_bad_item_never_drops_the_good_ones() {
 
     // A correct image next to items that are not images: the image is kept, each
     // unusable item is named in its own warning.
-    let bad_items = vec![
-        json!({"inlineData": {"mimeType": "image/png", "data": "not base64 at all!!"}}),
-        image_part("image/png", b"{\"error\": \"not an image\"}"),
-        json!({"inlineData": {"mimeType": "image/png"}}),
+    // (item, its content as handed to the app: the payload text when it is not
+    // base64, the decoded bytes otherwise, nothing when there is no data)
+    let bad_items: Vec<(Value, Option<&[u8]>)> = vec![
+        (
+            json!({"inlineData": {"mimeType": "image/png", "data": "not base64 at all!!"}}),
+            Some(b"not base64 at all!!"),
+        ),
+        (image_part("image/png", b"{\"error\": \"not an image\"}"), Some(b"{\"error\": \"not an image\"}")),
+        (json!({"inlineData": {"mimeType": "image/png"}}), None),
     ];
-    for (i, bad) in bad_items.into_iter().enumerate() {
+    for (i, (bad, content)) in bad_items.into_iter().enumerate() {
         let server = MockServer::start().await;
         mount_ok(&server, response_with(vec![bad, image_part("image/png", &good)], "STOP")).await;
         let out = generate(&server, &generate_request(ResolvedOptions::new()))
@@ -516,6 +522,9 @@ async fn one_bad_item_never_drops_the_good_ones() {
         let count = &out.warnings[1].message;
         assert!(count.contains("returned 2 items (1 usable) for a request of 1"), "case {i}: {count}");
         assert!(out.usage.is_some(), "case {i}: usage is still reported");
+        let expected: Vec<UnusableOutput> =
+            content.into_iter().map(|bytes| UnusableOutput { item: 0, bytes: bytes.to_vec() }).collect();
+        assert_eq!(out.unusable, expected, "case {i}");
     }
 }
 
@@ -534,6 +543,13 @@ async fn an_answer_without_any_usable_image_is_a_bad_response_that_may_be_charge
         assert_eq!(err.details["declared_media_type"], "image/png", "{data}");
         assert_ne!(err.retryable, Some(true), "{data}");
         assert_eq!(requests(&server).await.len(), 1, "{data}");
+        // The content goes to the app as received, to be kept.
+        let content = if data.starts_with("not") {
+            data.as_bytes().to_vec()
+        } else {
+            b"{\"error\": \"not an image\"}".to_vec()
+        };
+        assert_eq!(err.unusable, [UnusableOutput { item: 0, bytes: content }], "{data}");
     }
     // Inline data of another kind is judged by its bytes too: a video is not an image.
     let mp4_head = b"\x00\x00\x00\x18ftypisom\x00\x00\x02\x00isommp41";
@@ -542,6 +558,7 @@ async fn an_answer_without_any_usable_image_is_a_bad_response_that_may_be_charge
     let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse);
     assert_eq!(err.details["sniffed_media_type"], "video/mp4");
+    assert_eq!(err.unusable, [UnusableOutput { item: 0, bytes: mp4_head.to_vec() }]);
 }
 
 #[tokio::test]
@@ -580,7 +597,7 @@ async fn error_case(status: u16, body: Value) -> (IrisError, usize) {
         .mount(&server)
         .await;
     let err = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err();
-    (err, requests(&server).await.len())
+    (err.error, requests(&server).await.len())
 }
 
 #[tokio::test]

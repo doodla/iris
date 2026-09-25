@@ -329,7 +329,8 @@ validated (magic bytes and structure, and an API error document served as 200 is
 renamed into place without replacing an existing file unless `--overwrite` is given. A download
 is capped at 4 GiB. Repeating a download of an intact file does nothing
 (`already_downloaded`). A paid image that cannot be saved where requested is written to
-`<state_dir>/unsaved/` and reported, never discarded.
+`<state_dir>/unsaved/` and reported, never discarded; so is returned content that is not a valid
+image, kept as received (`.bin`).
 
 **Why.** The Veo guide downloads outputs with the API key and `curl -L`, so a redirect is
 expected and its target host is not documented. `reqwest`'s default redirect policy removes a

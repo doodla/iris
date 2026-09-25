@@ -411,6 +411,70 @@ fn an_unusable_openai_item_never_costs_the_good_image() {
     assert!(unusable[0]["message"].as_str().unwrap().contains("response item 1 "), "{v}");
     assert!(v["result"]["cost_estimate"]["amount"].as_f64().is_some(), "usage still gives an estimate: {v}");
     assert_eq!(files_in(&sb.work()).len(), 1, "{:?}", files_in(&sb.work()));
+    // The unusable item's content was paid for too: it is kept, as received, in the
+    // state directory, and a warning names the file.
+    let unsaved = sb.state().join("unsaved");
+    let kept = files_in(&unsaved);
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].ends_with("-1.bin"), "{kept:?}");
+    assert_eq!(std::fs::read(unsaved.join(&kept[0])).unwrap(), br#"{"error": {"message": "x"}}"#);
+    let elsewhere: Vec<&Value> =
+        v["warnings"].as_array().unwrap().iter().filter(|w| w["code"] == "output_saved_elsewhere").collect();
+    assert_eq!(elsewhere.len(), 1, "{v}");
+    assert!(
+        elsewhere[0]["message"].as_str().unwrap().contains(unsaved.join(&kept[0]).to_str().unwrap()),
+        "{v}"
+    );
+}
+
+/// A completed answer with no usable image fails, yet its paid content is kept as
+/// received and the user is told where: `details.fallback_paths` and an
+/// `output_saved_elsewhere` warning in JSON mode, the warning line in human mode
+/// (which never prints details).
+#[test]
+fn a_paid_answer_without_a_usable_image_keeps_its_content_and_says_where() {
+    let content = br#"{"error": "not an image"}"#;
+    for json_mode in [true, false] {
+        let sb = Sandbox::new();
+        let api = MockApi::start();
+        api.on(
+            "POST",
+            &gemini_generate_path(GEMINI_DEFAULT_IMAGE_MODEL),
+            gemini_parts(json!([inline_part("image/png", content)])),
+        );
+        let mut iris = sb.iris();
+        iris.gemini(&api).args(["image", "generate", PROMPT, "--provider", "gemini", "-o", "fox.png"]);
+        if json_mode {
+            iris.arg("--json");
+        }
+        let out = iris.run();
+        assert_eq!(api.total(), 1, "a paid call is never repeated");
+        let unsaved = sb.state().join("unsaved");
+        let kept = files_in(&unsaved);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert!(kept[0].ends_with("-0.bin"), "named by its response position: {kept:?}");
+        let kept = unsaved.join(&kept[0]);
+        assert_eq!(std::fs::read(&kept).unwrap(), content, "kept exactly as received");
+        let kept = kept.to_str().unwrap();
+        assert!(files_in(&sb.work()).is_empty(), "nothing at the requested location");
+        if json_mode {
+            let v = out.err(1, "provider_bad_response");
+            assert_eq!(v["error"]["details"]["charge_possible"], true, "{v}");
+            assert_ne!(v["error"]["retryable"], true, "possibly charged: {v}");
+            assert_eq!(v["error"]["details"]["fallback_paths"], json!([kept]), "{v}");
+            let named = v["warnings"].as_array().unwrap().iter().any(|w| {
+                w["code"] == "output_saved_elsewhere" && w["message"].as_str().unwrap().contains(kept)
+            });
+            assert!(named, "{v}");
+        } else {
+            assert_eq!(out.code, 1, "{}", out.stderr);
+            out.assert_hygiene();
+            assert!(out.stdout.is_empty(), "no image was saved: {}", out.stdout);
+            let line = out.stderr.lines().find(|l| l.starts_with("warning[output_saved_elsewhere]"));
+            assert!(line.is_some_and(|l| l.contains(kept)), "{}", out.stderr);
+            assert!(out.stderr.contains("error[provider_bad_response]"), "{}", out.stderr);
+        }
+    }
 }
 
 #[test]

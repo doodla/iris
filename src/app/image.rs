@@ -7,8 +7,9 @@
 //! directory checked but not created) → `--dry-run` plan → credential → output
 //! directories created and proven writable → provider call → save every image
 //! (never discarding paid output: a file that appeared meanwhile makes the image go
-//! to `<stem>.<n>.<ext>`, and an image that cannot be saved there at all goes to
-//! `<state_dir>/unsaved/`).
+//! to `<stem>.<n>.<ext>`, an image that cannot be saved there at all goes to
+//! `<state_dir>/unsaved/`, and returned content that is not a valid image is kept
+//! there as received, as `.bin`).
 
 use std::path::PathBuf;
 
@@ -17,7 +18,7 @@ use crate::catalog::{self, InputCounts, OptionSource, RawOption, ResolvedModel};
 use crate::domain::{Artifact, JobStatus, Operation, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{ImageResult, PlanResult};
-use crate::providers::{ImageOutput, ImageRequest, InputRole};
+use crate::providers::{ImageFailure, ImageOutput, ImageRequest, InputRole, UnusableOutput};
 
 use super::context::AppContext;
 use super::request::{self, GenerationArgs, GenerationOutcome};
@@ -180,6 +181,8 @@ async fn run_checked(
         if count == 1 { "" } else { "s" },
         resolved.id
     ));
+    // Names every file this command may keep in the state directory.
+    let run_id = ulid::Ulid::generate().to_string().to_ascii_lowercase();
     ctx.interrupt.arm();
     let seen = ctx.interrupt.count();
     let call = async {
@@ -189,7 +192,10 @@ async fn run_checked(
         }
     };
     let output: ImageOutput = tokio::select! {
-        result = call => result.map_err(|e| with_usage_estimate(e, &resolved))?,
+        result = call => match result {
+            Ok(output) => output,
+            Err(failure) => return Err(failed_call(ctx, &run_id, failure, &resolved, warnings)),
+        },
         () = ctx.interrupt.after(seen) => {
             // Interrupted, but the outcome is as uncertain as a lost connection: not retryable.
             return Err(IrisError::new(
@@ -205,19 +211,23 @@ async fn run_checked(
             ));
         }
     };
+    warnings.extend(output.warnings.iter().cloned());
+    let kept = keep_unusable(ctx, &run_id, &output.unusable, warnings);
     if output.images.is_empty() {
-        return Err(IrisError::new(
-            ErrorCode::ProviderBadResponse,
-            "the provider reported success but returned no image",
-        )
-        .with_provider(provider)
-        .with_provider_request_id(output.provider_request_id.clone())
-        .with_detail("charge_possible", true)
-        .with_hint(
-            "the request completed, so the provider may have billed it; Iris did not retry automatically",
+        return Err(kept.report(
+            IrisError::new(
+                ErrorCode::ProviderBadResponse,
+                "the provider reported success but returned no image",
+            )
+            .with_provider(provider)
+            .with_provider_request_id(output.provider_request_id.clone())
+            .with_detail("charge_possible", true)
+            .with_hint(
+                "the request completed, so the provider may have billed it; Iris did not retry automatically",
+            ),
+            Vec::new(),
         ));
     }
-    warnings.extend(output.warnings.iter().cloned());
 
     // Save every returned image. If the provider returned another number of images
     // than planned, plan names for what arrived; those paths were not preflighted,
@@ -236,20 +246,20 @@ async fn run_checked(
         ))
         .map(|replanned| (replanned.paths, FinalizeMode::RenameOnConflict))
     };
-    let saving = save_all(ctx, &output, &planned, warnings);
+    let saving = save_all(ctx, &run_id, &output, &planned, warnings);
     if let Some(e) = saving.failure {
         let paths = |artifacts: &[Artifact]| artifacts.iter().map(|a| a.path.clone()).collect::<Vec<_>>();
+        let e = kept.report(e, saving.elsewhere);
         return Err(e
             .with_provider(provider)
             .with_provider_request_id(output.provider_request_id.clone())
             .with_detail("saved", paths(&saving.saved))
-            .with_detail("fallback_paths", saving.elsewhere)
             .with_detail("charge_possible", true)
             .with_hint(
                 "the provider completed this request and may have billed it; Iris did not retry \
-                 automatically. Every image that could be saved is listed in details.saved \
-                 (details.fallback_paths lists those saved in Iris's state directory instead of where \
-                 they were requested)",
+                 automatically. Every image that could be saved is listed in details.saved; \
+                 details.fallback_paths lists the files kept in Iris's state directory instead of where \
+                 they were requested (content that is not a valid image is kept as received, as .bin)",
             ));
     }
     let saved = saving.saved;
@@ -278,6 +288,104 @@ async fn run_checked(
     }))
 }
 
+/// The error of a failed image call, once any paid content that came with it (items
+/// of a completed response, none of them a usable image) is kept in the state
+/// directory (`details.fallback_paths`, and a warning per file), and a cost
+/// estimate is added from charged usage.
+fn failed_call(
+    ctx: &AppContext,
+    run_id: &str,
+    failure: ImageFailure,
+    model: &ResolvedModel,
+    warnings: &mut Vec<Warning>,
+) -> IrisError {
+    let ImageFailure { error, unusable } = failure;
+    let error = with_usage_estimate(error, model);
+    if unusable.is_empty() {
+        return error;
+    }
+    keep_unusable(ctx, run_id, &unusable, warnings).report(error, Vec::new())
+}
+
+/// Where the content of returned items that are not usable images was kept.
+struct Kept {
+    /// Files written in the state directory.
+    paths: Vec<String>,
+    /// The first failure to keep an item's content.
+    failure: Option<String>,
+}
+
+impl Kept {
+    /// `error` with every file kept in the state directory in
+    /// `details.fallback_paths` (these, then `more`), and the first failure to keep
+    /// one in `details.fallback_error` unless the error already gives one.
+    fn report(self, error: IrisError, more: Vec<String>) -> IrisError {
+        let mut paths = self.paths;
+        paths.extend(more);
+        let error = error.with_detail("fallback_paths", paths);
+        match self.failure {
+            Some(failure) if !error.details.contains_key("fallback_error") => {
+                error.with_detail("fallback_error", failure)
+            }
+            _ => error,
+        }
+    }
+}
+
+/// Keep the content of returned items that are not usable images (see
+/// [`keep_raw`]). An item whose content cannot be kept either gets an
+/// `output_item_unusable` warning saying so.
+fn keep_unusable(
+    ctx: &AppContext,
+    run_id: &str,
+    unusable: &[UnusableOutput],
+    warnings: &mut Vec<Warning>,
+) -> Kept {
+    let mut kept = Kept { paths: Vec::new(), failure: None };
+    for u in unusable {
+        match keep_raw(ctx, run_id, u.item, &u.bytes, "is not a usable image", warnings) {
+            Ok(path) => kept.paths.push(path),
+            Err(e) => {
+                warnings.push(Warning::new(
+                    WarningCode::OutputItemUnusable,
+                    format!(
+                        "the content of response item {} could not be kept either: {}",
+                        u.item, e.message
+                    ),
+                ));
+                kept.failure.get_or_insert(e.message.clone());
+            }
+        }
+    }
+    kept
+}
+
+/// Save paid content that is not a valid image exactly as received, to
+/// `<state_dir>/unsaved/<run_id>-<item>.bin` (`item`: its position in the response,
+/// so names never collide within a command), with an `output_saved_elsewhere`
+/// warning naming the file: paid output is never discarded. These files are not
+/// artifacts, since they hold no valid image. Returns the file's path.
+fn keep_raw(
+    ctx: &AppContext,
+    run_id: &str,
+    item: usize,
+    bytes: &[u8],
+    what: &str,
+    warnings: &mut Vec<Warning>,
+) -> Result<String, IrisError> {
+    let n = u32::try_from(item).unwrap_or(u32::MAX);
+    let path = artifacts::save_unsaved_raw(&ctx.settings.state_dir.value, run_id, n, bytes)?;
+    let path = path.display().to_string();
+    warnings.push(Warning::new(
+        WarningCode::OutputSavedElsewhere,
+        format!(
+            "response item {item} {what}; its content was saved as received to {path} so the paid output \
+             is not lost"
+        ),
+    ));
+    Ok(path)
+}
+
 /// An error from a completed answer the provider bills (`details.charged`) carries
 /// the usage it reported in `details.usage`; add the cost estimate computed from it
 /// (`details.cost_estimate`) when the model has one.
@@ -296,7 +404,8 @@ fn with_usage_estimate(e: IrisError, model: &ResolvedModel) -> IrisError {
 struct Saving {
     /// Every saved image, at the requested location or in the fallback directory.
     saved: Vec<Artifact>,
-    /// Paths of the images saved in the fallback directory instead.
+    /// Paths of the files saved in the fallback directory instead: images, and the
+    /// raw bytes of content that is not a valid image.
     elsewhere: Vec<String>,
     /// The first image that could not be saved anywhere.
     failure: Option<IrisError>,
@@ -306,14 +415,15 @@ struct Saving {
 /// error that prevented planning them). A valid image that cannot be saved there
 /// (an I/O failure after preflight) goes to `<state_dir>/unsaved/` with warning
 /// `output_saved_elsewhere`: paid output is never discarded. Content that is not a
-/// valid image stays `invalid_media` and is not saved.
+/// valid image stays `invalid_media`, and its bytes are kept as received (see
+/// [`keep_raw`]; listed with the fallback paths).
 fn save_all(
     ctx: &AppContext,
+    run_id: &str,
     output: &ImageOutput,
     planned: &Result<(Vec<PathBuf>, FinalizeMode), IrisError>,
     warnings: &mut Vec<Warning>,
 ) -> Saving {
-    let run_id = ulid::Ulid::generate().to_string().to_ascii_lowercase();
     let mut saving = Saving { saved: Vec::new(), elsewhere: Vec::new(), failure: None };
     for (index, image) in output.images.iter().enumerate() {
         let index = index as u32;
@@ -331,9 +441,18 @@ fn save_all(
                 saving.saved.push(artifact.artifact);
                 continue;
             }
-            Err(e) if e.code == ErrorCode::InvalidMedia => e,
+            Err(e) if e.code == ErrorCode::InvalidMedia => {
+                let what = format!("(image {index}) cannot be saved as an image ({})", e.message);
+                match keep_raw(ctx, run_id, image.item, &image.bytes, &what, warnings) {
+                    Ok(path) => {
+                        saving.elsewhere.push(path);
+                        e
+                    }
+                    Err(fallback) => e.with_detail("fallback_error", fallback.message.clone()),
+                }
+            }
             Err(e) => {
-                match artifacts::save_unsaved(&ctx.settings.state_dir.value, &run_id, index, &image.bytes) {
+                match artifacts::save_unsaved(&ctx.settings.state_dir.value, run_id, index, &image.bytes) {
                     Ok(artifact) => {
                         let wanted = requested
                             .map_or("the requested location".to_string(), |p| p.display().to_string());

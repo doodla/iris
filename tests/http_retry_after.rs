@@ -111,7 +111,7 @@ async fn submit(server: &MockServer) -> IrisError {
 }
 
 async fn generate(server: &MockServer) -> IrisError {
-    GeminiProvider::new().generate(&image_request(), &ctx(server)).await.unwrap_err()
+    GeminiProvider::new().generate(&image_request(), &ctx(server)).await.unwrap_err().error
 }
 
 const SUBMIT: &str = "/v1beta/models/veo-3.1-lite-generate-preview:predictLongRunning";

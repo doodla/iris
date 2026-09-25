@@ -29,8 +29,8 @@ pub use client::{API_V1, API_V1BETA};
 pub use veo::{check_output_uri, is_operation_name, validate_output_uri};
 
 use super::{
-    AccountAccess, CredentialHeader, ImageOutput, ImageProvider, ImageRequest, Provider, ProviderContext,
-    RemoteStatus, SubmittedOperation, VideoProvider, VideoRequest,
+    AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest, Provider,
+    ProviderContext, RemoteStatus, SubmittedOperation, VideoProvider, VideoRequest,
 };
 use crate::catalog;
 use crate::domain::{Operation, ProviderId};
@@ -105,11 +105,11 @@ impl Provider for GeminiProvider {
 
 #[async_trait]
 impl ImageProvider for GeminiProvider {
-    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
         image::run(Operation::ImageGenerate, req, ctx).await
     }
 
-    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
         image::run(Operation::ImageEdit, req, ctx).await
     }
 }

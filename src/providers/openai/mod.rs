@@ -26,8 +26,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD, STANDARD_PAD_INDIFFERENT};
 
 use super::{
-    AccountAccess, CredentialHeader, GeneratedImage, ImageOutput, ImageProvider, ImageRequest, InputImage,
-    Provider, ProviderContext,
+    AccountAccess, CredentialHeader, GeneratedImage, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
+    InputImage, Provider, ProviderContext, UnusableOutput,
 };
 use crate::artifacts::media;
 use crate::domain::{ProviderId, Warning, WarningCode};
@@ -92,12 +92,13 @@ impl Provider for OpenAiProvider {
 
 #[async_trait]
 impl ImageProvider for OpenAiProvider {
-    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+    async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
         // Input images would be dropped from a generation body: never send one silently.
         if !req.images.is_empty() || req.mask.is_some() {
             return Err(IrisError::internal(
                 "the OpenAI adapter's generate() received input images or a mask; nothing was sent",
-            ));
+            )
+            .into());
         }
         let options = WireOptions::from_resolved(&req.options)?;
         let expect = Expected::of(&options);
@@ -109,15 +110,16 @@ impl ImageProvider for OpenAiProvider {
         decode_images(&resp, &expect)
     }
 
-    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, IrisError> {
+    async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
         if req.images.is_empty() {
-            return Err(IrisError::usage("image edit requires at least one --image"));
+            return Err(IrisError::usage("image edit requires at least one --image").into());
         }
         if req.images.len() > MAX_EDIT_IMAGES {
             return Err(IrisError::invalid(format!(
                 "OpenAI accepts at most {MAX_EDIT_IMAGES} input images per edit; got {}",
                 req.images.len()
-            )));
+            ))
+            .into());
         }
         let options = WireOptions::from_resolved(&req.options)?;
         let expect = Expected::of(&options);
@@ -259,6 +261,9 @@ struct Unusable {
     why: String,
     /// Sniffed type of content that is not an image (e.g. `video/mp4`), if any.
     actual: Option<&'static str>,
+    /// The item's content as received: decoded bytes, or the `b64_json` text when it
+    /// is not base64; `None` for an item without inline data.
+    content: Option<Vec<u8>>,
 }
 
 /// Decode an `ImagesResponse`: every `data[].b64_json` (standard base64), typed by
@@ -271,16 +276,18 @@ struct Unusable {
 ///   `iris --help`).
 /// * An item that cannot be used (a URL instead of inline data, missing or invalid
 ///   base64, content that is not a recognized image) is skipped with warning
-///   `output_item_unusable` naming it; every usable item is kept.
+///   `output_item_unusable` naming it; every usable item is kept, and the content of
+///   a skipped item is handed to the app (`unusable`) to be saved as received.
 /// * Warnings name items by their position in `data[]` ("response item N"), which
 ///   differs from the artifact index once an earlier item was skipped.
-/// * Only a response with no usable item at all is `provider_bad_response`.
+/// * Only a response with no usable item at all is `provider_bad_response` (with
+///   that content in the failure).
 /// * A number of items other than the requested `n` is reported with warning
 ///   `unexpected_output_count`.
-fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, IrisError> {
+fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, ImageFailure> {
     let parsed = WireImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
     if parsed.data.is_empty() {
-        return Err(client::bad_response(resp, "it contains no images"));
+        return Err(client::bad_response(resp, "it contains no images").into());
     }
     let format_media_type = |format: &str| {
         media_type_for_format(format)
@@ -305,6 +312,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
     let returned = parsed.data.len();
     let mut images = Vec::with_capacity(returned);
     let mut unusable = Vec::new();
+    let mut kept = Vec::new();
     let mut revised = Vec::new();
     let mut warnings = Vec::new();
     for (index, item) in parsed.data.into_iter().enumerate() {
@@ -315,7 +323,10 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         }
         let image = match decode_item(index, item.b64_json, item.has_url, expected) {
             Ok(image) => image,
-            Err(problem) => {
+            Err(mut problem) => {
+                if let Some(bytes) = problem.content.take() {
+                    kept.push(UnusableOutput { item: index, bytes });
+                }
                 unusable.push(problem);
                 continue;
             }
@@ -342,7 +353,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         if let Some(actual) = unusable.first().and_then(|u| u.actual) {
             err = err.with_detail("expected_media_type", expected).with_detail("actual_media_type", actual);
         }
-        return Err(err);
+        return Err(ImageFailure { error: err, unusable: kept });
     }
     for problem in &unusable {
         warnings.push(Warning::new(
@@ -366,6 +377,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
 
     Ok(ImageOutput {
         images,
+        unusable: kept,
         text: (!revised.is_empty()).then(|| revised.join("\n\n")),
         usage: parsed.usage,
         provider_request_id: resp.request_id.clone(),
@@ -381,7 +393,7 @@ fn decode_item(
     has_url: bool,
     expected: &str,
 ) -> Result<GeneratedImage, Unusable> {
-    let unusable = |why: String| Unusable { why, actual: None };
+    let unusable = |why: String| Unusable { why, actual: None, content: None };
     let Some(b64) = b64_json else {
         return Err(unusable(if has_url {
             format!(
@@ -392,13 +404,17 @@ fn decode_item(
             format!("response item {index} has no b64_json data")
         }));
     };
-    let bytes = STANDARD_PAD_INDIFFERENT
-        .decode(b64.trim())
-        .map_err(|_| unusable(format!("response item {index} is not valid base64")))?;
+    let bytes = match STANDARD_PAD_INDIFFERENT.decode(b64.trim()) {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let why = format!("response item {index} is not valid base64");
+            return Err(Unusable { why, actual: None, content: Some(b64.into_bytes()) });
+        }
+    };
     drop(b64);
     match media::sniff(&bytes) {
         Some(actual) if media::is_image(actual) => {
-            Ok(GeneratedImage { media_type: actual.to_string(), bytes })
+            Ok(GeneratedImage { item: index, media_type: actual.to_string(), bytes })
         }
         other => Err(Unusable {
             why: format!(
@@ -406,6 +422,7 @@ fn decode_item(
                 other.unwrap_or("not a recognized image")
             ),
             actual: Some(other.unwrap_or("unknown")),
+            content: Some(bytes),
         }),
     }
 }
