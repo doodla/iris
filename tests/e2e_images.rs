@@ -427,6 +427,29 @@ fn an_unusable_openai_item_never_costs_the_good_image() {
     );
 }
 
+/// An OpenAI answer with no usable image may have been billed (OpenAI does not say),
+/// so the error is `charge_possible` and never retryable, not `charged`; the usage
+/// the answer reported, and a cost estimate from it, are there all the same.
+#[test]
+fn an_openai_answer_without_a_usable_image_reports_its_usage() {
+    let (sb, api, out) =
+        openai_run(openai_images(&[br#"{"error": "not an image"}"#], "req_e2e_unusable"), &["-o", "fox.png"]);
+    let v = out.err(1, "provider_bad_response");
+    let e = &v["error"];
+    assert_eq!(e["provider_request_id"], "req_e2e_unusable", "{v}");
+    assert_ne!(e["retryable"], true, "possibly charged: {v}");
+    assert_eq!(e["details"]["charge_possible"], true, "{v}");
+    assert!(e["details"].get("charged").is_none(), "{v}");
+    assert_eq!(e["details"]["usage"]["input_tokens"], 50, "{v}");
+    assert_eq!(e["details"]["usage"]["output_tokens"], 196, "{v}");
+    let estimate = &e["details"]["cost_estimate"];
+    assert_eq!(estimate["estimated"], true, "{v}");
+    assert!((estimate["amount"].as_f64().unwrap() - OPENAI_USAGE_ESTIMATE_USD).abs() < 1e-9, "{v}");
+    assert_eq!(api.total(), 1, "never retried");
+    assert!(files_in(&sb.work()).is_empty(), "nothing at the requested location");
+    assert_eq!(files_in(&sb.state().join("unsaved")).len(), 1, "the content is kept");
+}
+
 /// A completed answer with no usable image fails, yet its paid content is kept as
 /// received and the user is told where: `details.fallback_paths` and an
 /// `output_saved_elsewhere` warning in JSON mode, the warning line in human mode

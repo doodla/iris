@@ -75,7 +75,9 @@ compiler alone):
   (`GeneratedImage::item`); an item that is not one is reported with `output_item_unusable`, and
   its content (decoded bytes, or the payload as received when it does not decode) goes in
   `ImageOutput::unusable`, or in `ImageFailure::unusable` when no item was usable, so the app can
-  keep it. Adapters never write files.
+  keep it. Adapters never write files. An error built from a completed answer carries the usage
+  that answer reported (`providers::with_reported_usage`), and `details.charged: true` only when
+  the provider documents that such an answer is billed.
 - **Warnings come from the registry.** Build them with `Warning::new(WarningCode::…, message)`
   and reuse an existing code when it fits (`output_format_mismatch`, `output_item_unusable`,
   `unexpected_output_count`, ...). A new code is added to `WarningCode` in `src/domain.rs` and

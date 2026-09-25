@@ -27,7 +27,7 @@ use base64::engine::general_purpose::{STANDARD, STANDARD_PAD_INDIFFERENT};
 
 use super::{
     AccountAccess, CredentialHeader, GeneratedImage, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
-    InputImage, Provider, ProviderContext, UnusableOutput,
+    InputImage, Provider, ProviderContext, UnusableOutput, with_reported_usage,
 };
 use crate::artifacts::media;
 use crate::domain::{ProviderId, Warning, WarningCode};
@@ -281,13 +281,16 @@ struct Unusable {
 /// * Warnings name items by their position in `data[]` ("response item N"), which
 ///   differs from the artifact index once an earlier item was skipped.
 /// * Only a response with no usable item at all is `provider_bad_response` (with
-///   that content in the failure).
+///   that content in the failure, and the usage the response reported). OpenAI does
+///   not document whether such a response is billed, so it is `charge_possible`, not
+///   `charged`.
 /// * A number of items other than the requested `n` is reported with warning
 ///   `unexpected_output_count`.
 fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, ImageFailure> {
     let parsed = WireImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
     if parsed.data.is_empty() {
-        return Err(client::bad_response(resp, "it contains no images").into());
+        let err = client::bad_response(resp, "it contains no images");
+        return Err(with_reported_usage(err, parsed.usage.as_ref()).into());
     }
     let format_media_type = |format: &str| {
         media_type_for_format(format)
@@ -353,6 +356,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         if let Some(actual) = unusable.first().and_then(|u| u.actual) {
             err = err.with_detail("expected_media_type", expected).with_detail("actual_media_type", actual);
         }
+        let err = with_reported_usage(err, parsed.usage.as_ref());
         return Err(ImageFailure { error: err, unusable: kept });
     }
     for problem in &unusable {

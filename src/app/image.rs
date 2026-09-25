@@ -291,7 +291,7 @@ async fn run_checked(
 /// The error of a failed image call, once any paid content that came with it (items
 /// of a completed response, none of them a usable image) is kept in the state
 /// directory (`details.fallback_paths`, and a warning per file), and a cost
-/// estimate is added from charged usage.
+/// estimate is added from the usage the answer reported.
 fn failed_call(
     ctx: &AppContext,
     run_id: &str,
@@ -386,8 +386,9 @@ fn keep_raw(
     Ok(path)
 }
 
-/// An error from a completed answer the provider bills (`details.charged`) carries
-/// the usage it reported in `details.usage`; add the cost estimate computed from it
+/// An error built from a completed answer carries the usage that answer reported in
+/// `details.usage` (billed for sure when `details.charged`, possibly when
+/// `details.charge_possible`); add the cost estimate computed from it
 /// (`details.cost_estimate`) when the model has one.
 fn with_usage_estimate(e: IrisError, model: &ResolvedModel) -> IrisError {
     let usage = e.details.get("usage").cloned().and_then(|u| serde_json::from_value::<Usage>(u).ok());

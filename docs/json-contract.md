@@ -580,8 +580,11 @@ skipped with `output_item_unusable`, whose message names the item and the reason
 number items by their position in the provider's response ("response item 1"), which is not the
 artifact `index` once an earlier item was skipped; `unexpected_output_count` counts items, usable or
 not. Only a response with no usable image at all fails, as `provider_bad_response` with
-`details.charge_possible: true` (a Gemini one also with `details.charged: true` and its usage; see
-[above](#stable-codes-categories-exit-codes-and-default-retryability)).
+`details.charge_possible: true` and, when the response reported usage, `details.usage` and the
+`details.cost_estimate` computed from it (when Iris can estimate the model's cost). A Gemini one is
+also `details.charged: true` (see
+[above](#stable-codes-categories-exit-codes-and-default-retryability)); OpenAI does not document
+whether such a response is billed.
 
 Returned content that is not a valid image is paid output too, and is never thrown away: the
 content of a skipped item (the decoded bytes, or the payload as received when it is not valid

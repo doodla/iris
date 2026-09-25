@@ -817,10 +817,13 @@ async fn one_unusable_item_never_drops_the_usable_images() {
     let count = &out.warnings[1].message;
     assert!(count.contains("returned 2 items (1 usable) for a request of 1"), "{count}");
 
-    // Several items and none usable: one provider_bad_response naming each.
+    // Several items and none usable: one provider_bad_response naming each, with
+    // the usage the response reported. OpenAI does not say whether such a response
+    // is billed, so it may have been (`charge_possible`), not `charged`.
     let server = MockServer::start().await;
     let data = json!([{"url": "https://files.example/a.png"}, {"b64_json": "@@"}]);
-    mount(&server, GEN, ok(json!({"created": 1, "data": data}))).await;
+    let usage = json!({"input_tokens": 50, "output_tokens": 196, "total_tokens": 246});
+    mount(&server, GEN, ok(json!({"created": 1, "data": data, "usage": usage}))).await;
     let err = generate(&server, options(&[("count", OptionValue::Int(2))])).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::ProviderBadResponse);
     assert!(
@@ -830,7 +833,22 @@ async fn one_unusable_item_never_drops_the_usable_images() {
         err.message
     );
     assert_eq!(err.details.get("charge_possible"), Some(&json!(true)));
+    assert!(err.details.get("charged").is_none(), "{:?}", err.details);
+    assert_eq!(err.details["usage"]["input_tokens"], 50);
+    assert_eq!(err.details["usage"]["output_tokens"], 196);
+    assert_eq!(err.details["usage"]["provider_usage"]["total_tokens"], 246);
     assert_eq!(err.unusable, [UnusableOutput { item: 1, bytes: b"@@".to_vec() }]);
+
+    // An empty `data` array with usage reports that usage too; without usage, none.
+    let server = MockServer::start().await;
+    mount(&server, GEN, ok(json!({"created": 1, "data": [], "usage": {"input_tokens": 7}}))).await;
+    let err = generate(&server, ResolvedOptions::new()).await.unwrap_err();
+    assert_eq!(err.code, ErrorCode::ProviderBadResponse);
+    assert_eq!(err.details["usage"]["input_tokens"], 7);
+    let server = MockServer::start().await;
+    mount(&server, GEN, ok(json!({"created": 1, "data": []}))).await;
+    let err = generate(&server, ResolvedOptions::new()).await.unwrap_err();
+    assert!(err.details.get("usage").is_none(), "{:?}", err.details);
 }
 
 #[tokio::test]
