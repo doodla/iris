@@ -306,7 +306,17 @@ fn model_list(res: &ModelListResult) -> String {
             ]
         })
         .collect();
-    table(&["MODEL", "PROVIDER", "LIFECYCLE", "OPERATIONS", "DEFAULT FOR", "ALIASES"], &rows)
+    let mut out = table(&["MODEL", "PROVIDER", "LIFECYCLE", "OPERATIONS", "DEFAULT FOR", "ALIASES"], &rows);
+    if !res.effective_defaults.is_empty() {
+        let rows: Vec<Vec<String>> = res
+            .effective_defaults
+            .iter()
+            .map(|d| vec![ops(&[d.operation]), d.provider.as_str().to_string(), d.model.clone()])
+            .collect();
+        out.push_str("\nUsed without --provider or --model:\n");
+        out.push_str(&table(&["OPERATION", "PROVIDER", "MODEL"], &rows));
+    }
+    out
 }
 
 fn model_show(m: &ModelCapabilities) -> String {

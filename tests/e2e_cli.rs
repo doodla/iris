@@ -471,6 +471,63 @@ fn models_report_the_effective_default_model() {
     assert_eq!(line.matches("image.generate, image.edit").count(), 2, "operations and default for: {line}");
 }
 
+/// `effective_defaults` names the provider and model a generation command uses with
+/// neither `--provider` nor `--model` (`default_for` lists one default per provider),
+/// honoring `image.provider` and the configured default models, whatever the
+/// list's filters.
+#[test]
+fn models_list_names_the_default_used_without_provider_or_model() {
+    let sb = Sandbox::new();
+    let defaults = |v: &Value| -> Vec<[String; 3]> {
+        v["result"]["effective_defaults"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|d| ["operation", "provider", "model"].map(|k| d[k].as_str().unwrap().to_string()))
+            .collect()
+    };
+    let row = |op: &str, provider: &str, model: &str| [op, provider, model].map(str::to_string);
+
+    let v = sb.iris().args(["models", "list", "--json"]).run().ok();
+    let builtin = vec![
+        row("image.generate", "openai", "gpt-image-2.5-sunburst"),
+        row("image.edit", "openai", "gpt-image-2.5-sunburst"),
+        row("video.generate", "gemini", "veo-3.1-fast-generate-preview"),
+    ];
+    assert_eq!(defaults(&v), builtin);
+    let v = sb.iris().args(["models", "list", "--provider", "gemini", "--json"]).run().ok();
+    assert_eq!(defaults(&v), builtin, "the filters do not change what a bare command uses");
+
+    let config = sb.config(
+        "iris.toml",
+        "[image]\nprovider = \"gemini\"\n\n[providers.gemini]\nimage_model = \"nano-banana-pro\"\nvideo_model = \
+         \"veo-lite\"\n",
+    );
+    let mut configured = sb.iris();
+    configured.env("IRIS_CONFIG", &config);
+    let v = configured.clone().args(["models", "list", "--json"]).run().ok();
+    assert_eq!(
+        defaults(&v),
+        [
+            row("image.generate", "gemini", "gemini-3-pro-image"),
+            row("image.edit", "gemini", "gemini-3-pro-image"),
+            row("video.generate", "gemini", "veo-3.1-lite-generate-preview"),
+        ]
+    );
+    let plan = configured.clone().args(["image", "generate", "x", "--dry-run", "--json"]).run().ok();
+    assert_eq!(
+        (&plan["result"]["provider"], &plan["result"]["model"]),
+        (&"gemini".into(), &"gemini-3-pro-image".into())
+    );
+    let human = configured.args(["models", "list"]).run();
+    let text = human.human();
+    assert!(text.contains("Used without --provider or --model:"), "{text}");
+    assert!(
+        text.lines().any(|l| l.split_whitespace().eq(["image.generate", "gemini", "gemini-3-pro-image"])),
+        "{text}"
+    );
+}
+
 #[test]
 fn doctor_checks_access_to_the_configured_default_model() {
     let sb = Sandbox::new();

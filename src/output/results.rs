@@ -98,16 +98,32 @@ pub struct ModelSummary {
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
-    /// Operations for which this model is used when no `--model` is given: the
-    /// configured `providers.<provider>.image_model`/`video_model`, else the catalog
-    /// default.
+    /// Operations for which this model is its provider's default: the model used when
+    /// its provider is selected without `--model` (the configured
+    /// `providers.<provider>.image_model`/`video_model`, else the catalog default).
+    /// Several providers each have one; `effective_defaults` says which is used when
+    /// no provider is selected either.
     pub default_for: Vec<Operation>,
+}
+
+/// The model a generation command uses when neither `--provider` nor `--model` is
+/// given, honoring the configuration (`image.provider`, the configured default
+/// models).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct EffectiveDefault {
+    pub operation: Operation,
+    pub provider: ProviderId,
+    pub model: String,
 }
 
 /// `models.list`.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct ModelListResult {
     pub models: Vec<ModelSummary>,
+    /// One entry per operation that has a usable default, in operation order,
+    /// independent of the list's filters. An operation missing here has none: a
+    /// command for it needs `--provider` or `--model`.
+    pub effective_defaults: Vec<EffectiveDefault>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]
@@ -218,8 +234,8 @@ pub struct ModelCapabilities {
     pub aliases: Vec<String>,
     pub lifecycle: Lifecycle,
     pub operations: Vec<Operation>,
-    /// Operations for which this model is used when no `--model` is given (the
-    /// configured default of its provider, else the catalog default).
+    /// Operations for which this model is its provider's default (see
+    /// `models.list`): used when its provider is selected without `--model`.
     pub default_for: Vec<Operation>,
     pub inputs: InputsView,
     pub options: Vec<OptionView>,

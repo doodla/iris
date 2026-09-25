@@ -125,7 +125,7 @@ pub(crate) fn resolve_model(
 /// image provider for image operations. Video has no provider setting, so it comes
 /// from the catalog: the first provider (in `ProviderId` order) with a model
 /// declared as the default for `op`, else the first with any model for it.
-fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisError> {
+pub(crate) fn default_provider(ctx: &AppContext, op: Operation) -> Result<ProviderId, IrisError> {
     if !op.is_async_job() {
         return Ok(ctx.settings.image_provider.value);
     }

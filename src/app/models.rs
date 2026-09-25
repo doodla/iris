@@ -7,15 +7,15 @@ use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec, OptionVal
 use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{
-    AccessView, ConstraintView, InputsView, LimitsView, MaskRequirementsView, ModelCapabilities,
-    ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView, ProviderListResult,
-    ProviderView,
+    AccessView, ConstraintView, EffectiveDefault, InputsView, LimitsView, MaskRequirementsView,
+    ModelCapabilities, ModelListResult, ModelShowResult, ModelSummary, OptionView, OutputsView, PriceView,
+    ProviderListResult, ProviderView,
 };
 use crate::providers::AccountAccess;
 use crate::redact;
 
 use super::context::AppContext;
-use super::request::effective_default;
+use super::request::{default_provider, effective_default};
 
 /// `models list`, optionally filtered by provider and operation.
 pub fn list(ctx: &AppContext, provider: Option<ProviderId>, operation: Option<Operation>) -> ModelListResult {
@@ -27,7 +27,23 @@ pub fn list(ctx: &AppContext, provider: Option<ProviderId>, operation: Option<Op
         .filter(|m| operation.is_none_or(|op| m.supports(op)))
         .map(|m| summary(ctx, m))
         .collect();
-    ModelListResult { models }
+    ModelListResult { models, effective_defaults: effective_defaults(ctx) }
+}
+
+/// For each operation, the provider and model a generation command uses without
+/// `--provider` and `--model` (the same resolution those commands run). An
+/// operation whose default cannot be resolved (no model for it, or a configured
+/// default model the catalog does not know) is left out; the command itself
+/// reports why.
+fn effective_defaults(ctx: &AppContext) -> Vec<EffectiveDefault> {
+    Operation::ALL
+        .iter()
+        .filter_map(|&operation| {
+            let provider = default_provider(ctx, operation).ok()?;
+            let model = effective_default(ctx, provider, operation).ok()??;
+            Some(EffectiveDefault { operation, provider, model: model.id.to_string() })
+        })
+        .collect()
 }
 
 fn summary(ctx: &AppContext, m: &ModelSpec) -> ModelSummary {
@@ -42,8 +58,9 @@ fn summary(ctx: &AppContext, m: &ModelSpec) -> ModelSummary {
     }
 }
 
-/// Operations for which `m` is the model used without `--model`: the configured
-/// default of its provider when set, else the catalog default.
+/// Operations for which `m` is its provider's default, the model used when that
+/// provider is selected without `--model`: the configured default of its provider
+/// when set, else the catalog default.
 fn default_for(ctx: &AppContext, m: &ModelSpec) -> Vec<Operation> {
     m.operations
         .iter()

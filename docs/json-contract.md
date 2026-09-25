@@ -185,11 +185,20 @@ if a record changes between the check and its deletion can the command stop part
 `details.deleted` then lists what it deleted (see
 [jobs.md](jobs.md#local-deletion-vs-remote-state)).
 
-### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [], "default_for": [] } ] }`
+### `models.list` → `{ "models": [ { "id", "provider", "display_name", "aliases": [], "lifecycle", "operations": [], "default_for": [] } ], "effective_defaults": [ { "operation", "provider", "model" } ] }`
 
-`default_for` (here and in `models.show`) lists the operations for which the model is used when
-no `--model` is given: the configured `providers.<provider>.image_model` / `video_model` when set,
-otherwise the catalog default.
+`default_for` (here and in `models.show`) is **per provider**: it lists the operations for which the
+model is its provider's default, the model used when that provider is selected (`--provider`, or
+the configured image provider) without `--model` — the configured
+`providers.<provider>.image_model` / `video_model` when set, otherwise the catalog default. Each
+provider has its own, so several models list `image.generate`.
+
+`effective_defaults` says which one a command with neither `--provider` nor `--model` actually
+uses: one entry per operation, `{"operation": "image.generate", "provider": "openai", "model":
+"gpt-image-2.5-sunburst"}` by default, honoring `image.provider` (`IRIS_IMAGE_PROVIDER`) and the
+configured default models. It does not depend on the `--provider`/`--operation` filters. An
+operation without a usable default (e.g. a configured default model the catalog does not know) is
+left out; the command itself reports why.
 
 ### `models.show` → `{ "model": ModelCapabilities }`
 

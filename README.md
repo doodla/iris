@@ -326,7 +326,16 @@ gemini-3-pro-image             gemini    ga         image.generate, image.edit  
 veo-3.1-fast-generate-preview  gemini    preview    video.generate              video.generate              veo-fast
 veo-3.1-generate-preview       gemini    preview    video.generate              -                           veo
 veo-3.1-lite-generate-preview  gemini    preview    video.generate              -                           veo-lite
+
+Used without --provider or --model:
+OPERATION       PROVIDER  MODEL
+image.generate  openai    gpt-image-2.5-sunburst
+image.edit      openai    gpt-image-2.5-sunburst
+video.generate  gemini    veo-3.1-fast-generate-preview
 ```
+
+`DEFAULT FOR` is each provider's default; the last table is what a command with neither
+`--provider` nor `--model` uses (it follows `image.provider` and the configured default models).
 
 `iris models show <model>` prints one model's full contract: every accepted option (with its
 typed flag or `-O key=value` form), input/output limits, published prices, and documented access
