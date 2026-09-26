@@ -13,7 +13,7 @@ permissions:
 # (pushes to main, manual runs) gets a group of its own, so it is neither
 # cancelled nor, as a pending run in a shared group would be, replaced by a
 # later one: a release may only be tagged from a main commit whose CI passed
-# (CONTRIBUTING.md, Releasing).
+# (docs/contributing/releasing.md).
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -187,8 +187,9 @@ jobs:
     # paths (musl build, packaging, the smoke test of the archive and of
     # install.sh with it) are exercised before anything is tagged, with the
     # same pinned toolchain the release uses (read from release.yml, so the
-    # two never drift). The macOS legs run only in release.yml; CONTRIBUTING
-    # asks for a manual dry run of it before tagging.
+    # two never drift). The macOS legs run only in release.yml;
+    # docs/contributing/releasing.md asks for a manual dry run of it before
+    # tagging.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
