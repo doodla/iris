@@ -149,6 +149,11 @@ Use at most three alerts on a page, and keep each to one or two sentences.
 
 `cargo test` checks parts of this guide:
 
+- `tests/docs.rs` checks that every relative link and anchor resolves, and that the files in the
+  release archive link outside it only with absolute URLs. It also checks that prose, outside code,
+  has no Latin abbreviations, no spaced em dashes, and no "answer" for a provider's response. This
+  page, the generated CLI reference, and the agent instruction files are exempt from the prose
+  checks.
 - `tests/cli_reference.rs` checks that the [CLI reference](../reference/cli.md) matches the help.
   After you change help text, regenerate the page with
   `IRIS_UPDATE_DOCS=1 cargo test --test cli_reference`.
