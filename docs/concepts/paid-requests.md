@@ -22,11 +22,10 @@ output, and never lose an output that you paid for.
 - **Costs are estimates.** Iris labels every cost figure as an estimate. Only your provider's
   invoice is exact.
 
-## Check a request before you pay
+## Dry runs and spending caps
 
-Add `--dry-run` to any generation command. Iris runs every local check that the real command runs,
-prints the plan with a cost estimate, and sends nothing. To refuse any request that's estimated
-above a limit, add `--max-cost` with an amount in US dollars. For examples, see
+A dry run (`--dry-run`) checks a request and estimates its cost without sending it, and `--max-cost`
+refuses a request whose estimate is above a cap. See
 [Choose a model and control costs](../guides/models-and-costs.md).
 
 ## When Iris retries
@@ -50,7 +49,7 @@ delay in `retry_after_seconds`.
 Both providers recommend retrying server errors and timeouts. For paid requests, Iris doesn't,
 because neither provider offers a way to send a request again without risking a second charge. For
 the sources, see
-[Decisions](../contributing/decisions.md#retry-classes-and-why-vendor-retry-guidance-is-overridden).
+[Decisions](../contributing/decisions.md#retry-classes-and-why-provider-retry-guidance-is-overridden).
 
 ## When the outcome is uncertain
 
@@ -81,8 +80,8 @@ later. See [How video jobs work](video-jobs.md#job-states).
 
 If you press Ctrl+C, or the process receives SIGTERM or SIGHUP, while a paid request is in flight,
 Iris exits with code 130 (`interrupted`) and reports `retryable: false` and
-`details.charge_possible: true`. During a video submission, Iris waits for the provider's response
-to the first interrupt so that it can record the job. See
+`details.charge_possible: true`. After the first interrupt during a video submission, Iris waits
+for the provider's response so that it can record the job. See
 [Submitting a job](video-jobs.md#submitting-a-job).
 
 ## Billed errors
@@ -111,9 +110,10 @@ Iris judges each returned image by its content, not by the type that the provide
   the image in the `unsaved` folder instead and reports the path with an `output_saved_elsewhere`
   warning.
 
-A response fails only when it has no usable image at all, with `provider_bad_response` and
-`details.charge_possible: true`. To find the `unsaved` folder, run `iris config path`: it's in the
-state directory. Move its files elsewhere before you delete the state directory.
+A response fails only when it has no usable image at all. The error says whether the provider might
+have billed the request (`details.charge_possible: true`) or did (`details.charged: true`). To find
+the `unsaved` folder, run `iris config path`: it's in the state directory. Move its files elsewhere
+before you delete the state directory.
 
 ## Cost estimates
 
@@ -125,11 +125,10 @@ Iris estimates what a request costs twice:
 
 Every estimate has `estimated: true` and a `basis` that shows the calculation and what it leaves
 out, such as prompt, input-image, or thinking tokens. Your bill can be higher than the estimate by
-what the basis leaves out.
+what the basis leaves out. It can also be lower: Google doesn't charge for a video that it blocks.
 
 When Iris can't estimate a request before sending it, for example because the model chooses the
 quality or size, it reports a `cost_estimate_unavailable` warning that names the options to set.
-Google doesn't charge for a video that it blocks.
 
 ## What Iris can't do
 

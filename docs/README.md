@@ -9,7 +9,7 @@ Step-by-step instructions for common tasks.
 
 | Page | What it covers |
 |---|---|
-| [Install Iris](guides/install.md) | The installer, pinned versions, building from source, API keys, checking your setup, and uninstalling. |
+| [Install Iris](guides/install.md) | The installer, pinned versions, building from source, API keys, checking your setup, upgrades, and uninstalling. |
 | [Generate and edit images](guides/images.md) | Prompts, image options, edits with reference images and masks, and where images are saved. |
 | [Generate videos](guides/videos.md) | Waiting and detaching, following and downloading jobs, labels, and recovering after a crash. |
 | [Choose a model and control costs](guides/models-and-costs.md) | Comparing models, choosing a default, dry runs, `--max-cost`, and account access. |

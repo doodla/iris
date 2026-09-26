@@ -139,11 +139,11 @@ document, so one base URL has to serve two API versions.
 
 **Decision.** A video job is submitted with `POST /v1beta/models/{model}:predictLongRunning`, and
 followed with `GET /v1beta/{operation name}`. Where the guide's REST samples differ from the
-official SDKs, the request body follows the SDKs: images as `bytesBase64Encoded` plus `mimeType`,
-`durationSeconds` as a JSON integer, reference images with `referenceType: "ASSET"`, and no sample
-count, since the only value is 1. Iris always sends `durationSeconds`, `resolution`, and
-`aspectRatio`, with its defaults (8 seconds, 720p, 16:9) when the user sets none. Audio isn't an
-option.
+official SDKs, the request body follows the SDKs. Iris sends images as `bytesBase64Encoded` plus
+`mimeType`, `durationSeconds` as a JSON integer, and reference images with
+`referenceType: "ASSET"`. It sends no sample count, since the only value is 1. Iris always sends
+`durationSeconds`, `resolution`, and `aspectRatio`, with its defaults (8 seconds, 720p, 16:9) when
+the user sets none. Audio isn't an option.
 
 **Why.**
 
@@ -352,7 +352,8 @@ a 4-second video from Veo. That says little about which model costs less for the
 The estimates come from each model's own estimator, so they can't disagree with the estimate that a
 dry run of the same request gets. The catalog tests check that every declared request is valid for
 each of the model's operations, asks for one output, and gives the standard output by the catalog's
-own declarations: the OpenAI size, Google's image-size table, and the Veo duration and resolution.
+own declarations. Those are the OpenAI size, Google's image-size table, and the Veo duration and
+resolution.
 
 At other sizes, an OpenAI model's price follows OpenAI's calculator formula, which scales each
 quality's base down by the aspect ratio. At low quality, 1024x1024 needs 196 output tokens and
@@ -370,7 +371,7 @@ OpenAI's published formula, not an Iris quirk, and the `size` option's descripti
 
 ## Paid requests: retries and uncertain outcomes
 
-### Retry classes, and why vendor retry guidance is overridden
+### Retry classes, and why provider retry guidance is overridden
 
 **Decision.** Every HTTP call runs under one of three retry classes:
 
@@ -398,8 +399,8 @@ waited it out and sent the request again could pay twice, or only fail again. An
 
 **Why.** Both providers' guidance says to retry 5xx errors and timeouts, and OpenAI's official
 Python SDK resends a POST on connection errors, 408, 409, 429, and 5xx. But neither the Images API
-nor Veo offers an idempotency key, or a way to find a request whose response was lost, so resending
-an ambiguous paid request can generate, and bill, the same output twice. So Iris retries paid
+nor Veo offers an idempotency key, or a way to find a request whose response was lost. Resending an
+ambiguous paid request can generate, and bill, the same output twice. So Iris retries paid
 requests only where the provider has said that the request wasn't processed, and leaves every other
 decision to the caller. Rate-limit retries follow OpenAI's guidance to honor `Retry-After` as a
 minimum, and to stop, instead of retrying sooner, when the requested delay is longer than the client
@@ -436,10 +437,10 @@ interrupt waits for the response, so that the operation name is recorded.
 **Why.** Google's billing documentation says that requests that fail with a 400 or 500 error aren't
 charged, so a Gemini error response proves that nothing was billed. OpenAI makes no such
 statement, and neither provider documents whether a request that timed out on the client was
-processed. Veo keeps the strict rule for every 5xx: such a response doesn't prove that no operation
-was created, and an operation that exists runs, and is billed if it succeeds, with nothing for Iris
-to follow it by. Exit code 5 and `charge_possible` tell a caller to check the provider's usage page
-before trying again.
+processed. Veo keeps the strict rule for every 5xx, because such a response doesn't prove that no
+operation was created. An operation that exists runs, and is billed if it succeeds, with nothing for
+Iris to follow it by. Exit code 5 and `charge_possible` tell a caller to check the provider's usage
+page before trying again.
 
 A definite rejection of a malformed request, such as an HTTP 400 that the provider documents as not
 generating output, is `invalid_argument` with exit code 2, like a local validation error. In both
@@ -487,11 +488,11 @@ rewrite a record that a newer one wrote without destroying data. Prompts can be 
 hash is enough to match a job to a prompt that you still have.
 
 Veo offers no idempotency key (see [Retry
-classes](#retry-classes-and-why-vendor-retry-guidance-is-overridden)), so a submission can't be made
-idempotent at the provider. The label makes it idempotent locally: a script that reruns with the
-same label after a crash finds the job, instead of paying for a second one. The check has to share a
-lock with the write, since two processes that each checked first and then wrote could both submit.
-It also can't skip a record that it can't read.
+classes](#retry-classes-and-why-provider-retry-guidance-is-overridden)), so a submission can't be
+made idempotent at the provider. The label makes it idempotent locally: a script that reruns with
+the same label after a crash finds the job, instead of paying for a second one. The check has to
+share a lock with the write, since two processes that each checked first and then wrote could both
+submit. It also can't skip a record that it can't read.
 
 **Sources.** [`std::fs::File::lock`](https://doc.rust-lang.org/std/fs/struct.File.html#method.lock) ·
 [`tempfile::NamedTempFile`](https://docs.rs/tempfile/3.27.0/tempfile/struct.NamedTempFile.html) ·
@@ -510,9 +511,10 @@ It also can't skip a record that it can't read.
 - The HTTP client follows no redirects on its own. Downloads follow at most 5 hops themselves, send
   the provider credential only to hops on the configured base URL's origin, and require `https`,
   unless the base URL itself is `http` (a local mock server).
-- Bytes stream into a `.NAME.iris-part-RANDOM` file in the target directory, created exclusively,
-  then are validated (magic bytes and structure; an API error document served as 200 is rejected),
-  and renamed into place without replacing an existing file, unless `--overwrite` is given.
+- Bytes stream into a `.NAME.iris-part-RANDOM` file in the target directory, created exclusively.
+  The file is validated by magic bytes and structure, which rejects an API error document served
+  as 200. Then it's renamed into place without replacing an existing file, unless `--overwrite` is
+  given.
 - A download is capped at 4 GiB. Repeating the download of an intact file does nothing
   (`already_downloaded`).
 - A paid image that can't be saved where requested is written to the `unsaved` folder of the state
@@ -524,9 +526,9 @@ and its target host isn't documented. `reqwest`'s default redirect policy remove
 sensitive headers, such as `Authorization` and cookies, on a cross-origin hop, but keeps the rest.
 It would forward `x-goog-api-key` to whatever host a redirect names, so following redirects
 manually is the only way to keep the key on the provider's origin. The file ID rule comes from the
-Files API reference; the Python SDK's own parser would cut an ID at its first dash. Making the trust
-check a download decision means that a job behind a proxy that doesn't rewrite URIs still succeeds,
-and can be downloaded later, after the base URL is corrected, while the provider still keeps the
+Files API reference; the Python SDK's own parser would cut an ID at its first dash. Because the
+trust check is a download decision, a job behind a proxy that doesn't rewrite URIs still succeeds.
+It can be downloaded later, after the base URL is corrected, while the provider still keeps the
 output.
 
 **Sources.** [Veo guide (download with `curl -L`)](https://ai.google.dev/gemini-api/docs/veo) ·
@@ -550,7 +552,7 @@ that estimate; it always asks the file host.
 Local job records are never pruned automatically.
 
 **Why.** Google documents that generated videos are stored for 2 days and then removed. It doesn't
-document how long operations stay pollable, or exactly when the 2 days start, so counting from
+document how long operations stay pollable, or exactly when the 2 days start. Counting from
 submission gives the earliest possible deletion time, and treating it as a lower bound avoids
 refusing a download that the provider would still serve. A 404 during the retention period more
 likely means a key from another project, or a base URL that points elsewhere, than a deleted job,
@@ -589,7 +591,7 @@ so it must not turn a paid job into `expired`.
   Cloud credits can pay for API usage.
 - Google's SDKs read `GOOGLE_API_KEY` in preference to `GEMINI_API_KEY` when both are set, so
   honoring it would let a stray variable pick the key.
-- The Gemini image models and Veo have no free tier, and Google says that standard API keys will be
+- The Gemini image models and Veo have no free tier. Google says that standard API keys will be
   rejected from September 2026, with no exact day given, so the access notes recommend an auth key.
   OpenAI may require API Organization Verification for GPT Image models. A metadata read can't see
   that or a billing tier, which is why the check claims only visibility.
@@ -599,8 +601,8 @@ so it must not turn a paid job into `expired`.
   unknowable.
 - A cap lets an agent that pays stop a request before it's sent. The estimate before sending is the
   only figure that Iris has at that point, so the cap compares the estimate, and says so. Estimates
-  can leave out prompt, input-image, and thinking tokens (each basis says which), so the bill can be
-  higher than the cap by what the basis leaves out, and the cap is never described as a guarantee.
+  can leave out prompt, input-image, and thinking tokens, and each basis says which. The bill can be
+  higher than the cap by what the basis leaves out, so the cap is never described as a guarantee.
   The difference can be large: OpenAI doesn't document how the input images of a GPT Image edit are
   counted, and an edit takes up to 16 of them.
 - A request without an estimate can't be checked, so it's refused instead of let through. The
@@ -633,7 +635,7 @@ reason:
   (`scripts/package-release.sh`), on pinned, established actions, instead of `cargo-dist`. Iris
   needs a gate that runs every packaged binary, and installs it with `install.sh`, before anything
   is published. dist's documented pipeline has no step that runs the built binary. Adding one means
-  custom jobs in a workflow file that dist generates and owns, and dist refuses to run when that
+  custom jobs in a workflow file that dist generates and owns. But dist refuses to run when that
   file differs from what it would generate, unless that check is switched off. dist is also still
   before 1.0. The hand-rolled part is small: packaging into versioned `iris-vX.Y.Z-TARGET.tar.gz`
   archives with one `SHA256SUMS` file, and a publish job that runs only after every check and smoke
@@ -678,12 +680,13 @@ reason:
   so the claim stays true.
 - **`dirs` rather than `directories`.** The `directories` repository is archived, with no release
   since January 2025. `dirs` is maintained (7.0.0, September 2026), and gives exactly the paths that
-  Iris documents: the XDG config and state directories on Linux (absolute `$XDG_*_HOME` only), and
-  `~/Library/Application Support` on macOS, where it has no state directory, so Iris uses the data
-  directory. Both crates pull in `option-ext`, which is MPL-2.0. The license check allows MPL-2.0
-  for that one crate only, since file-level copyleft on an unmodified dependency doesn't affect
-  Iris's MIT license. Distributing the binary still obliges Iris to tell its recipients where
-  `option-ext`'s source is (MPL-2.0 section 3.2(a)), which `THIRD-PARTY-LICENSES` does.
+  Iris documents. On Linux, those are the XDG config and state directories (absolute
+  `$XDG_*_HOME` only). On macOS, `dirs` has no state directory, so Iris uses the data directory,
+  `~/Library/Application Support`. Both crates pull in `option-ext`, which is MPL-2.0. The license
+  check allows MPL-2.0 for that one crate only, since file-level copyleft on an unmodified
+  dependency doesn't affect Iris's MIT license. Distributing the binary still obliges Iris to tell
+  its recipients where `option-ext`'s source is (MPL-2.0 section 3.2(a)), which
+  `THIRD-PARTY-LICENSES` does.
 - **Third-party notices in every release archive, generated by cargo-about.** The release binary
   links its dependencies statically. Their licenses (MIT, Apache-2.0, BSD-3-Clause, ISC,
   Unicode-3.0, and MPL-2.0) require passing on their license texts and copyright notices, or where
@@ -696,8 +699,8 @@ reason:
   copyright notices. Packaging requires one exact cargo-about version, and fails on any cargo-about
   warning, so the notices are complete and the archives stay reproducible.
 - **`reqwest` 0.13 with its default `rustls` TLS.** In 0.13, `rustls` with the aws-lc crypto
-  provider and `rustls-platform-verifier` is the default, so certificates are verified against the
-  operating system's trust store, on Linux the system CA bundle. So minimal containers need
+  provider and `rustls-platform-verifier` is the default. Certificates are verified against the
+  operating system's trust store, which on Linux is the system CA bundle, so minimal containers need
   `ca-certificates`. The aws-lc provider needs a C compiler to build, but no CMake, and it builds
   for the static musl target with the distribution's musl tools. CI builds that target on every
   change.
@@ -751,9 +754,8 @@ reason:
 - `cargo-deny` covers both advisories and licenses with one tool, and its action has current
   releases.
 - With `stable`, a Rust release that lands between CI on `main` and the tag push would change the
-  compiler, and Clippy's lints, under an already-tested commit, and no record would say which
-  compiler built an archive. A pinned version makes a release repeatable, and its log says what
-  built it.
+  compiler, and Clippy's lints, under an already-tested commit. No record would say which compiler
+  built an archive. A pinned version makes a release repeatable, and its log says what built it.
 - GitHub's generated notes list pull requests, not the user-facing changes that the changelog
   records. parse-changelog is the established tool for reading one version's section of such a file;
   create-gh-release-action uses it. A simple line-based extractor stops early at a reference-link

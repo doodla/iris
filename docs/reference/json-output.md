@@ -89,7 +89,7 @@ Every document is an envelope:
 |---|---|---|
 | `schema_version` | integer | The version of the JSON output. See [Versioning](#versioning). |
 | `ok` | boolean | `true` if the command succeeded. |
-| `command` | string or null | The command that ran, such as `image.generate`. `null` if Iris couldn't parse the command line. |
+| `command` | string or null | The command, such as `image.generate`. `null` if Iris couldn't recognize a command, and for `--help`. |
 | `result` | object or null | The command's result, if `ok` is `true`. See [Results](#results). |
 | `error` | object or null | The error, if `ok` is `false`. See [Error object](errors.md#error-object). |
 | `warnings` | array | Warnings, each with a `code` and a `message`. The array can be non-empty when the command fails. See [Warning codes](errors.md#warning-codes). |
@@ -99,11 +99,11 @@ Every document is an envelope:
 `config.show`, `config.path`, `doctor`, `schema`, `completions`, or `version`. A later version can
 add commands.
 
-Some command lines don't name one command:
+Some command lines don't run a command:
 
-- If Iris can't parse the command line, it prints an envelope with `command: null` and a
-  `usage_error`, and exits with code 2. This applies whenever `--json` appears anywhere in the
-  arguments.
+- If Iris can't parse the command line, it prints an envelope with a `usage_error`, and exits with
+  code 2. `command` names the command if Iris recognized one, as in `iris image generate --bogus`.
+  This applies whenever `--json` appears anywhere in the arguments.
 - `--help` with `--json` prints `ok: true`, `command: null`, and the help text as `result.help`.
 - `--version` with `--json` prints the same result as `iris version`, with `command: "version"`.
 
@@ -310,15 +310,11 @@ variable and whether it's set, never its value.
 `{ "healthy": true, "checks": [ { "id", "status", "message" } ] }`
 
 `status` is `ok`, `warning`, or `error`. `healthy` is `false` only if a check has the status
-`error`.
+`error`. `iris doctor` exits with code 0 whenever its checks ran, so read `healthy` instead of the
+exit code. See [Exit codes](errors.md#exit-codes).
 
-> [!IMPORTANT]
-> `iris doctor` exits with code 0 whenever its checks ran, even when it finds problems. Read
-> `result.healthy` and the check statuses instead of the exit code. A nonzero exit code means that
-> `doctor` itself couldn't run, for example because of a usage error.
-
-A missing API key is a `warning` if another provider's key is set, because that provider's commands
-still work. If no key is set at all, the `credentials` check is an `error`.
+Each missing API key is a `warning`. If no key is set at all, a `credentials` check is also present,
+with the status `error`.
 
 Check IDs are unique within a result:
 
@@ -340,8 +336,7 @@ billing tier, prepaid credit, or organization verification allow a paid request.
 
 ### schema
 
-`{ "schema": { "...": "the JSON Schema" } }`. Without `--json`, `iris schema` prints the schema
-itself.
+`{ "schema": { "...": "the JSON Schema" } }`. See [JSON Schema](#json-schema).
 
 ### completions
 

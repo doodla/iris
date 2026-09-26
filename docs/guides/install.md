@@ -29,7 +29,8 @@ The installer is a short POSIX `sh` script. It does the following:
 
 1. Detects your platform. On a Mac with Apple silicon, it installs the Apple silicon build even
    when the shell runs under Rosetta.
-2. Checks for `curl` or `wget`, `tar`, and `sha256sum` or `shasum`, and names any that are missing.
+2. Checks for `curl` or `wget`, `tar`, and `sha256sum` or `shasum`. If one is missing, it stops and
+   names it.
 3. Finds the latest release by following GitHub's `releases/latest` redirect, so it needs no API
    token and isn't rate-limited.
 4. Downloads the release archive and its `SHA256SUMS` file into a private temporary directory,
@@ -47,7 +48,9 @@ nothing is installed, and an existing `iris` stays as it was.
 If your system has BusyBox `wget` without certificate checks, the installer stops before it uses
 anything that it downloaded, because the download could be tampered with. Install `curl` instead.
 
-### Installer options
+### Pass options to the installer
+
+The installer takes these options, as `sh install.sh --help` prints them:
 
 ```text
 Install iris from a GitHub release.
@@ -72,8 +75,8 @@ curl -fsSL https://raw.githubusercontent.com/doodla/iris/main/install.sh | sh -s
 
 ### Pin a version
 
-To install the same version every time, pin both the installer's URL and the version to the same
-release tag. Pinning only one of them leaves the other one unpinned.
+To install the same version every time, pin both the installer's URL and `--version` to the same
+release tag. The URL fixes the installer script, and `--version` fixes the release that it installs.
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/doodla/iris/v0.1.0/install.sh | sh -s -- --version v0.1.0
@@ -89,11 +92,10 @@ less install.sh
 sh install.sh --version v0.1.0
 ```
 
-> [!NOTE]
-> The checksum proves that you downloaded the archive that the release contains. It doesn't prove
-> who made the release, because the archive and `SHA256SUMS` come from the same place. Iris
-> releases don't include signatures or provenance attestations. If you need stronger assurance,
-> verify the tag and the release on GitHub.
+The checksum proves that you downloaded the archive that the release contains. It doesn't prove who
+made the release, because the archive and `SHA256SUMS` come from the same place. Iris releases don't
+include signatures or provenance attestations. For stronger assurance, verify the tag and the
+release on GitHub.
 
 ## Install a release archive by hand
 
@@ -113,8 +115,8 @@ The installer isn't affected, because `curl` and `wget` don't mark downloads.
 
 ## Build from source
 
-To build Iris from source, you need Rust 1.89 or later. [rustup](https://rustup.rs) is the easiest
-way to get it.
+To build Iris from source, you need Rust 1.89 or later, which you can install with
+[rustup](https://rustup.rs).
 
 ```sh
 git clone https://github.com/doodla/iris && cd iris
@@ -139,9 +141,9 @@ Replace the following:
 - `GEMINI_KEY`: an API key from Google AI Studio. You need it for the Nano Banana and Veo models.
 
 > [!IMPORTANT]
-> Each provider bills your API account for every request. A ChatGPT, Gemini app, or Google AI
-> subscription doesn't include API access. For the access and billing that each model requires,
-> see [Choose a model and control costs](models-and-costs.md#check-your-access).
+> Each provider bills your API account, and a ChatGPT, Gemini app, or Google AI subscription doesn't
+> include API access. For what each model requires, see
+> [Check your access](models-and-costs.md#check-your-access).
 
 ## Check your setup
 
@@ -165,7 +167,7 @@ The output is similar to the following:
 Healthy.
 ```
 
-`iris doctor` reports only whether each key is set, never its value. To also check that your keys
+`iris doctor` reports only whether each key is set, not its value. To also check that your keys
 can see each model, add `--check-access`. It makes one free metadata request per model.
 
 > [!NOTE]
@@ -207,10 +209,12 @@ iris completions fish > ~/.config/fish/completions/iris.fish
 
 ## Upgrade
 
-Run the installer again, with or without `--version`. The new binary replaces the old one with an
-atomic rename, so a failed upgrade leaves the previous `iris` as it was.
+Run the installer again, with or without `--version`. If the upgrade fails, the previous `iris`
+stays as it was.
 
 ## Uninstall Iris
+
+To uninstall Iris, do the following:
 
 1. Remove the binary. If you installed it with `--dir`, remove it from that directory instead.
 
@@ -229,9 +233,9 @@ atomic rename, so a failed upgrade leaves the previous `iris` as it was.
    first.
 
 > [!WARNING]
-> On macOS, the config file is inside the state directory, `~/Library/Application Support/iris`.
-> Deleting the state directory also deletes your config file. To delete only the job history,
-> delete its `jobs` folder.
+> On macOS, the config file is inside the state directory, `~/Library/Application Support/iris`, so
+> deleting that directory also deletes your config file. To delete only the job history, delete its
+> `jobs` folder.
 
 `iris jobs delete --all` deletes only local job records, and neither it nor uninstalling cancels or
 deletes anything at a provider. See

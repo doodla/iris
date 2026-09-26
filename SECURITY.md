@@ -1,5 +1,8 @@
 # Security policy
 
+This policy explains how to report a vulnerability in Iris, which versions get fixes, and what's in
+scope.
+
 ## Report a vulnerability
 
 Don't open a public issue for a vulnerability. Report it privately through GitHub:
@@ -16,7 +19,7 @@ reach the maintainers. Don't describe the vulnerability in it. A maintainer will
 
 ## Supported versions
 
-Iris is before version 1.0. Security fixes go into the latest release, and there's no long-term
+Iris hasn't reached version 1.0. Security fixes go into the latest release, and there's no long-term
 support branch.
 
 ## Scope

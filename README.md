@@ -22,7 +22,7 @@ iris image generate -m gpt-image-2.5-sunburst "a watercolor fox in a misty fores
   and `--max-cost` refuses any request that's estimated above your limit.
 - **Video jobs that survive.** Iris records each video job before it submits it, so you can resume
   the job from any later process, even after a crash.
-- **Careful with paid requests.** Iris never resends a request that might have been billed, and it
+- **Paid requests sent once.** Iris never resends a request that might have been billed, and it
   keeps every image that you paid for. See
   [How Iris handles paid requests](docs/concepts/paid-requests.md).
 
@@ -35,7 +35,8 @@ curl -fsSL https://raw.githubusercontent.com/doodla/iris/main/install.sh | sh
 ```
 
 The installer verifies the release's checksum, and installs `iris` in `~/.local/bin` without
-`sudo`. To pin a version, build from source, or uninstall, see
+`sudo`. If that directory isn't on your `PATH`, the installer prints the line to add to your shell's
+startup file. To pin a version, build from source, or uninstall, see
 [Install Iris](docs/guides/install.md).
 
 ## Quickstart
@@ -47,7 +48,10 @@ The installer verifies the release's checksum, and installs `iris` in `~/.local/
    export GEMINI_API_KEY="GEMINI_KEY"
    ```
 
-2. Check your setup:
+   Replace `OPENAI_KEY` with a key from the OpenAI API platform, and `GEMINI_KEY` with one from
+   Google AI Studio.
+
+2. Check your setup, and fix any `[error]` line that it reports:
 
    ```sh
    iris doctor
@@ -75,7 +79,8 @@ The installer verifies the release's checksum, and installs `iris` in `~/.local/
    iris video generate -m veo-lite "waves crashing at dusk" --duration 4 -o waves.mp4
    ```
 
-   If the wait is interrupted, the job keeps running. To resume, run `iris jobs wait JOB_ID`.
+   If the wait is interrupted, the job keeps running. To resume, run `iris jobs wait JOB_ID` with
+   the job ID that Iris printed.
 
 ## Use Iris from scripts and agents
 

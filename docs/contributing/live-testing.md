@@ -5,8 +5,8 @@ binary, with your API keys. This page describes what it checks, what it costs, h
 the rules that keep it from spending more than you intend.
 
 > [!WARNING]
-> Live verification sends real, billed requests. CI never runs it, `cargo test` never runs it, and
-> nothing runs it automatically. The default test suite is offline and free; see the
+> Live verification sends real, billed requests, and nothing runs it automatically: not CI, and not
+> `cargo test`. For the free, offline test suite, see the
 > [contributing guide](https://github.com/doodla/iris/blob/main/CONTRIBUTING.md).
 
 ## What it checks
@@ -236,7 +236,7 @@ under `env -i` with fake keys. It checks that:
 
 - `--plan`, with every proxy variable pointing at the mock so that any request that tries to leave
   the machine is recorded, prints the five paid estimates and sends nothing.
-- A full mock-mode run passes all eight steps with `mode=MOCK` ledger lines, and the mock receives
+- A full mock-mode run passes all eight steps with `mode=MOCK` ledger lines. The mock receives
   exactly one OpenAI generation and one edit, two Gemini `generateContent` calls, one Veo
   submission, one poll, and one download.
 - Running it again sends no request at all.

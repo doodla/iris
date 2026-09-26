@@ -2,7 +2,7 @@
 
 Iris never chooses a model for you, because models differ several-fold in price and in what they
 accept. This guide shows how to compare models, choose one for a command or as a default, check
-that your account can use it, and estimate and cap what a request costs.
+your access to it, and estimate and cap what a request costs.
 
 ## Compare models
 
@@ -166,7 +166,7 @@ In this example, `gpt-image-2.6-preview` stands for a new model ID. Iris sends t
 it, checks the request as if it were the known model, and reports an
 `unverified_model_capabilities` warning. For Gemini and Veo, the ID can contain only letters,
 digits, `.`, `_`, and `-`. Iris doesn't estimate the cost of such a model, because the known model's
-prices might not apply, so you can't combine it with `--max-cost`.
+prices might not apply. Without an estimate, you can't combine it with `--max-cost`.
 
 ## Set model options
 
@@ -246,23 +246,25 @@ estimate also fails, because Iris can't check it. A request estimated at exactly
 > `--max-cost` compares the estimate, which can leave out prompt, input-image, and thinking tokens.
 > Your bill can be higher than the cap by what the estimate leaves out.
 
-`--max-cost` applies only to the command that you pass it to. There's no config key or environment
-variable for it.
+`--max-cost` applies only to the command that you pass it to: no config key or environment variable
+sets it.
 
 ## Check your access
 
 > [!IMPORTANT]
 > Each provider bills its API usage separately, to your own API account. A ChatGPT Plus or Pro
 > subscription, the Gemini app, a Google AI plan, or a Google Flow subscription doesn't include API
-> access. Google Developer Program Cloud credits can pay for Gemini API usage.
+> access.
 
-Some models have more requirements:
+The models also have these requirements:
 
 - The Gemini image models and Veo have no free tier. Your key's project needs a paid-tier billing
-  plan, and on Prepay, a positive credit balance.
+  plan, and on Prepay, a positive credit balance. Google Developer Program Cloud credits can pay for
+  Gemini API usage.
 - Google says the Gemini API rejects standard API keys starting in September 2026, without naming a
   day, and it already rejects unrestricted standard keys. Use an auth API key.
-- OpenAI might require API Organization Verification for the GPT Image models.
+- The GPT Image models need a paid OpenAI usage tier, and OpenAI might require API Organization
+  Verification for them.
 
 `iris models show MODEL` lists a model's documented access requirements. To check that your key
 can see a model, add `--check-access`. To check every model of each provider whose key is set, run

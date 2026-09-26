@@ -38,6 +38,7 @@ sentence of summary.
 | Exit, error, and warning codes | [Errors reference](../reference/errors.md) |
 | Settings, environment variables, API key handling, logging, and time limits | [Configuration reference](../reference/configuration.md) |
 | What Iris guarantees about paid requests | [How Iris handles paid requests](../concepts/paid-requests.md) |
+| The account access and billing that each provider requires | [Check your access](../guides/models-and-costs.md#check-your-access) |
 | Job states, job records, downloads, retention, and deletion | [How video jobs work](../concepts/video-jobs.md) |
 | Why Iris made a choice, with sources | [Decisions](decisions.md) |
 
@@ -131,9 +132,9 @@ Use at most three alerts on a page, and keep each to one or two sentences.
 
 - Use the page title or a description as link text, not a file name or "here".
 - Link within the repository with relative paths.
-- The release archive ships only `README.md`, `CHANGELOG.md`, `LICENSE`, and `docs/`. From those
-  files, link to anything else in the repository, such as `CONTRIBUTING.md` or `scripts/`, with an
-  absolute `https://github.com/doodla/iris/blob/main/...` URL.
+- Of the repository's files, the release archive ships only `README.md`, `CHANGELOG.md`, `LICENSE`,
+  and `docs/`. From those files, link to anything else in the repository, such as `CONTRIBUTING.md`
+  or `scripts/`, with an absolute `https://github.com/doodla/iris/blob/main/...` URL.
 - Link to the provider's official documentation, not to a third-party page.
 
 ## Formatting

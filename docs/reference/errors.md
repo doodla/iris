@@ -38,7 +38,8 @@ Two commands exit with 0 even when they report a problem, because they ran succe
 
 ## Error object
 
-The following error is for a model that Iris doesn't know. `candidates` is shortened:
+The following error is for a model that Iris doesn't know. Iris prints JSON on one line, and the
+examples on this page are formatted for reading and shortened:
 
 ```json
 {
@@ -375,8 +376,8 @@ error that `iris video generate` itself reported keeps its original value and hi
 Iris reads error codes that it doesn't know without failing, so an older Iris can read a job record
 that a newer one wrote. A job view shows such a code as `internal_error`, with the category
 `internal`, and puts the recorded code in `details.recorded_code`. The job record keeps the original
-code. When you write a client, treat an unknown error code by its category and exit code, and an
-unknown warning code as informational text.
+code. For how a client should handle codes that it doesn't know, see
+[Versioning](json-output.md#versioning).
 
 ## Warning codes
 
@@ -389,7 +390,7 @@ case.
 |---|---|
 | `unverified_model_capabilities` | The model was used with `--capabilities-from`, so Iris assumes it has the named model's capabilities. If the ID nearly matches catalog models, the message also asks "did you mean -m …?", but Iris sends the ID as you typed it. |
 | `output_extension_adjusted` | Iris added an extension to an `-o` path that had none, or changed it to match the type that the provider returned. |
-| `output_renamed` | A different file appeared at the target in the meantime, so Iris saved the output as `STEM.N.EXT` instead of overwriting it. |
+| `output_renamed` | A different file was at the target when Iris saved the output, so Iris saved it as `STEM.N.EXT` instead. The file appeared after Iris checked the path, or `--overwrite` didn't apply because the provider's image type changed the extension. |
 | `output_format_mismatch` | A valid image came back as a different type than requested or labeled. Iris saved it under its real type. |
 | `cost_estimate_unavailable` | Iris couldn't estimate the request's cost. The message says why, and which options to set for an estimate. |
 | `job_record_unreadable` | Iris couldn't read a local job record, and skipped it. |
@@ -421,4 +422,4 @@ response didn't match, reported three warnings:
 ```
 
 A later version of Iris can add warning codes. Treat a code that you don't know as informational
-text, never as an error.
+text, not as an error.

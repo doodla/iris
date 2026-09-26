@@ -28,8 +28,8 @@ Google models, for people and for agents.
 - **Cost control.** `--dry-run` makes every local check and estimates the cost without sending
   anything, and `--max-cost` refuses a request whose estimate is above a cap. Every cost figure is
   labeled as an estimate.
-- **Careful paid requests.** Iris retries a paid request only when it provably wasn't processed,
-  reports an uncertain outcome with exit code 5 instead of sending it again, and keeps every paid
+- **Paid requests sent once.** Iris retries a paid request only when it provably wasn't processed,
+  and reports an uncertain outcome with exit code 5 instead of sending it again. It keeps every paid
   output, even one that it can't save where you asked. See
   [How Iris handles paid requests](https://github.com/doodla/iris/blob/main/docs/concepts/paid-requests.md).
 - **Durable video jobs.** Iris writes each job record before it submits the job, atomically and

@@ -40,7 +40,7 @@ If you didn't use `--json`, paste the plain output and the exit code (`echo $?`)
 
 - OS and architecture:
 - Installed with: (the installer, `cargo install`, or a build from source)
-- Providers involved: (OpenAI, Gemini, or Veo)
+- Providers involved: (OpenAI, Gemini, or both)
 
 ## Anything else
 

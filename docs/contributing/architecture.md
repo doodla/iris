@@ -54,9 +54,9 @@ These edges aren't obvious from the module names:
   paths, job state, or the file layout that `artifacts` and `jobs` own. Moving `InputImage` and
   `InputRole` into `domain` would remove the cycle.
 - **`cli` uses `config`, `catalog`, `jobs`, and `output` directly.** It resolves `Settings` from its
-  flags (`CliOverrides`), turns typed flags and `-O key=value` into the catalog's `RawOption`s,
-  parses `--label` into a `jobs::JobLabel`, and renders the JSON envelope and human text. Workflow
-  logic stays in `app`.
+  flags (`CliOverrides`), and turns typed flags and `-O key=value` into the catalog's `RawOption`s.
+  It parses `--label` into a `jobs::JobLabel`, and renders the JSON envelope and human text.
+  Workflow logic stays in `app`.
 - **`jobs` depends on five lower modules.** It uses `providers` for the adapter results that a
   record applies (`RemoteStatus`, `SubmittedOperation`), and `output` because a record renders
   itself as the public `JobView` and error body. It uses `artifacts` for the state of a downloaded
@@ -97,7 +97,7 @@ The layering protects two invariants:
 | `jobs` | Persisted job records (`JobRecord`, versioned) and `JobStore`, which owns `STATE_DIR/jobs/`: atomic writes, per-job locks, listing without locks, and local deletion. Only `video.generate` creates records. |
 | `artifacts` | Output path planning and file names (`paths`); media sniffing and validation, including image decoding and the ISO-BMFF structure of videos (`media`); input image validation (`input`); atomic finalization through `.NAME.iris-part-RANDOM` temporary files, without replacing an existing file unless `--overwrite` is given (`finalize`, `download`); and the `unsaved` fallback for paid outputs that can't be saved where requested (`fallback`). |
 | `config` | The config file, environment variables, the resolution order (flag, environment variable, config file, default), and platform paths. It resolves per-provider settings for every `ProviderId`. |
-| `app` | The workflows, one submodule per area: `image`, `video`, `jobs`, `models` (which also serves `providers list`), `info` (`version`, `config show`, and `config path`), and `doctor`. `app::catalog` is the `Catalog` type, for model lookup and resolution. `app::context` is the `AppContext` that every workflow receives. `app::request` holds the steps that the generation commands share: model resolution, prompt and option checks, cost estimates, and dry-run plans. `app` has no clap types and prints nothing: it takes typed arguments, reports progress through a `Progress` trait, collects warnings, and returns results or an `IrisError`. |
+| `app` | The workflows, one submodule per area: `image`, `video`, `jobs`, `models` (which also serves `providers list`), `info` (`version`, `config show`, and `config path`), and `doctor`. `app::catalog` is the `Catalog` type, for model lookup and resolution. `app::context` is the `AppContext` that every workflow receives. `app::request` holds the steps that the generation commands share: model resolution, prompt and option checks, cost estimates, and dry-run plans. `app` has no clap types and prints nothing: it takes typed arguments, reports progress through a `Progress` sink, collects warnings, and returns results or an `IrisError`. |
 | `output` | The JSON envelope and result types, built with `serde` and `schemars` so that the published schema comes from the serialized types, and the human-readable rendering. |
 | `cli` | The clap definitions, prompt sources (argument, file, or standard input), dispatch to `app`, and output as JSON or text. `cli::run` is the process entry point. |
 

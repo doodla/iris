@@ -32,14 +32,13 @@ Saved /home/you/waves.mp4
 ```
 
 The command waits for up to 10 minutes. To change that, pass `--timeout`, such as `--timeout 30m`.
-If the time passes first, the job keeps running, and you can
-[wait for it again](#wait-for-a-job-and-download-the-video).
+If the time passes first, the job keeps running. See
+[Wait for a job and download the video](#wait-for-a-job-and-download-the-video).
 
 The common video options have typed flags: `--duration`, `--resolution`, `--aspect-ratio`, and
 `--negative-prompt`. To start from images, pass a first frame with `--image`, a last frame with
-`--last-frame`, or reference images with `--ref`. Not every model accepts every option: run
-`iris models show MODEL` to see what a model takes. Veo always generates audio, and you can't turn
-it off.
+`--last-frame`, or reference images with `--ref`. Not every model accepts every option. To see what
+a model takes, run `iris models show MODEL`. Veo always generates audio, and you can't turn it off.
 
 ## Submit a job and return
 
@@ -123,14 +122,13 @@ Pressing Ctrl+C also stops only the wait. The command exits with code 130, and t
 running. To resume, run `iris jobs wait JOB_ID` again.
 
 > [!WARNING]
-> Veo keeps generated videos for 2 days. Download your video before then. After that, the download
-> fails with `artifact_expired`, and getting the video again means paying for a new job.
+> Veo keeps generated videos for 2 days. After that, the download fails with `artifact_expired`, and
+> getting the video again means paying for a new job.
 
 ## Download the video again
 
-`iris jobs download` saves the outputs of a finished job. It never generates the video again, so
-you can run it as often as you like. If the saved file is intact, Iris doesn't even contact the
-provider:
+`iris jobs download` saves the outputs of a finished job. It doesn't generate the video again, so
+you can run it as often as you like. If the saved file is intact, Iris doesn't contact the provider:
 
 ```sh
 iris jobs download JOB_ID
@@ -181,7 +179,7 @@ error[label_in_use]: label 'paper-boat-1' is already used by job job_01m3ec3srq9
   remote operation: models/veo-3.1-lite-generate-preview/operations/mock-op-1
 ```
 
-What to do next depends on the job's status, and the hint says it:
+The hint says what to do next, which depends on the job's status:
 
 | The labeled job is | What to do |
 |---|---|

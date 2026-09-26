@@ -32,9 +32,9 @@ add a provider, follow [Add a provider](docs/contributing/adding-a-provider.md).
 
 ## Set up a development environment
 
-You need Rust 1.89 or later, the `rust-version` in `Cargo.toml`. [rustup](https://rustup.rs) is the
-easiest way to get it. The repository has no `rust-toolchain.toml`, so any recent stable toolchain
-works.
+You need Rust 1.89 or later, the `rust-version` in `Cargo.toml`, which you can install with
+[rustup](https://rustup.rs). The repository has no `rust-toolchain.toml`, so any recent stable
+toolchain works.
 
 ```sh
 git clone https://github.com/doodla/iris && cd iris

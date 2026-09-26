@@ -21,8 +21,8 @@ both) and updated the docs. If not, write "None." -->
 - [ ] `cargo clippy --all-targets --locked -- -D warnings`
 - [ ] `cargo test --locked`
 - [ ] `sh tests/installer/run.sh` (only if `install.sh` or `tests/installer/` changed)
-- [ ] `shellcheck -s sh install.sh` and `shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh`
-      (only if shell scripts changed)
+- [ ] `shellcheck -s sh install.sh` and
+      `shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh` (only if shell scripts changed)
 - [ ] `sh tests/live/mock-run.sh` (only if `scripts/live-verify.sh` or `tests/live/` changed)
 - [ ] Ran every documented command against the built binary (only if the docs, the README, or
       `--help` text changed)

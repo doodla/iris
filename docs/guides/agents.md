@@ -1,9 +1,7 @@
 # Use Iris in scripts and agents
 
-Iris is designed to be called by programs. Every command can print one JSON document, errors have
-stable codes and exit codes, and Iris never repeats a paid request on its own. This guide shows how
-to call Iris from a script or an AI agent, check a request before you pay for it, and run a video
-job that survives a crash without paying twice.
+This guide shows how to call Iris from a script or an AI agent. It covers JSON output, exit codes,
+checking a request before you pay, and a video job that survives a crash without paying twice.
 
 ## Use JSON mode
 
@@ -20,7 +18,7 @@ The output is similar to the following:
 ```
 
 With `--json`, Iris prints exactly one JSON document on stdout, and sends progress lines to stderr.
-It never prompts for input. Every document is an envelope: check `ok`, then read `result`, or
+It doesn't prompt for input. Every document is an envelope: check `ok`, then read `result`, or
 `error.code` if the command failed. Warnings are in `warnings`, even when the command fails.
 
 To validate the output, or to generate types from it, save the JSON Schema:
@@ -39,7 +37,8 @@ every code and what to do about it, see [Exit codes](../reference/errors.md#exit
 
 Keep these rules in mind:
 
-- An error with `provider_status: null` didn't reach the provider, so it cost nothing.
+- An error with exit code 2 and `provider_status: null` didn't reach the provider, so it cost
+  nothing. With other exit codes, `null` can also mean that no response arrived.
 - `retryable` says whether sending the same request again might succeed. After exit code 5, don't
   send the request again automatically. See
   [Handle an uncertain outcome](#handle-an-uncertain-outcome).
@@ -119,13 +118,14 @@ Instead, check your usage in the provider's console.
 - For a video, Iris keeps the job with the status `submission_unknown`. If you used a label, running
   the command again is refused, so the flow above stays safe.
 
-For when this happens, see [How Iris handles paid requests](../concepts/paid-requests.md).
+For the cases that count as uncertain, see
+[When the outcome is uncertain](../concepts/paid-requests.md#when-the-outcome-is-uncertain).
 
 ## Keep one state directory
 
-Job records live in the state directory, and only a process that uses the same state directory can
-follow a job. When your agent runs in a container or CI, set `IRIS_STATE_DIR` to a path on a
-persistent volume, the same for every command.
+Only a process that uses the same state directory can follow a job. When your agent runs in a
+container or CI, set `IRIS_STATE_DIR` to a path on a persistent volume, the same for every command.
+See [Where job records live](../concepts/video-jobs.md#where-job-records-live).
 
 ## What's next
 

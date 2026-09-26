@@ -61,7 +61,7 @@ doesn't:
 - **Never silently drop an option.** `ResolvedOptions` contains only options that the catalog
   declared for the model and operation, because validation runs once, centrally, before any adapter
   is called. If your wire mapping meets an option that it doesn't know, the catalog declaration has
-  a bug. Return `IrisError::internal(...)`, as the "unmapped option" branches of
+  a bug. Return `IrisError::internal(...)`, as the branches for an unmapped option in
   `providers/openai/wire.rs` and `providers/gemini/veo.rs` do.
 - **Send a paid submission once.** `submit`, and any synchronous image call, uses the `PaidSubmit`
   retry class. It retries only a connection failure before the request was sent, a documented
@@ -95,13 +95,13 @@ doesn't:
   something to add to the existing trait.
 - **Use the shared credential-origin rule for downloads.** `http::download` attaches
   `Provider::credential_header()` only when the download URL's scheme, host, and port match the
-  provider's configured base URL, and follows redirects itself, so a redirect to another origin
+  provider's configured base URL. It follows redirects itself, so a redirect to another origin
   drops the credential. `poll` returns every output URI of a finished job as given, in sample order.
-  The job record then fails only an output whose URI no download could use (not an `http` or
-  `https` URL, or with user information or a fragment), with `provider_bad_response` and an
-  `output_item_unusable` warning, and keeps the others. A finished job is `failed` only when the
-  provider reports an error, or none of its outputs has a usable URI. Which usable URIs Iris fetches
-  is decided at download time, against the base URL configured then, by
+  The job record then fails only an output whose URI no download could use, with
+  `provider_bad_response` and an `output_item_unusable` warning, and keeps the others. Such a URI
+  isn't an `http` or `https` URL, or has user information or a fragment. A finished job is `failed`
+  only when the provider reports an error, or none of its outputs has a usable URI. Which usable
+  URIs Iris fetches is decided at download time, against the base URL configured then, by
   `VideoProvider::check_output_uri`. `providers/gemini/veo.rs::validate_output_uri` shows the
   pattern: the same origin and a narrow path shape. A refused URI fails that output's download,
   never the job.
@@ -198,10 +198,10 @@ adapter can send. Then fill in the declarations:
   declare an option that your adapter can't send: if the provider accepts it but your adapter has
   nowhere to put it yet, leave it out of the catalog.
 - **Inputs.** Declare the input rules that the provider documents in `InputSpec`: accepted types
-  and sizes, mask rules (`MaskSpec`), and a limit on the whole request when inputs are sent inline
-  (`RequestSizeLimit`, with allowances for the JSON that your adapter adds). Iris enforces them
-  before a dry run returns and before it needs a credential. Checks inside the adapter are only a
-  second line of defense: a dry run must never accept a request that the adapter would refuse.
+  and sizes, and mask rules (`MaskSpec`). If inputs are sent inline, add a limit on the whole
+  request (`RequestSizeLimit`), with allowances for the JSON that your adapter adds. Iris enforces
+  them before a dry run returns and before it needs a credential. Checks inside the adapter are only
+  a second line of defense: a dry run must never accept a request that the adapter would refuse.
 - **Rules between options.** If the model has rules that relate options, such as Veo's "1080p or 4k
   requires an 8-second duration" and "a last frame requires a first frame", write a check function
   shaped like `catalog::veo::validate_video`. Declare every rule that it enforces as a `Constraint`,
@@ -353,9 +353,9 @@ warning that `GOOGLE_API_KEY` is set but ignored, and each adapter's own error m
 
 ## What you shouldn't need to change
 
-If a provider needs changes beyond this checklist, such as in `cli/args.rs` beyond the help text
-that names providers, or new branches in `app/image.rs` or `app/video.rs` that depend on which
-provider was selected, the abstraction in `providers` needs to grow first. Change the trait or the
-shared catalog types, not the application layer. If that changes the CLI or JSON output, treat it
-as a deliberate, documented change under the
+If a provider needs changes beyond this checklist, the abstraction in `providers` needs to grow
+first. Such changes include edits to `cli/args.rs` beyond the help text that names providers, and
+new branches in `app/image.rs` or `app/video.rs` that depend on which provider was selected. Change
+the trait or the shared catalog types, not the application layer. If that changes the CLI or JSON
+output, treat it as a deliberate, documented change under the
 [compatibility rules](https://github.com/doodla/iris/blob/main/AGENTS.md#compatibility).

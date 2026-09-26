@@ -51,8 +51,8 @@ credentials (presence only):
 | Store prompt text in job records | `jobs.store_prompts` | `IRIS_STORE_PROMPTS` | | `false` |
 | OpenAI base URL | `providers.openai.base_url` | `IRIS_OPENAI_BASE_URL` | | `https://api.openai.com/v1` |
 | Gemini base URL | `providers.gemini.base_url` | `IRIS_GEMINI_BASE_URL` | | `https://generativelanguage.googleapis.com` |
-| Request time limit | `providers.PROVIDER.request_timeout` | | | `300s` |
-| Video submission time limit | `providers.gemini.submit_timeout` | | | `60s` |
+| Request time limit | `providers.PROVIDER.request_timeout` | | | `5m` |
+| Video submission time limit | `providers.gemini.submit_timeout` | | | `1m` |
 | Config file | | `IRIS_CONFIG` | `--config` | See [Config file](#config-file) |
 | Log filter | | `IRIS_LOG` | `-v`, `-vv` | `warn` |
 
@@ -103,8 +103,8 @@ Iris handles keys in the following ways:
 To send a key to another base URL, such as a proxy, see [Base URL overrides](#base-url-overrides).
 
 A command whose provider's key isn't set fails with `missing_credentials` (exit code 3). Iris checks
-the key after every other local check, and `--dry-run` doesn't require one. `iris doctor` reports a
-missing key as a warning while another provider's key is set, and as an error when no key is set:
+the key after every other local check, and `--dry-run` doesn't require one. `iris doctor` reports
+each missing key as a warning, and adds an error when no key is set at all:
 
 ```text
 [warning] credentials.gemini: GEMINI_API_KEY is not set; gemini commands will fail with missing_credentials
@@ -155,9 +155,9 @@ submit_timeout = "60s"
 ```
 
 `[image] model` and `[video] model` are the only settings that name a model. Each must be a catalog
-model ID or alias of its kind. Iris stores the ID that `-m` would send: the canonical ID for a
-nickname such as `nano-banana-2`, or a dated snapshot as written. `iris config show` shows the
-stored ID. `--capabilities-from` has no config equivalent. For how to choose a model, see
+model ID or alias of its kind. Iris resolves it to the ID that `-m` would send: the canonical ID for
+a nickname such as `nano-banana-2`, or a dated snapshot as written. `iris config show` shows that
+ID. `--capabilities-from` has no config equivalent. For how to choose a model, see
 [Choose a model and control costs](../guides/models-and-costs.md).
 
 There's one `[providers.PROVIDER]` table for each provider, `openai` and `gemini`, with the same
@@ -259,9 +259,9 @@ upload has an uncertain outcome, so if your connection uploads more slowly than 
 `request_timeout` or `submit_timeout`.
 
 A job record that stays `submitting` is reported as `submission_unknown` only after the whole
-submission time budget has passed. The budget covers three attempts, each with the connect limit,
-`submit_timeout`, and the largest upload allowance. It adds up to a minute between attempts, and
-one more minute. With the defaults, that's about 37 minutes. See
+submission time budget, plus one minute, has passed. With the defaults, that's about 37 minutes. The
+budget covers three attempts, each with the connect limit, `submit_timeout`, and the largest upload
+allowance, and up to a minute between attempts. See
 [Job states](../concepts/video-jobs.md#job-states).
 
 ## Base URL overrides
@@ -293,7 +293,7 @@ warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:808
 [warning] base_url.openai: providers.openai.base_url is http://127.0.0.1:8080/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
 ```
 
-### Download Veo videos through a proxy
+### Veo downloads through a proxy
 
 A finished Veo job names its video with a Files API download URL, such as
 `https://generativelanguage.googleapis.com/v1beta/files/FILE_ID:download?alt=media`. Iris downloads

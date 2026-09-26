@@ -28,9 +28,7 @@ state dir:   /home/you/.local/state/iris
 jobs dir:    /home/you/.local/state/iris/jobs
 ```
 
-The state directory is set by `IRIS_STATE_DIR`, then by `state_dir` in the config file. By default,
-it's `$XDG_STATE_HOME/iris` or `~/.local/state/iris` on Linux, and
-`~/Library/Application Support/iris` on macOS.
+For the default location and how to change it, see [Paths](../reference/configuration.md#paths).
 
 Only a process that uses the same state directory can follow a job. On another machine, in a fresh
 container, or with a different `HOME` or `IRIS_STATE_DIR`, Iris reports `job_not_found`, even though
@@ -40,8 +38,7 @@ persistent volume, or set `IRIS_STATE_DIR` to the same path for every command.
 Each job is one file, `JOB_ID.json`, in the jobs directory. Iris creates directories with mode
 `0700` and records with mode `0600`. It also creates empty lock files when it needs them:
 `JOB_ID.lock` and `JOB_ID.download.lock` for each job, and `labels.lock` for the jobs directory.
-Lock files stay on disk after use. `iris jobs delete` removes a job's lock files with its
-record.
+Lock files stay on disk after use. `iris jobs delete` removes a job's lock files with its record.
 
 Iris doesn't delete job records on its own, whatever their age. A record stays until you delete it
 with `iris jobs delete`.
@@ -106,16 +103,7 @@ Records are versioned, and every version of Iris can read the records of earlier
 
 ## Job states
 
-```mermaid
-stateDiagram-v2
-    [*] --> submitting: Iris writes the record
-    submitting --> running: the provider returns an operation name
-    submitting --> failed: the provider rejects the request
-    submitting --> submission_unknown: the outcome is unknown
-    running --> succeeded: the operation finishes with outputs
-    running --> failed: the operation finishes with an error
-    running --> expired: NOT_FOUND after the retention period
-```
+A job has one of these statuses:
 
 | Status | Meaning |
 |---|---|
@@ -136,6 +124,19 @@ A job changes status only in these ways:
 | `running` | `succeeded` | A status check finds the operation done, with outputs. |
 | `running` | `failed` | A status check finds the operation done, with an error. |
 | `running` | `expired` | A status check gets Google's `NOT_FOUND` error after the retention period. |
+
+The following diagram shows the same transitions:
+
+```mermaid
+stateDiagram-v2
+    [*] --> submitting: Iris writes the record
+    submitting --> running: the provider returns an operation name
+    submitting --> failed: the provider rejects the request
+    submitting --> submission_unknown: the outcome is unknown
+    running --> succeeded: the operation finishes with outputs
+    running --> failed: the operation finishes with an error
+    running --> expired: NOT_FOUND after the retention period
+```
 
 Each output of a succeeded job has its own download state. It starts as `pending` and becomes
 `downloaded`, `failed`, or `expired`. A `failed` output can be downloaded again. A `downloaded`
@@ -177,9 +178,8 @@ If you press Ctrl+C, or the process receives SIGTERM or SIGHUP:
 
 - After step 2 but before Iris starts sending the request, Iris stops without sending anything,
   deletes the record, and exits with code 130 and `retryable: true`.
-- During step 3, Iris waits for the provider's response to the first interrupt, records the
-  operation, and exits with code 130. The job is `running`. To resume it, run
-  `iris jobs wait JOB_ID`.
+- During step 3, Iris finishes waiting for the provider's response, records the operation, and
+  exits with code 130. The job is `running`. To resume it, run `iris jobs wait JOB_ID`.
 - A second interrupt stops Iris immediately. The job stays `submitting` and is reported as
   `submission_unknown` once the submission budget has passed.
 
@@ -303,10 +303,9 @@ project and the base URL.
 downloaded, and its result says so with `"remote_effect": "none"`.
 
 > [!NOTE]
-> You can't cancel a video job after you submit it. Veo operations support only `get` and `list`,
-> with no way to cancel or delete them. Iris also doesn't delete generated videos from the provider.
-> Google's Files API has a delete method, but Google doesn't document whether it applies to Veo
-> outputs.
+> You can't cancel a video job after you submit it, because Veo operations have no cancel or delete
+> method. Iris also doesn't delete generated videos from the provider, because Google doesn't
+> document whether the Files API's delete method applies to them.
 
 Without `--force`, Iris refuses to delete a record when that would lose track of paid work:
 

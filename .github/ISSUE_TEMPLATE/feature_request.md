@@ -16,8 +16,8 @@ link the provider's current documentation for it. -->
 
 ## Why the existing commands don't cover it
 
-<!-- Did you check `iris models show MODEL` and `iris COMMAND --help`? If Iris rejects the capability
-(unsupported_option or unsupported_operation), paste the error. -->
+<!-- Did you check `iris models show MODEL` and `iris COMMAND --help`? If Iris rejects the
+capability (unsupported_option or unsupported_operation), paste the error. -->
 
 ## Anything else
 

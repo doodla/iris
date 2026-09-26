@@ -53,9 +53,9 @@ If you give two sources, the command fails with `usage_error`.
 ## Set image options
 
 Iris has typed flags for the common image options: `--count` (`-n`), `--size`, `--aspect-ratio`,
-`--resolution`, `--quality`, and `--format`. Which options a model accepts depends on the model.
-For example, the OpenAI models take `--size` and `--quality`, and the Gemini models take
-`--aspect-ratio` and `--resolution`:
+`--resolution`, `--quality`, and `--format`. Each model accepts only some of them. For example, the
+OpenAI models take `--size` and `--quality`, and the Gemini models take `--aspect-ratio` and
+`--resolution`:
 
 ```sh
 iris image generate -m nano-banana-2 --aspect-ratio 16:9 --resolution 2K "a watercolor fox" -o fox.jpg
@@ -66,8 +66,8 @@ An option that has no typed flag is available with `-O NAME=VALUE`, such as
 `iris models show MODEL`. For more about options, see
 [Set model options](models-and-costs.md#set-model-options).
 
-Iris checks every option against the model before it sends anything. If the model doesn't accept an
-option, the command fails with `unsupported_option` and names the models that do.
+If the model doesn't accept an option, the command fails with `unsupported_option` before it sends
+anything, and names the models that do.
 
 ## Edit images
 
@@ -116,7 +116,7 @@ such as `/dev/stdout` or `/dev/null`. With `--json`, the paths are in `result.ar
 > the image in the state directory instead and tells you where. See
 > [Paid outputs are kept](../concepts/paid-requests.md#paid-outputs-are-kept).
 
-### File type and extension
+### Choose the file type
 
 For the OpenAI models, the extension of `-o` chooses the image format: `-o fox.jpg` requests a JPEG.
 You can also set the format with `--format`.
