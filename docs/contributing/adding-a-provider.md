@@ -90,7 +90,7 @@ compiler alone):
   warn before an artifact expires (`retention_limited`), never to promise a number no one
   published.
 - **Declare cancellation honestly, by omission.** There is no `cancel` method on `VideoProvider`
-  and no `jobs cancel` command in the CLI (see [video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state))
+  and no `jobs cancel` command in the CLI (see [video-jobs.md](../concepts/video-jobs.md#deleting-job-records))
   because no provider Iris implements today offers one. If your provider *does* document a cancel
   endpoint, that is a CLI-contract change (a new command), not something to bolt onto the existing
   trait — treat it as a deliberate, documented CLI/JSON compatibility change (see

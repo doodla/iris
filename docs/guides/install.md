@@ -186,7 +186,7 @@ $ rm -rf "/Users/you/Library/Application Support/iris/jobs"          # job histo
 $ rm "/Users/you/Library/Application Support/iris/config.toml"       # config, separately
 ```
 
-`iris jobs delete --all` (see [video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state)) removes only
+`iris jobs delete --all` (see [video-jobs.md](../concepts/video-jobs.md#deleting-job-records)) removes only
 *local job records* — it is not a substitute for deleting the state directory, and neither of
 these ever cancels or deletes anything on a provider.
 

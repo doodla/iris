@@ -180,7 +180,7 @@ directory (a state directory that moves loses its jobs). Relative paths given as
 `--max-cost` and `--label` have no environment variable or config key: a spending cap or a label
 applies only to the command that names it. `--max-cost` caps the request's pre-call estimate, never
 the bill (see [`cost_limit_exceeded`](json-output.md#error-object)); `--label` is described in
-[video-jobs.md](../concepts/video-jobs.md#labels-find-a-job-and-never-submit-it-twice).
+[video-jobs.md](../concepts/video-jobs.md#labels).
 
 If the current directory does not exist (it was deleted under a running shell), commands that
 do not need it still work: `version`, `schema`, `completions`, `--help`, `config path`/`show`,

@@ -147,7 +147,7 @@ pub trait VideoProvider: Send + Sync {
 output or of the failure, which the app keeps in `<state_dir>/unsaved/`): there is nothing to persist
 between the request and the response, so no job record is created, and a lost connection after the
 provider accepted the request is simply unrecoverable (`submission_uncertain` with `job_id: null`,
-`details.charge_possible: true` — see [video-jobs.md](../concepts/video-jobs.md#why-synchronous-calls-have-no-job-record)).
+`details.charge_possible: true` — see [video-jobs.md](../concepts/video-jobs.md#why-only-videos-create-jobs)).
 
 `VideoProvider` is split into `submit` (paid, sent once, never blindly retried) and `poll`
 (idempotent, safe to retry and to call again from a different process). Iris persists the job
@@ -162,7 +162,7 @@ record turns that into `expired` only once the retention period since submission
 the same shape regardless of provider, so `app::jobs` drives the poll loop once, independent of
 which provider a job belongs to. There is no `cancel` method on `VideoProvider` and no `jobs
 cancel` command: no provider Iris implements offers a way to cancel a job it accepted, so nothing
-in the codebase pretends otherwise (see [video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state)).
+in the codebase pretends otherwise (see [video-jobs.md](../concepts/video-jobs.md#deleting-job-records)).
 Downloading an artifact goes through a generic `http::download`: `app::jobs` attaches a
 provider's `credential_header()` only when the download URL's scheme, host, and port equal that
 provider's configured base URL origin, and `http::download` keeps it off every redirect hop to

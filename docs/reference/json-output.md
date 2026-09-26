@@ -172,7 +172,7 @@ when `jobs.store_prompts` keeps the text in the record): `sha256` is the lowerca
 the prompt as sent, encoded as UTF-8 (a `--prompt-file` or `--prompt-stdin` prompt without its
 trailing whitespace), and `chars` its length in characters (Unicode scalar values). It is how a
 caller finds a job whose submitting process was killed before printing anything (see
-[video-jobs.md](../concepts/video-jobs.md#finding-a-job-whose-submitting-process-was-killed)).
+[video-jobs.md](../concepts/video-jobs.md#submitting-a-job)).
 
 `label` is the label `video generate --label` recorded with the job, or `null`. No two local job
 records share a label (see [`label_in_use`](#error-object)), so a caller that labels each intended
@@ -212,7 +212,7 @@ is refused while the provider still keeps them; its error adds `details.outputs_
 retention). `--all --force` also deletes unreadable record files and names them in `note`. Only
 if a record changes between the check and its deletion can the command stop partway;
 `details.deleted` then lists what it deleted (see
-[video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state)).
+[video-jobs.md](../concepts/video-jobs.md#deleting-job-records)).
 
 ### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "billing", "operations": [], "standard_cost" } ] }`
 
@@ -589,7 +589,7 @@ job's `model`, and its `created_at`. The hint depends on that job's status: an a
 followed with `jobs status`/`jobs wait` (deleting its record does not cancel it), a succeeded one
 downloaded, a `submission_unknown` one checked in the provider's console before anything is
 submitted again, and for a failed or expired one the record is deleted or another label used (the
-full table is in [video-jobs.md](../concepts/video-jobs.md#labels-find-a-job-and-never-submit-it-twice)). The check and the
+full table is in [video-jobs.md](../concepts/video-jobs.md#labels)). The check and the
 new record are one step under the job store's lock, so of two commands submitting with one label at
 the same time, only one submits. While a local job record cannot be read, it could have the label:
 a labeled submission is then `state_invalid` (exit 1, `retryable: false`, nothing sent, a dry run
@@ -708,7 +708,7 @@ written; the job record keeps the original code and any unknown fields untouched
 compares every row with the code's definition); a specific error can override it (e.g.
 `provider_error` is `true` for a 5xx it classified as transient). `retryable` describes
 whether *retrying the same request* might help — it is never an instruction to retry a paid
-submission automatically; see [video-jobs.md](../concepts/video-jobs.md#submission-uncertainty) for why Iris never
+submission automatically; see [paid-requests.md](../concepts/paid-requests.md#when-the-outcome-is-uncertain) for why Iris never
 resubmits a paid request whose outcome it cannot prove. An image-command error whose
 `details.charge_possible` is `true` (the provider may have processed and billed the request) never
 says `retryable: true`. `details.charged: true` is different: the provider completed the request
@@ -770,7 +770,7 @@ full disk) stay `io_error` (exit 1).
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint
 that Iris did not retry it, and `job_id: null` — Iris has no way to resume a synchronous call,
-unlike a video job (see [video-jobs.md](../concepts/video-jobs.md#why-synchronous-calls-have-no-job-record)). That covers:
+unlike a video job (see [video-jobs.md](../concepts/video-jobs.md#why-only-videos-create-jobs)). That covers:
 
 - no complete answer after the request was sent: a timeout (`details.transport: "timeout"`), or a
   connection that failed or an answer that could not be read in full (`details.transport:
@@ -789,7 +789,7 @@ to 16 MiB. A longer one is `provider_bad_response` for a request that costs noth
 or a metadata read), with the answer's `provider_status`, `details.limit_bytes` (the limit), and
 `details.declared_bytes` when the answer declared a longer `Content-Length`; it is not retried. For
 a Veo submission it is `submission_uncertain`, and the job is recorded as `submission_unknown` (see
-[video-jobs.md](../concepts/video-jobs.md#submission-uncertainty)).
+[paid-requests.md](../concepts/paid-requests.md#when-the-outcome-is-uncertain)).
 
 A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retryable, for a 5xx)
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
@@ -812,7 +812,7 @@ while a paid request is in flight (a Veo `video generate` submit or an image cal
 `retryable: false` and `details.charge_possible: true` because running it again could pay twice.
 An interrupt that arrives before Iris starts sending a Veo request stops without sending it: it
 keeps `retryable: true`, names no job, and leaves no job record (see
-[video-jobs.md](../concepts/video-jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
+[video-jobs.md](../concepts/video-jobs.md#submitting-a-job)).
 
 `job_not_ready` (exit 4) from `jobs download` means the job was still `submitting` or `running`
 when the command looked. If the status check that `jobs download` makes first failed transiently,

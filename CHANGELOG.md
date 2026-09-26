@@ -179,7 +179,7 @@ machine-readable contract for agents.
 
 - A synchronous image call cannot be recovered if the connection is lost after the provider
   accepted it — there is no job to resume, unlike video (see
-  [docs/concepts/video-jobs.md](https://github.com/doodla/iris/blob/main/docs/concepts/video-jobs.md#why-synchronous-calls-have-no-job-record)).
+  [docs/concepts/paid-requests.md](https://github.com/doodla/iris/blob/main/docs/concepts/paid-requests.md#when-the-outcome-is-uncertain)).
 - Veo audio cannot be disabled (not an option the Gemini API offers), Veo outputs are retained by
   the provider for about 2 days, and all Veo models are labeled preview by Google.
 - Veo 3.1 Lite takes no negative prompt, and no Veo model takes one together with reference
