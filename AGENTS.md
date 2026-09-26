@@ -2,7 +2,8 @@
 
 Shared instructions for coding agents (and humans) working on Iris, a Rust CLI for
 generating and editing media through provider APIs. These are invariants and steering
-rules, not a description of the code; read `docs/contributing/architecture.md` and the source for that.
+rules, not a description of the code; read `docs/contributing/architecture.md` and the
+source for that.
 
 ## Compatibility
 
@@ -70,6 +71,17 @@ rules, not a description of the code; read `docs/contributing/architecture.md` a
   requests. Never add them to ordinary CI and never run them to "see if it works".
 - Test observable behavior (CLI output, exit codes, files, persisted state), not
   implementation details.
+
+## Documentation
+
+- Write docs by `docs/contributing/style-guide.md`: one reader and one type per page,
+  second person, short sentences, and tables for reference facts.
+- Every fact has one home (the style guide lists them). Change the home, then replace
+  any restatement elsewhere with a link; never copy a rule into a second page.
+- Change the README only when installation, the quickstart, or a headline capability
+  changes. Feature details belong in the guides and references.
+- After changing help text, regenerate `docs/reference/cli.md` with
+  `IRIS_UPDATE_DOCS=1 cargo test --test cli_reference` (a test enforces this).
 
 ## Working in this repository
 
