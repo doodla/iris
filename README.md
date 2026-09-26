@@ -89,7 +89,7 @@ $ cargo install --locked --path .
 This builds `iris` with exactly the dependency versions in the committed `Cargo.lock` and installs
 it into Cargo's `bin` directory (`~/.cargo/bin` by default). The platforms release archives are
 built for, and their minimum OS/kernel versions, are listed in
-[docs/guides/install.md](docs/guides/install.md#supported-platforms-and-runtime-requirements).
+[docs/guides/install.md](docs/guides/install.md#supported-platforms).
 
 ## Setup
 
@@ -309,7 +309,7 @@ $ iris --json version
 ```
 
 (A binary built from a checkout reports `git_commit: null`; see
-[docs/guides/install.md](docs/guides/install.md#verifying-what-you-installed).)
+[docs/guides/install.md](docs/guides/install.md#verify-what-you-installed).)
 
 Get the full schema (also published at `schema/iris-output.v1.schema.json` in this repo):
 

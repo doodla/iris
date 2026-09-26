@@ -60,7 +60,7 @@ CI also builds and tests on macOS (Intel and Apple silicon) in addition to Linux
 crate (`cargo package --list`) to catch anything accidentally included or excluded, and runs a
 release dry run: it builds the Linux musl binary, packages it, and smoke-tests the archive and
 `install.sh` with it. The macOS jobs are hosted-only; the release dry run can be replayed locally
-as shown in [docs/guides/install.md](docs/guides/install.md#testing-the-installer-without-a-real-release).
+as shown in [docs/contributing/releasing.md](docs/contributing/releasing.md#test-the-release-path).
 
 Packaging generates `THIRD-PARTY-LICENSES`, the license notices of every crate linked into the
 binary, with cargo-about (`about.toml`, `about.hbs`), and fails on any problem cargo-about
@@ -69,7 +69,7 @@ reports. A new dependency whose license `deny.toml` allows needs no change there
 SHA-256 in `about.toml`, whose comments explain why those two files are listed. Packaging accepts
 only one cargo-about version, `cargo_about_version` in `scripts/package-release.sh`, so that the
 same commit always gives the same archive; to move to a newer one, change it there, in the
-cargo-about install steps of `ci.yml` and `release.yml`, and in `docs/guides/install.md`, and compare
+cargo-about install steps of `ci.yml` and `release.yml`, and in `docs/contributing/releasing.md`, and compare
 the file it generates with the old one.
 
 ## Tests

@@ -1,5 +1,6 @@
 #!/bin/sh
-# scripts/package-release.sh — build the release archive (docs/guides/install.md) for one target.
+# scripts/package-release.sh — build the release archive for one target
+# (docs/contributing/releasing.md).
 #
 # Usage:
 #   scripts/package-release.sh <target-triple> [output-dir]

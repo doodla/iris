@@ -1,5 +1,5 @@
 # Release: check, build, package, smoke-test, and publish the release
-# archives (docs/guides/install.md) for a pushed `vX.Y.Z` tag (or, via
+# archives (docs/contributing/releasing.md) for a pushed `vX.Y.Z` tag (or, via
 # workflow_dispatch, everything but publishing — see the `dry_run` input
 # below). Publishing needs every other job to pass on the tagged commit. The
 # release notes are the version's section of CHANGELOG.md; a tag without one,
