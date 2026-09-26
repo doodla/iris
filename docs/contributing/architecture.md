@@ -1,24 +1,26 @@
 # Architecture
 
-Iris is a single Cargo package: binary crate `iris` (`src/main.rs`, thin — it calls
-`iris::cli::run()` and exits with its code) and library crate `iris` (`src/lib.rs`), so the
-integration tests can reach internals through the library. `#![forbid(unsafe_code)]` is set at the
-crate root; there is no `unsafe` anywhere in Iris's own code.
+This page describes how the Iris code is organized: the module layers, what each module owns, the
+two provider traits, and where each invariant is enforced. For the command surface, see the
+[CLI reference](../reference/cli.md) and the [JSON output reference](../reference/json-output.md).
+For why Iris uses the provider APIs, retries, and dependencies that it does, see
+[Decisions](decisions.md). To add a provider, see [Add a provider](adding-a-provider.md).
 
-This document describes the module layout and where each kind of invariant is enforced. For the
-exact command surface see [json-output.md](../reference/json-output.md) and `iris <command> --help`; for how
-to add a provider see [adding-a-provider.md](adding-a-provider.md); for why Iris calls the provider APIs, retries,
-persists jobs, and picks dependencies the way it does, with sources, see
-[decisions.md](decisions.md).
+Iris is one Cargo package with two crates, both named `iris`:
+
+- The binary crate, `src/main.rs`, only calls `iris::cli::run()` and exits with its code.
+- The library crate, `src/lib.rs`, holds everything else, so integration tests can reach the
+  internals.
+
+The crate root sets `#![forbid(unsafe_code)]`, and Iris's own code has no `unsafe` blocks.
 
 ## Layering
 
-The top-level modules form these layers. This is what the `use crate::…` imports of the
-non-test code say, not an aspiration. A module depends only on modules in lower rows, and
-modules in the same row do not depend on each other, with one exception (`providers` and
-`artifacts`, below):
+The top-level modules form these layers, as the `use crate::…` imports of the non-test code show. A
+module depends only on modules in lower rows, and modules in the same row don't depend on each
+other, with one exception, `providers` and `artifacts`:
 
-```
+```text
 cli
 app
 jobs        config
@@ -29,7 +31,7 @@ redact      error       secret
 domain
 ```
 
-| module | depends on |
+| Module | Depends on |
 |---|---|
 | `cli` | `app`, `jobs`, `config`, `output`, `catalog`, `redact`, `error`, `domain` |
 | `app` | `jobs`, `config`, `output`, `providers`, `artifacts`, `catalog`, `http`, `redact`, `error`, `domain` |
@@ -41,70 +43,70 @@ domain
 | `catalog` | `redact`, `error`, `domain` |
 | `http` | `redact`, `secret`, `error`, `domain` |
 | `redact`, `error` | `domain` |
-| `secret`, `domain` | nothing |
+| `secret`, `domain` | Nothing |
 
-The edges that are not obvious from the module names, and why they exist:
+These edges aren't obvious from the module names:
 
-- `providers` ⇄ `artifacts` is the one cycle. `artifacts::input` reads and validates local input
-  files into the adapters' request type (`providers::InputImage` with its `InputRole`), and
-  adapters call the pure, I/O-free helpers in `artifacts::media` (magic-byte sniffing, image
-  inspection) to verify a provider's payload before returning it. Adapters still never touch
-  output paths, job state, or the filesystem layout `artifacts` and `jobs` own. Moving
-  `InputImage` and `InputRole` into `domain` would remove the cycle.
-- `cli` uses `config`, `catalog`, `jobs`, and `output` directly, not only through `app`: it
-  resolves `Settings` from its flags (`CliOverrides`), turns typed flags and `-O key=value` into
-  the catalog's `RawOption`s, parses `--label` into a `jobs::JobLabel`, and renders the `output`
-  envelope and human text. Workflow logic stays in `app`.
-- `jobs` depends on `providers` for the adapter results a record applies (`RemoteStatus`,
-  `SubmittedOperation`), on `output` because a record renders itself as the public `JobView` and
-  error body, on `artifacts` for the recorded state of a downloaded file, on `catalog` to persist
-  resolved options (free-text options as a hash), and on `http::Timeouts` to size how long a
-  record may stay `submitting`.
-- `config` depends on `catalog` (a configured model must be a known model), on
-  `output::results` (the `config show` and `config path` results), and on `http` (the HTTP client
-  settings and per-provider timeouts it resolves).
-- `output` depends on `providers` and `catalog` only for types that appear in results
-  (`AccountAccess`, `Lifecycle`, `OptionValue`), so the published schema is generated from the
-  same types.
-- `providers` and `artifacts` depend on `catalog` for the resolved options an adapter maps onto
-  the wire and the input rules (`InputSpec`) a model declares.
+- **`providers` and `artifacts` depend on each other.** This is the only cycle. `artifacts::input`
+  reads and validates local input files into the adapters' request type, `providers::InputImage`
+  with its `InputRole`. Adapters call the pure helpers in `artifacts::media`, such as magic-byte
+  sniffing and image inspection, to check a provider's payload. Adapters still never touch output
+  paths, job state, or the file layout that `artifacts` and `jobs` own. Moving `InputImage` and
+  `InputRole` into `domain` would remove the cycle.
+- **`cli` uses `config`, `catalog`, `jobs`, and `output` directly.** It resolves `Settings` from its
+  flags (`CliOverrides`), turns typed flags and `-O key=value` into the catalog's `RawOption`s,
+  parses `--label` into a `jobs::JobLabel`, and renders the JSON envelope and human text. Workflow
+  logic stays in `app`.
+- **`jobs` depends on five lower modules.** It uses `providers` for the adapter results that a
+  record applies (`RemoteStatus`, `SubmittedOperation`), and `output` because a record renders
+  itself as the public `JobView` and error body. It uses `artifacts` for the state of a downloaded
+  file, `catalog` to persist resolved options (free-text options as a hash), and `http::Timeouts` to
+  size how long a record may stay `submitting`.
+- **`config` depends on `catalog`, `output`, and `http`.** A configured model must be a known model,
+  `config show` and `config path` return `output::results` types, and `config` resolves the HTTP
+  client settings and each provider's time limits.
+- **`output` depends on `providers` and `catalog`** only for types that appear in results, such as
+  `AccountAccess`, `Lifecycle`, and `OptionValue`, so that the published schema is generated from
+  the same types.
+- **`providers` and `artifacts` depend on `catalog`** for the resolved options that an adapter maps
+  onto the wire, and the input rules (`InputSpec`) that a model declares.
 
-Two invariants the layering protects:
+The layering protects two invariants:
 
-- `providers` never touches the filesystem layout of jobs or artifacts — an adapter returns bytes
-  (image calls) or a remote operation id/status (video calls), never a path.
-- Adapters are the only place a provider's wire format is known: every request to a provider's
-  API (generation, video submission, polling, the metadata call behind `--check-access`) is built
-  inside an adapter. The one network call `app` makes itself is downloading a finished job's
-  output: `app::jobs` asks the adapter whether the recorded URI may be fetched
+- `providers` never touches the file layout of jobs or artifacts. An adapter returns bytes for an
+  image call, or an operation ID and status for a video call, never a path.
+- Only adapters know a provider's wire format. Every request to a provider's API is built inside an
+  adapter: generation, video submission, status checks, and the metadata call behind
+  `--check-access`. The one network call that `app` makes itself is the download of a finished
+  job's output. `app::jobs` asks the adapter whether it may fetch the recorded URI
   (`VideoProvider::check_output_uri`), attaches the provider's credential header only when the URI
-  has the configured base URL's origin, and streams it through `http::download`, which follows
-  redirects itself and sends the credential only to hops on that origin.
+  has the configured base URL's origin, and streams the file through `http::download`. That
+  function follows redirects itself, and sends the credential only to hops on the same origin.
 
 ## Modules
 
-| module | responsibility |
+| Module | Responsibility |
 |---|---|
-| `domain` | Shared plain types used everywhere: `ProviderId` (also each provider's fixed identity: id, credential variable, default base URL, base URL variable), `Operation`, `ModelSource` (whether `-m` or the config file named a command's model), `Billing` (whether a model's requests cost money), job/download status enums, `Artifact`, `Usage`, `CostEstimate`, `Warning` and the `WarningCode` registry every warning is built from. |
-| `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the exit-code mapping (see [json-output.md](../reference/json-output.md)). |
-| `secret` | The `Secret` newtype: `Debug`/`Display` print `***`, and it is never `Serialize`. Credentials are held as `Secret` from the moment they are read from the environment. |
-| `redact` | `redact_url` (strips userinfo, replaces query values with `REDACTED` except an allowlist), `scrub` (removes any configured credential value from text), `truncate`. Every error message, provider message, log line, and persisted `last_error` passes through these before it can reach stdout, stderr, or disk. |
-| `catalog` | The static model catalog: every model Iris knows, its one-line summary, declared operations, inputs, options (typed, with defaults and allowed values/ranges), outputs, pricing, cost estimators (with the requests that give the standard output models are compared on), access notes, and the model names Iris declines (with why and what to use instead). Per-provider declarations live in `catalog/{openai,gemini,veo}.rs`. |
-| `providers` | The `ImageProvider` and `VideoProvider` traits, `ProviderContext`, and `Registry::builtin()`. Per-provider wire types and HTTP calls are private to `providers/{openai,gemini}/`. |
-| `http` | Shared HTTP client construction, the retry executor (operation-aware retry classes; see [Where invariants live](#where-invariants-live)), streaming downloads with the credential-origin rule, and error classification helpers. |
-| `jobs` | Persisted job records (`JobRecord`, versioned, v1) and `JobStore` (`<state_dir>/jobs/`: atomic writes, per-job locks, listing without locking, local deletion). Only `video.generate` creates records; synchronous image calls never do. |
-| `artifacts` | Output path planning and filename rules (`paths`), media sniffing/validation (`media`: magic bytes, image decode, ISO-BMFF structure for video), local input-image validation (`input`), atomic, no-clobber (or `--overwrite`) finalization through `.<name>.iris-part-*` temp files (`finalize`, `download`), and the `<state_dir>/unsaved/` fallback for paid images that cannot be saved where requested and for returned content that is not a valid image, kept as received (`fallback`). |
-| `config` | Config file (TOML), environment variables, precedence resolution (flag > env > file > default), and platform-appropriate paths. Per-provider settings are resolved for every `ProviderId`. |
-| `app` | Application workflows, one submodule per area: `image`, `video`, `jobs`, `models` (models list/show *and* providers list), `info` (version, config show/path), `doctor`. Three submodules are not command handlers: `app::catalog` is the `Catalog` type (model lookup and resolution, and the candidate models an error lists), `app::context` the `AppContext` every workflow receives, and `app::request` the steps shared by the generation commands (model resolution, prompt and option checks, cost estimates, dry-run plan pieces). No clap types, no printing — it takes typed arguments and an `AppContext`, reports progress through a `Progress` trait, collects warnings, and returns result DTOs or an `IrisError`. |
-| `output` | The JSON envelope and result DTOs (`serde` + `schemars`, so the published schema is generated from the same types that are serialized) and human-text rendering. |
-| `cli` | clap argument definitions, prompt-source resolution (inline/file/stdin), dispatch to `app`, and presentation (JSON envelope or human text). `cli::run` is the process entry point. |
+| `domain` | Plain types that every module shares. `ProviderId` is also each provider's fixed identity: its ID, credential variable, default base URL, and base URL variable. Also `Operation`, `ModelSource`, `Billing`, the job and download status enums, `Artifact`, `Usage`, `CostEstimate`, and `Warning` with the `WarningCode` registry that every warning comes from. |
+| `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the mapping to exit codes. See the [Errors reference](../reference/errors.md). |
+| `secret` | The `Secret` type. Its `Debug` and `Display` print `***`, and it never implements `Serialize`. Credentials are `Secret` values from the moment Iris reads them from the environment. |
+| `redact` | `redact_url`, which removes user information and replaces query values with `REDACTED` except for an allowlist; `scrub`, which removes any configured credential value from text; and `truncate`. Every error message, provider message, log line, and persisted `last_error` passes through them before it reaches stdout, stderr, or disk. |
+| `catalog` | The static model catalog: each model's summary, operations, inputs, typed options with defaults and allowed values, outputs, prices, cost estimators, and access notes, and the names that Iris declines. Each provider's declarations are in `catalog/openai.rs`, `catalog/gemini.rs`, and `catalog/veo.rs`. |
+| `providers` | The `Provider`, `ImageProvider`, and `VideoProvider` traits, `ProviderContext`, and `Registry::builtin()`. Each provider's wire types and HTTP calls are private to `providers/openai/` or `providers/gemini/`. |
+| `http` | The shared HTTP client, the retry executor with its retry classes (see [Where invariants live](#where-invariants-live)), streaming downloads with the credential-origin rule, and error classification helpers. |
+| `jobs` | Persisted job records (`JobRecord`, versioned) and `JobStore`, which owns `STATE_DIR/jobs/`: atomic writes, per-job locks, listing without locks, and local deletion. Only `video.generate` creates records. |
+| `artifacts` | Output path planning and file names (`paths`); media sniffing and validation, including image decoding and the ISO-BMFF structure of videos (`media`); input image validation (`input`); atomic finalization through `.NAME.iris-part-RANDOM` temporary files, without replacing an existing file unless `--overwrite` is given (`finalize`, `download`); and the `unsaved` fallback for paid outputs that can't be saved where requested (`fallback`). |
+| `config` | The config file, environment variables, the resolution order (flag, environment variable, config file, default), and platform paths. It resolves per-provider settings for every `ProviderId`. |
+| `app` | The workflows, one submodule per area: `image`, `video`, `jobs`, `models` (which also serves `providers list`), `info` (`version`, `config show`, and `config path`), and `doctor`. `app::catalog` is the `Catalog` type, for model lookup and resolution. `app::context` is the `AppContext` that every workflow receives. `app::request` holds the steps that the generation commands share: model resolution, prompt and option checks, cost estimates, and dry-run plans. `app` has no clap types and prints nothing: it takes typed arguments, reports progress through a `Progress` trait, collects warnings, and returns results or an `IrisError`. |
+| `output` | The JSON envelope and result types, built with `serde` and `schemars` so that the published schema comes from the serialized types, and the human-readable rendering. |
+| `cli` | The clap definitions, prompt sources (argument, file, or standard input), dispatch to `app`, and output as JSON or text. `cli::run` is the process entry point. |
 
-## Sync vs. async: two provider traits, on purpose
+## Sync and async: two provider traits
 
-Image generation and video generation are not the same shape of operation, and Iris does not
-pretend otherwise. A provider implements the shared `Provider` trait (identity, credential
-header, documentation link, the free `check_access` metadata call) and opts into `image()` and/or
-`video()`:
+Image generation and video generation are different kinds of operation, so they have different
+traits. A provider implements the shared `Provider` trait, for its identity, credential header,
+documentation link, and the free `check_access` metadata call. It then provides `image()`,
+`video()`, or both:
 
 ```rust
 #[async_trait]
@@ -142,73 +144,71 @@ pub trait VideoProvider: Send + Sync {
 }
 ```
 
-`ImageProvider::generate`/`edit` return the generated bytes directly (usable images in
-`ImageOutput::images`; the content of any other returned item, as received, in `unusable` of the
-output or of the failure, which the app keeps in `<state_dir>/unsaved/`): there is nothing to persist
-between the request and the response, so no job record is created, and a lost connection after the
-provider accepted the request is simply unrecoverable (`submission_uncertain` with `job_id: null`,
-`details.charge_possible: true` — see [video-jobs.md](../concepts/video-jobs.md#why-only-videos-create-jobs)).
+`ImageProvider::generate` and `edit` return the images themselves: usable images in
+`ImageOutput::images`, and the content of any other returned item, as received, in `unusable`, which
+the app keeps in the `unsaved` folder. Nothing needs to persist between the request and the
+response, so image calls create no job record. A lost connection after the provider accepted the
+request can't be recovered, and is reported as `submission_uncertain` with `job_id: null` and
+`details.charge_possible: true`. See
+[How Iris handles paid requests](../concepts/paid-requests.md#when-the-outcome-is-uncertain).
 
-`VideoProvider` is split into `submit` (paid, sent once, never blindly retried) and `poll`
-(idempotent, safe to retry and to call again from a different process). Iris persists the job
-*before* submitting so that even a crash in the submission's uncertainty window leaves a
-diagnosable local record (`submission_unknown`) instead of silence. This split is what makes
-`--detach` plus `jobs status`/`wait`/`download` possible, and why Iris never offers `--detach` or
-recovery for image calls: the provider itself gives image generation no operation id to recover.
+`VideoProvider` splits `submit`, which is paid and sent once, from `poll`, which is idempotent and
+safe to repeat from any process. Iris writes the job record before it submits, so a crash during
+the submission still leaves a record to diagnose (`submission_unknown`). This split is what makes
+`--detach` and `jobs status`, `wait`, and `download` possible. Image calls get none of these,
+because the image APIs return no operation ID to recover.
 
 `RemoteStatus` is `Running { progress }`, `Succeeded { outputs, usage, warnings }`,
-`Failed { error }`, or `Gone { error }` (the provider says it does not know the operation; the job
-record turns that into `expired` only once the retention period since submission has passed) —
-the same shape regardless of provider, so `app::jobs` drives the poll loop once, independent of
-which provider a job belongs to. There is no `cancel` method on `VideoProvider` and no `jobs
-cancel` command: no provider Iris implements offers a way to cancel a job it accepted, so nothing
-in the codebase pretends otherwise (see [video-jobs.md](../concepts/video-jobs.md#deleting-job-records)).
-Downloading an artifact goes through a generic `http::download`: `app::jobs` attaches a
-provider's `credential_header()` only when the download URL's scheme, host, and port equal that
-provider's configured base URL origin, and `http::download` keeps it off every redirect hop to
-another origin. The adapter only decides which output URIs Iris may fetch at all
-(`check_output_uri`); no per-download adapter method is needed for the credential rule to hold.
+`Failed { error }`, or `Gone { error }`. `Gone` means that the provider doesn't know the operation;
+the job record turns it into `expired` only after the retention period. The shape is the same for
+every provider, so `app::jobs` runs one poll loop for all of them.
+
+`VideoProvider` has no `cancel` method, and Iris has no `jobs cancel` command, because no provider
+that Iris supports lets you cancel an accepted job. See
+[Deleting job records](../concepts/video-jobs.md#deleting-job-records).
+
+Downloads go through the generic `http::download`. `app::jobs` attaches a provider's
+`credential_header()` only when the download URL's scheme, host, and port match the provider's
+configured base URL, and `http::download` drops it on every redirect to another origin. The adapter
+decides only which output URIs Iris may fetch at all (`check_output_uri`), so the credential rule
+needs no per-provider download code.
 
 ## Where invariants live
 
-- **"Never silently discard an option."** Enforced once, in `catalog::validate_request`, before
-  any provider is called: every CLI option and every `-O key=value` is checked against the
-  resolved model's declared `OptionSpec`s for the requested operation. An adapter that receives an
-  option it does not have a wire mapping for returns `internal_error` rather than dropping it —
-  that should be unreachable if validation ran, and treating it as a bug (not a silent no-op) is
-  deliberate.
-- **"Credentials never touch disk, argv, or an unrelated host."** `Secret` makes accidental
-  printing a compile-time non-issue (no `Serialize`, redacting `Debug`); `config` rejects any
-  config-file key that looks like a credential; the HTTP layer attaches a provider's credential
-  header only when a request's scheme+host+port matches that provider's configured base URL
-  origin, including across redirects (see [configuration.md](../reference/configuration.md) and
-  [json-output.md](../reference/json-output.md)).
-- **"A download failure is never a generation failure."** `app::jobs` downloads are a separate
-  step from `app::video` submission/polling; `artifacts::finalize` writes through a temp file and
-  finalizes atomically, so a failed or repeated download can never touch a file that already
-  succeeded, and downloading never re-submits anything to a provider (see
-  [video-jobs.md](../concepts/video-jobs.md#downloads)).
-- **"An ambiguous paid submission is never retried automatically."** `http::retry` has three
-  retry classes (`PaidSubmit`, `IdempotentRead`, `Download`); `PaidSubmit` retries only outcomes
-  that provably did not reach the provider (a connection failure before sending) or that the
-  provider explicitly says were rejected before processing (a documented rate limit or overload
-  rejection). Everything else that leaves the outcome open is reported as `submission_uncertain`
-  (with no job for a synchronous image call, a `submission_unknown` job for a video submit) and
-  never resent by Iris.
-- **"Persisted state survives a crash and a concurrent process."** `jobs::JobStore` writes go
-  through a temp file in the same directory, `sync_all`, then an atomic rename; a per-job lock
-  (`.lock`, held only for the read-modify-write) serializes concurrent updates; the store lock
-  (`labels.lock`) makes the check that no record has a new record's label and its creation one
-  step; `jobs list` reads without locking so it can never block on a stuck writer.
+- **Options are never silently dropped.** `catalog::validate_request` checks every option, typed or
+  `-O`, against the resolved model's declared `OptionSpec`s for the operation, once, before any
+  provider is called. An adapter that receives an option without a wire mapping returns
+  `internal_error` instead of dropping it: that case is a bug, because validation should have
+  rejected the option.
+- **Credentials never reach disk, argv, or another host.** `Secret` has no `Serialize` and a
+  redacting `Debug`, so printing a credential by accident doesn't compile into output. `config`
+  rejects config keys that look like credentials. The HTTP layer attaches a provider's credential
+  header only when a request's scheme, host, and port match that provider's configured base URL,
+  including across redirects. See [Security and privacy](../concepts/security-and-privacy.md).
+- **A download failure is never a generation failure.** Downloads in `app::jobs` are a separate step
+  from submitting and polling in `app::video`. `artifacts::finalize` writes through a temporary file
+  and renames it into place, so a failed or repeated download can't damage a file that already
+  succeeded, and a download never submits anything. See
+  [Downloads](../concepts/video-jobs.md#downloads).
+- **An ambiguous paid submission is never retried.** `http::retry` has three retry classes:
+  `PaidSubmit`, `IdempotentRead`, and `Download`. `PaidSubmit` retries only outcomes that provably
+  didn't reach the provider, such as a connection failure before sending, or that the provider
+  explicitly rejected before processing, such as a documented rate limit or overload. Every other
+  open outcome is reported as `submission_uncertain`, with no job for an image call and a
+  `submission_unknown` job for a video, and Iris never sends it again.
+- **Persisted state survives crashes and concurrent processes.** `jobs::JobStore` writes to a
+  temporary file in the same directory, calls `sync_all`, and renames it into place. A per-job lock
+  (`.lock`), held only for each read-modify-write, serializes updates. The store's lock
+  (`labels.lock`) makes the label check and the new record's creation one step. `jobs list` reads
+  without locks, so a stuck writer can't block it.
 
 ## Extending Iris
 
 Adding a provider means a new adapter module, one line in `Registry::builtin()`, the provider's
-identity in `ProviderId`, catalog declarations, and tests — not changes scattered through `app`
-or `cli`. Configuration, `doctor`, and redaction iterate `ProviderId::ALL`, and `providers list`
-iterates the registry. The compiler does not check that `ALL` lists every variant; a unit test in
-`domain` does, and also checks that `ALL` agrees with the registry and the catalog. The published
-schema, a few help texts and documents that name providers, test fixtures, and the opt-in
-live-verification script are updated by hand. See
-[adding-a-provider.md](adding-a-provider.md) for the step-by-step guide and the complete checklist, worked
-through a hypothetical Seedance adapter.
+identity in `ProviderId`, catalog declarations, and tests, not changes throughout `app` or `cli`.
+Configuration, `doctor`, and redaction iterate `ProviderId::ALL`, and `providers list` iterates the
+registry. The compiler doesn't check that `ALL` lists every variant, but a unit test in `domain`
+does, and it also checks that `ALL` agrees with the registry and the catalog. The published schema,
+a few help texts and pages that name providers, test fixtures, and the live verification script
+are updated by hand. For the steps and the complete checklist, see
+[Add a provider](adding-a-provider.md).
