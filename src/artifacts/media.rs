@@ -1,4 +1,4 @@
-//! Media sniffing and validation (see docs/jobs.md and docs/configuration.md#security-rules).
+//! Media sniffing and validation (see docs/concepts/video-jobs.md and docs/concepts/paid-requests.md).
 //!
 //! * [`sniff`] identifies a media type from magic bytes (never from file names):
 //!   PNG, JPEG, WebP, GIF via `infer`; ISO-BMFF files (`ftyp` at offset 4) are

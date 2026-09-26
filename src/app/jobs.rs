@@ -1,5 +1,5 @@
 //! `jobs list/status/wait/download/delete`, and the wait-and-download phase that
-//! `video generate` shares with `jobs wait` (see `iris --help` and docs/jobs.md).
+//! `video generate` shares with `jobs wait` (see `iris --help` and docs/concepts/video-jobs.md).
 //!
 //! Invariants:
 //! * Ctrl-C, wait limits, poll failures, and download failures never change a
@@ -55,14 +55,14 @@ pub struct Target {
 /// How a file already at an output's target is handled when the output is saved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SaveMode {
-    /// `jobs wait` / `jobs download` (docs/jobs.md "Downloads" step 4): without
+    /// `jobs wait` / `jobs download` (docs/concepts/video-jobs.md "Downloads" step 4): without
     /// `--overwrite` a different file at the target is `output_exists`. Nothing
     /// is regenerated, so the caller can simply choose another target.
     Download,
     /// The wait of `video generate` itself: the caller just paid for this output
     /// and the target passed the preflight, so a file that appeared since then
     /// never blocks the save; the output goes to `<stem>.<n>.<ext>` with warning
-    /// `output_renamed` (see docs/json-contract.md "Warning codes", as for images).
+    /// `output_renamed` (see docs/reference/errors.md "Warning codes", as for images).
     Generated,
 }
 
@@ -601,7 +601,7 @@ pub(crate) fn with_job_context(e: IrisError, rec: &JobRecord) -> IrisError {
 }
 
 /// When a record that is still `submitting` will be reported as
-/// `submission_unknown` (the stale-`submitting` rule of docs/jobs.md): its creation time
+/// `submission_unknown` (the stale-`submitting` rule of docs/concepts/video-jobs.md): its creation time
 /// plus the store's paid-submit budget and grace period.
 pub(crate) fn submission_unknown_at(ctx: &AppContext, rec: &JobRecord) -> Option<Timestamp> {
     rec.created_at().checked_add(ctx.store.submit_budget().saturating_add(jobs::SUBMIT_GRACE)).ok()
@@ -865,7 +865,7 @@ struct Access<'a> {
     seen: u64,
 }
 
-/// docs/jobs.md "Downloads" steps 1–4 for every output of a job. `save` decides what a
+/// docs/concepts/video-jobs.md "Downloads" steps 1–4 for every output of a job. `save` decides what a
 /// file already at a target means (see [`SaveMode`]).
 async fn download_outputs(
     ctx: &AppContext,

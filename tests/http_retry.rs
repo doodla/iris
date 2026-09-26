@@ -1,4 +1,4 @@
-//! Retry executor behavior against localhost mock servers (see docs/architecture.md
+//! Retry executor behavior against localhost mock servers (see docs/contributing/architecture.md
 //! "Where invariants live" for retry classes).
 //! No network access beyond 127.0.0.1; no credentials.
 

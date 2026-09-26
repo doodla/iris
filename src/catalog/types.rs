@@ -324,7 +324,7 @@ pub struct EstimateInput<'a> {
 
 /// A model name Iris deliberately gives no model: a model its provider deprecated,
 /// shut down, limited, or serves only elsewhere, a family of them, or a nickname of
-/// one (docs/decisions.md, "Built-in models"). `-m` with such a name is
+/// one (docs/contributing/decisions.md, "Built-in models"). `-m` with such a name is
 /// `unknown_model` with a hint that says why and what to use instead, never
 /// `--capabilities-from`, which would send the name anyway. Each provider's catalog
 /// module declares its own, from the provider documentation cited there.

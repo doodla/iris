@@ -2,7 +2,7 @@
 //!
 //! Values that need Iris-specific validation (option values, durations, provider
 //! and status names, job ids, prompts) are taken as strings here and validated by
-//! the CLI/app layers, so they produce the stable error codes of docs/json-contract.md
+//! the CLI/app layers, so they produce the stable error codes of docs/reference/errors.md
 //! (`invalid_argument`, `unknown_provider`, ...) rather than generic usage errors.
 
 use std::ffi::OsString;

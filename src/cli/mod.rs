@@ -1,5 +1,5 @@
 //! Command-line interface: argument parsing (clap; see `iris --help`), prompt sources,
-//! dispatch to the application workflows, and presentation (docs/json-contract.md envelope or
+//! dispatch to the application workflows, and presentation (docs/reference/json-output.md envelope or
 //! concise human text).
 //!
 //! [`run`] is the process entry point. [`run_with`] runs one invocation against
@@ -53,7 +53,7 @@ pub struct Io {
 }
 
 /// Run the `iris` process: parse `std::env::args_os`, execute, print, and return
-/// the exit code (docs/json-contract.md mapping). An unexpected panic is reported as
+/// the exit code (docs/reference/errors.md mapping). An unexpected panic is reported as
 /// `internal_error` (exit 1), still as a single JSON document in `--json` mode.
 pub fn run() -> i32 {
     let args: Vec<OsString> = std::env::args_os().collect();

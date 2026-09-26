@@ -1,14 +1,13 @@
 ---
 name: Bug report
-about: Something Iris did (or didn't do) that doesn't match its documented behavior
+about: Iris did something that doesn't match its documented behavior
 title: ""
 labels: bug
 ---
 
 <!--
-Before filing: if this might be a credential/security issue (a key or signed URL appearing
-somewhere it shouldn't), please use private reporting instead — see SECURITY.md — not a public
-issue.
+If this might be a security issue, such as an API key or a signed URL that appears where it
+shouldn't, don't file a public issue. Follow SECURITY.md instead.
 -->
 
 ## What happened
@@ -22,27 +21,28 @@ $ iris --json version
 <paste the output here>
 ```
 
-## Command and JSON error
+## Command and error
 
-The exact command (redact anything sensitive in the prompt or file paths if you'd rather not
-share it) and, if it failed, the JSON error object — never a screenshot, and please double-check
-it before pasting that no credential value is present (Iris never prints one, but paste with the
-same care you'd give any log):
+<!--
+The exact command and, if it failed, its JSON output. Paste text, not a screenshot. Redact anything
+in the prompt or file paths that you'd rather not share. Iris never prints API keys, but check the
+output before you paste it, as you would any log.
+-->
 
 ```console
 $ iris ... --json
 <paste the full JSON output here>
 ```
 
-If `--json` wasn't used, the plain output and exit code (`echo $?`) are still useful.
+If you didn't use `--json`, paste the plain output and the exit code (`echo $?`).
 
 ## Environment
 
-- OS / architecture:
-- Installed via: (installer / `cargo install` / built from source)
-- Provider(s) involved: (OpenAI / Gemini / Veo)
+- OS and architecture:
+- Installed with: (the installer, `cargo install`, or a build from source)
+- Providers involved: (OpenAI, Gemini, or both)
 
 ## Anything else
 
-<!-- Config file contents (with any credential-like key already rejected by Iris itself, so
-there shouldn't be one — but redact freely), relevant job id, or other context. -->
+<!-- Your config file, a job ID, or other context. Iris rejects config keys that look like
+credentials, but redact anything you like. -->

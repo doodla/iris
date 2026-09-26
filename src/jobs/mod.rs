@@ -1,4 +1,4 @@
-//! Persisted provider-native job records and the job store (see docs/jobs.md).
+//! Persisted provider-native job records and the job store (see docs/concepts/video-jobs.md).
 //!
 //! Only provider-native asynchronous operations (`video.generate`) create job
 //! records; synchronous image calls never do. A record is enough to resume,
@@ -7,7 +7,7 @@
 //! * [`JobId`] — validated `job_<26 lowercase ULID chars>` identifiers. Every path
 //!   join goes through a `JobId`, so traversal (`../x`) is unrepresentable.
 //! * [`JobRecord`] — the versioned (v1) on-disk record with transition helpers
-//!   that only allow the arrows documented in docs/jobs.md.
+//!   that only allow the arrows documented in docs/concepts/video-jobs.md.
 //! * [`JobLabel`] — caller-chosen labels (`--label`), unique among the records of a
 //!   store.
 //! * [`JobStore`] — `<state_dir>/jobs/`: atomic writes, per-job exclusive locks
@@ -155,7 +155,7 @@ impl fmt::Display for JobLabel {
     }
 }
 
-/// The current time truncated to whole seconds (docs/json-contract.md timestamps look like
+/// The current time truncated to whole seconds (docs/reference/json-output.md timestamps look like
 /// `2026-09-24T12:34:56Z`). Transition helpers take `now` explicitly; callers
 /// normally pass this.
 pub fn now() -> jiff::Timestamp {

@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # live-verify.sh — OPT-IN, PAID live verification of Iris against the real OpenAI
-# and Gemini APIs, following the steps and budget rules in tests/live/README.md.
+# and Gemini APIs, following the steps and budget rules in
+# docs/contributing/live-testing.md.
 #
 # THIS SCRIPT SPENDS MONEY. It is never run by CI or by `cargo test`. It refuses
 # to run a step unless IRIS_LIVE_CONFIRM=yes-i-accept-charges is set, and the one
 # Veo submission (step 4) also needs IRIS_LIVE_VEO_CONFIRM=submit-one-veo-job.
 #
-# Documentation: tests/live/README.md. Quick reference: `scripts/live-verify.sh --help`.
+# Documentation: docs/contributing/live-testing.md. Quick reference:
+# `scripts/live-verify.sh --help`.
 #
 # Credentials come only from OPENAI_API_KEY / GEMINI_API_KEY in the environment.
 # The script never prints, logs, writes, or passes them as arguments (the scan of

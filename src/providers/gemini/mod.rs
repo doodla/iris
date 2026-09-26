@@ -5,7 +5,7 @@
 //! A thin REST client: Google publishes no Rust SDK, and no community crate
 //! was verified to cover `imageConfig`, `thinkingLevel`, and Veo on these API
 //! versions; the surface is three calls. All Google wire types stay in
-//! this module. See docs/architecture.md for the shared traits and, in "Where
+//! this module. See docs/contributing/architecture.md for the shared traits and, in "Where
 //! invariants live", the retry classes; the model catalog declares option values
 //! and defaults. Wire mapping and response/error rules live in this adapter.
 //!

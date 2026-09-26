@@ -1,6 +1,6 @@
 //! Streaming downloads against localhost mock servers: hashing, retries from an
 //! empty file, manual redirects, credential origin rule, https-only rule, and
-//! error documents served as media (see docs/jobs.md). No network beyond 127.0.0.1.
+//! error documents served as media (see docs/concepts/video-jobs.md). No network beyond 127.0.0.1.
 
 use std::io::{BufRead, BufReader, Write};
 use std::net::TcpListener;
@@ -271,7 +271,7 @@ async fn refused_or_gone_artifacts_are_not_retried_and_only_410_is_artifact_expi
             assert_eq!((e.code, e.retryable), (ErrorCode::ArtifactExpired, Some(false)));
         } else {
             // Whether a 403/404 means "gone" depends on the provider's retention,
-            // which the caller decides (see docs/jobs.md).
+            // which the caller decides (see docs/concepts/video-jobs.md).
             assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(true)), "{status}");
         }
     }
@@ -360,7 +360,11 @@ async fn a_server_error_asking_to_wait_beyond_the_cap_reports_rate_limited() {
     assert_eq!(*retry_after_limit, Some(Duration::from_secs(60)));
     assert_eq!(server.received_requests().await.unwrap().len(), 1, "no wait of 600s, no retry");
     let e = err.into_iris();
-    assert_eq!(e.code, ErrorCode::RateLimited, "beyond the cap return rate_limited (see docs/jobs.md)");
+    assert_eq!(
+        e.code,
+        ErrorCode::RateLimited,
+        "beyond the cap return rate_limited (see docs/concepts/video-jobs.md)"
+    );
     assert_eq!((e.retryable, e.retry_after), (Some(true), Some(Duration::from_secs(600))));
     assert_eq!(e.provider_status, Some(503));
 }

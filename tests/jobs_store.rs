@@ -1,4 +1,4 @@
-//! Job store: atomic writes, locking, listing, deletion (see docs/jobs.md).
+//! Job store: atomic writes, locking, listing, deletion (see docs/concepts/video-jobs.md).
 
 use std::fs;
 use std::path::Path;

@@ -1,5 +1,5 @@
 //! Validation of JSON envelopes against the committed schema
-//! `schema/iris-output.v1.schema.json` (see docs/json-contract.md): the envelope itself, then `result`
+//! `schema/iris-output.v1.schema.json` (see docs/reference/json-output.md): the envelope itself, then `result`
 //! against the `$defs` type of its command (or `error` against `ErrorBody`).
 
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ fn check(def: Option<&str>, instance: &Value) {
     assert!(errors.is_empty(), "does not match {}: {errors:?}\n{instance}", def.unwrap_or("the envelope"));
 }
 
-/// The `$defs` result type of a successful envelope for `command` (see docs/json-contract.md).
+/// The `$defs` result type of a successful envelope for `command` (see docs/reference/json-output.md).
 pub fn result_def(command: Option<&str>, result: &Value) -> &'static str {
     let only_help = result.as_object().is_some_and(|o| o.len() == 1 && o.contains_key("help"));
     if only_help {

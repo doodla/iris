@@ -82,7 +82,7 @@ fn configure(cmd: &mut std::process::Command, sandbox: &Sandbox) {
 
 /// `iris` in the sandbox with no credentials and unreachable providers.
 /// The documented default config file for the platform the tests run on, with no
-/// `XDG_CONFIG_HOME` (docs/configuration.md).
+/// `XDG_CONFIG_HOME` (docs/reference/configuration.md).
 fn default_config_file(sandbox: &Sandbox) -> std::path::PathBuf {
     if cfg!(target_os = "macos") {
         sandbox.home().join("Library/Application Support/iris/config.toml")
@@ -284,7 +284,7 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
         "{}",
         top.stdout
     );
-    // Exit 130 covers every signal Iris handles, as docs/json-contract.md says.
+    // Exit 130 covers every signal Iris handles, as docs/reference/errors.md says.
     assert!(words.contains("130 interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP)"), "{}", top.stdout);
     // Iris never chooses a model, and each generation command's -m help names the config
     // key that can stand in for -m.

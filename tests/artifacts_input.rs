@@ -1,5 +1,5 @@
 //! Local input image validation before paid requests (see the `artifacts` row in
-//! docs/architecture.md).
+//! docs/contributing/architecture.md).
 
 use std::fs;
 use std::io::Cursor;

@@ -1,60 +1,44 @@
 # Security policy
 
-## Reporting a vulnerability
+This policy explains how to report a vulnerability in Iris, which versions get fixes, and what's in
+scope.
 
-Please **do not** open a public GitHub issue for a security vulnerability. Instead:
+## Report a vulnerability
 
-1. Go to the [Security tab](https://github.com/doodla/iris/security) of `doodla/iris`.
-2. **If private vulnerability reporting is enabled for this repository** (a **"Report a
-   vulnerability"** button on that tab), use it to open a private advisory. This starts a
-   confidential conversation with the maintainers, visible only to you and them, before anything
-   is public.
+Don't open a public issue for a vulnerability. Report it privately through GitHub:
 
-Drafting a security advisory directly is a maintainer-only action, so if you don't see that button
-— private reporting isn't enabled, or you don't have access to it — open a regular public issue
-asking for another way to reach the maintainers **without describing the vulnerability itself** (no
-technical details, no proof of concept); a maintainer will follow up with a private channel.
+1. Go to the [Security tab](https://github.com/doodla/iris/security) of this repository.
+2. Click **Report a vulnerability**, and describe the issue.
 
-Please include what you'd include in any good report: the affected version or commit, a minimal
-reproduction, and the impact as you understand it. You do not need to propose a fix.
+The report starts a private conversation with the maintainers, and nothing is public until a fix is
+ready. Include the affected version or commit, a minimal reproduction, and the impact as you
+understand it. You don't need to propose a fix.
+
+If you don't see **Report a vulnerability**, open a public issue that asks for a private way to
+reach the maintainers. Don't describe the vulnerability in it. A maintainer will follow up.
 
 ## Supported versions
 
-Iris is pre-1.0 (`0.x`). Security fixes target the latest released version; there is no formal
-long-term-support branch yet.
+Iris hasn't reached version 1.0. Security fixes go into the latest release, and there's no long-term
+support branch.
 
 ## Scope
 
-Iris is a local command-line tool. Things that are particularly worth a private report:
+Iris is a local command-line tool. These problems are worth a private report:
 
-- Credentials (`OPENAI_API_KEY`, `GEMINI_API_KEY`) leaking into logs, error messages, persisted
-  job records, or any other output.
-- A request being sent to a host other than the configured provider API origin while still
-  carrying a credential (including across a redirect).
-- Path traversal or unsafe file handling in output/download filenames.
-- A way to make the installer (`install.sh`) install or execute something other than a verified
-  release archive.
+- An API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`) that appears in logs, error messages, job
+  records, or any other output.
+- A request that carries a credential to a host other than the provider's configured API origin,
+  including through a redirect.
+- Path traversal, or other unsafe file handling, in output or download file names.
+- A way to make the installer, `install.sh`, install or run anything other than a verified release
+  archive.
 
-Things that are **not** a vulnerability report, and can be filed as regular issues instead: a
-provider changing its own API/pricing/behavior out from under Iris's catalog, or Iris correctly
-reporting an error a misconfigured account produced.
+These aren't vulnerabilities, and you can report them as regular issues:
 
-## How Iris handles secrets, for context
+- A provider that changes its API, prices, or behavior so that Iris's catalog is out of date.
+- An error that Iris reports correctly for a misconfigured account.
 
-This is background for reporters, not a guarantee that supersedes the actual code — see
-[docs/configuration.md](docs/configuration.md#security-rules) and
-[AGENTS.md](AGENTS.md#money-credentials-and-safety) for the durable rules this project holds
-itself to:
-
-- Credentials are read only from `OPENAI_API_KEY` and `GEMINI_API_KEY`, held in a type that
-  never prints or serializes its contents, and are never written to the config file, a log line,
-  an error message, a persisted job record, or a command-line argument.
-- Every error message, log line, and persisted `last_error` is passed through redaction before it
-  can reach output, and every printed URL has its userinfo and query values redacted, except the
-  values of a small allowlist of non-secret query parameters such as `alt`.
-- A provider's credential header is attached only to requests whose scheme, host, and port match
-  that provider's *configured* base URL — including across redirects, which Iris follows itself
-  precisely so it can enforce this, rather than letting the HTTP client follow them silently.
-- Generated media, local job/state data, a private config file, secrets, and local
-  scratch/temporary work files are git-ignored (see `.gitignore`) so they can't end up committed
-  by accident.
+For how Iris handles API keys, see [API keys](docs/reference/configuration.md#api-keys). For what
+Iris stores about a video job, see
+[What a job record contains](docs/concepts/video-jobs.md#what-a-job-record-contains).

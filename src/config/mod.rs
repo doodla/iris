@@ -1,4 +1,4 @@
-//! Configuration: config file, environment, precedence, platform paths (see docs/configuration.md).
+//! Configuration: config file, environment, precedence, platform paths (see docs/reference/configuration.md).
 //!
 //! [`Settings::load`] resolves every non-secret setting from four layers —
 //! command-line flags ([`CliOverrides`]) > environment variables > the TOML config
@@ -27,7 +27,7 @@
 //! Besides the foundation modules, `config` uses `catalog` (a configured model must
 //! be a known model), `output::results` (the `config show` and `config path`
 //! results), and `http` (the client settings and timeouts it resolves); see the
-//! layering in docs/architecture.md.
+//! layering in docs/contributing/architecture.md.
 
 #![warn(missing_docs)]
 

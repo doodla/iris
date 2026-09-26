@@ -1,6 +1,6 @@
 //! Debug logging of the HTTP layer: request metadata only (method, redacted URL,
 //! status, attempt, elapsed, request id), never credentials, bodies, prompts, or
-//! signed query values (see docs/jobs.md and docs/configuration.md#security-rules).
+//! signed query values (see docs/reference/configuration.md and docs/concepts/video-jobs.md).
 //!
 //! This binary deliberately holds a single test: tracing caches callsite interest
 //! globally, and a thread-scoped subscriber can miss events whose callsites other

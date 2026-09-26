@@ -1,4 +1,4 @@
-//! Job record schema and status transitions (see docs/jobs.md).
+//! Job record schema and status transitions (see docs/concepts/video-jobs.md).
 
 use std::time::Duration;
 

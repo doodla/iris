@@ -1,4 +1,4 @@
-//! Output path planning (see `iris --help` and docs/jobs.md).
+//! Output path planning (see `iris --help` and docs/concepts/video-jobs.md).
 //!
 //! * The output directory precedence (`-d` > `IRIS_OUTPUT_DIR` > config > cwd) is
 //!   resolved by the caller and passed in; planned paths are absolute and lexically

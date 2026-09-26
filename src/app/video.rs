@@ -1,4 +1,4 @@
-//! `video generate`: a provider-native asynchronous job (see docs/jobs.md).
+//! `video generate`: a provider-native asynchronous job (see docs/concepts/video-jobs.md).
 //!
 //! The job record is written (`submitting`) BEFORE the paid submission, so a crash
 //! in the uncertainty window is detectable later (`submission_unknown`). Outcomes:

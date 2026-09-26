@@ -1,5 +1,5 @@
 //! Reading and validating local input images before any paid request (see the
-//! `artifacts` row in docs/architecture.md).
+//! `artifacts` row in docs/contributing/architecture.md).
 
 use std::fs::File;
 use std::io::Read;

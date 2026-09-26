@@ -185,7 +185,7 @@ fn str_option<'a>(name: &str, value: &'a crate::catalog::OptionValue) -> Result<
         .ok_or_else(|| IrisError::internal(format!("option '{name}' must be a string, got {value}")))
 }
 
-/// Paid synchronous call failures (see docs/json-contract.md). None is retried.
+/// Paid synchronous call failures (see docs/reference/errors.md). None is retried.
 ///
 /// * A transport failure after sending (timeout, reset, truncated body, or an
 ///   answer over the size limit) is `submission_uncertain`: the request may have

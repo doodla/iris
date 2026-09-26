@@ -1,4 +1,4 @@
-//! Operation-aware retry executor (see docs/architecture.md "Where invariants live" for
+//! Operation-aware retry executor (see docs/contributing/architecture.md "Where invariants live" for
 //! retry classes and paid-submit policy).
 //!
 //! The executor owns *when* to retry; the calling adapter owns *what a response
@@ -59,7 +59,7 @@ use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::redact;
 
-/// Maximum characters of provider text kept in messages and details (see docs/json-contract.md).
+/// Maximum characters of provider text kept in messages and details (see docs/reference/errors.md).
 pub(crate) const PROVIDER_TEXT_MAX: usize = 500;
 
 /// Largest successful response body [`HttpClient::execute`] reads for a JSON API
@@ -88,7 +88,7 @@ pub const MEDIA_BODY_LIMIT: u64 = 512 * 1024 * 1024;
 /// cut here and classified from what was read.
 const ERROR_BODY_LIMIT: u64 = 1024 * 1024;
 
-/// How a call may be retried (see docs/architecture.md "Where invariants live").
+/// How a call may be retried (see docs/contributing/architecture.md "Where invariants live").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RetryClass {
     /// Paid, non-idempotent submission (image generate/edit, video submit). Retried

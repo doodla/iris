@@ -1,5 +1,5 @@
 # Release: check, build, package, smoke-test, and publish the release
-# archives (docs/install.md) for a pushed `vX.Y.Z` tag (or, via
+# archives (docs/contributing/releasing.md) for a pushed `vX.Y.Z` tag (or, via
 # workflow_dispatch, everything but publishing — see the `dry_run` input
 # below). Publishing needs every other job to pass on the tagged commit. The
 # release notes are the version's section of CHANGELOG.md; a tag without one,
@@ -7,7 +7,7 @@
 #
 # Runtime compatibility of the three published archives (documented here so
 # this workflow's claims about what each archive runs on match
-# docs/install.md):
+# docs/guides/install.md):
 #   - iris-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz: statically linked
 #     (musl libc, static-pie) — runs on any x86_64 Linux kernel >= 3.2,
 #     regardless of the host's glibc version or absence of one.
@@ -39,8 +39,8 @@ permissions:
 env:
   # The Rust toolchain that checks and builds every release. It is pinned, not
   # "stable", so a release never depends on which stable was current when the
-  # tag was pushed, and bumped deliberately (CONTRIBUTING.md, Releasing). CI on
-  # main runs current stable and the MSRV.
+  # tag was pushed, and bumped deliberately (docs/contributing/releasing.md).
+  # CI on main runs current stable and the MSRV.
   RELEASE_RUST_TOOLCHAIN: "1.94.1"
 
 jobs:
@@ -61,7 +61,7 @@ jobs:
       # this job, which has a read-only token, runs it: the publish job gets
       # the notes as an artifact, so it publishes exactly the text checked
       # here and runs no extra tool while it holds `contents: write`.
-      # CONTRIBUTING.md (Releasing) gives this version for local previews.
+      # docs/contributing/releasing.md gives this version for local previews.
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: parse-changelog@0.6.17
@@ -103,7 +103,7 @@ jobs:
           if [ -z "$problem" ]; then
             { printf '## Release notes for %s\n\n' "$version"; cat "$notes"; } >> "$GITHUB_STEP_SUMMARY"
           elif [ "$EVENT_NAME" = "push" ]; then
-            echo "::error::$problem; nothing was built or published (CONTRIBUTING.md, Releasing)"
+            echo "::error::$problem; nothing was built or published (docs/contributing/releasing.md)"
             exit 1
           else
             echo "::warning::$problem; pushing tag v$version would fail"
@@ -259,7 +259,7 @@ jobs:
 
           # Fail closed rather than publishing whatever happened to match
           # dist/*.tar.gz: require exactly the three release archives (see
-          # docs/install.md) for this version, and nothing else, before
+          # docs/guides/install.md) for this version, and nothing else, before
           # anyone downloads them.
           expected=$(printf '%s\n' \
             "iris-v${VERSION}-x86_64-unknown-linux-musl.tar.gz" \

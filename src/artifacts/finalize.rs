@@ -1,5 +1,5 @@
 //! Atomic finalization of artifacts (see README "Prompts, models, and output files"
-//! and docs/jobs.md "Downloads" steps 3-4).
+//! and docs/concepts/video-jobs.md "Downloads" steps 3-4).
 //!
 //! Content is first written to a temp file in the target directory named
 //! `.<name>.iris-part-<random>` (created with `O_EXCL`, so an existing file or
