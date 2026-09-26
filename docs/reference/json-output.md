@@ -57,11 +57,12 @@ The schema encodes the rules of the output, not only its shapes:
 
 ## Versioning
 
-`schema_version` is the major version of the JSON output as a whole: the envelope, every result
-type, the error object, and the code tables. Iris 0.1.0 prints version 1.
+`schema_version` is the major version of Iris's public contract. The contract is the commands and
+their flags, the exit codes, and the JSON output as a whole: the envelope, every result type, the
+error object, and the code tables. Iris 0.1.0 prints version 1.
 
-- Additive changes keep the version: a new field, a new error or warning code, or a new command.
-- Renaming or removing a field or a code, or changing its meaning, increments the version.
+- Additive changes keep the version: a new field, error code, warning code, command, or flag.
+- Renaming or removing any part of the contract, or changing its meaning, increments the version.
 
 To read output from a version that you don't know:
 
@@ -87,7 +88,7 @@ Every document is an envelope:
 
 | Field | Type | Description |
 |---|---|---|
-| `schema_version` | integer | The version of the JSON output. See [Versioning](#versioning). |
+| `schema_version` | integer | The version of the contract that this output follows. See [Versioning](#versioning). |
 | `ok` | boolean | `true` if the command succeeded. |
 | `command` | string or null | The command, such as `image.generate`. `null` if Iris couldn't recognize a command, and for `--help`. |
 | `result` | object or null | The command's result, if `ok` is `true`. See [Results](#results). |
