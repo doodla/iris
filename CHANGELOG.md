@@ -45,8 +45,8 @@ Google models, for people and for agents.
   `iris providers list`, shell completions for bash, zsh, fish, and elvish, and `iris version`.
 - **Security.** Iris reads API keys only from `OPENAI_API_KEY` and `GEMINI_API_KEY`, never prints,
   logs, or stores them, and sends them only to the configured API origin, including across
-  redirects. It redacts signed URLs in all output. See
-  [Security and privacy](https://github.com/doodla/iris/blob/main/docs/concepts/security-and-privacy.md).
+  redirects. It redacts signed URLs in all output. See the
+  [configuration reference](https://github.com/doodla/iris/blob/main/docs/reference/configuration.md#api-keys).
 - **Distribution:** a checksum-verifying installer for Linux x86_64 and macOS, reproducible release
   archives with third-party license notices, and documentation organized as guides, concepts, and
   reference. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).

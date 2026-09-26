@@ -184,7 +184,7 @@ needs no per-provider download code.
   redacting `Debug`, so printing a credential by accident doesn't compile into output. `config`
   rejects config keys that look like credentials. The HTTP layer attaches a provider's credential
   header only when a request's scheme, host, and port match that provider's configured base URL,
-  including across redirects. See [Security and privacy](../concepts/security-and-privacy.md).
+  including across redirects. See [API keys](../reference/configuration.md#api-keys).
 - **A download failure is never a generation failure.** Downloads in `app::jobs` are a separate step
   from submitting and polling in `app::video`. `artifacts::finalize` writes through a temporary file
   and renames it into place, so a failed or repeated download can't damage a file that already

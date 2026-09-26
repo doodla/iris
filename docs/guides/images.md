@@ -29,6 +29,9 @@ Iris prints the path of each saved image, and an estimate of the cost from the u
 provider reported. To check a request and its cost before you pay for it, add `--dry-run`. See
 [Estimate a cost before you run](models-and-costs.md#estimate-a-cost-before-you-run).
 
+For the Gemini models, Iris asks Google not to store your requests (`store: false`), even if logging
+is turned on for your project.
+
 ## Provide the prompt
 
 Give each command exactly one prompt source:

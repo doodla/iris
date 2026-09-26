@@ -78,8 +78,11 @@ Some fields have specific rules:
   the provider asked for a delay.
 - `provider_code` and `details.provider_message` come from the provider and can change without
   notice. Don't branch on them.
-- Iris removes key values from every string in an error, redacts URLs, and shortens a provider's
-  message to 500 characters.
+- Iris removes key values from every string in an error, and shortens a provider's message to 500
+  characters.
+- Iris redacts every URL that it prints or logs. It removes the user information and the fragment,
+  and replaces each query value with `REDACTED`, except the value of `alt`. So a signed URL never
+  appears in output.
 
 ## Error codes
 
@@ -261,6 +264,14 @@ check gets HTTP 404 during the retention period, with `provider_status: 404`. Se
 |---|---|
 | `limit_bytes`, `declared_bytes` | A response to a free request was longer than Iris reads. `declared_bytes` is present when the response declared a longer `Content-Length`. |
 | `charge_possible`, `usage`, `cost_estimate`, `fallback_paths` | A paid image response had no usable image. See [Paid image failures](#paid-image-failures). |
+
+Iris reads a successful response only up to a size limit, so a misbehaving server or proxy can't
+make it use unbounded memory. The limit is 512 MiB for an image response, which carries the images
+inline, and 16 MiB for any other response. A longer response to a free request, such as a status
+check, fails with `provider_bad_response`. A longer response to a paid request is
+`submission_uncertain` instead, because the provider processed the request. Iris reads an error
+response up to 1 MiB, and classifies it from what it read. A video download is limited to 4 GiB.
+See [Downloads](../concepts/video-jobs.md#downloads).
 
 ### `download_failed`
 

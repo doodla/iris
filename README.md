@@ -113,7 +113,6 @@ with `-m`, or set a default in the config file. See
 
 - [How Iris handles paid requests](docs/concepts/paid-requests.md)
 - [How video jobs work](docs/concepts/video-jobs.md)
-- [Security and privacy](docs/concepts/security-and-privacy.md)
 
 ### Reference
 

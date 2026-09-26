@@ -67,8 +67,9 @@ Values have these formats:
   that moves loses its jobs. Paths that you pass as flags can be relative to the current directory.
 - **Log filter**: `IRIS_LOG` takes
   [`tracing` filter directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html),
-  such as `debug`. `-v` logs Iris's debug messages, and `-vv` its trace messages. Logs never
-  contain prompts, keys, or signed URLs.
+  such as `debug`. `-v` logs Iris's debug messages, and `-vv` its trace messages. For a request,
+  Iris logs only metadata, such as its method, redacted URL, status, provider request ID, and
+  elapsed time. Logs never contain prompts, the content of input files, keys, or signed URLs.
 
 Iris validates an environment variable's value like a config file value. An invalid value fails
 with `config_invalid`, which names the variable.
@@ -85,8 +86,21 @@ Iris reads API keys only from these environment variables:
 | OpenAI | `OPENAI_API_KEY` |
 | Google Gemini, for images and Veo | `GEMINI_API_KEY` |
 
-Iris ignores `GOOGLE_API_KEY`, and `iris doctor` warns you if it's set. For how Iris protects keys,
-see [Security and privacy](../concepts/security-and-privacy.md#api-keys).
+Iris doesn't read keys from flags, and it rejects a config file that contains one. See
+[Validation](#validation). It also ignores `GOOGLE_API_KEY`, which Google's SDKs prefer when both
+variables are set, so a leftover variable can't choose your key. `iris doctor` warns you if
+`GOOGLE_API_KEY` is set.
+
+Iris handles keys in the following ways:
+
+- It never prints, logs, or stores a key. `iris config show`, `iris doctor`, and
+  `iris providers list` report only whether each key is set.
+- It sends a key only to its provider's base URL: the same scheme, host, and port. API requests
+  don't follow redirects, and a download that's redirected anywhere else continues without the key.
+- It sends the Gemini key in the `x-goog-api-key` header, never in a URL, because URLs end up in
+  logs and error messages.
+
+To send a key to another base URL, such as a proxy, see [Base URL overrides](#base-url-overrides).
 
 A command whose provider's key isn't set fails with `missing_credentials` (exit code 3). Iris checks
 the key after every other local check, and `--dry-run` doesn't require one. `iris doctor` reports a

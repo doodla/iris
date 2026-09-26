@@ -36,5 +36,6 @@ These aren't vulnerabilities, and you can report them as regular issues:
 - A provider that changes its API, prices, or behavior so that Iris's catalog is out of date.
 - An error that Iris reports correctly for a misconfigured account.
 
-For how Iris handles API keys, prompts, and the files that it writes, see
-[Security and privacy](docs/concepts/security-and-privacy.md).
+For how Iris handles API keys, see [API keys](docs/reference/configuration.md#api-keys). For what
+Iris stores about a video job, see
+[What a job record contains](docs/concepts/video-jobs.md#what-a-job-record-contains).

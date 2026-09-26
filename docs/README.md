@@ -23,7 +23,6 @@ How Iris works, and why.
 |---|---|
 | [How Iris handles paid requests](concepts/paid-requests.md) | The guarantees, retries, uncertain outcomes, billed errors, and cost estimates. |
 | [How video jobs work](concepts/video-jobs.md) | Job records, states, submission, labels, downloads, retention, and deletion. |
-| [Security and privacy](concepts/security-and-privacy.md) | API keys, prompt storage, redaction, file permissions, and response limits. |
 
 ## Reference
 
@@ -34,7 +33,7 @@ Complete, exact descriptions.
 | [CLI reference](reference/cli.md) | The help of every command, generated from the CLI itself. |
 | [JSON output reference](reference/json-output.md) | The envelope, every result type, and the JSON Schema. |
 | [Errors reference](reference/errors.md) | Exit codes, error codes and their details, and warning codes. |
-| [Configuration reference](reference/configuration.md) | Every setting, the config file, paths, time limits, and base URL overrides. |
+| [Configuration reference](reference/configuration.md) | Every setting, API keys, the config file, paths, time limits, and base URL overrides. |
 
 ## Contributing
 

@@ -36,10 +36,9 @@ sentence of summary.
 | Commands, arguments, flags, and their defaults | [CLI reference](../reference/cli.md), generated from `--help` |
 | The JSON envelope and result fields | [JSON output reference](../reference/json-output.md) |
 | Exit, error, and warning codes | [Errors reference](../reference/errors.md) |
-| Configuration keys, environment variables, and time limits | [Configuration reference](../reference/configuration.md) |
+| Settings, environment variables, API key handling, logging, and time limits | [Configuration reference](../reference/configuration.md) |
 | What Iris guarantees about paid requests | [How Iris handles paid requests](../concepts/paid-requests.md) |
-| Job states, downloads, retention, and deletion | [How video jobs work](../concepts/video-jobs.md) |
-| How Iris handles keys, prompts, and files | [Security and privacy](../concepts/security-and-privacy.md) |
+| Job states, job records, downloads, retention, and deletion | [How video jobs work](../concepts/video-jobs.md) |
 | Why Iris made a choice, with sources | [Decisions](decisions.md) |
 
 When you change a behavior, update its home first. Then search the docs for the old behavior, and
