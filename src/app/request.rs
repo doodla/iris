@@ -1,5 +1,5 @@
 //! Steps shared by every generation workflow (image generate/edit, video
-//! generate): model resolution (docs/configuration.md), prompt limits, output counts,
+//! generate): model resolution (docs/reference/configuration.md), prompt limits, output counts,
 //! cost estimates, and dry-run plan pieces.
 
 use std::fmt;
@@ -67,7 +67,7 @@ pub enum GenerationOutcome<T> {
     Planned(PlanResult),
 }
 
-/// Resolve the model (docs/configuration.md): `-m/--model` if given, else the
+/// Resolve the model (docs/reference/configuration.md): `-m/--model` if given, else the
 /// model the config file names for `op` (`image.model` / `video.model`), else
 /// `model_required`. Iris never chooses a model itself; the provider is the model's.
 /// Returns the model and where it came from, and adds the warnings

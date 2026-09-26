@@ -1,4 +1,4 @@
-//! Local artifact handling (see `iris --help` and docs/jobs.md "Downloads").
+//! Local artifact handling (see `iris --help` and docs/concepts/video-jobs.md "Downloads").
 //!
 //! * [`paths`] — plan absolute output paths (default names, `-o` rules,
 //!   extension/format consistency), the `output_exists` preflight, and the

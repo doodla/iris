@@ -1,4 +1,4 @@
-//! OpenAI Images API adapter (see docs/architecture.md, docs/jobs.md, and the model catalog).
+//! OpenAI Images API adapter (see docs/contributing/architecture.md, docs/concepts/video-jobs.md, and the model catalog).
 //!
 //! A thin REST client over the shared HTTP layer:
 //!

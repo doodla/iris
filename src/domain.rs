@@ -55,7 +55,7 @@ impl ProviderId {
         }
     }
 
-    /// The default API base URL (see docs/configuration.md). Credentials are only
+    /// The default API base URL (see docs/reference/configuration.md). Credentials are only
     /// ever sent to the origin of the configured base URL.
     pub const fn default_base_url(self) -> &'static str {
         match self {
@@ -176,7 +176,7 @@ pub enum ModelSource {
 }
 
 /// Whether a model's requests cost money, as the catalog declares it. An open set
-/// (docs/json-contract.md): a later Iris may add a value, and human output uses each
+/// (docs/reference/json-output.md): a later Iris may add a value, and human output uses each
 /// value as the adjective for a request ("this is a paid request").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -286,7 +286,7 @@ pub enum DownloadState {
 }
 
 /// Every warning code Iris emits: the registry of the public, additive set listed in
-/// docs/json-contract.md ("Warning codes"). A [`Warning`] is only built from one of
+/// docs/reference/json-output.md ("Warning codes"). A [`Warning`] is only built from one of
 /// these ([`Warning::new`]); the contract tests compare this list with the
 /// documented one and check that no other source file spells out a code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, JsonSchema)]
@@ -389,7 +389,7 @@ impl fmt::Display for WarningCode {
 pub struct Warning {
     // Iris emits only `WarningCode`s; the field is a string so that a reader keeps a
     // code it does not know.
-    /// Stable snake_case warning code (additive set; see docs/json-contract.md).
+    /// Stable snake_case warning code (additive set; see docs/reference/json-output.md).
     pub code: String,
     pub message: String,
 }

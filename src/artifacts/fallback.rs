@@ -1,4 +1,4 @@
-//! Last-resort saving of paid synchronous output (see docs/json-contract.md,
+//! Last-resort saving of paid synchronous output (see docs/reference/json-output.md,
 //! warning `output_saved_elsewhere`).
 //!
 //! A paid image that reached Iris is never discarded. When a valid image cannot be

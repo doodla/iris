@@ -1,4 +1,4 @@
-//! Streaming artifact downloads (see docs/jobs.md "Downloads").
+//! Streaming artifact downloads (see docs/concepts/video-jobs.md "Downloads").
 //!
 //! Redirects are followed here, by hand, because reqwest's automatic redirects would
 //! forward custom credential headers such as `x-goog-api-key` to other hosts.
@@ -94,7 +94,7 @@ pub enum DownloadError {
         /// Set when retrying stopped because `retry_after` exceeded this limit
         /// ([`RetryPolicy::max_retry_after`](super::RetryPolicy::max_retry_after));
         /// [`DownloadError::into_iris`] then reports `rate_limited` whatever the
-        /// status (see docs/jobs.md), as [`HttpClient::execute`] does.
+        /// status (see docs/concepts/video-jobs.md), as [`HttpClient::execute`] does.
         retry_after_limit: Option<Duration>,
         /// Attempts made.
         attempts: u32,
@@ -146,7 +146,7 @@ pub enum DownloadError {
 }
 
 impl DownloadError {
-    /// Map to the public taxonomy (see docs/json-contract.md and docs/jobs.md):
+    /// Map to the public taxonomy (see docs/reference/json-output.md and docs/concepts/video-jobs.md):
     /// 410 → `artifact_expired`; 403/404 → `download_failed`, retryable (callers
     /// that know the output's retention report `artifact_expired` once it has
     /// passed); 401 → `authentication_failed`;

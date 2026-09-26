@@ -1,4 +1,4 @@
-//! Configuration resolution (see docs/configuration.md): discovery, strict parsing, precedence
+//! Configuration resolution (see docs/reference/configuration.md): discovery, strict parsing, precedence
 //! flag > env > file > default for every setting, validation, platform paths, and
 //! secret handling. Uses environment snapshots only; the process environment is
 //! never read for settings or mutated, and credentials are fake.

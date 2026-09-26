@@ -2,7 +2,7 @@
 
 Shared instructions for coding agents (and humans) working on Iris, a Rust CLI for
 generating and editing media through provider APIs. These are invariants and steering
-rules, not a description of the code; read `docs/architecture.md` and the source for that.
+rules, not a description of the code; read `docs/contributing/architecture.md` and the source for that.
 
 ## Compatibility
 

@@ -122,7 +122,7 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
 `next_steps` lists the commands to run next, as given (see [Envelope](#envelope)).
 
 `Job` (real record, captured from a mock-server run — see
-[live-testing.md](live-testing.md) for how live runs differ):
+[live-testing.md](../contributing/live-testing.md) for how live runs differ):
 
 ```json
 {
@@ -158,12 +158,12 @@ file's `image.model`, or `video.model` for a video job). Iris never chooses a mo
 ```
 
 `request` holds only resolved, non-secret options (and input *counts*, never paths or bytes) —
-see [jobs.md](jobs.md) for what is and is not persisted, and why. `model_source` is `null` for a
+see [video-jobs.md](../concepts/video-jobs.md) for what is and is not persisted, and why. `model_source` is `null` for a
 job record that does not say where its model came from.
 
 `output_plan` is where `jobs wait` and `jobs download` save the outputs when given neither `-o` nor
 `-d`: the `-o` path (`path`) or the output directory (`dir`) recorded when `video generate`
-submitted the job, and whether it was given `--overwrite` (see [jobs.md](jobs.md#downloads)). With
+submitted the job, and whether it was given `--overwrite` (see [video-jobs.md](../concepts/video-jobs.md#downloads)). With
 several outputs an `-o` path is saved as `<stem>-<i>.<ext>` with `i` from 1, while
 `outputs[].index` and `artifacts[].index` count from 0.
 
@@ -172,7 +172,7 @@ when `jobs.store_prompts` keeps the text in the record): `sha256` is the lowerca
 the prompt as sent, encoded as UTF-8 (a `--prompt-file` or `--prompt-stdin` prompt without its
 trailing whitespace), and `chars` its length in characters (Unicode scalar values). It is how a
 caller finds a job whose submitting process was killed before printing anything (see
-[jobs.md](jobs.md#finding-a-job-whose-submitting-process-was-killed)).
+[video-jobs.md](../concepts/video-jobs.md#finding-a-job-whose-submitting-process-was-killed)).
 
 `label` is the label `video generate --label` recorded with the job, or `null`. No two local job
 records share a label (see [`label_in_use`](#error-object)), so a caller that labels each intended
@@ -212,7 +212,7 @@ is refused while the provider still keeps them; its error adds `details.outputs_
 retention). `--all --force` also deletes unreadable record files and names them in `note`. Only
 if a record changes between the check and its deletion can the command stop partway;
 `details.deleted` then lists what it deleted (see
-[jobs.md](jobs.md#local-deletion-vs-remote-state)).
+[video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state)).
 
 ### `models.list` → `{ "models": [ { "id", "provider", "display_name", "summary", "aliases": [], "lifecycle", "billing", "operations": [], "standard_cost" } ] }`
 
@@ -354,7 +354,7 @@ request.
 `git_commit` is the commit the binary was built from, filled only when the build set
 `IRIS_GIT_COMMIT` (the release workflow does, so release archives report the tagged commit) and
 `null` otherwise, for example for a local `cargo install`. See
-[Verifying what you installed](install.md#verifying-what-you-installed) for the exact rule and how
+[Verifying what you installed](../guides/install.md#verifying-what-you-installed) for the exact rule and how
 to check it.
 
 ### `plan` (any generation command run with `--dry-run`)
@@ -466,7 +466,7 @@ $ iris image generate "x" --model does-not-exist --json
 support its operation (every model for `models show`), in the form `model_required` uses below. A
 name Iris declines — a model its provider deprecated, shut down, limited, or serves only
 elsewhere, a family of them, or a nickname of one, such as `dall-e-3`, `gpt-image-1`, `imagen-4`,
-`veo-3`, or `nano-banana` (see [decisions.md](decisions.md#built-in-models) for the models and
+`veo-3`, or `nano-banana` (see [decisions.md](../contributing/decisions.md#built-in-models) for the models and
 families) — gets a hint that says why, with the provider's date, and what to use instead that
 supports the command's operation (when none does, which command lists the ones that do), and no
 `--capabilities-from` suggestion. Those replacements are its `details.suggestions`, as ids:
@@ -589,7 +589,7 @@ job's `model`, and its `created_at`. The hint depends on that job's status: an a
 followed with `jobs status`/`jobs wait` (deleting its record does not cancel it), a succeeded one
 downloaded, a `submission_unknown` one checked in the provider's console before anything is
 submitted again, and for a failed or expired one the record is deleted or another label used (the
-full table is in [jobs.md](jobs.md#labels-find-a-job-and-never-submit-it-twice)). The check and the
+full table is in [video-jobs.md](../concepts/video-jobs.md#labels-find-a-job-and-never-submit-it-twice)). The check and the
 new record are one step under the job store's lock, so of two commands submitting with one label at
 the same time, only one submits. While a local job record cannot be read, it could have the label:
 a labeled submission is then `state_invalid` (exit 1, `retryable: false`, nothing sent, a dry run
@@ -652,7 +652,7 @@ example `submission_uncertain` (sending the request again could pay twice) or `q
 a used-up daily quota — even when the provider's answer asked for a delay. When Iris retries a
 request itself, it waits out a requested delay of up to 60 seconds; a longer one stops with
 `rate_limited`, whose `retry_after_seconds` says how long to wait (see
-[decisions.md](decisions.md#retry-classes-and-why-vendor-retry-guidance-is-overridden)).
+[decisions.md](../contributing/decisions.md#retry-classes-and-why-vendor-retry-guidance-is-overridden)).
 
 `provider_code` and `details.provider_message` are informational and **unstable** — they come
 from the provider and can change without notice; `code` is Iris's own, stable, public taxonomy.
@@ -708,7 +708,7 @@ written; the job record keeps the original code and any unknown fields untouched
 compares every row with the code's definition); a specific error can override it (e.g.
 `provider_error` is `true` for a 5xx it classified as transient). `retryable` describes
 whether *retrying the same request* might help — it is never an instruction to retry a paid
-submission automatically; see [jobs.md](jobs.md#submission-uncertainty) for why Iris never
+submission automatically; see [video-jobs.md](../concepts/video-jobs.md#submission-uncertainty) for why Iris never
 resubmits a paid request whose outcome it cannot prove. An image-command error whose
 `details.charge_possible` is `true` (the provider may have processed and billed the request) never
 says `retryable: true`. `details.charged: true` is different: the provider completed the request
@@ -770,7 +770,7 @@ full disk) stay `io_error` (exit 1).
 A paid **synchronous** image request whose outcome Iris cannot know is reported as
 `submission_uncertain` (exit 5, `retryable: false`) with `details.charge_possible: true`, a hint
 that Iris did not retry it, and `job_id: null` — Iris has no way to resume a synchronous call,
-unlike a video job (see [jobs.md](jobs.md#why-synchronous-calls-have-no-job-record)). That covers:
+unlike a video job (see [video-jobs.md](../concepts/video-jobs.md#why-synchronous-calls-have-no-job-record)). That covers:
 
 - no complete answer after the request was sent: a timeout (`details.transport: "timeout"`), or a
   connection that failed or an answer that could not be read in full (`details.transport:
@@ -789,7 +789,7 @@ to 16 MiB. A longer one is `provider_bad_response` for a request that costs noth
 or a metadata read), with the answer's `provider_status`, `details.limit_bytes` (the limit), and
 `details.declared_bytes` when the answer declared a longer `Content-Length`; it is not retried. For
 a Veo submission it is `submission_uncertain`, and the job is recorded as `submission_unknown` (see
-[jobs.md](jobs.md#submission-uncertainty)).
+[video-jobs.md](../concepts/video-jobs.md#submission-uncertainty)).
 
 A Gemini HTTP error answer keeps its ordinary code (e.g. `provider_error`, retryable, for a 5xx)
 without `charge_possible`: Google's billing documentation says requests that fail with 400 or 500
@@ -812,24 +812,24 @@ while a paid request is in flight (a Veo `video generate` submit or an image cal
 `retryable: false` and `details.charge_possible: true` because running it again could pay twice.
 An interrupt that arrives before Iris starts sending a Veo request stops without sending it: it
 keeps `retryable: true`, names no job, and leaves no job record (see
-[jobs.md](jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
+[video-jobs.md](../concepts/video-jobs.md#waiting---timeout-ctrl-c-and-other-signals)).
 
 `job_not_ready` (exit 4) from `jobs download` means the job was still `submitting` or `running`
 when the command looked. If the status check that `jobs download` makes first failed transiently,
 the error adds `details.status_checked: false` (the job was only *last known* to be running) next
 to a `status_refresh_failed` warning; a check that failed for any other reason (a missing key,
 rejected credentials, no access, quota) is reported as that error instead, with the job's
-identifiers (see [jobs.md](jobs.md#downloads)).
+identifiers (see [video-jobs.md](../concepts/video-jobs.md#downloads)).
 
 For job outputs, `artifact_expired` means the output is gone for good: the file host answered 410,
 or 403/404 after the provider's retention period (`job.remote_expires_at`). A 403/404 before that
 is `download_failed` with `retryable: true`, and a status check that finds the operation missing
 inside the retention period is `permission_denied` with `provider_status: 404` while the job stays
-`running` (see [jobs.md](jobs.md#retention-and-expiry)).
+`running` (see [video-jobs.md](../concepts/video-jobs.md#retention-and-expiry)).
 
 Provider error strings and HTTP-status-specific provider codes are **never** the public taxonomy —
 they are mapped to one of the codes above by each adapter (see
-[providers.md](providers.md#2-add-the-adapter-module-srcprovidersseedance) for the mapping
+[adding-a-provider.md](../contributing/adding-a-provider.md#2-add-the-adapter-module-srcprovidersseedance) for the mapping
 obligations a new adapter has to meet) and kept only as `provider_code`/`details.provider_message`
 for diagnosis.
 

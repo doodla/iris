@@ -1,4 +1,4 @@
-//! The published JSON output schema (see docs/json-contract.md): the committed file equals the schema
+//! The published JSON output schema (see docs/reference/json-output.md): the committed file equals the schema
 //! generated from the Rust DTOs, and real outputs of every command validate
 //! against it (the envelope, and the `$defs` type of the command's result).
 
@@ -18,15 +18,15 @@ use wiremock::matchers::method;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 const SCHEMA_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/schema/iris-output.v1.schema.json");
-const CONTRACT_DOC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/json-contract.md");
+const CONTRACT_DOC: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/docs/reference/json-output.md");
 
 /// The body rows of the first Markdown table under the heading line `heading` of
-/// docs/json-contract.md: trimmed cells, with surrounding backticks removed.
+/// docs/reference/json-output.md: trimmed cells, with surrounding backticks removed.
 fn contract_table(heading: &str) -> Vec<Vec<String>> {
-    let doc = std::fs::read_to_string(CONTRACT_DOC).expect("docs/json-contract.md exists");
+    let doc = std::fs::read_to_string(CONTRACT_DOC).expect("docs/reference/json-output.md exists");
     let section = doc
         .split_once(&format!("\n{heading}\n"))
-        .unwrap_or_else(|| panic!("docs/json-contract.md has no heading {heading:?}"))
+        .unwrap_or_else(|| panic!("docs/reference/json-output.md has no heading {heading:?}"))
         .1;
     let rows: Vec<Vec<String>> = section
         .lines()
@@ -68,7 +68,7 @@ fn committed_schema_matches_the_generated_schema() {
         committed == generated,
         "schema/iris-output.v1.schema.json is out of date with the output DTOs.\nRegenerate it with\n    \
          cargo run -q -- schema > schema/iris-output.v1.schema.json\nand review the diff: removing or renaming \
-         a field, or changing its meaning, needs a schema_version bump (see docs/json-contract.md)."
+         a field, or changing its meaning, needs a schema_version bump (see docs/reference/json-output.md)."
     );
 }
 
@@ -104,7 +104,7 @@ fn the_schema_is_valid_and_enumerates_the_stable_codes() {
     assert_eq!(
         known_values(&schema["$defs"]["CommandName"]),
         commands,
-        "docs/json-contract.md command names"
+        "docs/reference/json-output.md command names"
     );
     let warnings: BTreeSet<String> = WarningCode::ALL.iter().map(|c| c.as_str().to_string()).collect();
     assert_eq!(known_values(&schema["$defs"]["Warning"]["properties"]["code"]), warnings);
@@ -482,7 +482,7 @@ async fn a_job_error_with_a_newer_code_still_matches_the_schema() {
     );
 }
 
-/// The warning codes docs/json-contract.md lists are exactly the registry's.
+/// The warning codes docs/reference/json-output.md lists are exactly the registry's.
 #[test]
 fn the_documented_warning_codes_are_the_registry() {
     let rows = contract_table("## Warning codes");
@@ -490,7 +490,7 @@ fn the_documented_warning_codes_are_the_registry() {
     let unique: BTreeSet<String> = documented.iter().cloned().collect();
     assert_eq!(unique.len(), documented.len(), "a warning code is documented twice: {documented:?}");
     let registry: BTreeSet<String> = WarningCode::ALL.iter().map(|c| c.as_str().to_string()).collect();
-    assert_eq!(unique, registry, "docs/json-contract.md \"Warning codes\" vs WarningCode::ALL");
+    assert_eq!(unique, registry, "docs/reference/json-output.md \"Warning codes\" vs WarningCode::ALL");
     assert!(rows.iter().all(|row| row.len() == 2 && !row[1].is_empty()), "every code has a meaning");
 }
 
@@ -538,7 +538,7 @@ fn warnings_are_only_built_from_the_registry() {
     }
 }
 
-/// docs/json-contract.md's table of stable codes and ErrorCode agree both ways:
+/// docs/reference/json-output.md's table of stable codes and ErrorCode agree both ways:
 /// every code is documented once, every row is a code, and each row's category,
 /// exit code, and default retryability (the first word of its cell) are the code's.
 #[test]
@@ -548,7 +548,7 @@ fn the_documented_error_table_is_the_error_codes() {
     let unique: BTreeSet<&str> = documented.iter().copied().collect();
     assert_eq!(unique.len(), documented.len(), "a code is documented twice: {documented:?}");
     let codes: BTreeSet<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
-    assert_eq!(unique, codes, "docs/json-contract.md error table vs ErrorCode::ALL");
+    assert_eq!(unique, codes, "docs/reference/json-output.md error table vs ErrorCode::ALL");
     for row in &rows {
         assert_eq!(row.len(), 4, "{row:?}");
         let code = *ErrorCode::ALL.iter().find(|c| c.as_str() == row[0]).unwrap();

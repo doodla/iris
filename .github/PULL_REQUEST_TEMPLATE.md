@@ -36,5 +36,5 @@ relevant doc under docs/ was updated to match. If no, say "none." -->
 ## Live testing
 
 <!-- Only relevant if you touched provider request/response handling: did you run anything from
-docs/live-testing.md? If so, note the approximate cost and what you verified. If not, say so —
+docs/contributing/live-testing.md? If so, note the approximate cost and what you verified. If not, say so —
 that's expected for most changes; offline coverage is what CI checks. -->

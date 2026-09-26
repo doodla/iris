@@ -1,7 +1,7 @@
 //! The public error taxonomy: stable codes, categories, exit codes, retryability.
 //!
 //! `ErrorCode` values are part of the public JSON contract (see
-//! docs/json-contract.md). Provider error strings never become codes; they are
+//! docs/reference/json-output.md). Provider error strings never become codes; they are
 //! carried as informational `provider_code` / `details.provider_message`.
 
 use std::fmt;
@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{JobStatus, ProviderId};
 
-/// Process exit codes (documented in README and docs/json-contract.md).
+/// Process exit codes (documented in README and docs/reference/json-output.md).
 pub mod exit {
     pub const SUCCESS: i32 = 0;
     /// Runtime or provider failure.

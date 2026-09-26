@@ -1,5 +1,5 @@
 #!/bin/sh
-# scripts/package-release.sh — build the release archive (docs/install.md) for one target.
+# scripts/package-release.sh — build the release archive (docs/guides/install.md) for one target.
 #
 # Usage:
 #   scripts/package-release.sh <target-triple> [output-dir]
@@ -14,7 +14,7 @@
 # containing the binary, LICENSE, THIRD-PARTY-LICENSES, README.md, CHANGELOG.md
 # and the docs/ directory that README.md links to. Nothing else: no links or
 # special files, no absolute or ".." entries (the installer checks this too;
-# see docs/install.md).
+# see docs/guides/install.md).
 #
 # THIRD-PARTY-LICENSES holds the licenses and copyright notices of the crates
 # linked into the binary for this target. It is generated here by cargo-about

@@ -1,6 +1,6 @@
 //! Shared REST plumbing for the Gemini API: endpoint URLs, the credential header,
 //! identifier validation, and the mapping of `google.rpc.Status` error bodies to the
-//! public error taxonomy (see docs/json-contract.md).
+//! public error taxonomy (see docs/reference/json-output.md).
 
 use std::time::Duration;
 
@@ -29,7 +29,7 @@ pub const CREDENTIAL_HEADER: CredentialHeader = CredentialHeader { name: "x-goog
 const REQUEST_ID_HEADERS: &[&str] = &["x-request-id", "x-goog-request-id"];
 
 /// Maximum characters of provider text kept in messages and details: the limit
-/// shared by every adapter (see docs/json-contract.md).
+/// shared by every adapter (see docs/reference/json-output.md).
 pub(crate) use crate::http::PROVIDER_TEXT_MAX;
 
 /// The credential header for this call.
@@ -217,7 +217,7 @@ pub fn parse_google_error(resp: &HttpResponse) -> GoogleError {
     }
 }
 
-/// Map a non-success response to the public taxonomy (see docs/json-contract.md).
+/// Map a non-success response to the public taxonomy (see docs/reference/json-output.md).
 /// Returns the error and the provider-requested retry delay (`RetryInfo`).
 pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
     let google = parse_google_error(resp);
@@ -401,7 +401,7 @@ pub fn map_error(resp: &HttpResponse) -> (IrisError, Option<Duration>) {
     (err, google.retry_delay)
 }
 
-/// Retry verdict for a non-success response (see docs/architecture.md "Where
+/// Retry verdict for a non-success response (see docs/contributing/architecture.md "Where
 /// invariants live" for retry classes):
 /// 429 → retryable rejection honoring `RetryInfo`, unless its `QuotaFailure` shows
 /// an exhausted quota (`quota_exceeded`, final; Gemini's billing exhaustion is the

@@ -12,7 +12,7 @@ the same HTTP response, so there is nothing to persist between request and respo
 operation id to poll later. If the connection is lost *after* the provider accepted the request,
 Iris cannot know whether it succeeded and has no way to check — that outcome is reported as
 `submission_uncertain` (exit 5) with `details.charge_possible: true` and `job_id: null`, and Iris
-never retries it automatically (see [json-contract.md](json-contract.md#error-object)). This is a
+never retries it automatically (see [json-output.md](../reference/json-output.md#error-object)). This is a
 real, provider-shaped limitation, not an Iris gap: OpenAI's Images API and Gemini's
 `generateContent` are both plain request/response calls with no job or operation concept, so there
 is nothing durable to recover.
@@ -51,7 +51,7 @@ own: its `flock` is held while a job with a `--label` is recorded (see
 
 `<state_dir>/unsaved/` may hold paid images Iris could not save where you asked, and returned
 content that was not a valid image, kept as received as `.bin` (warning `output_saved_elsewhere`,
-see [json-contract.md](json-contract.md#warning-codes)); move them out before deleting the state
+see [json-output.md](../reference/json-output.md#warning-codes)); move them out before deleting the state
 directory.
 
 ## What is persisted — and what is not
@@ -248,7 +248,7 @@ shows the label in its plan. The hint depends on that job's status:
 | `failed`, `expired` | a new submission is billed: delete its local record first (`iris jobs delete <id>`), or use another label |
 
 In human output (the JSON form of the error is in
-[json-contract.md](json-contract.md#error-object)):
+[json-output.md](../reference/json-output.md#error-object)):
 
 ```console
 $ iris video generate -m veo-lite "a paper boat drifting on a pond" --duration 4 --label paper-boat-1 --detach
@@ -371,7 +371,7 @@ Order of decision for each output, under the job's download lock:
    output (deleted or edited since it was downloaded, which is why the output was fetched).
 3. Otherwise, check that Iris may fetch the recorded URI with the configuration of *this*
    invocation (for Veo: a Files API download URL under the configured Gemini base URL; see
-   [configuration.md](configuration.md#base-url-overrides) for proxies). A refused URI fails that
+   [configuration.md](../reference/configuration.md#base-url-overrides) for proxies). A refused URI fails that
    output with `download_failed` (not retryable as is, redacted URI in `details.uri`,
    `download_state: failed`) and nothing is requested; the job stays `succeeded`, `next_steps`
    still offer `iris jobs download <id>`, and a later download with a corrected base URL checks
@@ -624,5 +624,5 @@ on the same jobs at that moment), the command can still stop partway; its error 
 records it did delete in `details.deleted`, and in human mode as `Deleted <job_id>` lines.
 
 Local job-history deletion is a separate action from removing the Iris *binary* or its
-*configuration* — see [install.md](install.md#uninstall) — and from a provider's own retention
+*configuration* — see [install.md](../guides/install.md#uninstall) — and from a provider's own retention
 policy, which Iris cannot change or extend.

@@ -13,7 +13,7 @@ file, never from a command-line flag, and never with a fallback name:
 Credentials are held in a `Secret` type that never prints or serializes its contents — Iris
 reports only *presence*, never a value. Real `doctor` output, abridged to the credential rows
 (`...` marks the omitted lines; `doctor` also reports `config`, `state_dir`, `output_dir`,
-`base_url.openai`, `base_url.gemini`, and `jobs` — see [Setup](../README.md#setup) in the README
+`base_url.openai`, `base_url.gemini`, and `jobs` — see [Setup](../../README.md#setup) in the README
 for the full block):
 
 ```console
@@ -80,7 +80,7 @@ wait_timeout = "10m"
 poll_interval = "10s"
 
 [jobs]
-store_prompts = false                 # see docs/jobs.md — off by default
+store_prompts = false                 # see docs/concepts/video-jobs.md — off by default
 
 [providers.openai]
 base_url = "https://api.openai.com/v1"
@@ -137,7 +137,7 @@ error[config_invalid]: config file /home/you/bad4.toml: `video.model`: model 'ge
 `iris models list` and `iris models show` (without `--check-access`) never read the config file,
 so while the file is invalid you can still list the models these hints name and inspect each one's
 options and prices. A name Iris declines, such as `nano-banana` or `dall-e-3`, gets the same
-hint as with `-m` (see [decisions.md](decisions.md#built-in-models)).
+hint as with `-m` (see [decisions.md](../contributing/decisions.md#built-in-models)).
 
 `iris doctor` still runs the checks that do not need a valid configuration when the config file
 itself is invalid, so an invalid file doesn't hide unrelated problems like a missing credential.
@@ -179,8 +179,8 @@ directory (a state directory that moves loses its jobs). Relative paths given as
 
 `--max-cost` and `--label` have no environment variable or config key: a spending cap or a label
 applies only to the command that names it. `--max-cost` caps the request's pre-call estimate, never
-the bill (see [`cost_limit_exceeded`](json-contract.md#error-object)); `--label` is described in
-[jobs.md](jobs.md#labels-find-a-job-and-never-submit-it-twice).
+the bill (see [`cost_limit_exceeded`](json-output.md#error-object)); `--label` is described in
+[video-jobs.md](../concepts/video-jobs.md#labels-find-a-job-and-never-submit-it-twice).
 
 If the current directory does not exist (it was deleted under a running shell), commands that
 do not need it still work: `version`, `schema`, `completions`, `--help`, `config path`/`show`,
@@ -246,12 +246,12 @@ With `--json`, the error's `details` hold the `operation`, the `config_key` (`im
 display_name, summary, aliases, standard_cost}` object per catalog model that supports the
 operation, in catalog order, with what the model is for and what the same output costs with it
 (one 1024x1024 image, or one 8-second 720p video; see
-[json-contract.md](json-contract.md#error-object)). An
+[json-output.md](json-output.md#error-object)). An
 `-m` naming no catalog model is `unknown_model` (exit 2) with the same `candidates`; a near miss of
 catalog models (`gpt-image-2.5`, `Nano-Banana-2`) has them in `suggestions` and a hint asking "did
 you mean …?", and a name Iris declines (a model its provider deprecated, shut down, limited, or
 serves only elsewhere, such as `dall-e-3` or `veo-3`) has a hint that says why and what to use
-instead (see [decisions.md](decisions.md#built-in-models)).
+instead (see [decisions.md](../contributing/decisions.md#built-in-models)).
 
 A configured model must be a catalog id or alias of its table's kind (`image.model` an image
 model, `video.model` a video model); anything else is `config_invalid` naming the key when the
@@ -263,7 +263,7 @@ message and in `details.config_key`, with the models that do support it in `deta
 
 `-m` always wins over the config file. Every result says which of the two chose the model:
 `model_source` is `flag` or `config` in the dry-run plan, the image result, and the job (see
-[json-contract.md](json-contract.md)). Human output names the key when the config file chose it
+[json-output.md](json-output.md)). Human output names the key when the config file chose it
 (output with `[image] model = "nano-banana-2"` and no key set):
 
 ```console
@@ -290,7 +290,7 @@ image.model) does not support --quality for image.generate`.
 
 Each request Iris sends has its own time limit, per attempt (a retried request gets a fresh one).
 None of them is the caller's wait limit: that is `video.wait_timeout` (`--timeout`), and when it
-passes, the remote job continues (see [jobs.md](jobs.md)). A dry run of `video generate` shows
+passes, the remote job continues (see [video-jobs.md](../concepts/video-jobs.md)). A dry run of `video generate` shows
 the wait limit and poll interval it would use, with the source of each.
 
 | time limit | covers | default | setting |
@@ -311,7 +311,7 @@ uplink is slower than that, raise `request_timeout` or `submit_timeout` rather t
 A job record still `submitting` is only declared abandoned once no live submitter could still be
 waiting for its answer: three attempts, each allowed the connect time limit plus `submit_timeout`
 plus the largest upload allowance, plus up to a minute of waiting between attempts, plus a minute
-of grace — about 37 minutes with the defaults (see [jobs.md](jobs.md)). The submitting process
+of grace — about 37 minutes with the defaults (see [video-jobs.md](../concepts/video-jobs.md)). The submitting process
 records its own budget in the job record, so a later process with shorter timeouts still waits at
 least that long.
 
@@ -382,6 +382,6 @@ URL configured at that moment.
   answers are read up to 1 MiB. A longer status or metadata answer is `provider_bad_response`; a
   longer answer to a paid request is `submission_uncertain` (the provider processed the request,
   but its answer was lost), and it is never resent. Downloads stream to disk instead and are
-  capped at 4 GiB (see [jobs.md](jobs.md#downloads)).
+  capped at 4 GiB (see [video-jobs.md](../concepts/video-jobs.md#downloads)).
 - Test fixtures in this repository contain no real keys; tests set fake ones (e.g.
   `test-openai-key-000`) through the process environment, never through argv.

@@ -6,8 +6,8 @@ integration tests can reach internals through the library. `#![forbid(unsafe_cod
 crate root; there is no `unsafe` anywhere in Iris's own code.
 
 This document describes the module layout and where each kind of invariant is enforced. For the
-exact command surface see [json-contract.md](json-contract.md) and `iris <command> --help`; for how
-to add a provider see [providers.md](providers.md); for why Iris calls the provider APIs, retries,
+exact command surface see [json-output.md](../reference/json-output.md) and `iris <command> --help`; for how
+to add a provider see [adding-a-provider.md](adding-a-provider.md); for why Iris calls the provider APIs, retries,
 persists jobs, and picks dependencies the way it does, with sources, see
 [decisions.md](decisions.md).
 
@@ -86,7 +86,7 @@ Two invariants the layering protects:
 | module | responsibility |
 |---|---|
 | `domain` | Shared plain types used everywhere: `ProviderId` (also each provider's fixed identity: id, credential variable, default base URL, base URL variable), `Operation`, `ModelSource` (whether `-m` or the config file named a command's model), `Billing` (whether a model's requests cost money), job/download status enums, `Artifact`, `Usage`, `CostEstimate`, `Warning` and the `WarningCode` registry every warning is built from. |
-| `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the exit-code mapping (see [json-contract.md](json-contract.md)). |
+| `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the exit-code mapping (see [json-output.md](../reference/json-output.md)). |
 | `secret` | The `Secret` newtype: `Debug`/`Display` print `***`, and it is never `Serialize`. Credentials are held as `Secret` from the moment they are read from the environment. |
 | `redact` | `redact_url` (strips userinfo, replaces query values with `REDACTED` except an allowlist), `scrub` (removes any configured credential value from text), `truncate`. Every error message, provider message, log line, and persisted `last_error` passes through these before it can reach stdout, stderr, or disk. |
 | `catalog` | The static model catalog: every model Iris knows, its one-line summary, declared operations, inputs, options (typed, with defaults and allowed values/ranges), outputs, pricing, cost estimators (with the requests that give the standard output models are compared on), access notes, and the model names Iris declines (with why and what to use instead). Per-provider declarations live in `catalog/{openai,gemini,veo}.rs`. |
@@ -147,7 +147,7 @@ pub trait VideoProvider: Send + Sync {
 output or of the failure, which the app keeps in `<state_dir>/unsaved/`): there is nothing to persist
 between the request and the response, so no job record is created, and a lost connection after the
 provider accepted the request is simply unrecoverable (`submission_uncertain` with `job_id: null`,
-`details.charge_possible: true` — see [jobs.md](jobs.md#why-synchronous-calls-have-no-job-record)).
+`details.charge_possible: true` — see [video-jobs.md](../concepts/video-jobs.md#why-synchronous-calls-have-no-job-record)).
 
 `VideoProvider` is split into `submit` (paid, sent once, never blindly retried) and `poll`
 (idempotent, safe to retry and to call again from a different process). Iris persists the job
@@ -162,7 +162,7 @@ record turns that into `expired` only once the retention period since submission
 the same shape regardless of provider, so `app::jobs` drives the poll loop once, independent of
 which provider a job belongs to. There is no `cancel` method on `VideoProvider` and no `jobs
 cancel` command: no provider Iris implements offers a way to cancel a job it accepted, so nothing
-in the codebase pretends otherwise (see [jobs.md](jobs.md#local-deletion-vs-remote-state)).
+in the codebase pretends otherwise (see [video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state)).
 Downloading an artifact goes through a generic `http::download`: `app::jobs` attaches a
 provider's `credential_header()` only when the download URL's scheme, host, and port equal that
 provider's configured base URL origin, and `http::download` keeps it off every redirect hop to
@@ -181,13 +181,13 @@ another origin. The adapter only decides which output URIs Iris may fetch at all
   printing a compile-time non-issue (no `Serialize`, redacting `Debug`); `config` rejects any
   config-file key that looks like a credential; the HTTP layer attaches a provider's credential
   header only when a request's scheme+host+port matches that provider's configured base URL
-  origin, including across redirects (see [configuration.md](configuration.md) and
-  [json-contract.md](json-contract.md)).
+  origin, including across redirects (see [configuration.md](../reference/configuration.md) and
+  [json-output.md](../reference/json-output.md)).
 - **"A download failure is never a generation failure."** `app::jobs` downloads are a separate
   step from `app::video` submission/polling; `artifacts::finalize` writes through a temp file and
   finalizes atomically, so a failed or repeated download can never touch a file that already
   succeeded, and downloading never re-submits anything to a provider (see
-  [jobs.md](jobs.md#downloads)).
+  [video-jobs.md](../concepts/video-jobs.md#downloads)).
 - **"An ambiguous paid submission is never retried automatically."** `http::retry` has three
   retry classes (`PaidSubmit`, `IdempotentRead`, `Download`); `PaidSubmit` retries only outcomes
   that provably did not reach the provider (a connection failure before sending) or that the
@@ -210,5 +210,5 @@ iterates the registry. The compiler does not check that `ALL` lists every varian
 `domain` does, and also checks that `ALL` agrees with the registry and the catalog. The published
 schema, a few help texts and documents that name providers, test fixtures, and the opt-in
 live-verification script are updated by hand. See
-[providers.md](providers.md) for the step-by-step guide and the complete checklist, worked
+[adding-a-provider.md](adding-a-provider.md) for the step-by-step guide and the complete checklist, worked
 through a hypothetical Seedance adapter.

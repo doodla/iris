@@ -1,4 +1,4 @@
-//! The job store over `<state_dir>/jobs/` (see docs/jobs.md).
+//! The job store over `<state_dir>/jobs/` (see docs/concepts/video-jobs.md).
 //!
 //! Layout: `<job_id>.json` (record), `<job_id>.lock` (exclusive advisory lock held
 //! only for a read-modify-write), `<job_id>.download.lock` (exclusive lock held for
@@ -36,7 +36,7 @@ const JOBS_DIR: &str = "jobs";
 /// The store lock taken to create a labeled record, in the jobs directory.
 const LABELS_LOCK: &str = "labels.lock";
 
-/// Attempts of the `PaidSubmit` retry class (see docs/architecture.md "Where
+/// Attempts of the `PaidSubmit` retry class (see docs/contributing/architecture.md "Where
 /// invariants live").
 const PAID_SUBMIT_ATTEMPTS: u32 = 3;
 /// Longest wait between two `PaidSubmit` attempts: `Retry-After` is honored up to

@@ -42,7 +42,7 @@ reporting an error a misconfigured account produced.
 ## How Iris handles secrets, for context
 
 This is background for reporters, not a guarantee that supersedes the actual code — see
-[docs/configuration.md](docs/configuration.md#security-rules) and
+[docs/reference/configuration.md](docs/reference/configuration.md#security-rules) and
 [AGENTS.md](AGENTS.md#money-credentials-and-safety) for the durable rules this project holds
 itself to:
 

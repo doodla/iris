@@ -1188,7 +1188,7 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ],
-      "description": "Stable, public error code (docs/json-contract.md): one of the listed codes, or a code a later version of this schema_version adds.",
+      "description": "Stable, public error code (docs/reference/json-output.md): one of the listed codes, or a code a later version of this schema_version adds.",
       "type": "string"
     },
     "HelpResult": {
@@ -2627,7 +2627,7 @@
               "pattern": "^[a-z][a-z0-9_]*$"
             }
           ],
-          "description": "Stable warning code (docs/json-contract.md): one of the listed codes, or a code a later version of this schema_version adds. Treat a code you do not know as informational text.",
+          "description": "Stable warning code (docs/reference/json-output.md): one of the listed codes, or a code a later version of this schema_version adds. Treat a code you do not know as informational text.",
           "type": "string"
         },
         "message": {

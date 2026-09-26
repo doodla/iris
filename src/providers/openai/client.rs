@@ -1,5 +1,5 @@
 //! HTTP calls to the OpenAI API and the classification of its answers
-//! (see docs/architecture.md "Where invariants live" for retry classes and
+//! (see docs/contributing/architecture.md "Where invariants live" for retry classes and
 //! paid-submit policy).
 //!
 //! Paid image requests run under [`RetryClass::PaidSubmit`]: they are resent only
@@ -100,7 +100,7 @@ pub(super) async fn post_paid(
 /// Remove the context's own credential from every string of an error.
 ///
 /// Provider text is already passed through [`redact::scrub`], which covers the
-/// credentials in the environment (the only source the CLI uses; see docs/configuration.md). This pass
+/// credentials in the environment (the only source the CLI uses; see docs/reference/configuration.md). This pass
 /// also covers a key handed to the adapter another way, e.g. by a library caller.
 fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
     let secrets = [ctx.credential.expose().trim().to_string()];
@@ -132,7 +132,7 @@ fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
 /// reset, truncated body, or an answer over the size limit): `submission_uncertain`
 /// (exit 5, not retryable) with `details.charge_possible`, `details.transport`
 /// (`timeout` or `other`, never relabeled), and the client request id. Never
-/// retried (see docs/jobs.md).
+/// retried (see docs/concepts/video-jobs.md).
 fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError {
     let mut err = t.to_iris();
     err.code = ErrorCode::SubmissionUncertain;

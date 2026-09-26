@@ -1,5 +1,5 @@
 //! OpenAI Images API wire format (request bodies, response and error bodies).
-//! Everything here is private to the adapter (see docs/architecture.md).
+//! Everything here is private to the adapter (see docs/contributing/architecture.md).
 //!
 //! Requests are typed structs, so fields the adapter must never send
 //! (`response_format`, `style`, `input_fidelity`, `user`, `stream`) cannot appear.

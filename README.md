@@ -65,7 +65,7 @@ failover, and Windows.
 
 ### From a release
 
-Iris ships a small POSIX-sh installer with each release ([docs/install.md](docs/install.md) has
+Iris ships a small POSIX-sh installer with each release ([docs/guides/install.md](docs/guides/install.md) has
 the full details: pinned installs, passing options through the pipe, checksum verification,
 upgrade, and uninstall):
 
@@ -89,7 +89,7 @@ $ cargo install --locked --path .
 This builds `iris` with exactly the dependency versions in the committed `Cargo.lock` and installs
 it into Cargo's `bin` directory (`~/.cargo/bin` by default). The platforms release archives are
 built for, and their minimum OS/kernel versions, are listed in
-[docs/install.md](docs/install.md#supported-platforms-and-runtime-requirements).
+[docs/guides/install.md](docs/guides/install.md#supported-platforms-and-runtime-requirements).
 
 ## Setup
 
@@ -136,7 +136,7 @@ model's exact, current access notes rather than assuming these generalize.
 
 Non-secret settings (output directory, timeouts, a config file) follow
 `flag > environment variable > config file > default`; see
-[docs/configuration.md](docs/configuration.md). Iris has no default model: every generation
+[docs/reference/configuration.md](docs/reference/configuration.md). Iris has no default model: every generation
 command names one with `-m`, or uses the one the config file names (see
 [Prompts, models, and output files](#prompts-models-and-output-files)).
 
@@ -159,7 +159,7 @@ carries a pre-call estimate (with `auto`, the default, the model chooses them, s
 a `cost_estimate_unavailable` warning names the options to pass for one). `billing: "paid"` says
 the real run is billed to your provider account at its published prices, and a name the real run
 generates is shown as its pattern (`iris-<ulid>.png`). The other fields are described under
-[`plan`](docs/json-contract.md#plan-any-generation-command-run-with---dry-run):
+[`plan`](docs/reference/json-output.md#plan-any-generation-command-run-with---dry-run):
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
@@ -246,7 +246,7 @@ list` shows every one Iris knows); without it, the command uses the model the co
 its kind (`[image] model`, `[video] model`). Iris never picks one for you: with neither, the
 command fails with `model_required` (exit 2) before anything is sent, and the error lists the
 models that support the command, each with its summary and `standard_cost`
-(`error.details.candidates`; see [docs/configuration.md](docs/configuration.md#choosing-the-model)).
+(`error.details.candidates`; see [docs/reference/configuration.md](docs/reference/configuration.md#choosing-the-model)).
 A model Iris does not know is `unknown_model` with the same list. A near miss, such as
 `gpt-image-2.5`, `veo-3.1-lite`, or `Nano-Banana-2`, also asks "did you mean …?" naming the models
 it nearly names (`details.suggestions`); a name Iris declines, such as `dall-e-3`, `veo-3`, or the
@@ -309,7 +309,7 @@ $ iris --json version
 ```
 
 (A binary built from a checkout reports `git_commit: null`; see
-[docs/install.md](docs/install.md#verifying-what-you-installed).)
+[docs/guides/install.md](docs/guides/install.md#verifying-what-you-installed).)
 
 Get the full schema (also published at `schema/iris-output.v1.schema.json` in this repo):
 
@@ -319,7 +319,7 @@ $ iris schema > iris-output.v1.schema.json
 
 Exit codes are a stable, documented contract — an agent can branch on them without parsing text
 (the exit code of every error code is in
-[docs/json-contract.md](docs/json-contract.md#stable-codes-categories-exit-codes-and-default-retryability)):
+[docs/reference/json-output.md](docs/reference/json-output.md#stable-codes-categories-exit-codes-and-default-retryability)):
 
 | exit | meaning |
 |---|---|
@@ -358,7 +358,7 @@ directory:
    **4** (`job_not_ready`) rather than waiting or resubmitting.
 
 Every step is idempotent: repeating a download never re-generates the video (see
-[docs/jobs.md](docs/jobs.md)).
+[docs/concepts/video-jobs.md](docs/concepts/video-jobs.md)).
 
 ## Supported providers and models
 
@@ -465,19 +465,19 @@ credential each provider reads and whether it's set.
 
 ## Documentation
 
-- [docs/architecture.md](docs/architecture.md) — module layout, sync vs. async traits, where
+- [docs/contributing/architecture.md](docs/contributing/architecture.md) — module layout, sync vs. async traits, where
   invariants live
-- [docs/decisions.md](docs/decisions.md) — why Iris uses the endpoints, models, retry rules, and
+- [docs/contributing/decisions.md](docs/contributing/decisions.md) — why Iris uses the endpoints, models, retry rules, and
   tools it does, with the official sources and the date they were checked
-- [docs/providers.md](docs/providers.md) — how to add a provider (worked example: Seedance)
-- [docs/json-contract.md](docs/json-contract.md) — the `--json` envelope, every result type, the
+- [docs/contributing/adding-a-provider.md](docs/contributing/adding-a-provider.md) — how to add a provider (worked example: Seedance)
+- [docs/reference/json-output.md](docs/reference/json-output.md) — the `--json` envelope, every result type, the
   error taxonomy, exit codes, and schema versioning
-- [docs/jobs.md](docs/jobs.md) — job lifecycle, submission uncertainty, downloads, retention,
+- [docs/concepts/video-jobs.md](docs/concepts/video-jobs.md) — job lifecycle, submission uncertainty, downloads, retention,
   local deletion vs. remote
-- [docs/configuration.md](docs/configuration.md) — config file, environment variables, precedence
-- [docs/install.md](docs/install.md) — the installer in detail: pinning, integrity, upgrade,
+- [docs/reference/configuration.md](docs/reference/configuration.md) — config file, environment variables, precedence
+- [docs/guides/install.md](docs/guides/install.md) — the installer in detail: pinning, integrity, upgrade,
   uninstall
-- [docs/live-testing.md](docs/live-testing.md) — opt-in, paid live verification: what it checks
+- [docs/contributing/live-testing.md](docs/contributing/live-testing.md) — opt-in, paid live verification: what it checks
   and how to run it by hand
 - [CONTRIBUTING.md](https://github.com/doodla/iris/blob/main/CONTRIBUTING.md),
   [SECURITY.md](https://github.com/doodla/iris/blob/main/SECURITY.md), [CHANGELOG.md](CHANGELOG.md)

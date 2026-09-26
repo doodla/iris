@@ -1,7 +1,7 @@
-//! The versioned job record (see docs/jobs.md) and its status transitions.
+//! The versioned job record (see docs/concepts/video-jobs.md) and its status transitions.
 //!
 //! Lifecycle fields are private: the only way to change a job's status is through
-//! the transition methods below, which implement exactly the arrows documented in docs/jobs.md:
+//! the transition methods below, which implement exactly the arrows documented in docs/concepts/video-jobs.md:
 //!
 //! ```text
 //! (create: submitting) --2xx with operation id--> running
@@ -424,7 +424,7 @@ const RECORD_FIELDS: &[&str] = &[
     "cost_estimate",
 ];
 
-/// A persisted provider-native job (see docs/jobs.md; record schema v1).
+/// A persisted provider-native job (see docs/concepts/video-jobs.md; record schema v1).
 ///
 /// Unknown fields (written by newer Iris versions with the same major record
 /// version) are kept in `extra` and written back unchanged.
@@ -1006,7 +1006,7 @@ impl JobRecord {
 
     // ----- views -------------------------------------------------------------
 
-    /// The public view (docs/json-contract.md `Job`). Remote download URIs are never included;
+    /// The public view (docs/reference/json-output.md `Job`). Remote download URIs are never included;
     /// `artifacts` are built from downloaded outputs only.
     pub fn to_view(&self) -> JobView {
         let outputs: Vec<JobOutputView> = self

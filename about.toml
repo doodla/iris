@@ -1,6 +1,6 @@
 # cargo-about configuration for the third-party license notices that every
 # release archive ships as THIRD-PARTY-LICENSES (scripts/package-release.sh
-# generates it with about.hbs; docs/install.md).
+# generates it with about.hbs; docs/guides/install.md).
 # Docs: https://embarkstudios.github.io/cargo-about/
 #
 # deny.toml decides which licenses Iris may depend on; this list mirrors its

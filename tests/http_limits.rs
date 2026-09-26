@@ -527,7 +527,7 @@ async fn image_answers_that_never_arrive_whole_are_uncertain_and_say_what_happen
     }
 }
 
-/// End to end, as docs/json-contract.md describes it: a paid image call whose answer
+/// End to end, as docs/reference/json-output.md describes it: a paid image call whose answer
 /// is longer than Iris reads exits 5 with `submission_uncertain`, the 2xx status,
 /// `details.transport: "other"` and `charge_possible`, no retry delay and no job.
 /// The request is sent once, and nothing is saved.

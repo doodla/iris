@@ -1,4 +1,4 @@
-//! Media sniffing, image decoding, and ISO-BMFF video validation (see docs/jobs.md).
+//! Media sniffing, image decoding, and ISO-BMFF video validation (see docs/concepts/video-jobs.md).
 //! Fixtures are generated in-test; nothing binary is committed.
 
 use std::io::Cursor;

@@ -1,6 +1,6 @@
 //! Shared HTTP plumbing: client construction, operation-aware retries, error
 //! classification helpers, streaming downloads with credential-origin rules, and
-//! redaction. See docs/architecture.md "Where invariants live" for the retry
+//! redaction. See docs/contributing/architecture.md "Where invariants live" for the retry
 //! classes, the paid-submit retry policy, and the credential-origin rule.
 //!
 //! Provider adapters use three entry points:

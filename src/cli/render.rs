@@ -1,4 +1,4 @@
-//! Writing results: exactly one JSON envelope on stdout in `--json` mode (docs/json-contract.md),
+//! Writing results: exactly one JSON envelope on stdout in `--json` mode (docs/reference/json-output.md),
 //! concise text otherwise (`output::human`). clap usage errors, `--help`, and
 //! `--version` are converted to envelopes too when `--json` appears in argv.
 

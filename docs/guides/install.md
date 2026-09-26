@@ -166,7 +166,7 @@ $ rm -rf /home/you/.local/state/iris
 
 The state directory's `unsaved/` subdirectory may hold paid images Iris could not save where you
 asked, and returned content that was not a valid image, kept as received (`.bin`; see
-[json-contract.md](json-contract.md#warning-codes), `output_saved_elsewhere`); move them out
+[json-output.md](../reference/json-output.md#warning-codes), `output_saved_elsewhere`); move them out
 before deleting the state directory.
 
 **On macOS, be careful: the config file and the state directory are the same directory**
@@ -186,7 +186,7 @@ $ rm -rf "/Users/you/Library/Application Support/iris/jobs"          # job histo
 $ rm "/Users/you/Library/Application Support/iris/config.toml"       # config, separately
 ```
 
-`iris jobs delete --all` (see [jobs.md](jobs.md#local-deletion-vs-remote-state)) removes only
+`iris jobs delete --all` (see [video-jobs.md](../concepts/video-jobs.md#local-deletion-vs-remote-state)) removes only
 *local job records* — it is not a substitute for deleting the state directory, and neither of
 these ever cancels or deletes anything on a provider.
 

@@ -1,4 +1,4 @@
-//! Local side of job downloads (docs/jobs.md "Downloads" steps 1–2): decide whether an output
+//! Local side of job downloads (docs/concepts/video-jobs.md "Downloads" steps 1–2): decide whether an output
 //! needs the network at all, and copy an already-downloaded file to a new target
 //! without touching the network. A recorded file counts only while it is intact
 //! (recorded size and hash) and still validates as media, so a file saved before
@@ -52,7 +52,7 @@ pub enum DownloadDecision {
     Refetch,
 }
 
-/// Decide per docs/jobs.md: `AlreadyDownloaded` if the recorded file exists with the
+/// Decide per docs/concepts/video-jobs.md: `AlreadyDownloaded` if the recorded file exists with the
 /// recorded size and SHA-256, still validates as media, and is the file `target`
 /// would become; `CopyLocal` if it is intact and valid but `target` differs;
 /// otherwise `Fetch`. With `refetch` (`--overwrite`), or when the recorded file no

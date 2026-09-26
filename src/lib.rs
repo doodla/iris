@@ -2,7 +2,7 @@
 //! from one agent-friendly CLI.
 //!
 //! The module layers (which module may depend on which, and why) are described in
-//! `docs/architecture.md#layering`.
+//! `docs/contributing/architecture.md#layering`.
 
 #![forbid(unsafe_code)]
 
