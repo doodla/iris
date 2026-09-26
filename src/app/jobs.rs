@@ -62,7 +62,7 @@ pub(crate) enum SaveMode {
     /// The wait of `video generate` itself: the caller just paid for this output
     /// and the target passed the preflight, so a file that appeared since then
     /// never blocks the save; the output goes to `<stem>.<n>.<ext>` with warning
-    /// `output_renamed` (see docs/reference/json-output.md "Warning codes", as for images).
+    /// `output_renamed` (see docs/reference/errors.md "Warning codes", as for images).
     Generated,
 }
 

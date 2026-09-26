@@ -251,7 +251,7 @@ more letters may be nearly spelled, by Jaro-Winkler similarity). The last rule i
 the registered names differ mostly in their tier and version words, and a suggestion that drops
 one steers to another price: `veo3-fast` must never suggest Veo 3.1, which costs four times as
 much, nor `gpt-image-2.5-flair` the older `gpt-image-2`. Every suggestion can be explained by the
-rule that found it (see [json-output.md](../reference/json-output.md#error-object)).
+rule that found it (see [json-output.md](../reference/errors.md#unknown_model)).
 
 **Sources.** [OpenAI model pages](https://developers.openai.com/api/docs/models/gpt-image-2.5-sunburst) ·
 [OpenAI deprecations](https://developers.openai.com/api/docs/deprecations) ·

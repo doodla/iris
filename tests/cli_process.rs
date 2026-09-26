@@ -284,7 +284,7 @@ fn every_command_has_help_with_examples_and_the_top_level_notes_billing() {
         "{}",
         top.stdout
     );
-    // Exit 130 covers every signal Iris handles, as docs/reference/json-output.md says.
+    // Exit 130 covers every signal Iris handles, as docs/reference/errors.md says.
     assert!(words.contains("130 interrupted (Ctrl-C/SIGINT, SIGTERM, or SIGHUP)"), "{}", top.stdout);
     // Iris never chooses a model, and each generation command's -m help names the config
     // key that can stand in for -m.

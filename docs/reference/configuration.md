@@ -1,387 +1,297 @@
-# Configuration
+# Configuration reference
 
-## Credentials
+Iris works without a config file. This page lists every setting, how Iris resolves it, and how to
+set it with a flag, an environment variable, or the config file. It also covers API keys, paths,
+time limits, and base URL overrides.
 
-Iris reads provider credentials **only** from environment variables — never from the config
-file, never from a command-line flag, and never with a fallback name:
+## How Iris resolves a setting
 
-| provider | environment variable |
+Iris takes each setting from the first of these sources that sets it:
+
+1. A command-line flag.
+2. An environment variable.
+3. The config file.
+4. The built-in default.
+
+To see every setting, its value, and its source, run `iris config show`. The output is similar to
+the following:
+
+```text
+config file: /home/you/.config/iris/config.toml (loaded)
+SETTING                           VALUE                                       SOURCE
+config_file                       /home/you/.config/iris/config.toml          default
+output_dir                        /home/you                                   default
+state_dir                         /home/you/.local/state/iris                 default
+image.model                       gemini-3.1-flash-image                      file
+video.model                       (none)                                      default
+video.wait_timeout                20m                                         file
+video.poll_interval               10s                                         default
+jobs.store_prompts                false                                       default
+providers.openai.base_url         https://api.openai.com/v1                   default
+providers.openai.request_timeout  5m                                          default
+providers.gemini.base_url         https://generativelanguage.googleapis.com/  default
+providers.gemini.request_timeout  5m                                          default
+providers.gemini.submit_timeout   1m                                          default
+log                               warn                                        default
+credentials (presence only):
+  OPENAI_API_KEY: set
+  GEMINI_API_KEY: not set
+```
+
+## Settings
+
+| Setting | Config key | Environment variable | Flag | Default |
+|---|---|---|---|---|
+| Output directory | `output_dir` | `IRIS_OUTPUT_DIR` | `-d`, `--out-dir` | The current directory |
+| State directory | `state_dir` | `IRIS_STATE_DIR` | | See [Paths](#paths) |
+| Image model | `image.model` | | `-m`, `--model` | None: a command without a model fails with `model_required` |
+| Video model | `video.model` | | `-m`, `--model` | None: a command without a model fails with `model_required` |
+| Video wait limit | `video.wait_timeout` | `IRIS_WAIT_TIMEOUT` | `--timeout` | `10m` |
+| Video poll interval | `video.poll_interval` | `IRIS_POLL_INTERVAL` | `--poll-interval` | `10s` |
+| Store prompt text in job records | `jobs.store_prompts` | `IRIS_STORE_PROMPTS` | | `false` |
+| OpenAI base URL | `providers.openai.base_url` | `IRIS_OPENAI_BASE_URL` | | `https://api.openai.com/v1` |
+| Gemini base URL | `providers.gemini.base_url` | `IRIS_GEMINI_BASE_URL` | | `https://generativelanguage.googleapis.com` |
+| Request time limit | `providers.PROVIDER.request_timeout` | | | `300s` |
+| Video submission time limit | `providers.gemini.submit_timeout` | | | `60s` |
+| Config file | | `IRIS_CONFIG` | `--config` | See [Config file](#config-file) |
+| Log filter | | `IRIS_LOG` | `-v`, `-vv` | `warn` |
+
+Values have these formats:
+
+- **Durations**: a number with a unit, such as `90s`, `10m`, or `1h`, or a number of seconds. The
+  poll interval must be at least 2 seconds.
+- **Booleans**: `true` or `false`. In environment variables, Iris also accepts `1` and `0`, `yes`
+  and `no`, and `on` and `off`.
+- **Paths**: in the config file and in environment variables, an absolute path or a path that starts
+  with `~/`. A relative path would follow each command's working directory, and a state directory
+  that moves loses its jobs. Paths that you pass as flags can be relative to the current directory.
+- **Log filter**: `IRIS_LOG` takes
+  [`tracing` filter directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html),
+  such as `debug`. `-v` logs Iris's debug messages, and `-vv` its trace messages. Logs never
+  contain prompts, keys, or signed URLs.
+
+Iris validates an environment variable's value like a config file value. An invalid value fails
+with `config_invalid`, which names the variable.
+
+`--max-cost` and `--label` have no environment variable or config key. A spending cap or a label
+applies only to the command that names it.
+
+## API keys
+
+Iris reads API keys only from these environment variables:
+
+| Provider | Environment variable |
 |---|---|
 | OpenAI | `OPENAI_API_KEY` |
-| Google Gemini (images and Veo) | `GEMINI_API_KEY` (not `GOOGLE_API_KEY` — Iris explicitly ignores that name; `doctor` warns when `GOOGLE_API_KEY` is set, so a common mistake doesn't fail silently) |
+| Google Gemini, for images and Veo | `GEMINI_API_KEY` |
 
-Credentials are held in a `Secret` type that never prints or serializes its contents — Iris
-reports only *presence*, never a value. Real `doctor` output, abridged to the credential rows
-(`...` marks the omitted lines; `doctor` also reports `config`, `state_dir`, `output_dir`,
-`base_url.openai`, `base_url.gemini`, and `jobs` — see [Setup](../../README.md#setup) in the README
-for the full block):
+Iris ignores `GOOGLE_API_KEY`, and `iris doctor` warns you if it's set. For how Iris protects keys,
+see [Security and privacy](../concepts/security-and-privacy.md#api-keys).
 
-```console
-$ iris doctor
-...
-[ok]      credentials.openai: OPENAI_API_KEY is set
+A command whose provider's key isn't set fails with `missing_credentials` (exit code 3). Iris checks
+the key after every other local check, and `--dry-run` never requires one. `iris doctor` reports a
+missing key as a warning while another provider's key is set, and as an error when no key is set:
+
+```text
 [warning] credentials.gemini: GEMINI_API_KEY is not set; gemini commands will fail with missing_credentials
-...
 ```
-
-A key that is not set is a warning while another provider's key is set. With no key set at all,
-`doctor` adds an error, and `healthy` is false:
-
-```console
-$ iris doctor
-...
-[error]   credentials: no provider API key is set (OPENAI_API_KEY, GEMINI_API_KEY): every generation command would fail with missing_credentials
-...
-Problems found (see [error] lines).
-```
-
-A missing key for the provider a command needs is `missing_credentials` (exit 3), checked after
-every other local validation and before any network call — so a bad prompt or an unsupported
-option is still reported as such even with no key set. `video generate`, `jobs wait`, and
-`jobs download` also check it before creating any output directory (only a fetch from the
-provider's own origin needs it: copying an already downloaded output does not), so a run that
-stops for a missing key leaves nothing behind. `--dry-run` never requires a credential;
-it reports whether one is present without requiring it.
 
 ## Config file
 
-TOML. Location, in order: `--config <PATH>` > `IRIS_CONFIG` > the platform default:
+The config file is a TOML file. Iris reads it from the first of these locations that's set:
 
-| platform | default location |
-|---|---|
-| Linux | `$XDG_CONFIG_HOME/iris/config.toml`, else `~/.config/iris/config.toml` |
-| macOS | `~/Library/Application Support/iris/config.toml` |
+1. The path from `--config PATH`.
+2. The path in `IRIS_CONFIG`.
+3. The platform default:
 
-A missing *default* file is fine: settings then come from flags, the environment, and the built-in
-defaults, and no model is configured. A file named explicitly by `--config` or `IRIS_CONFIG` that
-does not exist is `config_invalid` — you asked for it, so Iris tells you it isn't there rather
-than silently falling back. `iris config path` prints the real, absolute locations (output on
-Linux with `HOME=/home/you` and no `XDG_*` or `IRIS_*` variables set):
+   | Platform | Default location |
+   |---|---|
+   | Linux | `$XDG_CONFIG_HOME/iris/config.toml`, or `~/.config/iris/config.toml` |
+   | macOS | `~/Library/Application Support/iris/config.toml` |
 
-```console
-$ iris config path
-config file: /home/you/.config/iris/config.toml
-state dir:   /home/you/.local/state/iris
-jobs dir:    /home/you/.local/state/iris/jobs
-```
+If the file at the default location doesn't exist, Iris uses the other sources and no model is
+configured. If a file that you named with `--config` or `IRIS_CONFIG` doesn't exist, Iris fails with
+`config_invalid`. To see the paths on your machine, run `iris config path`.
 
-Full key set:
+The following file sets every key:
 
 ```toml
-output_dir = "~/Pictures/iris"        # ~ expanded
-state_dir = "/custom/state"           # optional
+output_dir = "~/Pictures/iris"
+state_dir = "/custom/state"
 
 [image]
-model = "gpt-image-2.5-sunburst"      # image generate/edit without -m; a catalog image model
+model = "gpt-image-2.5-sunburst"      # image generate and image edit without -m
 
 [video]
-model = "veo-3.1-lite-generate-preview"   # video generate without -m; a catalog video model
+model = "veo-3.1-lite-generate-preview"   # video generate without -m
 wait_timeout = "10m"
 poll_interval = "10s"
 
 [jobs]
-store_prompts = false                 # see docs/concepts/video-jobs.md — off by default
+store_prompts = false
 
 [providers.openai]
 base_url = "https://api.openai.com/v1"
 request_timeout = "300s"
 
 [providers.gemini]
-base_url = "https://generativelanguage.googleapis.com"   # origin; Iris appends /v1 or /v1beta
+base_url = "https://generativelanguage.googleapis.com"   # the origin: Iris adds /v1 or /v1beta
 request_timeout = "300s"
 submit_timeout = "60s"
 ```
 
-`[image] model` and `[video] model` are the only settings that name a model; see
-[Choosing the model](#choosing-the-model). There is one `[providers.<id>]` table per provider
-(`openai`, `gemini`), with the same keys; `submit_timeout` applies only to a provider with video
-models (`gemini`), and setting it for another is `config_invalid`. See [Timeouts](#timeouts) for
-what `request_timeout` and `submit_timeout` cover. **Unknown keys are rejected**, not ignored — a
-typo is caught immediately rather than silently doing nothing (a relative `--config` path
-resolves against the current directory, `/home/you` here):
+`[image] model` and `[video] model` are the only settings that name a model. Each must be a catalog
+model ID or alias of its kind. Iris stores the ID that `-m` would send: the canonical ID for a
+nickname such as `nano-banana-2`, or a dated snapshot as written. `iris config show` shows the
+stored ID. `--capabilities-from` has no config equivalent. For how to choose a model, see
+[Choose a model and control costs](../guides/models-and-costs.md).
 
-```console
-$ iris --config bad.toml config show
-error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `request_timeout`, `submit_timeout`
-  hint: fix the config file, or point --config / IRIS_CONFIG at another file
-$ echo $?
-2
+There's one `[providers.PROVIDER]` table for each provider, `openai` and `gemini`, with the same
+keys. `submit_timeout` applies only to a provider with video models, so setting it for `openai`
+fails with `config_invalid`.
+
+### Validation
+
+Iris validates the config file when it loads it, before any command runs:
+
+- **Unknown keys fail.** A typo fails instead of silently doing nothing. A table for a provider that
+  Iris doesn't have fails the same way.
+- **Keys that look like credentials fail.** This includes `api_key`, `key`, `token`, `secret`,
+  `password`, and any key that ends in `_key`, in any case and at any depth. Iris reads keys only
+  from the environment, and a key in a config file can end up committed to a repository.
+- **Models are checked.** A model that Iris doesn't know, or of the wrong kind, fails.
+
+For example, a typo in a key:
+
+```sh
+iris --config bad.toml config show
 ```
 
-A table for a provider Iris does not have is rejected the same way, whatever it contains
-(`providers.<id>`: unknown key; expected one of `openai`, `gemini`).
+The output is similar to the following:
 
-**Any key that looks like a credential — `api_key`, anything ending in `_key`, `key`, `token`,
-`secret`, or `password`, case-insensitive, at any depth — is rejected too**, with a message
-pointing at the environment variables instead, so a well-meaning `api_key = "sk-..."` in a config
-file (which would otherwise get committed to a repo) is caught rather than silently accepted:
+```text
+error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `request_timeout`, `submit_timeout`
+  hint: fix the config file, or point --config / IRIS_CONFIG at another file
+```
 
-```console
-$ iris --config bad2.toml config show
+A credential in the config file:
+
+```text
 error[config_invalid]: config file /home/you/bad2.toml: `providers.openai.api_key`: credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY, never from the config file
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 ```
 
-A model in `image.model` or `video.model` that the catalog does not know, or that is of the other
-kind, is also caught at config-load time, before any command tries to use it:
+A model of the wrong kind:
 
-```console
-$ iris --config bad3.toml config show
-error[config_invalid]: config file /home/you/bad3.toml: `image.model`: unknown model 'not-a-real-model'
-  hint: set image.model to a model listed by `iris models list --operation image.generate` or `iris models list --operation image.edit`
-$ iris --config bad4.toml config show
+```text
 error[config_invalid]: config file /home/you/bad4.toml: `video.model`: model 'gemini-3.1-flash-image' does not support video.generate (supports: image.generate, image.edit)
   hint: set video.model to a model listed by `iris models list --operation video.generate`
 ```
 
-`iris models list` and `iris models show` (without `--check-access`) never read the config file,
-so while the file is invalid you can still list the models these hints name and inspect each one's
-options and prices. A name Iris declines, such as `nano-banana` or `dall-e-3`, gets the same
-hint as with `-m` (see [decisions.md](../contributing/decisions.md#built-in-models)).
+While the config file is invalid, some commands still work:
 
-`iris doctor` still runs the checks that do not need a valid configuration when the config file
-itself is invalid, so an invalid file doesn't hide unrelated problems like a missing credential.
-The directory, base URL, and job checks need the resolved settings, so they are skipped (real,
-complete output):
+- `iris models list` and `iris models show`, without `--check-access`, don't read the config file,
+  so you can look up the models that a hint names.
+- `iris doctor` runs every check that doesn't need a valid configuration, so an invalid file doesn't
+  hide other problems, such as a missing key. It skips the directory, base URL, and job checks.
 
-```console
-$ iris --config bad.toml doctor
-[error]   config: config file /home/you/bad.toml: `providers.openai.typo_field`: unknown key; expected one of `base_url`, `request_timeout`, `submit_timeout` (fix the config file, or point --config / IRIS_CONFIG at another file)
-[ok]      credentials.openai: OPENAI_API_KEY is set
-[ok]      credentials.gemini: GEMINI_API_KEY is set
-Problems found (see [error] lines).
-$ echo $?
-0
+## Paths
+
+| Path | Linux | macOS |
+|---|---|---|
+| Config file | `$XDG_CONFIG_HOME/iris/config.toml`, or `~/.config/iris/config.toml` | `~/Library/Application Support/iris/config.toml` |
+| State directory | `$XDG_STATE_HOME/iris`, or `~/.local/state/iris` | `~/Library/Application Support/iris` |
+| Jobs directory | `STATE_DIR/jobs` | `STATE_DIR/jobs` |
+
+On macOS, the config file is inside the state directory. Keep this in mind before you delete the
+state directory. See [Uninstall Iris](../guides/install.md#uninstall-iris).
+
+To print the absolute paths that Iris uses, run `iris config path`. The output is similar to the
+following:
+
+```text
+config file: /home/you/.config/iris/config.toml
+state dir:   /home/you/.local/state/iris
+jobs dir:    /home/you/.local/state/iris/jobs
 ```
 
-## Precedence: flag > environment variable > config file > default
+If the current directory no longer exists, for example because it was deleted under a running
+shell:
 
-| setting | env var | flag | default |
+- These commands still work: `version`, `schema`, `completions`, `--help`, `config path`,
+  `config show`, `providers list`, `models`, `jobs list`, `jobs status`, and `doctor`.
+- A command that needs the directory fails with `io_error` before it sends anything. A command
+  needs it if you gave it a relative path, or if it saves to the default output directory. An
+  absolute `-o`, `-d`, or `IRIS_OUTPUT_DIR` avoids this.
+
+## Time limits
+
+Each request that Iris sends has its own time limit, and each retry gets a fresh one. None of them
+is the time that a command waits for a video job: that's the wait limit, `video.wait_timeout` or
+`--timeout`. When the wait limit passes, the job continues remotely.
+
+| Time limit | Covers | Default | Setting |
 |---|---|---|---|
-| output directory | `IRIS_OUTPUT_DIR` | `-d`/`--out-dir` | current directory |
-| state directory | `IRIS_STATE_DIR` | — | platform default |
-| image model (`image generate`, `image edit`) | — (config file `image.model` only) | `-m`/`--model` | none: `model_required` |
-| video model (`video generate`) | — (config file `video.model` only) | `-m`/`--model` | none: `model_required` |
-| video wait timeout | `IRIS_WAIT_TIMEOUT` | `--timeout` | `10m` |
-| video poll interval | `IRIS_POLL_INTERVAL` | `--poll-interval` | `10s` |
-| store prompts in job records | `IRIS_STORE_PROMPTS` | — | `false` |
-| OpenAI base URL | `IRIS_OPENAI_BASE_URL` | — | `https://api.openai.com/v1` |
-| Gemini base URL | `IRIS_GEMINI_BASE_URL` | — | `https://generativelanguage.googleapis.com` |
-| config file path | `IRIS_CONFIG` | `--config` | platform default |
-| log filter | `IRIS_LOG` | `-v` (repeatable) | `warn` |
+| Connect | Establishing the connection, for every request | 15 s | |
+| Request | One paid image request, from connecting until its response, which carries the images, is read | 5 min | `providers.PROVIDER.request_timeout` |
+| Submission | One video submission, until the response that names the job arrives | 1 min | `providers.gemini.submit_timeout` |
+| Status check | One job status check, or one model metadata read with `--check-access` | 30 s | |
+| Download idle | The longest pause between two pieces of a download. A download as a whole has no time limit. | 1 min | |
 
-An environment variable's value is validated exactly like a config-file value — a bad one is
-`config_invalid` naming the variable, not silently ignored. That includes paths: `IRIS_CONFIG`,
-`IRIS_OUTPUT_DIR`, and `IRIS_STATE_DIR` must be absolute or start with `~/`, like `output_dir` and
-`state_dir` in the config file, because a relative one would follow each command's working
-directory (a state directory that moves loses its jobs). Relative paths given as flags
-(`--config`, `-d`/`--out-dir`, `-o`, input files) resolve against the current directory.
+A request that carries data, such as an image edit with its input images or a video with reference
+images, also gets the time to upload it at 256 KiB/s, up to 10 more minutes. For example, a 23 MB
+video request gets `submit_timeout` plus about 90 seconds. A paid request that's cut off during the
+upload has an uncertain outcome, so if your connection uploads more slowly than that, raise
+`request_timeout` or `submit_timeout`.
 
-`--max-cost` and `--label` have no environment variable or config key: a spending cap or a label
-applies only to the command that names it. `--max-cost` caps the request's pre-call estimate, never
-the bill (see [`cost_limit_exceeded`](json-output.md#error-object)); `--label` is described in
-[video-jobs.md](../concepts/video-jobs.md#labels).
-
-If the current directory does not exist (it was deleted under a running shell), commands that
-do not need it still work: `version`, `schema`, `completions`, `--help`, `config path`/`show`,
-`providers list`, `models`, `jobs list`/`status`, and `doctor` (`config show` then reports the
-default output directory as `.`, and `doctor` flags it as unusable). A command that does need it —
-one given a relative path, or a generation command whose outputs would go to the default output
-directory — fails with `io_error` before anything is sent; an absolute `-o`, `-d`, or
-`IRIS_OUTPUT_DIR` avoids that.
-
-Real `config show` output, with `HOME=/home/you`, both keys set, and
-`IRIS_STATE_DIR=/home/you/iris-state`, `IRIS_OPENAI_BASE_URL=http://127.0.0.1:8080/v1`, and
-`IRIS_GEMINI_BASE_URL=http://127.0.0.1:8080` (the table goes to stdout; the two
-`non_default_base_url` warnings it also prints go to stderr and are shown in
-[Base URL overrides](#base-url-overrides)):
-
-```console
-$ iris config show
-config file: /home/you/.config/iris/config.toml (not found)
-SETTING                           VALUE                               SOURCE
-config_file                       /home/you/.config/iris/config.toml  default
-output_dir                        /home/you                           default
-state_dir                         /home/you/iris-state                env IRIS_STATE_DIR
-image.model                       (none)                              default
-video.model                       (none)                              default
-video.wait_timeout                10m                                 default
-video.poll_interval               10s                                 default
-jobs.store_prompts                false                               default
-providers.openai.base_url         http://127.0.0.1:8080/v1            env IRIS_OPENAI_BASE_URL
-providers.openai.request_timeout  5m                                  default
-providers.gemini.base_url         http://127.0.0.1:8080/              env IRIS_GEMINI_BASE_URL
-providers.gemini.request_timeout  5m                                  default
-providers.gemini.submit_timeout   1m                                  default
-log                               warn                                default
-credentials (presence only):
-  OPENAI_API_KEY: set
-  GEMINI_API_KEY: set
-```
-
-## Choosing the model
-
-Iris never chooses a model for you. A generation command uses, in order:
-
-1. `-m`/`--model`: a catalog id or alias (`iris models list` shows them), or an id the catalog does
-   not know together with `--capabilities-from <KNOWN_MODEL>`;
-2. the config file: `[image] model` for `image generate` and `image edit`, `[video] model` for
-   `video generate`;
-3. nothing: the command fails with `model_required` (exit 2) before anything is sent, and a
-   `--dry-run` fails the same way.
-
-The provider is the model's provider: the generation commands have no `--provider` flag (`models
-list` and `jobs list` have one, as a filter). No environment variable names a model.
-
-```console
-$ iris image generate "a fox"
-error[model_required]: image.generate needs a model: pass -m/--model, or set model in the [image] table of the config file
-  hint: run `iris models list --operation image.generate` and pass -m <MODEL>, or set model under [image] in /home/you/.config/iris/config.toml
-$ echo $?
-2
-```
-
-With `--json`, the error's `details` hold the `operation`, the `config_key` (`image.model` or
-`video.model`), the resolved `config_file`, and the `candidates`: one `{model, provider,
-display_name, summary, aliases, standard_cost}` object per catalog model that supports the
-operation, in catalog order, with what the model is for and what the same output costs with it
-(one 1024x1024 image, or one 8-second 720p video; see
-[json-output.md](json-output.md#error-object)). An
-`-m` naming no catalog model is `unknown_model` (exit 2) with the same `candidates`; a near miss of
-catalog models (`gpt-image-2.5`, `Nano-Banana-2`) has them in `suggestions` and a hint asking "did
-you mean …?", and a name Iris declines (a model its provider deprecated, shut down, limited, or
-serves only elsewhere, such as `dall-e-3` or `veo-3`) has a hint that says why and what to use
-instead (see [decisions.md](../contributing/decisions.md#built-in-models)).
-
-A configured model must be a catalog id or alias of its table's kind (`image.model` an image
-model, `video.model` a video model); anything else is `config_invalid` naming the key when the
-config loads (see [Config file](#config-file)). It is stored as the id `-m` would send: the
-canonical id for a nickname such as `nano-banana-2`, a dated snapshot as written; `config show`
-shows it. `--capabilities-from` has no config equivalent. If `image.model` does not support the
-operation being run, that command fails with `unsupported_operation`, naming the key in its
-message and in `details.config_key`, with the models that do support it in `details.candidates`.
-
-`-m` always wins over the config file. Every result says which of the two chose the model:
-`model_source` is `flag` or `config` in the dry-run plan, the image result, and the job (see
-[json-output.md](json-output.md)). Human output names the key when the config file chose it
-(output with `[image] model = "nano-banana-2"` and no key set):
-
-```console
-$ iris image generate "a fox" --dry-run
-Dry run: nothing was sent and nothing was charged.
-  operation:  image.generate
-  provider:   gemini
-  model:      gemini-3.1-flash-image (config image.model)
-  async job:  no
-  billing:    paid (requests are billed to the provider account at its published prices; no free tier)
-  options:    count=1 resolution=1K thinking_level=minimal
-  output:     /home/you/iris-<ulid>.jpg
-  credential: GEMINI_API_KEY is NOT set (required for the real run)
-  cost:       ~$0.067 USD (1 image × $0.067 (gemini-3.1-flash-image, 1K); input and thinking tokens not included)
-```
-
-The progress line of a real run names it the same way: `Requesting 1 image from gemini
-(gemini-3.1-flash-image, config image.model); this is a paid request`. So does an error that names
-the model, after its name, and its `details.model_source` says `config` (`flag` for `-m`): with that
-file, `iris image generate "a fox" --quality low` fails with `model 'gemini-3.1-flash-image' (config
-image.model) does not support --quality for image.generate`.
-
-## Timeouts
-
-Each request Iris sends has its own time limit, per attempt (a retried request gets a fresh one).
-None of them is the caller's wait limit: that is `video.wait_timeout` (`--timeout`), and when it
-passes, the remote job continues (see [video-jobs.md](../concepts/video-jobs.md)). A dry run of `video generate` shows
-the wait limit and poll interval it would use, with the source of each.
-
-| time limit | covers | default | setting |
-|---|---|---|---|
-| connect | establishing the connection of every request | 15 s | — |
-| `request_timeout` | one paid image request (`image generate`, `image edit`), from connecting until its answer, which carries the images, is read | 5 m | `providers.<id>.request_timeout` |
-| `submit_timeout` | one Veo job submission (`video generate`), until the answer naming the job arrives | 1 m | `providers.gemini.submit_timeout` |
-| status check | one status request (`jobs status`, `jobs wait`, `jobs download`, `video generate` while waiting) and one model-metadata read (`--check-access`) | 30 s | — |
-| download idle | the longest pause between two pieces of a download (a download as a whole has no time limit) | 1 m | — |
-
-**Upload allowance.** A request with a body — an image edit with its input images, a Veo job
-with reference or frame images — also gets the time needed to upload that body at 256 KiB/s
-(about 2 Mbit/s), at most 10 minutes more: a 23 MB Veo request gets `submit_timeout` + about
-90 s. A small JSON request gets nothing noticeable. A paid request cut off mid-upload has an
-unknown outcome (`submission_uncertain`, and for a video job `submission_unknown`), so if your
-uplink is slower than that, raise `request_timeout` or `submit_timeout` rather than retrying.
-
-A job record still `submitting` is only declared abandoned once no live submitter could still be
-waiting for its answer: three attempts, each allowed the connect time limit plus `submit_timeout`
-plus the largest upload allowance, plus up to a minute of waiting between attempts, plus a minute
-of grace — about 37 minutes with the defaults (see [video-jobs.md](../concepts/video-jobs.md)). The submitting process
-records its own budget in the job record, so a later process with shorter timeouts still waits at
-least that long.
+A job record that stays `submitting` is reported as `submission_unknown` only after the whole
+submission time budget has passed. The budget covers three attempts, each with the connect limit,
+`submit_timeout`, and the largest upload allowance. It adds up to a minute between attempts, and
+one more minute. With the defaults, that's about 37 minutes. See
+[Job states](../concepts/video-jobs.md#job-states).
 
 ## Base URL overrides
 
-`providers.openai.base_url` / `providers.gemini.base_url` (and their `IRIS_*_BASE_URL`
-environment variables) exist for testing and for routing through a proxy — this is how Iris's own
-offline tests and this documentation's mock-server transcripts run without touching a real
-provider. **Your credential is sent to whatever base URL is configured**, so:
+You can send a provider's requests to another base URL, for example a proxy or a local mock server
+for testing. Iris sends the provider's API key to that base URL, so it applies these rules:
 
-- A base URL must use `https`. Plain `http` is accepted only for a loopback host — `localhost`, an
-  address in `127.0.0.0/8`, or `[::1]` (a mock server or proxy on your own machine) — because
-  anywhere else the key would cross a network unencrypted. Any other `http://` base URL is
-  `config_invalid` naming the variable or config key, before any command runs. Downloads follow
-  the same rule: every hop must be `https`, except between loopback hosts when the base URL itself
-  is a loopback `http` one. Requests to a loopback host never go through a system proxy
-  (`HTTPS_PROXY`, `HTTP_PROXY`, `ALL_PROXY`), whatever `NO_PROXY` says, so a loopback `http` key
-  never reaches a proxy in clear text; requests to any other host honor the system proxy settings.
-- Every command that sends a provider's key to a non-default base URL — `image generate`/`edit`,
-  `video generate`, `jobs status`/`wait`/`download` when they reach the provider, and
-  `models show --check-access` — reports a `non_default_base_url` warning, once per provider,
-  naming exactly where the key goes (a command that sends no key, like `--dry-run` or
-  `jobs status --no-refresh`, does not). `config show` and `doctor` flag every overridden base URL:
+- A base URL must use `https`. Plain `http` is allowed only for a host on your own machine:
+  `localhost`, an address in `127.0.0.0/8`, or `[::1]`. Any other `http` URL fails with
+  `config_invalid` before any command runs.
+- Downloads follow the same rule on every redirect: each hop must use `https`, except between local
+  hosts when the base URL itself is a local `http` URL.
+- Requests to a local host never go through a system proxy (`HTTPS_PROXY`, `HTTP_PROXY`, or
+  `ALL_PROXY`), whatever `NO_PROXY` says, so a key sent over `http` never reaches a proxy
+  unencrypted. Requests to other hosts use the system proxy settings.
+- Every command that sends a key to a base URL other than the default reports a
+  `non_default_base_url` warning once per provider. `iris config show` and `iris doctor` flag every
+  overridden base URL.
 
-```console
-$ iris doctor
+The Gemini base URL is an origin, such as `https://generativelanguage.googleapis.com`. Iris adds
+`/v1` for image requests and `/v1beta` for Veo, operations, and files. The OpenAI base URL includes
+its `/v1` path.
+
+With overrides, `iris doctor` reports lines similar to the following:
+
+```text
 warning[non_default_base_url]: providers.openai.base_url is http://127.0.0.1:8080/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
-warning[non_default_base_url]: providers.gemini.base_url is http://127.0.0.1:8080/ (from IRIS_GEMINI_BASE_URL); GEMINI_API_KEY is sent to that host over unencrypted HTTP
-[ok]      config: no config file at /home/you/.config/iris/config.toml (it is optional)
-[ok]      credentials.openai: OPENAI_API_KEY is set
-[ok]      credentials.gemini: GEMINI_API_KEY is set
-[ok]      state_dir: state directory /home/you/iris-state does not exist yet; it will be created on first use
-[ok]      output_dir: output directory /home/you is writable
+...
 [warning] base_url.openai: providers.openai.base_url is http://127.0.0.1:8080/v1 (from IRIS_OPENAI_BASE_URL); OPENAI_API_KEY is sent to that host over unencrypted HTTP
-[warning] base_url.gemini: providers.gemini.base_url is http://127.0.0.1:8080/ (from IRIS_GEMINI_BASE_URL); GEMINI_API_KEY is sent to that host over unencrypted HTTP
-[ok]      jobs: 0 local job record(s) readable
-Healthy.
 ```
 
-**Veo downloads through a proxy.** A finished Veo job names its video by a Files API download URL
-(`https://generativelanguage.googleapis.com/v1beta/files/<id>:download?alt=media`). Iris
-downloads a Veo output only from such a URL under the configured Gemini base URL — the same
-origin, below the base URL's path prefix — so the key is never sent anywhere else. A proxy base
-URL must therefore rewrite those URLs in the operation answer to its own origin and prefix (for a
-base URL of `https://proxy.example/gemini`:
-`https://proxy.example/gemini/v1beta/files/<id>:download?alt=media`). A pass-through proxy that
-leaves Google's URLs as they are still lets you submit and follow jobs, and they still succeed,
-but each download is refused with `download_failed` (not retryable as is; `details.uri` holds the
-redacted URL). Nothing is lost: point the base URL back at
-`https://generativelanguage.googleapis.com` (or fix the proxy) and run `iris jobs download <id>`
-while the provider still keeps the output (about 2 days) — every download checks against the base
-URL configured at that moment.
+### Download Veo videos through a proxy
 
-## Security rules
+A finished Veo job names its video with a Files API download URL, such as
+`https://generativelanguage.googleapis.com/v1beta/files/FILE_ID:download?alt=media`. Iris downloads
+a video only from such a URL under the configured Gemini base URL: the same origin, below the base
+URL's path. This keeps the key from going anywhere else.
 
-- Generated media, local job/state data, a private config file, secrets, and local
-  scratch/temporary work files are all git-ignored in this repository (see `.gitignore`).
-- Prompts and input contents are never logged by default; `-v`/`--verbose` logs request
-  *metadata* only (method, redacted URL, status, provider request id, elapsed time) — never
-  prompt text, never a credential.
-- Every URL Iris prints or logs is redacted first (`redact_url`): userinfo is stripped and every
-  query value is replaced with `REDACTED` except a small allowlist (e.g. `alt`), so a signed
-  download URL never leaks in output.
-- API answers are read into memory only up to a limit, so a misbehaving server or proxy at a
-  configured base URL cannot make Iris buffer gigabytes: 16 MiB for JSON answers (status checks,
-  model metadata, video job submissions) and 512 MiB for image answers, which carry the images
-  inline (the largest legitimate one, ten uncompressed 4K PNGs from OpenAI, is about 422 MiB). Error
-  answers are read up to 1 MiB. A longer status or metadata answer is `provider_bad_response`; a
-  longer answer to a paid request is `submission_uncertain` (the provider processed the request,
-  but its answer was lost), and it is never resent. Downloads stream to disk instead and are
-  capped at 4 GiB (see [video-jobs.md](../concepts/video-jobs.md#downloads)).
-- Test fixtures in this repository contain no real keys; tests set fake ones (e.g.
-  `test-openai-key-000`) through the process environment, never through argv.
+So a proxy must rewrite those URLs in its responses to its own origin and path. For example, with a
+base URL of `https://proxy.example/gemini`, the URL must become
+`https://proxy.example/gemini/v1beta/files/FILE_ID:download?alt=media`.
+
+With a proxy that passes Google's URLs through unchanged, you can still submit and follow jobs,
+and they still succeed, but each download fails with `download_failed`. Nothing is lost: set the
+base URL back to `https://generativelanguage.googleapis.com`, or fix the proxy, and run
+`iris jobs download JOB_ID` while the provider still keeps the video, for about 2 days. Every
+download checks the base URL that's configured at that moment.

@@ -1,4 +1,5 @@
-//! The versioned JSON envelope (see docs/reference/json-output.md) and the error object.
+//! The versioned JSON envelope (see docs/reference/json-output.md) and the error object
+//! (see docs/reference/errors.md).
 
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -308,7 +309,7 @@ fn add_contract_rules(schema: &mut serde_json::Value) {
     });
     let codes: Vec<&str> = ErrorCode::ALL.iter().map(|c| c.as_str()).collect();
     schema["$defs"][ErrorCode::schema_name().as_ref()] = open_set(
-        "Stable, public error code (docs/reference/json-output.md): one of the listed codes, or a code a later version \
+        "Stable, public error code (docs/reference/errors.md): one of the listed codes, or a code a later version \
          of this schema_version adds.",
         &codes,
         CODE_PATTERN,
@@ -341,7 +342,7 @@ fn add_contract_rules(schema: &mut serde_json::Value) {
     );
     let warnings: Vec<&str> = WarningCode::ALL.iter().map(|c| c.as_str()).collect();
     schema["$defs"][Warning::schema_name().as_ref()]["properties"]["code"] = open_set(
-        "Stable warning code (docs/reference/json-output.md): one of the listed codes, or a code a later version of this \
+        "Stable warning code (docs/reference/errors.md): one of the listed codes, or a code a later version of this \
          schema_version adds. Treat a code you do not know as informational text.",
         &warnings,
         CODE_PATTERN,

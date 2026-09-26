@@ -146,7 +146,7 @@ pub enum DownloadError {
 }
 
 impl DownloadError {
-    /// Map to the public taxonomy (see docs/reference/json-output.md and docs/concepts/video-jobs.md):
+    /// Map to the public taxonomy (see docs/reference/errors.md and docs/concepts/video-jobs.md):
     /// 410 → `artifact_expired`; 403/404 → `download_failed`, retryable (callers
     /// that know the output's retention report `artifact_expired` once it has
     /// passed); 401 → `authentication_failed`;

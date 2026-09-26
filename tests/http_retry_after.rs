@@ -169,7 +169,7 @@ async fn retryable_gemini_errors_keep_the_retry_delay() {
     assert_eq!(sent(&server).await, 3, "a rate limit is retried; nothing was processed");
 }
 
-/// End to end, as docs/reference/json-output.md describes `retry_after_seconds`: it is null
+/// End to end, as docs/reference/errors.md describes `retry_after_seconds`: it is null
 /// whenever `retryable` is false. A Veo submission answered 503 with `Retry-After:
 /// 30` exits 5 without it, in the envelope and in the job record; an image request
 /// that hit a used-up daily quota (429 with `Retry-After: 20`) exits 3 without it.

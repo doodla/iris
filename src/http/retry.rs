@@ -59,7 +59,7 @@ use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::redact;
 
-/// Maximum characters of provider text kept in messages and details (see docs/reference/json-output.md).
+/// Maximum characters of provider text kept in messages and details (see docs/reference/errors.md).
 pub(crate) const PROVIDER_TEXT_MAX: usize = 500;
 
 /// Largest successful response body [`HttpClient::execute`] reads for a JSON API

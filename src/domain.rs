@@ -286,7 +286,7 @@ pub enum DownloadState {
 }
 
 /// Every warning code Iris emits: the registry of the public, additive set listed in
-/// docs/reference/json-output.md ("Warning codes"). A [`Warning`] is only built from one of
+/// docs/reference/errors.md ("Warning codes"). A [`Warning`] is only built from one of
 /// these ([`Warning::new`]); the contract tests compare this list with the
 /// documented one and check that no other source file spells out a code.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, JsonSchema)]
@@ -389,7 +389,7 @@ impl fmt::Display for WarningCode {
 pub struct Warning {
     // Iris emits only `WarningCode`s; the field is a string so that a reader keeps a
     // code it does not know.
-    /// Stable snake_case warning code (additive set; see docs/reference/json-output.md).
+    /// Stable snake_case warning code (additive set; see docs/reference/errors.md).
     pub code: String,
     pub message: String,
 }

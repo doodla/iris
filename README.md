@@ -159,7 +159,7 @@ carries a pre-call estimate (with `auto`, the default, the model chooses them, s
 a `cost_estimate_unavailable` warning names the options to pass for one). `billing: "paid"` says
 the real run is billed to your provider account at its published prices, and a name the real run
 generates is shown as its pattern (`iris-<ulid>.png`). The other fields are described under
-[`plan`](docs/reference/json-output.md#plan-any-generation-command-run-with---dry-run):
+[`plan`](docs/reference/json-output.md#dry-run-plan):
 
 ```console
 $ iris image generate -m gpt-image-2.5-sunburst "a red bicycle" --size 1024x1024 --quality low --dry-run --json
@@ -246,7 +246,7 @@ list` shows every one Iris knows); without it, the command uses the model the co
 its kind (`[image] model`, `[video] model`). Iris never picks one for you: with neither, the
 command fails with `model_required` (exit 2) before anything is sent, and the error lists the
 models that support the command, each with its summary and `standard_cost`
-(`error.details.candidates`; see [docs/reference/configuration.md](docs/reference/configuration.md#choosing-the-model)).
+(`error.details.candidates`; see [docs/reference/configuration.md](docs/reference/configuration.md#config-file)).
 A model Iris does not know is `unknown_model` with the same list. A near miss, such as
 `gpt-image-2.5`, `veo-3.1-lite`, or `Nano-Banana-2`, also asks "did you mean …?" naming the models
 it nearly names (`details.suggestions`); a name Iris declines, such as `dall-e-3`, `veo-3`, or the
@@ -319,7 +319,7 @@ $ iris schema > iris-output.v1.schema.json
 
 Exit codes are a stable, documented contract — an agent can branch on them without parsing text
 (the exit code of every error code is in
-[docs/reference/json-output.md](docs/reference/json-output.md#stable-codes-categories-exit-codes-and-default-retryability)):
+[docs/reference/json-output.md](docs/reference/errors.md#error-codes)):
 
 | exit | meaning |
 |---|---|

@@ -81,7 +81,7 @@ compiler alone):
 - **Warnings come from the registry.** Build them with `Warning::new(WarningCode::…, message)`
   and reuse an existing code when it fits (`output_format_mismatch`, `output_item_unusable`,
   `unexpected_output_count`, ...). A new code is added to `WarningCode` in `src/domain.rs` and
-  to the table in [json-output.md](../reference/json-output.md#warning-codes); a contract test checks that
+  to the table in [json-output.md](../reference/errors.md#warning-codes); a contract test checks that
   both lists agree and that no other source file spells out a code.
 - **`poll` is idempotent** and uses the `IdempotentRead` retry class (retried on connect errors,
   timeouts, 408/429/5xx). It must never mutate anything Iris cannot safely repeat.
@@ -305,7 +305,7 @@ providers, updated by hand:**
 - The JSON Schema. The published schema lists the known provider ids (an open set: a later id
   still validates), so regenerate it with `cargo run -q -- schema > schema/iris-output.v1.schema.json`
   (`tests/schema_contract.rs` fails until you do). A new provider value is an additive change
-  under the [versioning policy](../reference/json-output.md#schema-versioning-policy): no `schema_version`
+  under the [versioning policy](../reference/json-output.md#versioning): no `schema_version`
   bump, but it gets a changelog entry.
 - Help text in `src/cli/args.rs` that names the providers, their products, or their variables:
   `ABOUT` ("…with OpenAI and Google Gemini/Veo"), `LONG_ABOUT` (its first paragraph names each

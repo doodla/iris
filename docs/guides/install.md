@@ -166,7 +166,7 @@ $ rm -rf /home/you/.local/state/iris
 
 The state directory's `unsaved/` subdirectory may hold paid images Iris could not save where you
 asked, and returned content that was not a valid image, kept as received (`.bin`; see
-[json-output.md](../reference/json-output.md#warning-codes), `output_saved_elsewhere`); move them out
+[json-output.md](../reference/errors.md#warning-codes), `output_saved_elsewhere`); move them out
 before deleting the state directory.
 
 **On macOS, be careful: the config file and the state directory are the same directory**
