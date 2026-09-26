@@ -39,7 +39,7 @@ every code and what to do about it, see [Exit codes](../reference/errors.md#exit
 
 Keep these rules in mind:
 
-- An error with `provider_status: null` never reached the provider, so it cost nothing.
+- An error with `provider_status: null` didn't reach the provider, so it cost nothing.
 - `retryable` says whether sending the same request again might succeed. After exit code 5, don't
   send the request again automatically. See
   [Handle an uncertain outcome](#handle-an-uncertain-outcome).

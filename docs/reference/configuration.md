@@ -89,7 +89,7 @@ Iris ignores `GOOGLE_API_KEY`, and `iris doctor` warns you if it's set. For how 
 see [Security and privacy](../concepts/security-and-privacy.md#api-keys).
 
 A command whose provider's key isn't set fails with `missing_credentials` (exit code 3). Iris checks
-the key after every other local check, and `--dry-run` never requires one. `iris doctor` reports a
+the key after every other local check, and `--dry-run` doesn't require one. `iris doctor` reports a
 missing key as a warning while another provider's key is set, and as an error when no key is set:
 
 ```text

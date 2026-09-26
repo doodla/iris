@@ -247,7 +247,7 @@ While a job record can't be read, a labeled submission fails with `state_invalid
 
 Iris checks the API key after every other local check and before any network call, so a problem
 with the request itself is reported first. `video generate`, `jobs wait`, and `jobs download` check
-it before they create any output directory. A dry run never requires a key.
+it before they create any output directory. A dry run doesn't require a key.
 
 ### `permission_denied`
 
