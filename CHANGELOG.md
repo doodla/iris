@@ -6,6 +6,12 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Changed
+
+- **The installer falls back to git tags.** When GitHub's `releases/latest` page can't be read and
+  `git` is installed, `install.sh` installs the highest `vX.Y.Z` tag that has a published release,
+  and warns that it did. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
+
 ## [0.1.0] - 2026-09-25
 
 The first release of Iris, a command-line tool that generates images and videos with OpenAI and

@@ -114,6 +114,7 @@ make_toolboxes() {
   toolbox notar curl "$HASH" gzip mktemp mkdir cp chmod mv rm
   toolbox nohash curl tar gzip mktemp mkdir cp chmod mv rm
   toolbox nofetch "$HASH" tar gzip mktemp mkdir cp chmod mv rm
+  toolbox git curl git "$HASH" tar gzip mktemp mkdir cp chmod mv rm
   broken_toolbox brokenchmod chmod
   broken_toolbox brokenmv mv
   make_busybox_toolbox
@@ -167,6 +168,33 @@ $(cat "$W/server.log" 2>/dev/null)"
   SERVER=http://127.0.0.1:$(cat "$W/port")
 }
 
+# tag_repo NAME TAG...: a local git repository with these tags, for the
+# fallback from <base>/latest to `git ls-remote`.
+tag_repo() {
+  # The host's git config (signing, hooks) must not reach these repositories.
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
+  repo=$W/repos/$1.git
+  shift
+  git init -q --bare "$repo" || die "git init failed"
+  work=$W/repos/work
+  rm -rf "$work"
+  git init -q "$work" || die "git init failed"
+  git -C "$work" -c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m t ||
+    die "git commit failed"
+  for t in "$@"; do git -C "$work" tag "$t" || die "git tag $t failed"; done
+  git -C "$work" push -q --tags "$repo" 2>/dev/null || die "git push failed"
+}
+
+make_tag_repos() {
+  HAVE_GIT=
+  command -v git >/dev/null 2>&1 || return 0
+  HAVE_GIT=yes
+  tag_repo tags v0.0.9 v0.1.0 v0.9.0 v0.10.0 v0.11.0 v0.12.0-rc.1 v0.1 v1.2.3.4 nightly
+  tag_repo unreleased v0.1.0 v0.11.0 v0.12.0 v0.13.0
+  tag_repo notags nightly v0.3.0-rc.1
+}
+
 # --- test case helpers -----------------------------------------------------------
 
 PASSED=0
@@ -196,6 +224,7 @@ begin() {
   CWD=$C
   STATUS=
   BIN=$C/home/.local/bin
+  GIT_URL=$W/repos/missing.git
 }
 
 # in_env CMD...: exec CMD in the case's clean environment (call in a subshell).
@@ -204,7 +233,7 @@ in_env() {
   exec env -i HOME="$C/home" TMPDIR="$C/tmp" SHELL="$USER_SHELL" \
     PATH="${FRONT_PATH:+$FRONT_PATH:}$SHIMS:$TOOLS" \
     FAKE_UNAME_S="$OS" FAKE_UNAME_M="$ARCH" FAKE_SYSCTL_ARM64="$ARM64" \
-    IRIS_INSTALL_BASE_URL="$BASE" IRIS_VERSION="$ENV_VERSION" IRIS_INSTALL_DIR="$ENV_DIR" \
+    IRIS_INSTALL_BASE_URL="$BASE" IRIS_INSTALL_GIT_URL="$GIT_URL" IRIS_VERSION="$ENV_VERSION" IRIS_INSTALL_DIR="$ENV_DIR" \
     "$@"
 }
 
@@ -521,6 +550,65 @@ network_cases() {
   STATUS=$?
   [ "$STATUS" != 0 ] || fail "exit status 0 after TERM"
   expect_missing "$C/home/.local"
+  end
+}
+
+git_fallback_cases() {
+  if [ -z "$HAVE_GIT" ]; then
+    echo "skip git fallback cases: git is not installed"
+    return 0
+  fi
+
+  begin "latest page fails: newest released version tag over git, with a warning"
+  TOOLS=$W/tools/git
+  GIT_URL=$W/repos/tags.git
+  run ok/nolatest
+  expect_status 0
+  expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404); using v0.10.0, the newest released version tag of $GIT_URL"
+  expect_installed "$BIN/iris" 0.10.0 "$LINUX"
+  end
+
+  begin "git fallback tries at most three tags without a release"
+  TOOLS=$W/tools/git
+  GIT_URL=$W/repos/unreleased.git
+  run ok/nolatest
+  expect_status 1
+  expect_err "(HTTP 404); no recent version tag of $GIT_URL has a published release; if none is published yet"
+  expect_missing "$C/home/.local"
+  end
+
+  begin "git fallback with no version tags says none has a release"
+  TOOLS=$W/tools/git
+  GIT_URL=$W/repos/notags.git
+  run ok/nolatest
+  expect_status 1
+  expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404); no recent version tag"
+  expect_no_err "using v"
+  end
+
+  begin "git fallback with an unreachable repository says git failed too"
+  TOOLS=$W/tools/git
+  run 500/good
+  expect_status 1
+  expect_err "could not find the latest release at $SERVER/500/good/latest (HTTP 500); git ls-remote $GIT_URL also failed ("
+  expect_err "if none is published yet"
+  end
+
+  begin "git fallback after a network error on latest"
+  TOOLS=$W/tools/git
+  GIT_URL=$W/repos/tags.git
+  run http://127.0.0.1:1/releases
+  expect_status 1
+  expect_err "network error: could not reach http://127.0.0.1:1/releases/latest; no recent version tag of $GIT_URL has a published release"
+  end
+
+  begin "latest page works: git is not consulted"
+  TOOLS=$W/tools/git
+  GIT_URL=$W/repos/tags.git
+  run ok/good
+  expect_status 0
+  expect_no_err "newest version tag"
+  expect_installed "$BIN/iris" 0.2.0 "$LINUX"
   end
 }
 
@@ -985,6 +1073,7 @@ make_installer_shell
 make_shims
 make_toolboxes
 start_server
+make_tag_repos
 
 printf 'installer: %s\ninstaller shell: %s\nserver: %s\n' \
   "$INSTALLER" "${INSTALLER_SHELL:-sh} ($(command -v "${ishell_cmd}"))" "$SERVER"
@@ -994,6 +1083,7 @@ printf 'BusyBox wget cases: %s\n\n' "${BUSYBOX_KIND:-skipped}"
 platform_cases
 version_cases
 network_cases
+git_fallback_cases
 dir_cases
 option_cases
 verification_cases

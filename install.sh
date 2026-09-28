@@ -11,9 +11,11 @@
 #   --dir DIR          install directory (default: ~/.local/bin)    env IRIS_INSTALL_DIR
 #   -h, --help         print this help and exit
 #
-# Test-only override, not for normal use:
+# Test-only overrides, not for normal use:
 #   IRIS_INSTALL_BASE_URL  replaces https://github.com/doodla/iris/releases, so
 #                          <base>/latest and <base>/download/<tag>/<asset> are used.
+#   IRIS_INSTALL_GIT_URL   replaces https://github.com/doodla/iris as the
+#                          repository whose tags step 3 falls back to.
 #
 # What it does, in order:
 #   1. Detects the platform: Linux x86_64, macOS x86_64 or macOS arm64 (arm64 is
@@ -21,6 +23,9 @@
 #   2. Needs curl (or wget), tar, and sha256sum (or shasum). A wget that says
 #      it does not verify HTTPS certificates (BusyBox's built-in TLS) is refused.
 #   3. Resolves "latest" by following <base>/latest to .../tag/<tag> (no API).
+#      If that page can't be read and git is installed, it takes the highest
+#      vX.Y.Z tag from `git ls-remote` whose release is published instead,
+#      and warns that it did (downloads still come from <base>).
 #   4. Downloads SHA256SUMS and iris-<tag>-<target>.tar.gz into a private
 #      temporary directory, removed on exit or interruption.
 #   5. Verifies the archive's SHA-256 against its line in SHA256SUMS.
@@ -49,6 +54,7 @@ set -u
 # Linux kernel; kept in one variable here in case that ever needs to change.
 LINUX_X86_64_TARGET=x86_64-unknown-linux-musl
 DEFAULT_BASE_URL=https://github.com/doodla/iris/releases
+DEFAULT_GIT_URL=https://github.com/doodla/iris
 NL='
 '
 
@@ -110,6 +116,7 @@ parse_args() {
   fi
   base_url=${IRIS_INSTALL_BASE_URL:-$DEFAULT_BASE_URL}
   base_url=${base_url%/}
+  git_url=${IRIS_INSTALL_GIT_URL:-$DEFAULT_GIT_URL}
 }
 
 set_option() {
@@ -256,19 +263,71 @@ download() {
   esac
 }
 
-# Sets tag by following <base>/latest, which redirects to .../tag/<tag>.
+# Sets tag by following <base>/latest, which redirects to .../tag/<tag>. If
+# that page can't be read, falls back to the repository's newest version tag.
 resolve_latest() {
   latest_url=$base_url/latest
   no_release_hint="if none is published yet, build from source or pass --version"
-  http_get "$latest_url" /dev/null || die "network error: could not reach $latest_url"
-  if [ "$http_status" != 200 ]; then
-    die "could not find the latest release at $latest_url (HTTP $http_status); $no_release_hint"
+  if ! http_get "$latest_url" /dev/null; then
+    latest_problem="network error: could not reach $latest_url"
+  elif [ "$http_status" != 200 ]; then
+    latest_problem="could not find the latest release at $latest_url (HTTP $http_status)"
+  else
+    case $final_url in
+      */tag/*) tag=${final_url##*/tag/} ;;
+      *) die "could not tell the latest release from $final_url (expected .../tag/vX.Y.Z); $no_release_hint" ;;
+    esac
+    check_tag "$tag" "latest release tag '$tag'"
+    return 0
   fi
-  case $final_url in
-    */tag/*) tag=${final_url##*/tag/} ;;
-    *) die "could not tell the latest release from $final_url (expected .../tag/vX.Y.Z); $no_release_hint" ;;
-  esac
-  check_tag "$tag" "latest release tag '$tag'"
+  if newest_git_tag; then
+    warn "$latest_problem; using $tag, the newest released version tag of $git_url"
+    return 0
+  fi
+  die "$latest_problem${git_problem:+; $git_problem}; $no_release_hint"
+}
+
+# Sets tag to the highest vX.Y.Z tag of $git_url whose SHA256SUMS is published
+# (a tag is pushed before its release, and a failed release keeps its tag).
+# Some networks block <base>/latest but still serve git. On failure, sets
+# git_problem. git must not prompt, open a dialog, or stall without a limit.
+newest_git_tag() {
+  git_problem=
+  have git || return 1
+  # Without the developer tools, macOS's /usr/bin/git opens an install dialog.
+  if [ "$os" = Darwin ] && [ "$(command -v git)" = /usr/bin/git ] &&
+    ! xcode-select -p >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! refs=$(GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='' SSH_ASKPASS='' \
+    GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+    git -c credential.helper= -c core.askPass= \
+    -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=60 -c versionsort.suffix=- \
+    ls-remote --tags --refs --sort=-v:refname "$git_url" 'v*' 2>"$tmp_dir/git-err"); then
+    git_err=
+    read -r git_err <"$tmp_dir/git-err"
+    git_problem="git ls-remote $git_url also failed${git_err:+ ($git_err)}"
+    return 1
+  fi
+  tries=0
+  while read -r _ ref; do
+    candidate=${ref#refs/tags/}
+    case $candidate in
+      v*[!0-9.]* | v.* | v*. | v*..* | v*.*.*.*) continue ;;
+      v*.*.*) ;;
+      *) continue ;;
+    esac
+    tries=$((tries + 1))
+    [ "$tries" -le 3 ] || break
+    if http_get "$base_url/download/$candidate/SHA256SUMS" /dev/null && [ "$http_status" = 200 ]; then
+      tag=$candidate
+      return 0
+    fi
+  done <<EOF
+$refs
+EOF
+  git_problem="no recent version tag of $git_url has a published release"
+  return 1
 }
 
 # Sets expected_sum from the archive's single, well-formed SHA256SUMS line.
