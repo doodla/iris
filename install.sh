@@ -23,8 +23,9 @@
 #   2. Needs curl (or wget), tar, and sha256sum (or shasum). A wget that says
 #      it does not verify HTTPS certificates (BusyBox's built-in TLS) is refused.
 #   3. Resolves "latest" by following <base>/latest to .../tag/<tag> (no API).
-#      If that fails and git is installed, it takes the highest vX.Y.Z tag
-#      from `git ls-remote` instead, and warns that it did.
+#      If that page can't be read and git is installed, it takes the highest
+#      vX.Y.Z tag from `git ls-remote` whose release is published instead,
+#      and warns that it did (downloads still come from <base>).
 #   4. Downloads SHA256SUMS and iris-<tag>-<target>.tar.gz into a private
 #      temporary directory, removed on exit or interruption.
 #   5. Verifies the archive's SHA-256 against its line in SHA256SUMS.
@@ -280,21 +281,35 @@ resolve_latest() {
     return 0
   fi
   if newest_git_tag; then
-    warn "$latest_problem; using $tag, the newest version tag of $git_url"
+    warn "$latest_problem; using $tag, the newest released version tag of $git_url"
     return 0
   fi
-  die "$latest_problem; $no_release_hint"
+  die "$latest_problem${git_problem:+; $git_problem}; $no_release_hint"
 }
 
-# Sets tag to the highest vX.Y.Z tag of $git_url, skipping pre-releases. Some
-# networks block GitHub's release pages but still serve git.
+# Sets tag to the highest vX.Y.Z tag of $git_url whose SHA256SUMS is published
+# (a tag is pushed before its release, and a failed release keeps its tag).
+# Some networks block <base>/latest but still serve git. On failure, sets
+# git_problem. git must not prompt, open a dialog, or stall without a limit.
 newest_git_tag() {
+  git_problem=
   have git || return 1
-  refs=$(GIT_TERMINAL_PROMPT=0 git ls-remote --tags --refs "$git_url" 'v*' 2>/dev/null) || return 1
-  tag=
-  best_major=-1
-  best_minor=-1
-  best_patch=-1
+  # Without the developer tools, macOS's /usr/bin/git opens an install dialog.
+  if [ "$os" = Darwin ] && [ "$(command -v git)" = /usr/bin/git ] &&
+    ! xcode-select -p >/dev/null 2>&1; then
+    return 1
+  fi
+  if ! refs=$(GIT_TERMINAL_PROMPT=0 GIT_ASKPASS='' SSH_ASKPASS='' \
+    GIT_SSH_COMMAND='ssh -o BatchMode=yes' \
+    git -c credential.helper= -c core.askPass= \
+    -c http.lowSpeedLimit=1024 -c http.lowSpeedTime=60 -c versionsort.suffix=- \
+    ls-remote --tags --refs --sort=-v:refname "$git_url" 'v*' 2>"$tmp_dir/git-err"); then
+    git_err=
+    read -r git_err <"$tmp_dir/git-err"
+    git_problem="git ls-remote $git_url also failed${git_err:+ ($git_err)}"
+    return 1
+  fi
+  tries=0
   while read -r _ ref; do
     candidate=${ref#refs/tags/}
     case $candidate in
@@ -302,23 +317,17 @@ newest_git_tag() {
       v*.*.*) ;;
       *) continue ;;
     esac
-    rest=${candidate#v}
-    major=${rest%%.*}
-    rest=${rest#*.}
-    minor=${rest%%.*}
-    patch=${rest#*.}
-    if [ "$major" -gt "$best_major" ] ||
-      { [ "$major" -eq "$best_major" ] && [ "$minor" -gt "$best_minor" ]; } ||
-      { [ "$major" -eq "$best_major" ] && [ "$minor" -eq "$best_minor" ] && [ "$patch" -gt "$best_patch" ]; }; then
+    tries=$((tries + 1))
+    [ "$tries" -le 3 ] || break
+    if http_get "$base_url/download/$candidate/SHA256SUMS" /dev/null && [ "$http_status" = 200 ]; then
       tag=$candidate
-      best_major=$major
-      best_minor=$minor
-      best_patch=$patch
+      return 0
     fi
   done <<EOF
 $refs
 EOF
-  [ -n "$tag" ]
+  git_problem="no recent version tag of $git_url has a published release"
+  return 1
 }
 
 # Sets expected_sum from the archive's single, well-formed SHA256SUMS line.

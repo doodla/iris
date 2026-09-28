@@ -32,9 +32,9 @@ The installer is a short POSIX `sh` script. It does the following:
 2. Checks for `curl` or `wget`, `tar`, and `sha256sum` or `shasum`. If one is missing, it stops and
    names it.
 3. Finds the latest release by following GitHub's `releases/latest` redirect, so it needs no API
-   token and isn't rate-limited. If that page can't be read, for example on a network that blocks
-   GitHub's release pages but allows git, and `git` is installed, it uses the repository's highest
-   `vX.Y.Z` tag instead and prints a warning.
+   token and isn't rate-limited. If that page alone can't be read, for example behind a proxy that
+   blocks it but allows git and release downloads, and `git` is installed, the installer uses the
+   highest `vX.Y.Z` tag that has a published release instead, and prints a warning.
 4. Downloads the release archive and its `SHA256SUMS` file into a private temporary directory,
    which it removes on exit, even after a failure or Ctrl+C.
 5. Verifies the archive's SHA-256 checksum. A missing or wrong checksum stops the install.

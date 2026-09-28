@@ -171,6 +171,9 @@ $(cat "$W/server.log" 2>/dev/null)"
 # tag_repo NAME TAG...: a local git repository with these tags, for the
 # fallback from <base>/latest to `git ls-remote`.
 tag_repo() {
+  # The host's git config (signing, hooks) must not reach these repositories.
+  GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+  export GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM
   repo=$W/repos/$1.git
   shift
   git init -q --bare "$repo" || die "git init failed"
@@ -187,8 +190,8 @@ make_tag_repos() {
   HAVE_GIT=
   command -v git >/dev/null 2>&1 || return 0
   HAVE_GIT=yes
-  tag_repo tags v0.0.9 v0.1.0 v0.3.0-rc.1 v0.1 v1.2.3.4 nightly
-  tag_repo semver v0.0.9 v0.0.10
+  tag_repo tags v0.0.9 v0.1.0 v0.9.0 v0.10.0 v0.11.0 v0.12.0-rc.1 v0.1 v1.2.3.4 nightly
+  tag_repo unreleased v0.1.0 v0.11.0 v0.12.0 v0.13.0
   tag_repo notags nightly v0.3.0-rc.1
 }
 
@@ -556,39 +559,47 @@ git_fallback_cases() {
     return 0
   fi
 
-  begin "latest page fails: newest version tag over git, with a warning"
+  begin "latest page fails: newest released version tag over git, with a warning"
   TOOLS=$W/tools/git
   GIT_URL=$W/repos/tags.git
   run ok/nolatest
   expect_status 0
-  expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404); using v0.1.0, the newest version tag of $GIT_URL"
-  expect_installed "$BIN/iris" 0.1.0 "$LINUX"
+  expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404); using v0.10.0, the newest released version tag of $GIT_URL"
+  expect_installed "$BIN/iris" 0.10.0 "$LINUX"
   end
 
-  begin "git fallback compares versions numerically"
+  begin "git fallback tries at most three tags without a release"
   TOOLS=$W/tools/git
-  GIT_URL=$W/repos/semver.git
+  GIT_URL=$W/repos/unreleased.git
   run ok/nolatest
   expect_status 1
-  expect_err "using v0.0.10, the newest version tag"
-  expect_err "not found (HTTP 404): $SERVER/ok/nolatest/download/v0.0.10/SHA256SUMS"
+  expect_err "(HTTP 404); no recent version tag of $GIT_URL has a published release; if none is published yet"
   expect_missing "$C/home/.local"
   end
 
-  begin "git fallback with no version tags keeps the original error"
+  begin "git fallback with no version tags says none has a release"
   TOOLS=$W/tools/git
   GIT_URL=$W/repos/notags.git
   run ok/nolatest
   expect_status 1
-  expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404); if none is published yet"
+  expect_err "could not find the latest release at $SERVER/ok/nolatest/latest (HTTP 404); no recent version tag"
   expect_no_err "using v"
   end
 
-  begin "git fallback with an unreachable repository keeps the original error"
+  begin "git fallback with an unreachable repository says git failed too"
   TOOLS=$W/tools/git
   run 500/good
   expect_status 1
-  expect_err "could not find the latest release at $SERVER/500/good/latest (HTTP 500); if none is published yet"
+  expect_err "could not find the latest release at $SERVER/500/good/latest (HTTP 500); git ls-remote $GIT_URL also failed ("
+  expect_err "if none is published yet"
+  end
+
+  begin "git fallback after a network error on latest"
+  TOOLS=$W/tools/git
+  GIT_URL=$W/repos/tags.git
+  run http://127.0.0.1:1/releases
+  expect_status 1
+  expect_err "network error: could not reach http://127.0.0.1:1/releases/latest; no recent version tag of $GIT_URL has a published release"
   end
 
   begin "latest page works: git is not consulted"

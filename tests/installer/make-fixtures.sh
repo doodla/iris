@@ -108,6 +108,8 @@ echo v0.2.0 >"$ROOT/good/LATEST"
 
 good_archive nolatest v0.1.0 "$LINUX"
 write_sums nolatest v0.1.0
+good_archive nolatest v0.10.0 "$LINUX"
+write_sums nolatest v0.10.0
 
 good_archive badlatest v0.1.0 "$LINUX"
 write_sums badlatest v0.1.0

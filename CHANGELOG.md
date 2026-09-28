@@ -9,8 +9,8 @@ All notable changes to this project are documented in this file. The format foll
 ### Changed
 
 - **The installer falls back to git tags.** When GitHub's `releases/latest` page can't be read and
-  `git` is installed, `install.sh` installs the repository's highest `vX.Y.Z` tag, and warns that it
-  did. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
+  `git` is installed, `install.sh` installs the highest `vX.Y.Z` tag that has a published release,
+  and warns that it did. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
 
 ## [0.1.0] - 2026-09-25
 
