@@ -12,6 +12,12 @@ All notable changes to this project are documented in this file. The format foll
   `git` is installed, `install.sh` installs the highest `vX.Y.Z` tag that has a published release,
   and warns that it did. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
 
+### Fixed
+
+- **Redaction replaces a credential whole when it contains the other one.** If one API key was a
+  prefix or substring of the other, output could show the longer key's remainder next to
+  `[REDACTED]`. Iris now replaces longer credentials first.
+
 ## [0.1.0] - 2026-09-25
 
 The first release of Iris, a command-line tool that generates images and videos with OpenAI and
