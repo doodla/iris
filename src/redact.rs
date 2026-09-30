@@ -47,9 +47,14 @@ pub fn scrub(text: &str) -> Cow<'_, str> {
 }
 
 /// `scrub` with an explicit secret list (for tests and callers holding secrets).
+///
+/// Longer secrets are replaced first, so a secret that contains another is never
+/// left partly visible around the shorter one's `[REDACTED]`.
 pub fn scrub_with<'a>(text: &'a str, secrets: &[String]) -> Cow<'a, str> {
+    let mut ordered: Vec<&String> = secrets.iter().collect();
+    ordered.sort_by_key(|s| std::cmp::Reverse(s.len()));
     let mut out = Cow::Borrowed(text);
-    for s in secrets {
+    for s in ordered {
         if s.len() >= 8 && out.contains(s.as_str()) {
             out = Cow::Owned(out.replace(s.as_str(), "[REDACTED]"));
         }
@@ -110,6 +115,13 @@ mod tests {
         let secrets = vec!["sk-test-1234567890".to_string(), "short".to_string()];
         let s = scrub_with("key sk-test-1234567890 and short word", &secrets);
         assert_eq!(s, "key [REDACTED] and short word");
+    }
+
+    #[test]
+    fn scrub_replaces_a_containing_secret_whole() {
+        let secrets = vec!["sk-abcdefgh".to_string(), "sk-abcdefgh-and-more".to_string()];
+        let s = scrub_with("key sk-abcdefgh-and-more here", &secrets);
+        assert_eq!(s, "key [REDACTED] here");
     }
 
     #[test]
