@@ -242,6 +242,27 @@ fn openai_edit_with_a_mask_of_other_dimensions_is_rejected_before_any_request() 
     assert_eq!(files_in(&sb.work()), ["a.png", "b.jpg", "mask.png"], "nothing was saved");
 }
 
+/// A reference JPEG that was cut off decodes anyway, gray where its data is missing,
+/// so Iris checks that it ends: it is refused before any paid request.
+#[test]
+fn a_cut_off_jpeg_input_is_refused_before_any_request() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let jpeg = noisy_jpeg(128, 128);
+    sb.write("cut.jpg", &jpeg[..jpeg.len() / 2]);
+    api.on("POST", OPENAI_EDITS, openai_images(&[&png(8, 8)], "req_never"));
+
+    let out = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "edit", "-m", OPENAI_IMAGE_MODEL, "add a tiny hat", "-i", "cut.jpg", "--json"])
+        .run();
+    let v = out.err(2, "input_file_invalid");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("cut.jpg") && message.contains("end-of-image marker"), "{message}");
+    assert_eq!(api.total(), 0, "nothing was sent");
+}
+
 // ----- scenario 3: Gemini generate / edit ------------------------------------------------------
 
 #[test]
@@ -913,6 +934,19 @@ fn a_rate_limited_paid_request_is_retried_and_then_succeeds() {
     assert_eq!(v["error"]["retry_after_seconds"], 120);
     assert_eq!(api.total(), 1);
     assert!(out.elapsed < std::time::Duration::from_secs(30), "{:?}", out.elapsed);
+}
+
+/// A delay asked for in milliseconds is reported in whole seconds rounded up: a
+/// caller that waits `retry_after_seconds` never retries before the provider asked.
+#[test]
+fn a_fractional_retry_delay_is_reported_rounded_up() {
+    let limited =
+        openai_error(429, "requests", Some("rate_limit_exceeded"), "Rate limit reached for requests.")
+            .insert_header("retry-after-ms", "60500");
+    let (_sb, api, out) = openai_run(limited, &[]);
+    let v = out.err(1, "rate_limited");
+    assert_eq!(v["error"]["retry_after_seconds"], 61, "{v}");
+    assert_eq!(api.total(), 1);
 }
 
 /// A paid request that may have been billed is never presented as retryable.

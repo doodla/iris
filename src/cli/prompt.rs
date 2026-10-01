@@ -1,6 +1,6 @@
 //! Prompt sources (see `iris --help`): exactly one of the positional PROMPT, `--prompt-file`,
-//! or `--prompt-stdin`. File and stdin content has trailing whitespace trimmed;
-//! interior content is kept as is. Prompt text is never logged.
+//! or `--prompt-stdin`. File and stdin content loses a leading byte order mark and
+//! trailing whitespace; interior content is kept as is. Prompt text is never logged.
 
 use std::io::Read;
 use std::path::Path;
@@ -45,7 +45,7 @@ pub fn read(args: &PromptArgs, stdin: &mut dyn Read, stdin_is_tty: bool) -> Resu
         let bytes = read_file(path)?;
         let text = String::from_utf8(bytes)
             .map_err(|_| IrisError::invalid(format!("prompt file {} is not valid UTF-8", path.display())))?;
-        text.trim_end().to_string()
+        without_bom(&text).trim_end().to_string()
     } else {
         if stdin_is_tty {
             return Err(IrisError::usage(
@@ -65,13 +65,21 @@ pub fn read(args: &PromptArgs, stdin: &mut dyn Read, stdin_is_tty: bool) -> Resu
         }
         let text = String::from_utf8(bytes)
             .map_err(|_| IrisError::invalid("the prompt on standard input is not valid UTF-8"))?;
-        text.trim_end().to_string()
+        without_bom(&text).trim_end().to_string()
     };
 
     if text.trim().is_empty() {
         return Err(IrisError::invalid("the prompt is empty"));
     }
     Ok(text)
+}
+
+/// `text` without the byte order mark (U+FEFF) that some editors, Notepad among
+/// them, write at the start of a UTF-8 file. It marks the encoding and is not part of
+/// the prompt: kept, it would be sent to the provider, count toward the prompt's
+/// fingerprint, and make a file that holds only it pass as a non-empty prompt.
+fn without_bom(text: &str) -> &str {
+    text.strip_prefix('\u{feff}').unwrap_or(text)
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>, IrisError> {
@@ -141,6 +149,26 @@ mod tests {
         let e = read(&args(None, None, true), &mut &[0xff, 0xfe, b'a'][..], false).unwrap_err();
         assert_eq!(e.code, ErrorCode::InvalidArgument);
         let e = read(&args(None, None, true), &mut "\n \n".as_bytes(), false).unwrap_err();
+        assert_eq!(e.message, "the prompt is empty");
+    }
+
+    #[test]
+    fn a_leading_byte_order_mark_is_not_part_of_the_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, bytes: &[u8]| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, bytes).unwrap();
+            read(&args(None, Some(path), false), &mut std::io::empty(), false)
+        };
+        assert_eq!(file("bom.txt", b"\xEF\xBB\xBFa fox\r\n").unwrap(), "a fox");
+        // Only a leading one: a byte order mark inside the text is kept.
+        assert_eq!(file("inner.txt", "a \u{feff}fox\n".as_bytes()).unwrap(), "a \u{feff}fox");
+        let e = file("only.txt", b"\xEF\xBB\xBF\r\n").unwrap_err();
+        assert_eq!(e.message, "the prompt is empty");
+
+        let mut input = "\u{feff}  a fox\n".as_bytes();
+        assert_eq!(read(&args(None, None, true), &mut input, false).unwrap(), "  a fox");
+        let e = read(&args(None, None, true), &mut "\u{feff}".as_bytes(), false).unwrap_err();
         assert_eq!(e.message, "the prompt is empty");
     }
 

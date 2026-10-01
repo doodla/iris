@@ -1,0 +1,48 @@
+# Weekly check of the pinned release toolchain: fails when RELEASE_RUST_TOOLCHAIN
+# in release.yml is more than MAX_MINOR_VERSIONS_BEHIND minor versions behind the
+# newest stable Rust, as the reminder to move releases to a newer Rust version
+# (docs/contributing/releasing.md#update-the-pinned-tools). Dependabot never
+# updates that pin. In a public repository with no activity for 60 days, GitHub
+# disables scheduled workflows; re-enable this one from the Actions tab, or run
+# it by hand (workflow_dispatch).
+name: Release toolchain
+
+on:
+  schedule:
+    - cron: "43 6 * * 1" # Mondays 06:43 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  # Rust ships a minor version every six weeks, so three is about 18 weeks.
+  MAX_MINOR_VERSIONS_BEHIND: "3"
+
+jobs:
+  age:
+    name: release toolchain age
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read the pinned release toolchain from release.yml
+        run: |
+          set -eu
+          version=$(sed -n 's/^  RELEASE_RUST_TOOLCHAIN: "\([0-9.]*\)"$/\1/p' .github/workflows/release.yml)
+          if [ -z "$version" ]; then
+            echo "::error::no RELEASE_RUST_TOOLCHAIN found in .github/workflows/release.yml"
+            exit 1
+          fi
+          echo "RELEASE_RUST_TOOLCHAIN=$version" >> "$GITHUB_ENV"
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master (2026-09-11)
+        with:
+          toolchain: stable
+      - name: Compare it with the newest stable Rust
+        run: |
+          set -eu
+          rustc -V
+          stable=$(rustc -V | cut -d' ' -f2)
+          sh scripts/check-release-toolchain-age.sh "$RELEASE_RUST_TOOLCHAIN" "$stable" "$MAX_MINOR_VERSIONS_BEHIND"

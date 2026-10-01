@@ -548,7 +548,9 @@ async fn fetch_into(
                 attempts: attempt,
                 url: shown,
             };
-            let transient = matches!(status.as_u16(), 408 | 429 | 500 | 502 | 503 | 504);
+            // The statuses a free read retries (408, 429, and every 5xx), the ones
+            // `DownloadError::into_iris` reports as retryable.
+            let transient = matches!(status.as_u16(), 408 | 429) || status.is_server_error();
             return Err(if transient && !no_retry {
                 AttemptError::Retryable { error, delay: retry_after }
             } else {

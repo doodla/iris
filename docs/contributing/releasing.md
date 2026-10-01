@@ -1,7 +1,8 @@
 # Releasing Iris
 
-This page is for maintainers. It describes how to cut a release, what a release archive contains,
-and how to test the installer and the release path before you publish.
+This page is for maintainers. It describes how to cut a release, how to update the tool versions
+that releases pin, what a release archive contains, and how to test the installer and the release
+path before you publish.
 
 ## Cut a release
 
@@ -15,7 +16,7 @@ Cut releases from `main`:
 3. Merge the change, and wait until CI passes on the resulting `main` commit. Only tag a `main`
    commit whose CI is green.
 4. Run the Release workflow by hand on that commit: **Actions** > **Release** > **Run workflow**.
-   Wait for it to pass. A manual run never publishes. CI covers only the Linux release path, and
+   Wait for it to pass. A manual run never publishes. CI covers only the Linux release paths, and
    this run also builds, packages, and smoke-tests both macOS archives with the pinned release
    toolchain, so a problem there doesn't use up a version number.
 5. Tag the commit and push the tag:
@@ -42,10 +43,11 @@ Pushing a `v*` tag starts the release workflow, which does the following:
 1. Checks that the tag is `v` followed by the `Cargo.toml` version, and that `CHANGELOG.md` has that
    version's section.
 2. Runs formatting, Clippy, and the tests again on the tagged commit.
-3. Builds the Linux musl binary and both macOS binaries, each on its own runner.
+3. Builds the two Linux musl binaries, x86_64 and arm64, and the two macOS binaries, each on its
+   own runner.
 4. Packages each binary as `iris-vX.Y.Z-TARGET.tar.gz`, and smoke-tests every archive, including
    installing it with `install.sh`.
-5. Creates the GitHub release, with the three archives, `SHA256SUMS`, `install.sh`, and the
+5. Creates the GitHub release, with the four archives, `SHA256SUMS`, `install.sh`, and the
    version's changelog section as its notes. A version with a `-` suffix, such as `1.2.0-rc.1`,
    becomes a pre-release.
 
@@ -53,7 +55,27 @@ The release is created only when every job passes. If a job fails, nothing is pu
 again if it failed for a temporary reason. Otherwise, fix the problem on `main` and release a new
 version, rather than moving a pushed tag.
 
-## Change the release toolchain
+## Update the pinned tools
+
+Dependabot keeps the crates and the GitHub Actions current. These four versions are pinned by hand
+instead. Each is set in one place, and named in a few others:
+
+| Version | Set in | Also named in | How a change is checked |
+|---|---|---|---|
+| The release Rust toolchain | `RELEASE_RUST_TOOLCHAIN` in `.github/workflows/release.yml` | Nowhere else: `ci.yml` and `toolchain.yml` read it from `release.yml` | CI's release dry run builds the Linux archives with it. Run the Release workflow by hand for the macOS archives, as [Change the release toolchain](#change-the-release-toolchain) says. |
+| cargo-about | `cargo_about_version` in `scripts/package-release.sh` | The cargo-about install steps of `ci.yml` and `release.yml`, and this page | CI's release dry run packages with it. Compare the `THIRD-PARTY-LICENSES` that it generates with the old one. |
+| parse-changelog | The `parse-changelog@` install step of `release.yml` | This page | Run the Release workflow by hand. Its summary shows the release notes that it read. |
+| The minimum Rust version | `rust-version` in `Cargo.toml` | `CONTRIBUTING.md`, [Install Iris](../guides/install.md), and the reason for it in [Decisions](decisions.md#dependencies-and-toolchain) | CI's `msrv` job reads it from `Cargo.toml`, and checks and tests Iris with it. |
+
+To update a version, change every place in its row in one pull request. `cargo test` fails while two
+places name different versions of a tool, or while the release toolchain is older than the minimum
+Rust version (`tests/release_pins.rs`).
+
+The Release toolchain workflow (`.github/workflows/toolchain.yml`) runs every Monday. It fails when
+the release toolchain is more than three minor versions behind the newest stable Rust, about 18
+weeks, as a reminder to move releases to a newer Rust version.
+
+### Change the release toolchain
 
 The release workflow checks and builds with one pinned Rust version, `RELEASE_RUST_TOOLCHAIN` at the
 top of `.github/workflows/release.yml`, not with whatever `stable` is when a tag is pushed. Every
@@ -76,10 +98,8 @@ change there.
 
 - If an update to `aws-lc-sys` or `aws-lc-rs` changes that crate's `LICENSE` file, read the new
   file, and put its SHA-256 in `about.toml`. Its comments explain why those two files are listed.
-- Packaging accepts only one cargo-about version, `cargo_about_version` in
-  `scripts/package-release.sh`, so that the same commit always gives the same archive. To move to a
-  newer version, change it there, in the cargo-about install steps of `ci.yml` and `release.yml`,
-  and on this page. Then compare the file that it generates with the old one.
+- Packaging accepts only one cargo-about version, so that the same commit always gives the same
+  archive. To move to a newer version, see [Update the pinned tools](#update-the-pinned-tools).
 
 ## What a release archive contains
 
@@ -135,10 +155,11 @@ GNU `wget` behind a shim with BusyBox's exit codes.
 
 ## Test the release path
 
-CI runs the Linux release path on every change, with the pinned release toolchain. It builds the
-static `x86_64-unknown-linux-musl` binary and packages it twice: the two archives must be identical.
-Then it runs `scripts/smoke-test-release.sh`, which runs the packaged binary, and installs the
-archive with `install.sh` from a local server.
+CI runs the Linux release paths on every change, with the pinned release toolchain. For each of the
+static `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl` binaries, it builds the binary
+on its own runner and packages it twice: the two archives must be identical. Then it runs
+`scripts/smoke-test-release.sh`, which runs the packaged binary, and installs the archive with
+`install.sh` from a local server.
 
 The macOS archives are built and smoke-tested only by the release workflow, which runs the same
 smoke test for every target before it publishes anything. A manual run of the workflow never
@@ -154,3 +175,6 @@ cargo build --release --locked --target x86_64-unknown-linux-musl
 sh scripts/package-release.sh x86_64-unknown-linux-musl dist
 sh scripts/smoke-test-release.sh "$(sh scripts/check-tag-version.sh)" x86_64-unknown-linux-musl dist
 ```
+
+On an arm64 Linux machine, use `aarch64-unknown-linux-musl` instead, and build with
+`CC_aarch64_unknown_linux_musl=musl-gcc`, as the workflows do.

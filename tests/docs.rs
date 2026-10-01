@@ -23,14 +23,28 @@ fn read(path: &Path) -> String {
     std::fs::read_to_string(root().join(path)).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-/// Every Markdown file of the repository, relative to its root, except build output.
+/// Every Markdown file of the repository, relative to its root (see [`markdown_files_in`]).
 fn markdown_files() -> Vec<PathBuf> {
+    let out = markdown_files_in(&root());
+    assert!(out.len() > 20, "found the Markdown files: {out:?}");
+    out
+}
+
+/// The Markdown files of the repository at `root`, relative to it: those that git tracks
+/// or would add (`git ls-files --cached --others --exclude-standard`). That leaves out
+/// ignored local files, and other checkouts inside this one, such as agent worktrees,
+/// whose copies of the docs are not this repository's. Where git can't list them (a
+/// source archive without `.git`), every Markdown file outside build output, other
+/// checkouts, and hidden directories other than `.github`.
+fn markdown_files_in(root: &Path) -> Vec<PathBuf> {
     fn walk(dir: &Path, relative: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).unwrap() {
             let entry = entry.unwrap();
             let name = entry.file_name().to_string_lossy().into_owned();
             if entry.file_type().unwrap().is_dir() {
-                if name != "target" && name != ".git" {
+                let hidden = name.starts_with('.') && name != ".github";
+                let other_checkout = entry.path().join(".git").exists();
+                if name != "target" && !hidden && !other_checkout {
                     walk(&entry.path(), &relative.join(&name), out);
                 }
             } else if name.ends_with(".md") {
@@ -38,10 +52,29 @@ fn markdown_files() -> Vec<PathBuf> {
             }
         }
     }
-    let mut out = Vec::new();
-    walk(&root(), Path::new(""), &mut out);
+    let listed = std::process::Command::new("git")
+        .args(["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", "*.md"])
+        .current_dir(root)
+        .output()
+        .ok()
+        .filter(|output| output.status.success());
+    let mut out: Vec<PathBuf> = match listed {
+        Some(listed) => listed
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|path| !path.is_empty())
+            .map(|path| PathBuf::from(String::from_utf8_lossy(path).into_owned()))
+            // A tracked file deleted from the working tree is no page.
+            .filter(|path| root.join(path).is_file())
+            .collect(),
+        None => {
+            let mut out = Vec::new();
+            walk(root, Path::new(""), &mut out);
+            out
+        }
+    };
     out.sort();
-    assert!(out.len() > 20, "found the Markdown files: {out:?}");
+    out.dedup();
     out
 }
 
@@ -51,7 +84,11 @@ fn text_lines(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
-        let marker: String = trimmed.chars().take_while(|c| *c == '`' || *c == '~').collect();
+        // A fence is three or more of one character, backticks or tildes, never mixed.
+        let marker: String = match trimmed.chars().next() {
+            Some(c @ ('`' | '~')) => trimmed.chars().take_while(|x| *x == c).collect(),
+            _ => String::new(),
+        };
         if marker.len() >= 3 {
             match &fence {
                 None => fence = Some(marker),
@@ -239,6 +276,60 @@ fn prose_follows_the_style_guide() {
     assert!(problems.is_empty(), "style guide violations:\n{}", problems.join("\n"));
 }
 
+/// The pages checked are the repository's own: not ignored local files, and not the
+/// copies of the docs in another checkout inside it, such as an agent worktree.
+#[test]
+fn only_the_repositorys_own_markdown_is_checked() {
+    fn write(root: &Path, page: &str) {
+        let path = root.join(page);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "# Page\n").unwrap();
+    }
+    fn git(dir: &Path, args: &[&str]) -> bool {
+        let git = std::process::Command::new("git").args(args).current_dir(dir).output();
+        git.is_ok_and(|output| output.status.success())
+    }
+    let paths = |pages: &[&str]| pages.iter().map(PathBuf::from).collect::<Vec<_>>();
+
+    // Without git, such as in a source archive: hidden directories other than .github,
+    // build output, and other checkouts are left out.
+    let plain = tempfile::tempdir().unwrap();
+    for page in [
+        "README.md",
+        "docs/guide.md",
+        ".github/template.md",
+        ".claude/worktrees/agent/README.md",
+        "target/doc/page.md",
+        "vendor/other/README.md",
+    ] {
+        write(plain.path(), page);
+    }
+    std::fs::create_dir(plain.path().join("vendor/other/.git")).unwrap();
+    if !git(plain.path(), &["rev-parse", "--git-dir"]) {
+        assert_eq!(
+            markdown_files_in(plain.path()),
+            paths(&[".github/template.md", "README.md", "docs/guide.md"])
+        );
+    }
+
+    // In a git checkout: tracked and new pages, but not ignored ones, and not those of a
+    // checkout inside it.
+    let repo = tempfile::tempdir().unwrap();
+    if !git(repo.path(), &["init", "-q"]) {
+        return;
+    }
+    for page in ["README.md", "docs/new.md", ".github/template.md", "scratch/notes.md"] {
+        write(repo.path(), page);
+    }
+    std::fs::write(repo.path().join(".gitignore"), "/scratch/\n").unwrap();
+    assert!(git(repo.path(), &["add", "README.md"]));
+    let worktree = repo.path().join(".claude/worktrees/agent");
+    std::fs::create_dir_all(&worktree).unwrap();
+    assert!(git(&worktree, &["init", "-q"]));
+    write(&worktree, "README.md");
+    assert_eq!(markdown_files_in(repo.path()), paths(&[".github/template.md", "README.md", "docs/new.md"]));
+}
+
 /// The checks catch what they are meant to catch.
 #[test]
 fn the_checks_catch_problems() {
@@ -259,5 +350,10 @@ fn the_checks_catch_problems() {
         anchors("# A b\n## Step 1: Do it, now\n### `label_in_use`\n## A b\n```\n# not a heading\n```\n");
     let expected: BTreeSet<String> =
         ["a-b", "step-1-do-it-now", "label_in_use", "a-b-1"].into_iter().map(String::from).collect();
+    assert_eq!(headings, expected);
+    // A fence is three of one character: a line that starts with an inline `~` is
+    // text, so the headings after it keep their anchors.
+    let headings = anchors("`~` is home.\n## After\n~~~\n## In tildes\n~~~\n## Last\n");
+    let expected: BTreeSet<String> = ["after", "last"].into_iter().map(String::from).collect();
     assert_eq!(headings, expected);
 }

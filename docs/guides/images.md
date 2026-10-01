@@ -39,7 +39,7 @@ Give each command exactly one prompt source:
 | Source | How |
 |---|---|
 | An argument | `iris image generate -m nano-banana-2 "a watercolor fox"` |
-| A file | `-f PATH` or `--prompt-file PATH`. The file must be UTF-8. Iris trims trailing whitespace. |
+| A file | `-f PATH` or `--prompt-file PATH`. The file must be UTF-8. Iris removes a leading byte order mark and trailing whitespace. |
 | Standard input | `--prompt-stdin`, when standard input isn't a terminal |
 
 For example, to read the prompt from standard input:
@@ -92,9 +92,9 @@ iris image edit -m gpt-image-2.5-sunburst -i room.png --mask window-mask.png "ad
   --size 1024x1024 --quality low -o room-window.png
 ```
 
-Iris checks the input images before it sends anything: their number, type, and size, and the mask's
-format. The OpenAI models take up to 16 input images, and the Gemini models up to 14. For a model's
-exact limits, run `iris models show MODEL`.
+Iris checks the input images before it sends anything: their number, type, and size, that each one
+is a whole image, and the mask's format. The OpenAI models take up to 16 input images, and the
+Gemini models up to 14. For a model's exact limits, run `iris models show MODEL`.
 
 ## Choose where images are saved
 

@@ -6,7 +6,9 @@
 # download/<tag>/. The "iris" executables are small shell scripts that print
 # "iris X.Y.Z (<target>)" for --version, so they run on any test machine.
 #
-#   good         v0.1.0, v0.2.0 (latest) for every target, plus v0.3.0-rc.1 for Linux
+#   good         v0.2.0 (latest) for every target; v0.1.0 for every target but
+#                Linux arm64, like a release from before that build; and
+#                v0.3.0-rc.1 for Linux x86_64
 #   nolatest     v0.1.0 but no latest release
 #   badlatest    latest points at a tag that is not a version
 #   nodocs       v0.1.0 for Linux, without docs/ (it is optional)
@@ -20,7 +22,8 @@ set -eu
 ROOT=$1
 WORK=$ROOT/.work
 LINUX=x86_64-unknown-linux-musl
-TARGETS="$LINUX x86_64-apple-darwin aarch64-apple-darwin"
+LINUX_ARM64=aarch64-unknown-linux-musl
+TARGETS="$LINUX $LINUX_ARM64 x86_64-apple-darwin aarch64-apple-darwin"
 
 mkdir -p "$ROOT" "$WORK"
 
@@ -99,7 +102,9 @@ write_sums() {
 
 # --- good releases -----------------------------------------------------------
 for tag in v0.1.0 v0.2.0; do
-  for target in $TARGETS; do good_archive good "$tag" "$target"; done
+  for target in $TARGETS; do
+    if [ "$tag/$target" != "v0.1.0/$LINUX_ARM64" ]; then good_archive good "$tag" "$target"; fi
+  done
   write_sums good "$tag"
 done
 good_archive good v0.3.0-rc.1 "$LINUX"

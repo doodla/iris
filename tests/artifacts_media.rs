@@ -1,11 +1,14 @@
 //! Media sniffing, image decoding, and ISO-BMFF video validation (see docs/concepts/video-jobs.md).
 //! Fixtures are generated in-test; nothing binary is committed.
 
+mod support;
+
 use std::io::Cursor;
 
 use image::{DynamicImage, ImageFormat, Rgb, RgbImage, Rgba, RgbaImage};
 use iris::artifacts::media::{self, inspect_iso_bmff};
 use iris::error::ErrorCode;
+use support::noisy_jpeg;
 
 fn encode(format: ImageFormat, width: u32, height: u32, alpha: bool) -> Vec<u8> {
     let img = if alpha {
@@ -134,6 +137,32 @@ fn truncated_images_fail_full_decode() {
     let err = media::validate_bytes(&png[..png.len() / 2], &["image/png"]).unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidMedia);
     assert!(err.message.contains("not a decodable image/png"), "{}", err.message);
+}
+
+/// A JPEG decodes even when it was cut off (the decoder fills in gray), so its end is
+/// checked: data that stops before the end-of-image marker is refused, while a whole
+/// file passes, with or without bytes after the marker.
+#[test]
+fn cut_off_jpegs_are_refused() {
+    let jpeg = noisy_jpeg(128, 128);
+    for keep in [jpeg.len() - 2, jpeg.len() / 2, jpeg.len() / 5] {
+        let err = media::validate_bytes(&jpeg[..keep], &["image/jpeg"]).unwrap_err();
+        assert_eq!(err.code, ErrorCode::InvalidMedia, "{keep}");
+        assert!(err.message.contains("it stops before the end-of-image marker"), "{keep}: {}", err.message);
+    }
+    media::validate_bytes(&jpeg, &["image/jpeg"]).unwrap();
+    media::validate_bytes(&[jpeg.as_slice(), b"trailing bytes"].concat(), &["image/jpeg"]).unwrap();
+
+    // A thumbnail in an APP1 segment ends with an end-of-image marker of its own,
+    // before the main image's scan: it doesn't make a cut-off main image whole.
+    let thumbnail = encode(ImageFormat::Jpeg, 4, 4, false);
+    let payload = [b"Exif\0\0".as_slice(), &thumbnail].concat();
+    let length = u16::try_from(payload.len() + 2).unwrap().to_be_bytes();
+    let with_thumbnail = [&jpeg[..2], &[0xFF, 0xE1], &length, &payload, &jpeg[2..]].concat();
+    media::validate_bytes(&with_thumbnail, &["image/jpeg"]).unwrap();
+    let cut = &with_thumbnail[..with_thumbnail.len() / 2];
+    let err = media::validate_bytes(cut, &["image/jpeg"]).unwrap_err();
+    assert!(err.message.contains("it stops before the end-of-image marker"), "{}", err.message);
 }
 
 #[test]
