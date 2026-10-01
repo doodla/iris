@@ -138,11 +138,13 @@ impl EnvSnapshot {
     }
 
     /// Home directory: `$HOME` from the snapshot if absolute, else the one captured
-    /// at construction.
+    /// at construction if absolute. A relative home is never used, not even the one
+    /// captured from a relative `$HOME`: the default paths under it would change with
+    /// the current directory, and a state directory that moves loses its jobs.
     pub fn home(&self) -> Option<&Path> {
         match self.var("HOME").map(Path::new) {
             Some(p) if p.is_absolute() => Some(p),
-            _ => self.home.as_deref(),
+            _ => self.home.as_deref().filter(|p| p.is_absolute()),
         }
     }
 
@@ -226,5 +228,15 @@ mod tests {
         assert_eq!(env.home(), Some(Path::new("/fallback")));
         let env = env.with_var("HOME", "/home/me");
         assert_eq!(env.home(), Some(Path::new("/home/me")));
+    }
+
+    /// A process whose `$HOME` is relative captures that same relative path (the
+    /// `dirs` crate reads `$HOME` first), so neither is used.
+    #[test]
+    fn a_relative_home_is_never_used() {
+        let env =
+            EnvSnapshot::new(Platform::Linux, Some(PathBuf::from("relative/home")), PathBuf::from("/w"))
+                .with_var("HOME", "relative/home");
+        assert_eq!(env.home(), None);
     }
 }

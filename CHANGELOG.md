@@ -21,6 +21,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A relative `HOME` is refused instead of used.** With `HOME` set to a relative path, Iris put its
+  default config file and state directory under the current directory, so a video job recorded in
+  one directory was missing from another. A command that needs a default path now fails with
+  `config_invalid`, as a relative `IRIS_STATE_DIR` already did.
 - **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
   the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
   which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.
