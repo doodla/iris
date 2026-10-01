@@ -14,6 +14,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A JPEG that was cut off is refused.** Its data decoded anyway, with the missing part filled in
+  gray, so Iris accepted it, and sent it in a paid request as an input image. Iris now checks that
+  a JPEG ends with its end-of-image marker, so a cut-off input image fails with
+  `input_file_invalid` before anything is sent.
 - **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
   about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
   printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.

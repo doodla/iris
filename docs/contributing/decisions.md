@@ -650,7 +650,11 @@ reason:
   walker, and GIF by a block walker. Iris needs only a few facts (the first box, whether `moov` is
   present, the duration, truncation), and the MP4 crates are unmaintained (`mp4`), MPL-licensed
   (`mp4parse`), newer than the minimum Rust version (`re_mp4`), or much heavier. The walker is
-  about a hundred lines of bounds-checked parsing.
+  about a hundred lines of bounds-checked parsing. The `image` crate runs its JPEG decoder with
+  strict mode off, and that decoder fills in a scan that was cut off instead of failing. Strict
+  mode would also refuse JPEGs that other tools display, such as ones with stray bytes between
+  segments, so a JPEG gets a marker walk of about twenty lines instead, which checks only that its
+  scan ends with an end-of-image marker.
 - **Lexical path normalization.** Planned output paths drop `.` and resolve `..` without touching
   the file system, because the standard library's `Path::normalize_lexically` isn't stable yet.
 - **The CLI reference.** `tests/cli_reference.rs` renders `docs/reference/cli.md` from the clap
