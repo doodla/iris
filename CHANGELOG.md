@@ -74,6 +74,10 @@ All notable changes to this project are documented in this file. The format foll
   job had been submitted. Every duration setting is now at most a year, and a longer one fails
   with `invalid_argument` or `config_invalid` before anything is sent. See
   [Configuration reference](https://github.com/doodla/iris/blob/main/docs/reference/configuration.md#settings).
+- **An interrupt that arrives as a video job is accepted isn't lost.** When Ctrl+C, SIGTERM, or
+  SIGHUP arrived together with the provider's response to a video submission, `iris video generate`
+  didn't see it, and went on to wait for the job until a second interrupt or the wait limit. It now
+  records the job and stops, as for an interrupt during the submission.
 - **`iris doctor` reports a directory that can't be created.** When a file or a broken symbolic
   link was in the path of the state or output directory, `doctor` reported the directory as `ok`,
   to be created on first use, although every command that needs it fails. The check is now an
