@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
+  the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
+  which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.
