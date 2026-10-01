@@ -28,7 +28,7 @@ iris image generate -m gpt-image-2.5-sunburst "a watercolor fox in a misty fores
 
 ## Install
 
-On Linux (x86_64) or macOS, run:
+On Linux (x86_64 or arm64) or macOS, run:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/doodla/iris/main/install.sh | sh
@@ -132,9 +132,9 @@ For every page, including the contributor docs, see the [documentation index](do
 
 Iris 0.1.0 is the first release. The command line, the JSON output, and the error codes are
 versioned, and changes to them follow the
-[versioning policy](docs/reference/json-output.md#versioning). Iris runs on Linux (x86_64) and
-macOS. It doesn't support Windows. The Veo models are previews, so Google can change their behavior
-and limits. For what changed in each release, see the [changelog](CHANGELOG.md).
+[versioning policy](docs/reference/json-output.md#versioning). Iris runs on Linux (x86_64 and
+arm64) and macOS. It doesn't support Windows. The Veo models are previews, so Google can change
+their behavior and limits. For what changed in each release, see the [changelog](CHANGELOG.md).
 
 ## Contributing
 
