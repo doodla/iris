@@ -67,7 +67,7 @@ examples on this page are formatted for reading and shortened:
 | `provider_code` | string or null | The provider's own error code, for diagnosis. |
 | `provider_request_id` | string or null | The provider's ID for the request, for its support team. |
 | `job_id`, `job_status`, `remote_operation_id` | string or null | The job that the error concerns, if any. |
-| `details` | object | Fields that depend on the code. See each code below. |
+| `details` | object or null | Fields that depend on the code, or `null` if the error has none. See each code below. |
 
 Some fields have specific rules:
 
@@ -75,8 +75,9 @@ Some fields have specific rules:
   an error about another job, such as `label_in_use`, it's that job's provider, even if the error
   itself is local. A refused `jobs delete` identifies the job only by `job_id` and `job_status`.
 - `retry_after_seconds` comes from the provider's `Retry-After` header, `retry-after-ms` header, or
-  Google's `RetryInfo`. It's at least 1, and it's `null` whenever `retryable` is `false`, even if
-  the provider asked for a delay.
+  Google's `RetryInfo`. Iris rounds a fraction of a second up, so waiting `retry_after_seconds` is
+  never shorter than the provider asked for. It's at least 1, and it's `null` whenever `retryable`
+  is `false`, even if the provider asked for a delay.
 - `provider_code` and `details.provider_message` come from the provider and can change without
   notice. Don't branch on them.
 - Iris removes key values from every string in an error, and shortens a provider's message to 500

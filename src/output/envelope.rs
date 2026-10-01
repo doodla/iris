@@ -179,7 +179,7 @@ impl From<&IrisError> for ErrorBody {
             category: e.code.category(),
             message: s(&e.message),
             retryable: e.retryable,
-            retry_after_seconds: e.retry_after.map(|d| d.as_secs().max(1)),
+            retry_after_seconds: e.retry_after_seconds(),
             hint: e.hint.as_deref().map(s),
             provider: e.provider,
             provider_status: e.provider_status,

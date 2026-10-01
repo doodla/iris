@@ -375,30 +375,32 @@ async fn veo_answers_over_the_limit_are_uncertain_on_submit_and_bad_on_poll() {
 
 // ----- upload allowance ----------------------------------------------------------------
 
-/// A server that reads the request body in 32 KiB pieces, 50 ms apart (about
-/// 640 KiB/s), before answering `reply`.
+/// A server that reads the request body in 128 KiB pieces, 50 ms apart (about
+/// 2.5 MiB/s), before answering `reply`. A body of 4 MiB takes about 1.6 s, longer
+/// than a 1 s timeout, and gets a 16 s upload allowance: a margin wide enough for a
+/// loaded CI machine, where a transfer like this has stalled for 5 s.
 fn slow_reader(reply: Vec<u8>) -> Server {
     raw_server(vec![Script {
         reply: Reply::Bytes(reply),
-        read_chunk: 32 * 1024,
+        read_chunk: 128 * 1024,
         pause: Duration::from_millis(50),
     }])
 }
 
-/// An attempt's time limit grows with its request body: a 1 MiB body read in about
-/// 1.6 s fits in a 1 s timeout plus its 4 s upload allowance, while a small body
+/// An attempt's time limit grows with its request body: a 4 MiB body read in about
+/// 1.6 s fits in a 1 s timeout plus its 16 s upload allowance, while a small body
 /// the server takes as long to answer does not.
 #[tokio::test]
 async fn a_slow_upload_gets_time_in_proportion_to_its_body() {
     let call = Call::new(RetryClass::PaidSubmit, Duration::from_secs(1)).with_provider(ProviderId::OpenAi);
-    assert_eq!(iris::http::upload_allowance(MIB as u64), Duration::from_secs(4));
+    assert_eq!(iris::http::upload_allowance(4 * MIB as u64), Duration::from_secs(16));
 
     let server = slow_reader(response("200 OK", b"{}"));
     let started = Instant::now();
-    let resp = post(&server, &call, vec![b'x'; MIB]).await.unwrap();
+    let resp = post(&server, &call, vec![b'x'; 4 * MIB]).await.unwrap();
     assert_eq!(resp.status.as_u16(), 200);
     assert!(started.elapsed() > Duration::from_secs(1), "the upload was not slow: {:?}", started.elapsed());
-    assert_eq!(server.received.load(Ordering::SeqCst), MIB);
+    assert_eq!(server.received.load(Ordering::SeqCst), 4 * MIB);
 
     // 32 KiB earn 125 ms: the server's 1.5 s pause after reading it is too long.
     let server = raw_server(vec![Script {
@@ -418,10 +420,10 @@ async fn a_slow_upload_gets_time_in_proportion_to_its_body() {
 async fn a_slow_veo_upload_is_not_cut_off_by_the_submit_timeout() {
     let server = slow_reader(response("200 OK", format!("{{\"name\":\"{OPERATION}\"}}").as_bytes()));
     let ctx = adapter_ctx(&server.base, Duration::from_secs(1));
-    // 768 KiB of image, 1 MiB as base64: about 1.6 s at the server's pace.
-    let op = GeminiProvider::new().submit(&veo_request(768 * 1024), &ctx).await.unwrap();
+    // 3 MiB of image, 4 MiB as base64: about 1.6 s at the server's pace.
+    let op = GeminiProvider::new().submit(&veo_request(3 * MIB), &ctx).await.unwrap();
     assert_eq!(op.remote_id, OPERATION);
-    assert!(server.received.load(Ordering::SeqCst) > MIB);
+    assert!(server.received.load(Ordering::SeqCst) > 4 * MIB);
     assert_eq!(server.connections.load(Ordering::SeqCst), 1);
 }
 

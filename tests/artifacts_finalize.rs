@@ -162,6 +162,31 @@ fn part_files_are_hidden_named_and_removed_on_drop() {
     assert!(!path.exists());
 }
 
+/// A name near the 255-byte limit of common file systems, in characters of two to
+/// four bytes, still gets a temp file: the name in it is cut to at most 120 bytes,
+/// at a character boundary, so an image saved through it lands at the target.
+#[test]
+fn a_long_name_of_multibyte_characters_gets_a_temp_file() {
+    let dir = tempfile::tempdir().unwrap();
+    for stem in [format!("a{}", "猫".repeat(83)), "é".repeat(125), format!("ab{}", "🦊".repeat(62))] {
+        let file_name = format!("{stem}.png");
+        assert!((250..=255).contains(&file_name.len()), "{} bytes", file_name.len());
+        let target = dir.path().join(&file_name);
+        let part = PartFile::create_for(&target).unwrap();
+        let name = part.path().file_name().unwrap().to_str().unwrap().to_string();
+        let cut = name.strip_prefix('.').unwrap().split(".iris-part-").next().unwrap();
+        assert!(file_name.starts_with(cut), "{name}");
+        assert!((117..=120).contains(&cut.len()), "{} bytes kept: {name}", cut.len());
+        drop(part);
+
+        let saved =
+            save_image(&image(ImageFormat::Png, 1), &target, 0, FinalizeMode::RenameOnConflict).unwrap();
+        assert_eq!(Path::new(&saved.artifact.path), target);
+        assert_eq!(listing(dir.path()), [file_name.as_str()]);
+        fs::remove_file(&target).unwrap();
+    }
+}
+
 #[test]
 fn stale_part_files_of_the_same_target_are_removed_and_nothing_else() {
     let dir = tempfile::tempdir().unwrap();

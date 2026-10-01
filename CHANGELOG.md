@@ -6,6 +6,13 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- **Linux arm64 releases.** Each release includes `aarch64-unknown-linux-musl`, a static binary
+  for arm64 Linux, such as ARM servers and the Linux containers that Docker runs on Apple silicon,
+  and the installer installs it there. See
+  [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
+
 ### Changed
 
 - **The installer falls back to git tags.** When GitHub's `releases/latest` page can't be read and
@@ -14,9 +21,40 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A long output name in a non-Latin script works.** Iris names the temporary file of a save
+  after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
+  than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
+  paid image went to the state directory's `unsaved/` folder instead, and a video download failed.
+- **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
+  the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
+  which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.
+- **A byte order mark at the start of a prompt file isn't sent.** Some editors, Notepad among
+  them, start a UTF-8 file with one. Iris sent it to the provider as part of the prompt, and a
+  file that held only one passed as a non-empty prompt. Iris now removes it, from `--prompt-file`
+  and `--prompt-stdin` alike.
+- **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
+  about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
+  printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.
+- **A requested delay is rounded up, not down.** When a provider asked to wait a fraction of a
+  second, `retry_after_seconds` dropped the fraction: OpenAI's `retry-after-ms: 1500` became 1, so a
+  caller that waited that long retried too early. Iris now rounds it up, to 2.
+- **A wait limit too large to use is refused before anything is sent.** An enormous wait limit or
+  poll interval, such as `--timeout 18446744073709551615` or a `wait_timeout` of the largest TOML
+  integer, was accepted, and `video generate` then stopped with `internal_error` after its paid
+  job had been submitted. Every duration setting is now at most a year, and a longer one fails
+  with `invalid_argument` or `config_invalid` before anything is sent. See
+  [Configuration reference](https://github.com/doodla/iris/blob/main/docs/reference/configuration.md#settings).
+- **`iris doctor` reports a directory that can't be created.** When a file or a broken symbolic
+  link was in the path of the state or output directory, `doctor` reported the directory as `ok`,
+  to be created on first use, although every command that needs it fails. The check is now an
+  `error` that names what's in the way.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.
+- **A JPEG that was cut off is refused.** Its data decoded anyway, with the missing part filled in
+  gray, so Iris accepted it, and sent it in a paid request as an input image. Iris now checks that
+  a JPEG ends with its end-of-image marker, so a cut-off input image fails with
+  `input_file_invalid` before anything is sent.
 
 ## [0.1.0] - 2026-09-25
 

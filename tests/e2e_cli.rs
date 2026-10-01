@@ -222,6 +222,56 @@ fn usage_errors_in_json_mode_are_a_single_envelope_with_exit_2() {
     assert!(!sb.jobs_dir().exists());
 }
 
+/// A prompt file's leading byte order mark, which Notepad writes, is not part of the
+/// prompt: the plan's fingerprint is that of the text after it, and a file that holds
+/// only one is an empty prompt.
+#[test]
+fn a_byte_order_mark_at_the_start_of_a_prompt_file_is_not_part_of_the_prompt() {
+    let sb = Sandbox::new();
+    sb.write("bom.txt", b"\xEF\xBB\xBFa fox\r\n");
+    sb.write("only-bom.txt", b"\xEF\xBB\xBF\r\n");
+    let plan = |prompt: &[&str]| {
+        sb.iris()
+            .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "--quality", "low", "--size", "1024x1024"])
+            .args(prompt)
+            .args(["--dry-run", "--json"])
+            .run()
+    };
+    let from_file = plan(&["-f", "bom.txt"]).ok();
+    let inline = plan(&["a fox"]).ok();
+    assert_eq!(from_file["result"]["prompt_fingerprint"], inline["result"]["prompt_fingerprint"]);
+    assert_eq!(from_file["result"]["prompt_fingerprint"]["chars"], 5);
+    let v = plan(&["-f", "only-bom.txt"]).err(2, "invalid_argument");
+    assert_eq!(v["error"]["message"], "the prompt is empty");
+}
+
+/// A usage error that quotes an argument never prints a configured key that ended
+/// up in it: the key reads `[REDACTED]`, in human mode as in JSON mode, as in every
+/// other error Iris prints.
+#[test]
+fn usage_errors_never_print_a_configured_key() {
+    let sb = Sandbox::new();
+    let cases: [&[&str]; 3] = [
+        &["jobs", "list", "--limit", OPENAI_KEY],
+        &["version", GEMINI_KEY],
+        &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", &format!("--{OPENAI_KEY}")],
+    ];
+    for args in cases {
+        for json in [false, true] {
+            let mut iris = sb.iris();
+            iris.keys().args(args);
+            if json {
+                iris.arg("--json");
+            }
+            let out = iris.run();
+            assert_eq!(out.code, 2, "{args:?} json={json}: {out:?}");
+            out.assert_hygiene();
+            let printed = if json { &out.stdout } else { &out.stderr };
+            assert!(printed.contains("[REDACTED]"), "{args:?} json={json}: {printed}");
+        }
+    }
+}
+
 // ----- scenario 13: dry runs -----------------------------------------------------------------------
 
 #[test]
@@ -413,6 +463,54 @@ fn a_video_plan_says_how_long_the_real_run_waits_and_why() {
         .run()
         .ok();
     assert!(v["result"]["wait"].is_null(), "an image command does not wait: {v}");
+}
+
+/// A time setting is at most a year (`1year`): the longest wait plans and prints, and
+/// a longer one from a flag, a variable, or the config file is refused before
+/// anything is sent. Such a wait used to be accepted, and `video generate` then
+/// stopped with `internal_error` once its paid job had been submitted.
+#[test]
+fn a_wait_longer_than_a_year_is_refused_before_anything_is_sent() {
+    let sb = Sandbox::new();
+    let human = sb
+        .iris()
+        .args(["video", "generate", "-m", VEO_LITE, "waves", "--dry-run", "--timeout", "1year"])
+        .args(["--poll-interval", "1year"])
+        .run();
+    assert!(
+        human
+            .human()
+            .contains("  wait:       up to 1year (--timeout), polling every 1year (--poll-interval)\n"),
+        "{}",
+        human.human()
+    );
+
+    let api = answering_api();
+    let forever = sb.config("forever.toml", "[video]\nwait_timeout = 9223372036854775807\n");
+    let forever = forever.to_str().unwrap();
+    let too_long = [
+        (None, &["--timeout", "18446744073709551615"][..], "invalid_argument", "--timeout"),
+        (None, &["--timeout", "1year 1s"], "invalid_argument", "--timeout"),
+        (None, &["--poll-interval", "2years"], "invalid_argument", "--poll-interval"),
+        (Some(("IRIS_WAIT_TIMEOUT", "400days")), &[], "config_invalid", "IRIS_WAIT_TIMEOUT"),
+        (Some(("IRIS_CONFIG", forever)), &[], "config_invalid", "video.wait_timeout"),
+    ];
+    for (env, args, code, named) in too_long {
+        let mut iris = sb.iris();
+        if let Some((key, value)) = env {
+            iris.env(key, value);
+        }
+        let v = iris
+            .gemini(&api)
+            .args(["video", "generate", "-m", VEO_LITE, "waves", "--duration", "4", "--json"])
+            .args(args)
+            .run()
+            .err(2, code);
+        let message = v["error"]["message"].as_str().unwrap();
+        assert!(message.contains(named) && message.ends_with("must be at most 1year"), "{v}");
+    }
+    assert_eq!(api.total(), 0, "nothing was sent");
+    assert!(!sb.jobs_dir().exists(), "no job was recorded");
 }
 
 /// `--max-cost <USD>` refuses a request estimated above the cap, or without an
@@ -1483,6 +1581,40 @@ fn veo_duration_is_an_integer_with_listed_values() {
         .ok();
     let id = v["result"]["job"]["job_id"].as_str().unwrap();
     assert_eq!(sb.record(id)["request"]["duration"], 8, "the default, as an integer");
+}
+
+/// `doctor` applies the rule of the commands that create the state and output
+/// directories: a file or a broken symbolic link in the path is in the way, so the
+/// directory is an error, not one that "will be created on first use".
+#[test]
+fn doctor_reports_a_directory_that_cannot_be_created() {
+    let sb = Sandbox::new();
+    std::fs::write(sb.path("afile"), b"").unwrap();
+    std::os::unix::fs::symlink(sb.path("missing"), sb.path("dangling")).unwrap();
+    for (var, id) in [("IRIS_OUTPUT_DIR", "output_dir"), ("IRIS_STATE_DIR", "state_dir")] {
+        let check = |dir: &Path| {
+            let v = sb.iris().env(var, dir).args(["doctor", "--json"]).run().ok();
+            v["result"]["checks"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap().clone()
+        };
+        let blocked = [
+            ("afile/sub", format!("cannot be created: {} is not a directory", sb.path("afile").display())),
+            (
+                "dangling/sub",
+                format!("cannot be created: {} is a broken symbolic link", sb.path("dangling").display()),
+            ),
+            ("afile", "exists but is not a directory".to_string()),
+            ("dangling", "exists but is a broken symbolic link".to_string()),
+        ];
+        for (dir, says) in blocked {
+            let c = check(&sb.path(dir));
+            assert_eq!(c["status"], "error", "{var}={dir}: {c}");
+            assert!(c["message"].as_str().unwrap().ends_with(&says), "{var}={dir}: {c}");
+        }
+        let c = check(&sb.path("new/sub"));
+        assert_eq!(c["status"], "ok", "{var}: {c}");
+        assert!(c["message"].as_str().unwrap().ends_with("it will be created on first use"), "{c}");
+    }
+    assert!(!sb.path("new").exists(), "doctor creates nothing");
 }
 
 /// `doctor --check-access` checks every catalog model of each provider whose key is

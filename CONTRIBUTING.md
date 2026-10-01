@@ -101,7 +101,7 @@ If you changed documented behavior, update the page that's its home, as the
 command that you document against the built binary. `cargo test` also checks the docs' links and
 parts of their style.
 
-CI also tests on macOS, checks the crate's package contents, and runs the Linux release path. See
+CI also tests on macOS, checks the crate's package contents, and runs the Linux release paths. See
 [Releasing Iris](docs/contributing/releasing.md#test-the-release-path).
 
 ## Compatibility
@@ -130,4 +130,5 @@ Don't open a public issue for a vulnerability. Follow the [security policy](SECU
 
 ## Release Iris
 
-Maintainers cut releases. See [Releasing Iris](docs/contributing/releasing.md).
+Maintainers cut releases, and update the tool versions that are pinned by hand, such as the Rust
+toolchain that builds releases. See [Releasing Iris](docs/contributing/releasing.md).

@@ -68,6 +68,10 @@ pub const DEFAULT_WAIT_TIMEOUT: Duration = Duration::from_secs(600);
 pub const DEFAULT_POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// Smallest accepted poll interval.
 pub const MIN_POLL_INTERVAL: Duration = Duration::from_secs(2);
+/// Longest duration that any time setting accepts: one year (`1year`, 365.25 days),
+/// far longer than any wait or request needs. A deadline or a delay computed from a
+/// longer one could overflow, after a paid video job was already submitted.
+pub const MAX_DURATION: Duration = Duration::from_secs(31_557_600);
 /// Default per-request timeout for synchronous generation.
 pub const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(300);
 /// Default per-request timeout for an async job submission (Veo).
@@ -761,12 +765,21 @@ fn parse_log_filter(text: &str) -> Result<String, String> {
 }
 
 fn positive(d: Duration) -> Result<Duration, String> {
-    if d.is_zero() { Err("must be greater than zero".to_string()) } else { Ok(d) }
+    if d.is_zero() { Err("must be greater than zero".to_string()) } else { at_most_max(d) }
 }
 
 fn min_poll(d: Duration) -> Result<Duration, String> {
     if d < MIN_POLL_INTERVAL {
         Err(format!("must be at least {}", humantime::format_duration(MIN_POLL_INTERVAL)))
+    } else {
+        at_most_max(d)
+    }
+}
+
+/// `d`, unless it is longer than [`MAX_DURATION`].
+fn at_most_max(d: Duration) -> Result<Duration, String> {
+    if d > MAX_DURATION {
+        Err(format!("must be at most {}", humantime::format_duration(MAX_DURATION)))
     } else {
         Ok(d)
     }
@@ -779,6 +792,17 @@ fn row(key: &str, value: serde_json::Value, source: &SettingSource, env_var: Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_longest_duration_is_the_year_that_humantime_names() {
+        assert_eq!(parse_duration("1year"), Ok(MAX_DURATION));
+        assert_eq!(humantime::format_duration(MAX_DURATION).to_string(), "1year");
+        let longer = MAX_DURATION + Duration::from_secs(1);
+        assert_eq!(positive(MAX_DURATION), Ok(MAX_DURATION));
+        assert_eq!(min_poll(MAX_DURATION), Ok(MAX_DURATION));
+        assert_eq!(positive(longer), Err("must be at most 1year".to_string()));
+        assert_eq!(min_poll(longer), Err("must be at most 1year".to_string()));
+    }
 
     #[test]
     fn durations_accept_humantime_and_plain_seconds() {

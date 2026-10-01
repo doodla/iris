@@ -349,6 +349,25 @@ platform_cases() {
   expect_out "installing iris v0.2.0 ($LINUX) into $BIN"
   end
 
+  for arch in aarch64 arm64; do
+    begin "Linux $arch: latest release, the arm64 build"
+    ARCH=$arch
+    run ok/good
+    expect_status 0
+    expect_installed "$BIN/iris" 0.2.0 aarch64-unknown-linux-musl
+    expect_out "installing iris v0.2.0 (aarch64-unknown-linux-musl) into $BIN"
+    end
+  done
+
+  begin "Linux aarch64, --version of a release without an arm64 build: nothing installed"
+  ARCH=aarch64
+  run ok/good --version v0.1.0
+  expect_status 1
+  expect_err "SHA256SUMS for v0.1.0 has no line for iris-v0.1.0-aarch64-unknown-linux-musl.tar.gz"
+  expect_err "If release v0.1.0 has no build for aarch64-unknown-linux-musl, choose another version with --version"
+  expect_missing "$C/home/.local"
+  end
+
   begin "macOS x86_64 (Intel, no hw.optional.arm64)"
   OS=Darwin ARCH=x86_64
   run ok/good
@@ -391,7 +410,7 @@ platform_cases() {
   expect_installed "$BIN/iris" 0.2.0 "$want"
   end
 
-  for platform in "Linux aarch64" "Linux i686" "Linux armv7l" "MINGW64_NT-10.0-19045 x86_64" \
+  for platform in "Linux armv8l" "Linux i686" "Linux armv7l" "MINGW64_NT-10.0-19045 x86_64" \
     "MSYS_NT-10.0-19045 x86_64" "CYGWIN_NT-10.0 x86_64" "FreeBSD amd64" "Darwin i386"; do
     begin "unsupported platform: $platform"
     OS=${platform% *} ARCH=${platform##* }
