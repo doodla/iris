@@ -178,8 +178,12 @@ If you press Ctrl+C, or the process receives SIGTERM or SIGHUP:
 
 - After step 2 but before Iris starts sending the request, Iris stops without sending anything,
   deletes the record, and exits with code 130 and `retryable: true`.
-- During step 3, Iris finishes waiting for the provider's response, records the operation, and
-  exits with code 130. The job is `running`. To resume it, run `iris jobs wait JOB_ID`.
+- During step 3, Iris doesn't send the request again. If the provider rejected it before
+  processing it, as it does for a rate limit, or Iris couldn't connect to send it, Iris also
+  deletes the record, and exits with code 130 and `retryable: true`.
+- Otherwise during step 3, Iris finishes waiting for the provider's response, records the
+  operation, and exits with code 130. The job is `running`. To resume it, run
+  `iris jobs wait JOB_ID`.
 - A second interrupt stops Iris immediately. The job stays `submitting` and is reported as
   `submission_unknown` once the submission budget has passed.
 

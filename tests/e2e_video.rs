@@ -16,7 +16,7 @@
 mod support;
 
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 use support::*;
@@ -1062,6 +1062,50 @@ fn sigterm_or_sighup_during_a_paid_submit_is_deferred_until_the_operation_id_is_
         let v = sb.iris().gemini(&veo.api).args(["jobs", "wait", id, "--json"]).run().ok();
         assert_eq!(job_of(&v)["status"], "succeeded");
         assert_eq!(veo.submits(), 1);
+        veo.assert_no_credential_leaks();
+    }
+}
+
+/// An interrupt that arrives while Iris waits to resend a paid submission that the
+/// provider rejected before processing it (a rate limit) stops it there: nothing
+/// more is sent, nothing was accepted or billed, and the record is removed, so the
+/// same command, label included, can run again.
+#[test]
+fn an_interrupt_while_a_rejected_submission_waits_to_be_resent_sends_nothing_more() {
+    for signal in ["INT", "TERM"] {
+        let sb = Sandbox::new();
+        let veo = VeoMock::start();
+        let limited = google_error(
+            429,
+            "RESOURCE_EXHAUSTED",
+            "Resource has been exhausted (e.g. check quota).",
+            json!([{ "@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "30s" }]),
+        );
+        veo.submit.set_sequence(vec![limited, json_response(200, json!({ "name": veo.op_name }))]);
+        let args = ["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--label", "boat"];
+        let child = sb.iris().gemini(&veo.api).args(args).args(["--detach", "--json"]).spawn();
+        child.wait_for_stderr("Submitting job", Duration::from_secs(30));
+        veo.api.wait_for("POST", &veo_submit_path(VEO_LITE), 1, Duration::from_secs(30));
+        // The rate limit asks for 30 s; Iris waits that long before resending.
+        let signalled = Instant::now();
+        send_signal(&child, signal);
+        let out = child.finish();
+        assert!(signalled.elapsed() < Duration::from_secs(15), "SIG{signal}: Iris waited to resend");
+        let v = out.err(130, "interrupted");
+        let error = &v["error"];
+        assert_eq!(error["retryable"], true, "SIG{signal}: nothing was accepted or billed: {v}");
+        assert_eq!(error["retry_after_seconds"], 30, "the delay the provider asked for still holds");
+        assert_eq!(error["details"]["cause_code"], "rate_limited");
+        assert_eq!(error["details"].get("charge_possible"), None, "{v}");
+        assert_eq!(error["job_id"], Value::Null, "{v}");
+        assert!(error["hint"].as_str().unwrap().contains("run the same command again"), "{v}");
+        assert_eq!(veo.submits(), 1, "SIG{signal}: a rejected request is never resent after an interrupt");
+        assert!(files_in(&sb.jobs_dir()).iter().all(|n| !n.ends_with(".json")), "no job record is left");
+
+        // The same command runs again, with the same label.
+        let v = sb.iris().gemini(&veo.api).args(args).args(["--detach", "--json"]).run().ok();
+        assert_eq!(job_of(&v)["status"], "running");
+        assert_eq!(veo.submits(), 2);
         veo.assert_no_credential_leaks();
     }
 }

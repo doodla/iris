@@ -115,6 +115,50 @@ async fn paid_submit_retries_a_rate_limit_rejection() {
     assert_eq!(requests(&server).await, 2);
 }
 
+/// A retry stop (raised by `video generate` at an interrupt) ends a call that would
+/// be retried with the outcome of its last attempt, also from the delay before the
+/// retry: a paid request that the provider rejected is never sent again after it.
+#[tokio::test]
+async fn a_raised_retry_stop_returns_the_last_outcome_instead_of_retrying() {
+    let server = MockServer::start().await;
+    // A 30 s wait before the retry: the stop must end it, not outlast it.
+    failing_then_ok(&server, 429, 1, &[("retry-after", "30")]).await;
+    let (stop, stopped) = tokio::sync::watch::channel(false);
+    let stoppable = client().with_retry_stop(stopped);
+    let url = format!("{}/v1/images/generations", server.uri());
+    let send = |url: &str| {
+        let url = url.to_string();
+        move |c: &reqwest::Client| Ok(c.post(&url).json(&json!({"prompt": "a lighthouse"})))
+    };
+    let started = Instant::now();
+    let raise = async {
+        while requests(&server).await == 0 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        stop.send_replace(true);
+    };
+    let paid = call(RetryClass::PaidSubmit);
+    let (result, ()) = tokio::join!(stoppable.execute(&paid, send(&url), classify), raise);
+    let err = expect_error(result);
+    assert_eq!((err.code, err.provider_status), (ErrorCode::RateLimited, Some(429)));
+    assert!(started.elapsed() < Duration::from_secs(10), "{:?}", started.elapsed());
+    assert_eq!(requests(&server).await, 1, "the rejected request is never sent again");
+
+    // Raised before a call, it lets the first attempt go, but no retry, also after
+    // a connection that failed before sending.
+    let err = stoppable.execute(&paid, send(DEAD_URL), classify).await.unwrap_err();
+    let HttpError::Transport(t) = err else { panic!("expected a transport error") };
+    assert_eq!((t.kind, t.attempts), (TransportKind::Connect, 1));
+
+    // A stop that can no longer be raised changes nothing.
+    let server = MockServer::start().await;
+    failing_then_ok(&server, 429, 1, &[]).await;
+    let unstoppable = client().with_retry_stop(tokio::sync::watch::channel(false).1);
+    let url = format!("{}/v1/images/generations", server.uri());
+    let resp = unstoppable.execute(&paid, send(&url), classify).await.unwrap();
+    assert_eq!(resp.attempts, 2);
+}
+
 #[tokio::test]
 async fn paid_submit_stops_after_three_attempts_with_the_classifier_error() {
     let server = MockServer::start().await;

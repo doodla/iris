@@ -39,6 +39,11 @@ All notable changes to this project are documented in this file. The format foll
   after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
   than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
   paid image went to the state directory's `unsaved/` folder instead, and a video download failed.
+- **An interrupt stops a video submission's retries.** After a rate limit, Iris waits and sends a
+  paid video request again. If you pressed Ctrl+C, or Iris got SIGTERM or SIGHUP, during that wait,
+  Iris still sent the request when the wait was over, so it could start a billed job after you
+  asked it to stop. Iris now sends nothing more after an interrupt. Because the provider accepted
+  nothing, Iris deletes the job record and exits with code 130 and `retryable: true`.
 - **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
   the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
   which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.

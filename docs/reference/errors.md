@@ -80,6 +80,9 @@ Some fields have specific rules:
   is `false`, even if the provider asked for a delay.
 - `provider_code` and `details.provider_message` come from the provider and can change without
   notice. Don't branch on them.
+- `details.cause_code`, when present, is the code of an error that Iris reports under another
+  code. For example, when an interrupt stops `iris video generate` after a rate limit, the error is
+  `interrupted`, and `details.cause_code` is `rate_limited`.
 - Iris removes key values from every string in an error, and shortens a provider's message to 500
   characters.
 - Iris redacts every URL that it prints or logs. It removes the user information and the fragment,

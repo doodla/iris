@@ -19,6 +19,9 @@
 //!
 //! Cancellation: every future here can be dropped at any point (the application
 //! races it against Ctrl-C); dropping aborts the in-flight request or backoff sleep.
+//! A caller that must not drop a call (a paid submission whose answer has to be
+//! recorded) can instead stop it from starting another attempt
+//! ([`HttpClient::with_retry_stop`]).
 
 #![warn(missing_docs)]
 
@@ -29,6 +32,7 @@ use std::fmt;
 use std::time::Duration;
 
 use reqwest::header::{HeaderName, HeaderValue};
+use tokio::sync::watch;
 
 pub use download::{
     DownloadError, DownloadRequest, Downloaded, MAX_DOWNLOAD_BYTES, MAX_REDIRECTS, download,
@@ -87,6 +91,9 @@ pub struct HttpClient {
     /// known to be `none`. [`HttpClient::execute`] and [`download()`] refuse to run
     /// on any other client (see [`HttpClient::from_reqwest`]).
     manual_redirects: bool,
+    /// Once this holds `true`, [`HttpClient::execute`] starts no further attempt
+    /// (see [`HttpClient::with_retry_stop`]).
+    retry_stop: Option<watch::Receiver<bool>>,
 }
 
 impl HttpClient {
@@ -119,7 +126,13 @@ impl HttpClient {
         };
         let inner = build(settings.system_proxy)?;
         let direct = build(false)?;
-        Ok(HttpClient { inner, direct, retry: settings.retry.clone(), manual_redirects: true })
+        Ok(HttpClient {
+            inner,
+            direct,
+            retry: settings.retry.clone(),
+            manual_redirects: true,
+            retry_stop: None,
+        })
     }
 
     /// The client to send a request to `url` with: [`HttpClient::new`]'s client, or
@@ -138,7 +151,13 @@ impl HttpClient {
     /// run on a client built here and fail with `internal_error` before sending
     /// anything. Use [`HttpClient::new`] for every client that talks to a provider.
     pub fn from_reqwest(inner: reqwest::Client) -> Self {
-        HttpClient { direct: inner.clone(), inner, retry: RetryPolicy::default(), manual_redirects: false }
+        HttpClient {
+            direct: inner.clone(),
+            inner,
+            retry: RetryPolicy::default(),
+            manual_redirects: false,
+            retry_stop: None,
+        }
     }
 
     /// Whether this client was built by [`HttpClient::new`] (redirects are never
@@ -168,6 +187,37 @@ impl HttpClient {
     /// The backoff schedule in use.
     pub fn retry_policy(&self) -> &RetryPolicy {
         &self.retry
+    }
+
+    /// This client, except that once `stop` holds `true`, [`HttpClient::execute`]
+    /// starts no further attempt of a call: a call that would be retried returns
+    /// its last attempt's outcome instead, at once, also from the delay before the
+    /// retry. An attempt in flight is never cut off. For a paid submission that
+    /// keeps running after an interrupt only so that the provider's answer can be
+    /// recorded: a retry would be a new paid request after the caller asked to stop.
+    pub fn with_retry_stop(&self, stop: watch::Receiver<bool>) -> Self {
+        HttpClient { retry_stop: Some(stop), ..self.clone() }
+    }
+
+    /// Wait `delay` before retrying a call; `false` (at once) if the retry stop
+    /// holds `true` before or during the wait: then no retry may be made.
+    pub(crate) async fn wait_to_retry(&self, delay: Duration) -> bool {
+        let Some(stop) = &self.retry_stop else {
+            tokio::time::sleep(delay).await;
+            return true;
+        };
+        let mut stop = stop.clone();
+        let stopped = async move {
+            // A closed channel can no longer stop anything.
+            if stop.wait_for(|stop| *stop).await.is_err() {
+                std::future::pending::<()>().await;
+            }
+        };
+        tokio::select! {
+            biased;
+            () = stopped => false,
+            () = tokio::time::sleep(delay) => true,
+        }
     }
 
     /// The underlying reqwest client.
