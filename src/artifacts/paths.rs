@@ -88,6 +88,19 @@ pub fn format_for_media_type(media_type: &str) -> Option<&'static str> {
     }
 }
 
+/// The image format that the extension of `-o` selects when no format is given
+/// (`png`, `jpeg`, `webp`), if the model can produce that type: what
+/// [`plan_outputs`] reports as [`PlannedOutputs::implied_format`], known before
+/// the options are validated, so a rule that depends on the format sees it.
+pub fn implied_format(output: Option<&Path>, media_types: &[&str]) -> Option<&'static str> {
+    let output = absolute(output?).ok()?;
+    let ext_type = media::media_type_for_extension(output.extension()?.to_str()?)?;
+    if !media::accepts(media_types, ext_type) {
+        return None;
+    }
+    format_for_media_type(ext_type)
+}
+
 /// Media type for a `--format` value.
 pub fn media_type_for_format(format: &str) -> Option<&'static str> {
     match format.to_ascii_lowercase().as_str() {

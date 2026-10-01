@@ -21,6 +21,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **`-O compression` works with the format that `-o` chooses.** With `-o fox.jpg` or `-o fox.webp`
+  and no `--format`, the GPT Image models refused `-O compression` as if the output were PNG,
+  because the options were checked before the `-o` extension set the format. The extension now
+  sets it first, as with `--format jpeg`.
 - **A long output name in a non-Latin script works.** Iris names the temporary file of a save
   after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
   than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
