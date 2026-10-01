@@ -190,6 +190,23 @@ async fn text_to_image_sends_the_exact_minimal_body_with_header_auth() {
     assert_eq!(usage.provider_usage.unwrap()["candidatesTokensDetails"][0]["modality"], "IMAGE");
 }
 
+/// Token counts come from the provider and can be anything: counts whose sum is
+/// beyond `u64` saturate instead of overflowing (a panic in a debug build), and the
+/// image of the paid answer is returned as usual.
+#[tokio::test]
+async fn usage_counts_too_large_to_add_saturate() {
+    let server = MockServer::start().await;
+    let image = png();
+    let mut body = response_with(vec![image_part("image/png", &image)], "STOP");
+    body["usageMetadata"]["candidatesTokenCount"] = json!(u64::MAX);
+    body["usageMetadata"]["thoughtsTokenCount"] = json!(u64::MAX);
+    mount_ok(&server, body).await;
+
+    let out = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap();
+    assert_eq!(out.images.len(), 1);
+    assert_eq!(out.usage.unwrap().output_tokens, Some(u64::MAX));
+}
+
 #[tokio::test]
 async fn edit_sends_the_prompt_first_then_every_reference_in_order_with_all_options() {
     let server = MockServer::start().await;

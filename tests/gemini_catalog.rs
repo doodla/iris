@@ -438,6 +438,28 @@ fn post_call_estimate_splits_usage_metadata_by_modality() {
     assert!(catalog::gemini::estimate_from_usage(spec(FLASH), &empty).is_none());
 }
 
+/// Reported counts are the provider's: sums beyond `u64` saturate instead of
+/// overflowing (a panic in a debug build, a wrong amount otherwise).
+#[test]
+fn post_call_estimate_saturates_counts_too_large_to_add() {
+    let usage = Usage {
+        provider_usage: Some(serde_json::json!({
+            "promptTokenCount": 1,
+            "candidatesTokenCount": u64::MAX,
+            "thoughtsTokenCount": u64::MAX,
+            "candidatesTokensDetails": [
+                {"modality": "IMAGE", "tokenCount": u64::MAX},
+                {"modality": "IMAGE", "tokenCount": u64::MAX}
+            ]
+        })),
+        ..Usage::default()
+    };
+    let e = catalog::gemini::estimate_from_usage(spec(FLASH), &usage).unwrap();
+    assert!(e.amount.is_finite() && e.amount > 0.0, "{}", e.amount);
+    assert!(e.basis.contains(&format!("{} image output tokens", u64::MAX)), "{}", e.basis);
+    assert!(e.basis.contains(&format!("{} text and thinking tokens", u64::MAX)), "{}", e.basis);
+}
+
 /// The Gemini image models have no cross-option rules: nothing beyond per-option and
 /// input checks rejects any combination of declared values, and none is published.
 #[test]
