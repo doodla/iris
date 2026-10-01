@@ -58,8 +58,8 @@ credentials (presence only):
 
 Values have these formats:
 
-- **Durations**: a number with a unit, such as `90s`, `10m`, or `1h`, or a number of seconds. The
-  poll interval must be at least 2 seconds.
+- **Durations**: a number with a unit, such as `90s`, `10m`, or `1h`, or a number of seconds. Every
+  duration is at most a year, `1year`. The poll interval must be at least 2 seconds.
 - **Booleans**: `true` or `false`. In environment variables, Iris also accepts `1` and `0`, `yes`
   and `no`, and `on` and `off`.
 - **Paths**: in the config file and in environment variables, an absolute path or a path that starts

@@ -333,6 +333,11 @@ fn wrong_types_and_invalid_values_in_the_file_are_rejected_with_the_key() {
         ("[video]\nmodel = \"no-such-model\"\n", "video.model"),
         ("[providers.gemini]\nsubmit_timeout = 0\n", "providers.gemini.submit_timeout"),
         ("[providers.gemini]\nsubmit_timeout = \"soon\"\n", "providers.gemini.submit_timeout"),
+        // Every duration is at most a year.
+        ("[video]\nwait_timeout = 9223372036854775807\n", "video.wait_timeout"),
+        ("[video]\npoll_interval = \"2years\"\n", "video.poll_interval"),
+        ("[providers.openai]\nrequest_timeout = \"400days\"\n", "providers.openai.request_timeout"),
+        ("[providers.gemini]\nsubmit_timeout = 31557601\n", "providers.gemini.submit_timeout"),
         // A provider without video models never submits a job: the key would do nothing.
         ("[providers.openai]\nsubmit_timeout = \"5m\"\n", "providers.openai.submit_timeout"),
     ] {
@@ -376,6 +381,8 @@ fn bad_environment_values_are_config_invalid_naming_the_variable() {
         ("IRIS_WAIT_TIMEOUT", "0"),
         ("IRIS_POLL_INTERVAL", "1s"),
         ("IRIS_POLL_INTERVAL", "abc"),
+        ("IRIS_WAIT_TIMEOUT", "18446744073709551615"),
+        ("IRIS_POLL_INTERVAL", "1year 1s"),
         ("IRIS_STORE_PROMPTS", "maybe"),
         ("IRIS_OPENAI_BASE_URL", "not a url"),
         ("IRIS_GEMINI_BASE_URL", "https://user:pw@example.com"),
@@ -409,6 +416,17 @@ fn bad_flag_values_are_invalid_argument_naming_the_flag() {
     let e = load_err(&CliOverrides { wait_timeout: Some(Duration::ZERO), ..Default::default() }, &fx.env());
     assert_eq!(e.code, ErrorCode::InvalidArgument);
     assert!(e.message.contains("--timeout"), "{}", e.message);
+    for (cli, flag) in [
+        (CliOverrides { wait_timeout: Some(Duration::MAX), ..Default::default() }, "--timeout"),
+        (
+            CliOverrides { poll_interval: Some(Duration::from_secs(u64::MAX)), ..Default::default() },
+            "--poll-interval",
+        ),
+    ] {
+        let e = load_err(&cli, &fx.env());
+        assert_eq!(e.code, ErrorCode::InvalidArgument);
+        assert_eq!(e.message, format!("{flag}: must be at most 1year"));
+    }
 }
 
 #[test]
