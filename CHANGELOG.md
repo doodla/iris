@@ -25,6 +25,10 @@ All notable changes to this project are documented in this file. The format foll
   default config file and state directory under the current directory, so a video job recorded in
   one directory was missing from another. A command that needs a default path now fails with
   `config_invalid`, as a relative `IRIS_STATE_DIR` already did.
+- **A long output name in a non-Latin script works.** Iris names the temporary file of a save
+  after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
+  than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
+  paid image went to the state directory's `unsaved/` folder instead, and a video download failed.
 - **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
   the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
   which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.
