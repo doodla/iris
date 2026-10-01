@@ -245,6 +245,33 @@ fn a_byte_order_mark_at_the_start_of_a_prompt_file_is_not_part_of_the_prompt() {
     assert_eq!(v["error"]["message"], "the prompt is empty");
 }
 
+/// A usage error that quotes an argument never prints a configured key that ended
+/// up in it: the key reads `[REDACTED]`, in human mode as in JSON mode, as in every
+/// other error Iris prints.
+#[test]
+fn usage_errors_never_print_a_configured_key() {
+    let sb = Sandbox::new();
+    let cases: [&[&str]; 3] = [
+        &["jobs", "list", "--limit", OPENAI_KEY],
+        &["version", GEMINI_KEY],
+        &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", &format!("--{OPENAI_KEY}")],
+    ];
+    for args in cases {
+        for json in [false, true] {
+            let mut iris = sb.iris();
+            iris.keys().args(args);
+            if json {
+                iris.arg("--json");
+            }
+            let out = iris.run();
+            assert_eq!(out.code, 2, "{args:?} json={json}: {out:?}");
+            out.assert_hygiene();
+            let printed = if json { &out.stdout } else { &out.stderr };
+            assert!(printed.contains("[REDACTED]"), "{args:?} json={json}: {printed}");
+        }
+    }
+}
+
 // ----- scenario 13: dry runs -----------------------------------------------------------------------
 
 #[test]
@@ -436,6 +463,54 @@ fn a_video_plan_says_how_long_the_real_run_waits_and_why() {
         .run()
         .ok();
     assert!(v["result"]["wait"].is_null(), "an image command does not wait: {v}");
+}
+
+/// A time setting is at most a year (`1year`): the longest wait plans and prints, and
+/// a longer one from a flag, a variable, or the config file is refused before
+/// anything is sent. Such a wait used to be accepted, and `video generate` then
+/// stopped with `internal_error` once its paid job had been submitted.
+#[test]
+fn a_wait_longer_than_a_year_is_refused_before_anything_is_sent() {
+    let sb = Sandbox::new();
+    let human = sb
+        .iris()
+        .args(["video", "generate", "-m", VEO_LITE, "waves", "--dry-run", "--timeout", "1year"])
+        .args(["--poll-interval", "1year"])
+        .run();
+    assert!(
+        human
+            .human()
+            .contains("  wait:       up to 1year (--timeout), polling every 1year (--poll-interval)\n"),
+        "{}",
+        human.human()
+    );
+
+    let api = answering_api();
+    let forever = sb.config("forever.toml", "[video]\nwait_timeout = 9223372036854775807\n");
+    let forever = forever.to_str().unwrap();
+    let too_long = [
+        (None, &["--timeout", "18446744073709551615"][..], "invalid_argument", "--timeout"),
+        (None, &["--timeout", "1year 1s"], "invalid_argument", "--timeout"),
+        (None, &["--poll-interval", "2years"], "invalid_argument", "--poll-interval"),
+        (Some(("IRIS_WAIT_TIMEOUT", "400days")), &[], "config_invalid", "IRIS_WAIT_TIMEOUT"),
+        (Some(("IRIS_CONFIG", forever)), &[], "config_invalid", "video.wait_timeout"),
+    ];
+    for (env, args, code, named) in too_long {
+        let mut iris = sb.iris();
+        if let Some((key, value)) = env {
+            iris.env(key, value);
+        }
+        let v = iris
+            .gemini(&api)
+            .args(["video", "generate", "-m", VEO_LITE, "waves", "--duration", "4", "--json"])
+            .args(args)
+            .run()
+            .err(2, code);
+        let message = v["error"]["message"].as_str().unwrap();
+        assert!(message.contains(named) && message.ends_with("must be at most 1year"), "{v}");
+    }
+    assert_eq!(api.total(), 0, "nothing was sent");
+    assert!(!sb.jobs_dir().exists(), "no job was recorded");
 }
 
 /// `--max-cost <USD>` refuses a request estimated above the cap, or without an

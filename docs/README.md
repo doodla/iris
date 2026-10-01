@@ -46,5 +46,5 @@ For people who change Iris. Start with the
 | [Decisions](contributing/decisions.md) | Why Iris uses the APIs, models, retry rules, and tools that it does, with sources. |
 | [Add a provider](contributing/adding-a-provider.md) | A step-by-step guide and checklist, with a worked example. |
 | [Live testing](contributing/live-testing.md) | The paid, opt-in verification against the real APIs, and its log. |
-| [Releasing Iris](contributing/releasing.md) | Release archives, the installer tests, and cutting a release. |
+| [Releasing Iris](contributing/releasing.md) | Cutting a release, the pinned tool versions, release archives, and the installer tests. |
 | [Documentation style guide](contributing/style-guide.md) | How to write and organize these pages. |
