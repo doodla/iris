@@ -1613,6 +1613,37 @@ fn a_relative_home_is_not_used_for_default_paths() {
     assert_eq!(v["result"]["state_dir"], sb.state().to_str().unwrap(), "{v}");
 }
 
+/// A path flag that starts with `~/` is under the home directory, as a path in the
+/// config file or `--out-dir` is, also when it reaches Iris unexpanded: quoted, or
+/// from a program that runs Iris without a shell. Without a usable home directory,
+/// it is refused, naming the flag.
+#[test]
+fn a_path_flag_that_starts_with_a_tilde_is_under_the_home_directory() {
+    let sb = Sandbox::new();
+    let home = sb.home();
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::write(home.join("in.png"), png(64, 64)).unwrap();
+    std::fs::write(home.join("prompt.txt"), "add a tiny hat").unwrap();
+    let edit = |output: &str| {
+        let args = ["image", "edit", "-m", OPENAI_IMAGE_MODEL, "-f", "~/prompt.txt", "-i", "~/in.png"];
+        let mut iris = sb.iris();
+        iris.args(args).args(["-o", output, "--dry-run", "--json"]);
+        iris
+    };
+    let v = edit("~/out.png").run().ok();
+    assert_eq!(v["result"]["outputs"], json!([home.join("out.png")]), "{v}");
+    assert_eq!(v["result"]["inputs"][0]["path"], json!(home.join("in.png")), "{v}");
+    assert!(!sb.work().join("~").exists(), "nothing is planned under a directory named ~");
+
+    let config = sb.write("config.toml", "");
+    let v = edit("~/out.png")
+        .env("HOME", "relative/home")
+        .env("IRIS_CONFIG", &config)
+        .run()
+        .err(2, "invalid_argument");
+    assert_eq!(v["error"]["details"]["flag"], "--prompt-file", "{v}");
+}
+
 /// `doctor` applies the rule of the commands that create the state and output
 /// directories: a file or a broken symbolic link in the path is in the way, so the
 /// directory is an error, not one that "will be created on first use".

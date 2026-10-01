@@ -65,6 +65,8 @@ Values have these formats:
 - **Paths**: in the config file and in environment variables, an absolute path or a path that starts
   with `~/`. A relative path would follow each command's working directory, and a state directory
   that moves loses its jobs. Paths that you pass as flags can be relative to the current directory.
+  In every path, a leading `~/` stands for your home directory, also in a flag value that your
+  shell left unexpanded, such as `-o '~/fox.png'`.
 - **Log filter**: `IRIS_LOG` takes
   [`tracing` filter directives](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html),
   such as `debug`. `-v` logs Iris's debug messages, and `-vv` its trace messages. For a request,

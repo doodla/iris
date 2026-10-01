@@ -54,6 +54,11 @@ All notable changes to this project are documented in this file. The format foll
 - **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
   about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
   printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.
+- **A `~/` in a path flag means your home directory.** `--out-dir` and `--config` expanded a
+  leading `~/`, but `-o`, `--image`, `--mask`, `--last-frame`, `--ref`, and `--prompt-file` didn't.
+  When the shell left `~` as it was, as in a quoted argument or a program that runs Iris without a
+  shell, `-o '~/fox.png'` saved to a directory named `~` under the current directory, and an input
+  file wasn't found.
 - **A requested delay is rounded up, not down.** When a provider asked to wait a fraction of a
   second, `retry_after_seconds` dropped the fraction: OpenAI's `retry-after-ms: 1500` became 1, so a
   caller that waited that long retried too early. Iris now rounds it up, to 2.

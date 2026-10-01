@@ -304,8 +304,9 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
         Command::Image(ImageCommand::Edit(a)) => {
             let common =
                 generation(&a.prompt, &a.model, a.options.flags(), &a.output, &a.execution, io, &mut o)?;
-            let images = a.images.into_iter().map(|p| absolute(&io.env, p)).collect::<Result<_, _>>()?;
-            let mask = a.mask.map(|p| absolute(&io.env, p)).transpose()?;
+            let images =
+                a.images.into_iter().map(|p| absolute(&io.env, "--image", p)).collect::<Result<_, _>>()?;
+            let mask = a.mask.map(|p| absolute(&io.env, "--mask", p)).transpose()?;
             Request::Image(Operation::ImageEdit, ImageArgs { common, images, mask })
         }
         Command::Video(VideoCommand::Generate(a)) => {
@@ -315,12 +316,12 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
             o.poll_interval = duration_flag("--poll-interval", a.poll_interval.as_deref())?;
             Request::Video(VideoArgs {
                 common,
-                first_frame: a.first_frame.map(|p| absolute(&io.env, p)).transpose()?,
-                last_frame: a.last_frame.map(|p| absolute(&io.env, p)).transpose()?,
+                first_frame: a.first_frame.map(|p| absolute(&io.env, "--image", p)).transpose()?,
+                last_frame: a.last_frame.map(|p| absolute(&io.env, "--last-frame", p)).transpose()?,
                 references: a
                     .references
                     .into_iter()
-                    .map(|p| absolute(&io.env, p))
+                    .map(|p| absolute(&io.env, "--ref", p))
                     .collect::<Result<_, _>>()?,
                 detach: a.detach,
                 label: a.label.as_deref().map(|l| JobLabel::parse(l, "--label")).transpose()?,
@@ -396,7 +397,11 @@ fn generation(
 ) -> Result<GenerationArgs, IrisError> {
     let prompt_args = PromptArgs {
         prompt: prompt_args.prompt.clone(),
-        prompt_file: prompt_args.prompt_file.clone().map(|p| absolute(&io.env, p)).transpose()?,
+        prompt_file: prompt_args
+            .prompt_file
+            .clone()
+            .map(|p| absolute(&io.env, "--prompt-file", p))
+            .transpose()?,
         prompt_stdin: prompt_args.prompt_stdin,
     };
     let prompt = prompt::read(&prompt_args, &mut *io.stdin, io.stdin_is_tty)?;
@@ -414,10 +419,17 @@ fn generation(
     })
 }
 
-/// Resolve a user-supplied path against the invocation's current directory (the
-/// environment snapshot's, which is the process's in production); `io_error` for a
-/// relative path when that directory is unknown. Paths are otherwise used literally.
-fn absolute(env: &EnvSnapshot, path: PathBuf) -> Result<PathBuf, IrisError> {
+/// Resolve the path given to `flag`: a leading `~` component is the home
+/// directory, as in the config file, `--config`, and `--out-dir` (a quoted
+/// argument, or one from a program that runs Iris without a shell, arrives
+/// unexpanded), and a relative path is resolved against the invocation's current
+/// directory (the environment snapshot's, which is the process's in production).
+/// `invalid_argument` naming `flag` when the home directory is unknown; `io_error`
+/// for a relative path when the current directory is unknown. Paths are otherwise
+/// used literally.
+fn absolute(env: &EnvSnapshot, flag: &str, path: PathBuf) -> Result<PathBuf, IrisError> {
+    let path = config::expand_tilde(&path, env.home())
+        .map_err(|m| IrisError::invalid(format!("{flag}: {m}")).with_detail("flag", flag))?;
     if path.is_absolute() { Ok(path) } else { Ok(env.cwd()?.join(path)) }
 }
 
@@ -425,7 +437,7 @@ fn absolute(env: &EnvSnapshot, path: PathBuf) -> Result<PathBuf, IrisError> {
 /// passed on as given: it would mean standard output, and output planning refuses
 /// it by that name (`./-` names a file called `-`, as usual).
 fn output_path(env: &EnvSnapshot, path: PathBuf) -> Result<PathBuf, IrisError> {
-    if path.as_os_str() == "-" { Ok(path) } else { absolute(env, path) }
+    if path.as_os_str() == "-" { Ok(path) } else { absolute(env, "--output", path) }
 }
 
 /// Typed flags → `RawOption { source: Flag(..) }` using the command's flag → option
