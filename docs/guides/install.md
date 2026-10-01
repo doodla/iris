@@ -8,11 +8,12 @@ pinned installs, building from source, upgrades, and uninstalling.
 | Platform | Release target | Minimum version |
 |---|---|---|
 | Linux x86_64 | `x86_64-unknown-linux-musl` | Linux kernel 3.2. The binary is statically linked, so it doesn't depend on the system's C library. |
+| Linux arm64 | `aarch64-unknown-linux-musl` | Linux kernel 4.1. The binary is statically linked, like the x86_64 one. Iris 0.1.0 has no arm64 Linux build. |
 | macOS on Intel | `x86_64-apple-darwin` | macOS 10.12 Sierra |
 | macOS on Apple silicon | `aarch64-apple-darwin` | macOS 11.0 Big Sur |
 
-Iris doesn't support other systems, such as Windows, Linux on arm64, BSDs, or 32-bit systems. The
-installer stops on them with a message that names what it detected.
+Iris doesn't support other systems, such as Windows, BSDs, or 32-bit systems. The installer stops
+on them with a message that names what it detected.
 
 ## Install with the installer
 
