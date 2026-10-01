@@ -379,10 +379,20 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         ));
     }
 
+    // Text in the result is always reported with `provider_text_output`
+    // (docs/reference/json-output.md), as the Gemini adapter does.
+    let text = (!revised.is_empty()).then(|| revised.join("\n\n"));
+    if text.is_some() {
+        warnings.push(Warning::new(
+            WarningCode::ProviderTextOutput,
+            "OpenAI also returned a revised prompt; it is reported in the result's `text` field",
+        ));
+    }
+
     Ok(ImageOutput {
         images,
         unusable: kept,
-        text: (!revised.is_empty()).then(|| revised.join("\n\n")),
+        text,
         usage: parsed.usage,
         provider_request_id: resp.request_id.clone(),
         warnings,

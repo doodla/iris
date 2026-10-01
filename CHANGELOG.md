@@ -55,6 +55,10 @@ All notable changes to this project are documented in this file. The format foll
   Iris still sent the request when the wait was over, so it could start a billed job after you
   asked it to stop. Iris now sends nothing more after an interrupt. Because the provider accepted
   nothing, Iris deletes the job record and exits with code 130 and `retryable: true`.
+- **An OpenAI revised prompt comes with its warning.** When OpenAI returned a revised prompt,
+  Iris put it in the result's `text` field without the `provider_text_output` warning, which the
+  JSON output reference says reports any text in that field, and which Gemini's text gets. Both
+  providers now report it the same way.
 - **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
   the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
   which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.

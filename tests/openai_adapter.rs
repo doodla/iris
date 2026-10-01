@@ -785,7 +785,13 @@ async fn one_unusable_item_never_drops_the_usable_images() {
         assert_eq!(out.images.len(), 1, "{name}: the usable image is kept");
         assert_eq!(out.images[0].bytes, good, "{name}");
         let codes: Vec<&str> = out.warnings.iter().map(|w| w.code.as_str()).collect();
-        assert_eq!(codes, ["output_item_unusable"], "{name}: two items came back for n=2");
+        if name == "missing data" {
+            // Its revised prompt is the result's text, which is always reported.
+            assert_eq!(out.text.as_deref(), Some("x"));
+            assert_eq!(codes, ["output_item_unusable", "provider_text_output"], "{name}");
+        } else {
+            assert_eq!(codes, ["output_item_unusable"], "{name}: two items came back for n=2");
+        }
         let message = &out.warnings[0].message;
         assert!(
             message.contains(&format!("response item {at} ")) && message.contains(reason),
@@ -917,6 +923,10 @@ async fn revised_prompts_become_text_when_present() {
     let out = generate(&server, ResolvedOptions::new()).await.unwrap();
     assert_eq!(out.images.len(), 2);
     assert_eq!(out.text.as_deref(), Some("A lighthouse, watercolor"));
+    // Text in the result is always reported, as for Gemini (docs/reference/json-output.md).
+    let warning = out.warnings.iter().find(|w| w.code == "provider_text_output");
+    let warning = warning.unwrap_or_else(|| panic!("no provider_text_output warning: {:?}", out.warnings));
+    assert!(warning.message.contains("revised prompt"), "{}", warning.message);
 }
 
 // ---------------------------------------------------------------- error mapping
