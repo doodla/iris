@@ -66,6 +66,28 @@ pub(crate) enum SaveMode {
     Generated,
 }
 
+/// How `jobs status/wait/download/delete` name their job: by its id, or by the
+/// label that `video generate --label` gave it (unique among local records).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum JobRef {
+    Id(String),
+    Label(JobLabel),
+}
+
+/// The id of the job that `job` names: the id as given (checked by the command
+/// that uses it), or that of the record with the label: `job_not_found` when no
+/// record has it, `state_invalid` when an unreadable record could.
+pub fn job_id(ctx: &AppContext, job: &JobRef, warnings: &mut [Warning]) -> Result<String, IrisError> {
+    match job {
+        JobRef::Id(id) => Ok(id.clone()),
+        JobRef::Label(label) => {
+            let start = warnings.len();
+            let found = ctx.store.find_label(label.as_str()).map(|id| id.to_string());
+            Commands::of(ctx).finish(found, warnings, start)
+        }
+    }
+}
+
 /// Arguments of `jobs wait`.
 #[derive(Debug, Clone)]
 pub struct WaitArgs {

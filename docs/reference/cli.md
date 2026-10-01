@@ -647,23 +647,27 @@ Exit status: 0 whenever the job's record could be read, whatever the job's state
 result.job.status (submitting, submission_unknown, running, succeeded, failed, expired), not on the
 exit code. A status check that fails is a status_refresh_failed warning, and the last known status
 is shown. The command fails only when it cannot show the job, with that error's code (e.g. 2
-job_not_found for an unknown id, 1 state_invalid for an unreadable record, 130 when interrupted).
+job_not_found for an unknown id or label, 1 state_invalid for an unreadable record, 130 when
+interrupted).
 
-Usage: iris jobs status [OPTIONS] <JOB_ID>
+Usage: iris jobs status [OPTIONS] [JOB_ID]
 
 Arguments:
-  <JOB_ID>
+  [JOB_ID]
           Job id (job_ followed by 26 lowercase letters or digits)
 
 Options:
       --json
           Machine mode: exactly one JSON document on stdout; progress and diagnostics on stderr
 
-      --no-refresh
-          Show the local record without checking the provider
+      --label <LABEL>
+          The job with this label (given by `video generate --label`), instead of JOB_ID
 
       --config <PATH>
           Config file (overrides IRIS_CONFIG and the platform default)
+
+      --no-refresh
+          Show the local record without checking the provider
 
   -q, --quiet
           Suppress progress lines on stderr
@@ -680,6 +684,7 @@ Options:
 Examples:
   iris jobs status job_01jbz9k3m4n5p6q7r8s9t0v1w2
   iris jobs status job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-refresh --json
+  iris jobs status --label paper-boat-1 --json
 ```
 
 ## iris jobs wait
@@ -702,32 +707,35 @@ recorded error, such as 1 for a remote failure, a blocked video, or an expired j
 unknown whether the provider accepted it. Other errors keep their own codes (e.g. 1 download_failed,
 2 output_exists, 3 missing_credentials).
 
-Usage: iris jobs wait [OPTIONS] <JOB_ID>
+Usage: iris jobs wait [OPTIONS] [JOB_ID]
 
 Arguments:
-  <JOB_ID>
+  [JOB_ID]
           Job id
 
 Options:
       --json
           Machine mode: exactly one JSON document on stdout; progress and diagnostics on stderr
 
-      --timeout <DURATION>
-          Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it;
-          default: IRIS_WAIT_TIMEOUT, config video.wait_timeout, or 10m
+      --label <LABEL>
+          The job with this label (given by `video generate --label`), instead of JOB_ID
 
       --config <PATH>
           Config file (overrides IRIS_CONFIG and the platform default)
+
+      --timeout <DURATION>
+          Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it;
+          default: IRIS_WAIT_TIMEOUT, config video.wait_timeout, or 10m
 
       --poll-interval <DURATION>
           Time between status checks (at least 2s); default: IRIS_POLL_INTERVAL, config
           video.poll_interval, or 10s
 
-      --no-download
-          Only wait; do not download the outputs
-
   -q, --quiet
           Suppress progress lines on stderr
+
+      --no-download
+          Only wait; do not download the outputs
 
   -v, --verbose...
           More diagnostics on stderr (repeatable); never prints prompts, keys, or signed URLs
@@ -754,6 +762,7 @@ Examples:
   iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2
   iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2 --timeout 30m -d videos/ --json
   iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download
+  iris jobs wait --label paper-boat-1 --timeout 90s --json
 ```
 
 ## iris jobs download
@@ -775,15 +784,18 @@ failed for a transient reason; a check that fails for any other reason exits wit
 error, such as 1 (remote_job_failed, content_blocked, artifact_expired) or 5 (submission_uncertain).
 Other errors keep their own codes (e.g. 1 download_failed, 2 output_exists, 130 interrupted).
 
-Usage: iris jobs download [OPTIONS] <JOB_ID>
+Usage: iris jobs download [OPTIONS] [JOB_ID]
 
 Arguments:
-  <JOB_ID>
+  [JOB_ID]
           Job id
 
 Options:
       --json
           Machine mode: exactly one JSON document on stdout; progress and diagnostics on stderr
+
+      --label <LABEL>
+          The job with this label (given by `video generate --label`), instead of JOB_ID
 
       --config <PATH>
           Config file (overrides IRIS_CONFIG and the platform default)
@@ -815,6 +827,7 @@ Output:
 Examples:
   iris jobs download job_01jbz9k3m4n5p6q7r8s9t0v1w2
   iris jobs download job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json
+  iris jobs download --label paper-boat-1
 ```
 
 ## iris jobs delete
@@ -832,11 +845,14 @@ Arguments:
           Job ids to delete
 
 Options:
-      --all
-          Delete every local job record
-
       --json
           Machine mode: exactly one JSON document on stdout; progress and diagnostics on stderr
+
+      --label <LABEL>
+          Delete the job with this label (given by `video generate --label`), instead of JOB_ID
+
+      --all
+          Delete every local job record
 
       --config <PATH>
           Config file (overrides IRIS_CONFIG and the platform default)
@@ -859,6 +875,7 @@ Options:
 
 Examples:
   iris jobs delete job_01jbz9k3m4n5p6q7r8s9t0v1w2
+  iris jobs delete --label paper-boat-1
   iris jobs delete --all
   iris jobs delete --all --force --json
 ```

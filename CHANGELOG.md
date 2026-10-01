@@ -8,6 +8,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- **Jobs commands take a label.** `iris jobs status`, `jobs wait`, `jobs download`, and
+  `jobs delete` find a job by the label that `video generate --label` gave it, with `--label`
+  instead of the job ID. A script or agent that chose the label can follow its job without keeping
+  the ID. A label that no record has is `job_not_found`, with the label in `details.label`. See
+  [Label a job](https://github.com/doodla/iris/blob/main/docs/guides/videos.md#label-a-job).
 - **Linux arm64 releases.** Each release includes `aarch64-unknown-linux-musl`, a static binary
   for arm64 Linux, such as ARM servers and the Linux containers that Docker runs on Apple silicon,
   and the installer installs it there. See

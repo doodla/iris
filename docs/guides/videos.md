@@ -188,14 +188,22 @@ The hint says what to do next, which depends on the job's status:
 | `failed` or `expired` | To try again, delete its record first, or use another label. The new submission is billed. |
 | `submission_unknown` | The provider might have accepted and billed it. Check your usage in the provider's console before you submit again. |
 
-To find a labeled job, run `iris jobs list --label LABEL`.
+To follow a labeled job, you can name it by its label instead of its ID. `iris jobs status`,
+`iris jobs wait`, `iris jobs download`, and `iris jobs delete` take `--label`:
+
+```sh
+iris jobs wait --label paper-boat-1
+```
+
+To list it, run `iris jobs list --label LABEL`.
 
 ## Recover a job after a crash
 
 If the process that submitted a job was killed, it might not have printed the job ID.
 
-- **If you used a label**, run the same command again. It fails with `label_in_use` and names the
-  job. You can also run `iris jobs list --label LABEL`.
+- **If you used a label**, follow the job by its label, for example with
+  `iris jobs wait --label LABEL`. Running the same command again also finds it: it fails with
+  `label_in_use` and names the job.
 - **If you didn't use a label**, list the jobs that are still being submitted:
 
   ```sh

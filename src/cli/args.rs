@@ -583,10 +583,11 @@ pub enum JobsCommand {
                       submission_unknown, running, succeeded, failed, expired), not on the exit code. A status \
                       check that fails is a status_refresh_failed warning, and the last known status is shown. \
                       The command fails only when it cannot show the job, with that error's code (e.g. 2 \
-                      job_not_found for an unknown id, 1 state_invalid for an unreadable record, 130 when \
-                      interrupted).",
+                      job_not_found for an unknown id or label, 1 state_invalid for an unreadable record, 130 \
+                      when interrupted).",
         after_help = "Examples:\n  iris jobs status job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs status \
-                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-refresh --json"
+                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-refresh --json\n  iris jobs status --label \
+                      paper-boat-1 --json"
     )]
     Status(JobsStatusArgs),
     /// Wait for a job to finish, then download its outputs
@@ -607,7 +608,8 @@ pub enum JobsCommand {
         ),
         after_help = "Examples:\n  iris jobs wait job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs wait \
                       job_01jbz9k3m4n5p6q7r8s9t0v1w2 --timeout 30m -d videos/ --json\n  iris jobs wait \
-                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download",
+                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 --no-download\n  iris jobs wait --label paper-boat-1 \
+                      --timeout 90s --json",
         mut_arg("output", |arg| arg.help(JOB_OUTPUT_HELP)),
         mut_arg("out_dir", |arg| arg.help(JOB_OUT_DIR_HELP))
     )]
@@ -629,7 +631,8 @@ pub enum JobsCommand {
              130 interrupted)."
         ),
         after_help = "Examples:\n  iris jobs download job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs download \
-                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json",
+                      job_01jbz9k3m4n5p6q7r8s9t0v1w2 -o clip.mp4 --json\n  iris jobs download --label \
+                      paper-boat-1",
         mut_arg("output", |arg| arg.help(JOB_OUTPUT_HELP)),
         mut_arg("out_dir", |arg| arg.help(JOB_OUT_DIR_HELP))
     )]
@@ -641,8 +644,8 @@ pub enum JobsCommand {
                       submitting or running, and succeeded jobs whose outputs were not downloaded while the \
                       provider still keeps them, are refused (they would become unrecoverable). With --all \
                       --force, unreadable job record files are deleted too.",
-        after_help = "Examples:\n  iris jobs delete job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs delete --all\n  \
-                      iris jobs delete --all --force --json"
+        after_help = "Examples:\n  iris jobs delete job_01jbz9k3m4n5p6q7r8s9t0v1w2\n  iris jobs delete --label \
+                      paper-boat-1\n  iris jobs delete --all\n  iris jobs delete --all --force --json"
     )]
     Delete(JobsDeleteArgs),
 }
@@ -666,8 +669,11 @@ pub struct JobsListArgs {
 #[derive(Debug, Args)]
 pub struct JobsStatusArgs {
     /// Job id (job_ followed by 26 lowercase letters or digits)
-    #[arg(value_name = "JOB_ID")]
-    pub job_id: String,
+    #[arg(value_name = "JOB_ID", required_unless_present = "label")]
+    pub job_id: Option<String>,
+    /// The job with this label (given by `video generate --label`), instead of JOB_ID
+    #[arg(long, value_name = "LABEL", conflicts_with = "job_id")]
+    pub label: Option<String>,
     /// Show the local record without checking the provider
     #[arg(long)]
     pub no_refresh: bool,
@@ -676,8 +682,11 @@ pub struct JobsStatusArgs {
 #[derive(Debug, Args)]
 pub struct JobsWaitArgs {
     /// Job id
-    #[arg(value_name = "JOB_ID")]
-    pub job_id: String,
+    #[arg(value_name = "JOB_ID", required_unless_present = "label")]
+    pub job_id: Option<String>,
+    /// The job with this label (given by `video generate --label`), instead of JOB_ID
+    #[arg(long, value_name = "LABEL", conflicts_with = "job_id")]
+    pub label: Option<String>,
     /// Caller wait limit (e.g. 90s, 10m, 1h, or seconds); the job continues remotely after it;
     /// default: IRIS_WAIT_TIMEOUT, config video.wait_timeout, or 10m
     #[arg(long, value_name = "DURATION")]
@@ -696,8 +705,11 @@ pub struct JobsWaitArgs {
 #[derive(Debug, Args)]
 pub struct JobsDownloadArgs {
     /// Job id
-    #[arg(value_name = "JOB_ID")]
-    pub job_id: String,
+    #[arg(value_name = "JOB_ID", required_unless_present = "label")]
+    pub job_id: Option<String>,
+    /// The job with this label (given by `video generate --label`), instead of JOB_ID
+    #[arg(long, value_name = "LABEL", conflicts_with = "job_id")]
+    pub label: Option<String>,
     #[command(flatten)]
     pub output: OutputArgs,
 }
@@ -705,8 +717,11 @@ pub struct JobsDownloadArgs {
 #[derive(Debug, Args)]
 pub struct JobsDeleteArgs {
     /// Job ids to delete
-    #[arg(value_name = "JOB_ID", required_unless_present = "all", conflicts_with = "all")]
+    #[arg(value_name = "JOB_ID", required_unless_present_any = ["all", "label"], conflicts_with_all = ["all", "label"])]
     pub job_ids: Vec<String>,
+    /// Delete the job with this label (given by `video generate --label`), instead of JOB_ID
+    #[arg(long, value_name = "LABEL", conflicts_with = "all")]
+    pub label: Option<String>,
     /// Delete every local job record
     #[arg(long)]
     pub all: bool,

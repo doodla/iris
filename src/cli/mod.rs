@@ -21,7 +21,7 @@ use clap::{CommandFactory, Parser};
 
 use crate::app::doctor::{self, DoctorArgs, DoctorTarget};
 use crate::app::image::ImageArgs;
-use crate::app::jobs::{ListFilter, Target, WaitArgs};
+use crate::app::jobs::{JobRef, ListFilter, Target, WaitArgs};
 use crate::app::video::VideoArgs;
 use crate::app::{self, AppContext, Deps, GenerationArgs, GenerationOutcome, Progress, info};
 use crate::catalog::{OptionSource, RawOption};
@@ -155,10 +155,10 @@ enum Request {
     Image(Operation, ImageArgs),
     Video(VideoArgs),
     JobsList(ListFilter),
-    JobsStatus { job_id: String, refresh: bool },
-    JobsWait { job_id: String, args: WaitArgs },
-    JobsDownload { job_id: String, target: Target },
-    JobsDelete { job_ids: Vec<String>, all: bool, force: bool },
+    JobsStatus { job: JobRef, refresh: bool },
+    JobsWait { job: JobRef, args: WaitArgs },
+    JobsDownload { job: JobRef, target: Target },
+    JobsDelete { job_ids: Vec<String>, label: Option<JobLabel>, all: bool, force: bool },
     ModelsList { provider: Option<ProviderId>, operation: Option<Operation> },
     ModelsShow { model: String, check_access: bool },
     ProvidersList,
@@ -254,16 +254,22 @@ async fn execute(
             GenerationOutcome::Planned(p) => ResultPayload::Plan(p),
         },
         Request::JobsList(filter) => ResultPayload::JobList(app::jobs::list(&ctx, &filter, warnings)?),
-        Request::JobsStatus { job_id, refresh } => {
+        Request::JobsStatus { job, refresh } => {
+            let job_id = app::jobs::job_id(&ctx, &job, warnings)?;
             ResultPayload::Job(app::jobs::status(&ctx, &job_id, refresh, warnings).await?)
         }
-        Request::JobsWait { job_id, args } => {
+        Request::JobsWait { job, args } => {
+            let job_id = app::jobs::job_id(&ctx, &job, warnings)?;
             ResultPayload::Job(app::jobs::wait(&ctx, &job_id, &args, warnings).await?)
         }
-        Request::JobsDownload { job_id, target } => {
+        Request::JobsDownload { job, target } => {
+            let job_id = app::jobs::job_id(&ctx, &job, warnings)?;
             ResultPayload::Job(app::jobs::download(&ctx, &job_id, &target, warnings).await?)
         }
-        Request::JobsDelete { job_ids, all, force } => {
+        Request::JobsDelete { mut job_ids, label, all, force } => {
+            if let Some(label) = label {
+                job_ids.push(app::jobs::job_id(&ctx, &JobRef::Label(label), warnings)?);
+            }
             ResultPayload::JobDelete(app::jobs::delete(&ctx, &job_ids, all, force, warnings)?)
         }
         Request::ModelsShow { model, check_access: true } => {
@@ -334,14 +340,14 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
             limit: a.limit,
         }),
         Command::Jobs(JobsCommand::Status(a)) => {
-            Request::JobsStatus { job_id: a.job_id, refresh: !a.no_refresh }
+            Request::JobsStatus { job: job_ref(a.job_id, a.label)?, refresh: !a.no_refresh }
         }
         Command::Jobs(JobsCommand::Wait(a)) => {
             o.wait_timeout = duration_flag("--timeout", a.timeout.as_deref())?;
             o.poll_interval = duration_flag("--poll-interval", a.poll_interval.as_deref())?;
             o.out_dir = a.output.out_dir;
             Request::JobsWait {
-                job_id: a.job_id,
+                job: job_ref(a.job_id, a.label)?,
                 args: WaitArgs {
                     download: !a.no_download,
                     target: Target {
@@ -354,16 +360,19 @@ fn build_request(command: Command, io: &mut Io) -> Result<(Request, Overrides), 
         Command::Jobs(JobsCommand::Download(a)) => {
             o.out_dir = a.output.out_dir;
             Request::JobsDownload {
-                job_id: a.job_id,
+                job: job_ref(a.job_id, a.label)?,
                 target: Target {
                     output: a.output.output.map(|p| output_path(&io.env, p)).transpose()?,
                     overwrite: a.output.overwrite,
                 },
             }
         }
-        Command::Jobs(JobsCommand::Delete(a)) => {
-            Request::JobsDelete { job_ids: a.job_ids, all: a.all, force: a.force }
-        }
+        Command::Jobs(JobsCommand::Delete(a)) => Request::JobsDelete {
+            job_ids: a.job_ids,
+            label: a.label.as_deref().map(|l| JobLabel::parse(l, "--label")).transpose()?,
+            all: a.all,
+            force: a.force,
+        },
         Command::Models(ModelsCommand::List(a)) => Request::ModelsList {
             provider: a.provider.as_deref().map(parse_provider).transpose()?,
             operation: a.operation.as_deref().map(parse_operation).transpose()?,
@@ -431,6 +440,15 @@ fn absolute(env: &EnvSnapshot, flag: &str, path: PathBuf) -> Result<PathBuf, Iri
     let path = config::expand_tilde(&path, env.home())
         .map_err(|m| IrisError::invalid(format!("{flag}: {m}")).with_detail("flag", flag))?;
     if path.is_absolute() { Ok(path) } else { Ok(env.cwd()?.join(path)) }
+}
+
+/// The job a `jobs` command names: JOB_ID or `--label` (clap requires exactly one).
+fn job_ref(job_id: Option<String>, label: Option<String>) -> Result<JobRef, IrisError> {
+    match (job_id, label) {
+        (_, Some(label)) => JobLabel::parse(&label, "--label").map(JobRef::Label),
+        (Some(id), None) => Ok(JobRef::Id(id)),
+        (None, None) => Err(IrisError::usage("give a JOB_ID or --label")),
+    }
 }
 
 /// An `-o/--output` path, resolved like [`absolute`] except `-` itself, which is
