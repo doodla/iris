@@ -62,7 +62,7 @@ jobs:
       # the notes as an artifact, so it publishes exactly the text checked
       # here and runs no extra tool while it holds `contents: write`.
       # docs/contributing/releasing.md gives this version for local previews.
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: taiki-e/install-action@4cef1412cce204788f482e778a0b9187f9626a29 # v2.87.21
         with:
           tool: parse-changelog@0.6.17
           # Fail if the manifest lacks this version, rather than fall back to
