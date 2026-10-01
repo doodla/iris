@@ -241,6 +241,28 @@ impl JobStore {
         Ok(())
     }
 
+    /// The id of the job whose record has the label `label` (there is at most one:
+    /// see [`JobStore::create`]). `job_not_found` when no record has it;
+    /// `state_invalid` when none of the readable records has it but some records
+    /// cannot be read, since one of them could (the error names them).
+    pub fn find_label(&self, label: &str) -> Result<JobId, IrisError> {
+        let listing = self.list()?;
+        if let Some(record) = listing.records.iter().find(|r| r.label() == Some(label)) {
+            return Ok(record.job_id().clone());
+        }
+        if !listing.skipped.is_empty() {
+            return Err(label_unfindable(label, &listing.skipped, &self.dir));
+        }
+        Err(IrisError::new(
+            ErrorCode::JobNotFound,
+            format!("no local job record has the label '{label}' in {}", self.dir.display()),
+        )
+        .with_detail("label", label)
+        .with_hint(
+            "run `iris jobs list` to see local jobs and their labels (records live in the state directory)",
+        ))
+    }
+
     /// Read one record (without locking). A `submitting` record past the stale
     /// threshold is returned as `submission_unknown` (not persisted here).
     ///
@@ -647,6 +669,28 @@ fn label_unverifiable(label: &str, skipped: &[PathBuf], dir: &Path) -> IrisError
         "inspect them with `iris jobs list`, which reports each as job_record_unreadable; after checking them, \
          remove them with `iris jobs delete <JOB_ID> --force` (or `iris jobs delete --all --force`), or submit \
          without --label",
+    )
+    .with_detail("label", label)
+    .with_detail("unreadable", paths)
+}
+
+/// `state_invalid`: no readable record has the label `label`, but the records at
+/// `skipped` in `dir` cannot be read, and one of them could have it.
+fn label_unfindable(label: &str, skipped: &[PathBuf], dir: &Path) -> IrisError {
+    let paths: Vec<String> = skipped.iter().map(|p| p.display().to_string()).collect();
+    IrisError::new(
+        ErrorCode::StateInvalid,
+        format!(
+            "cannot find the job with the label '{label}': no readable job record has it, and {} job record(s) \
+             in {} cannot be read",
+            paths.len(),
+            dir.display()
+        ),
+    )
+    .with_retryable(Some(false))
+    .with_hint(
+        "inspect them with `iris jobs list`, which reports each as job_record_unreadable; after checking them, \
+         remove them with `iris jobs delete <JOB_ID> --force`, or name the job by its id",
     )
     .with_detail("label", label)
     .with_detail("unreadable", paths)

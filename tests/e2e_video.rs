@@ -1308,6 +1308,35 @@ fn a_label_finds_the_job_and_refuses_to_submit_it_twice() {
 /// the label, so a labeled submission is refused while one exists (`state_invalid`,
 /// exit 1, naming the file), a dry run too, with nothing sent; a submission without a
 /// label is not affected.
+/// `jobs status`, `jobs wait`, `jobs download`, and `jobs delete` find a job by the
+/// label it was submitted with, instead of its id. A label that no record has is
+/// `job_not_found`, naming the label.
+#[test]
+fn jobs_commands_find_a_job_by_its_label() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    let id = submit_detached(&sb, &veo, &["--label", "boat-1"]);
+    let jobs = |args: &[&str]| sb.iris().gemini(&veo.api).arg("jobs").args(args).arg("--json").run();
+
+    let v = jobs(&["status", "--label", "boat-1", "--no-refresh"]).ok();
+    assert_eq!(job_of(&v)["job_id"], id.as_str());
+    veo.succeed();
+    let v = jobs(&["wait", "--label", "boat-1"]).ok();
+    assert_eq!(job_of(&v)["job_id"], id.as_str());
+    assert_video(&job_of(&v)["artifacts"][0], &sb.path(&format!("{id}.mp4")));
+    let v = jobs(&["download", "--label", "boat-1"]).ok();
+    assert!(warning_codes(&v).contains(&"already_downloaded".to_string()), "{v}");
+    let v = jobs(&["delete", "--label", "boat-1"]).ok();
+    assert_eq!(v["result"]["deleted"], json!([id]), "{v}");
+
+    let v = jobs(&["status", "--label", "boat-1"]).err(2, "job_not_found");
+    assert_eq!((&v["error"]["details"]["label"], &v["error"]["job_id"]), (&json!("boat-1"), &Value::Null));
+    jobs(&["status", &id, "--label", "boat-1"]).err(2, "usage_error");
+    jobs(&["wait"]).err(2, "usage_error");
+    assert_eq!(veo.submits(), 1);
+    veo.assert_no_credential_leaks();
+}
+
 #[test]
 fn a_labeled_submission_waits_for_every_record_to_be_readable() {
     let sb = Sandbox::new();

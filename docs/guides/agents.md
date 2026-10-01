@@ -71,9 +71,10 @@ use this flow:
 1. Submit the job with `--detach` and a label that names the intended video. If the same command
    runs again, for example after a crash, it fails with `label_in_use` and names the existing job,
    instead of paying for a second one.
-2. Wait for the job with `iris jobs wait --timeout`. The command exits with 4 while the job is still
-   running, and with 0 once the video is saved. You can also poll `iris jobs status`, which exits
-   with 0 and reports the job's state in `result.job.status`.
+2. Wait for the job with `iris jobs wait --label LABEL --timeout`. With `--label`, the command finds
+   the job by its label, so you don't need its ID. It exits with 4 while the job is still running,
+   and with 0 once the video is saved. You can also poll `iris jobs status --label LABEL`, which
+   exits with 0 and reports the job's state in `result.job.status`.
 3. Save the video. `iris jobs wait` downloads it, unless you pass `--no-download`. To download it
    again later, run `iris jobs download`, which never generates it again.
 
@@ -93,10 +94,9 @@ if [ "$status" -ne 0 ] && [ "$(printf '%s' "$out" | jq -r '.error.code')" != lab
   printf '%s\n' "$out" >&2
   exit "$status"
 fi
-job_id=$(printf '%s' "$out" | jq -r '.result.job.job_id // .error.job_id')
 
 while :; do
-  iris --json jobs wait "$job_id" --timeout 10m > wait.json
+  iris --json jobs wait --label "$label" --timeout 10m > wait.json
   status=$?
   [ "$status" -eq 4 ] || break
 done

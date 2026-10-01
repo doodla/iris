@@ -105,7 +105,7 @@ Some fields have specific rules:
 | `config_invalid` | config | 2 | false | The config file or an environment variable is invalid. |
 | `output_exists` | conflict | 2 | false | A file already exists where Iris would save an output. |
 | `label_in_use` | conflict | 2 | false | Another job record has the label. |
-| `job_not_found` | not_found | 2 | false | No job record in the state directory has the ID. |
+| `job_not_found` | not_found | 2 | false | No job record in the state directory has the ID, or the label in `details.label`. |
 | `missing_credentials` | auth | 3 | false | The provider's API key isn't set. |
 | `authentication_failed` | auth | 3 | false | The provider rejected the API key. |
 | `permission_denied` | access | 3 | false | The key's account can't use the model or the resource. |
@@ -248,8 +248,9 @@ writes no job record, in a dry run too. `job_id`, `job_status`, `provider`, and
 `remote_operation_id` describe that job, and `details` holds its `label`, `model`, and `created_at`.
 The hint depends on the job's status. See [Label a job](../guides/videos.md#label-a-job).
 
-While a job record can't be read, a labeled submission fails with `state_invalid` instead:
-`details.unreadable` lists the records and `details.label` the label.
+While a job record can't be read, a labeled submission fails with `state_invalid` instead, and so
+does a `jobs` command whose `--label` no readable record has: `details.unreadable` lists the records
+and `details.label` the label.
 
 ### `missing_credentials`
 

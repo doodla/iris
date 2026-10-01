@@ -910,6 +910,35 @@ fn deleting_the_record_frees_its_label() {
     store.create(&JobRecord::new(labeled("paper-boat-1"), now()).unwrap()).unwrap();
 }
 
+/// `find_label` names the job with a label, whatever its status: `job_not_found`
+/// (naming the label) when no record has it, and `state_invalid` (naming the files)
+/// when no readable record has it but some record cannot be read.
+#[test]
+fn a_label_finds_its_job_or_says_why_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = JobStore::new(dir.path());
+    let failed = labeled_in("boat-failed", JobStatus::Failed);
+    let running = labeled_in("boat-running", JobStatus::Running);
+    store.create(&failed).unwrap();
+    store.create(&running).unwrap();
+    store.create(&JobRecord::new(new_job(), now()).unwrap()).unwrap();
+    assert_eq!(&store.find_label("boat-failed").unwrap(), failed.job_id());
+    assert_eq!(&store.find_label("boat-running").unwrap(), running.job_id());
+
+    let e = store.find_label("boat-other").unwrap_err();
+    assert_eq!(e.code, ErrorCode::JobNotFound);
+    assert_eq!((e.job_id.as_deref(), &e.details["label"]), (None, &serde_json::json!("boat-other")));
+    assert!(e.hint.as_deref().unwrap().contains("`iris jobs list`"), "{e:?}");
+
+    let corrupt = store.dir().join(format!("{}.json", JobId::generate()));
+    fs::write(&corrupt, b"{ not json").unwrap();
+    let e = store.find_label("boat-other").unwrap_err();
+    assert_eq!((e.code, e.retryable), (ErrorCode::StateInvalid, Some(false)));
+    assert_eq!(e.details["unreadable"], serde_json::json!([corrupt.display().to_string()]));
+    // A readable record with the label is still found.
+    assert_eq!(&store.find_label("boat-failed").unwrap(), failed.job_id());
+}
+
 /// The label is stored in the record and shown in its view; a record without one
 /// (written by an older Iris, with no `label` field at all) reads as `null`, keeps
 /// no label after a locked rewrite, and never matches a label.
