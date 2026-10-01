@@ -445,6 +445,7 @@ fn accepted_but_unrecorded(
     .with_job(id.to_string(), None)
     .with_remote_operation(remote_id)
     .with_detail("provider_accepted", true)
+    .with_detail("charge_possible", true)
     .with_detail("record_error", record_error(cause))
     .with_hint(
         "the job continues remotely and is billed by the provider, but Iris cannot wait for or download it \

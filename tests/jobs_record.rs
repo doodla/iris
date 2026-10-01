@@ -221,6 +221,7 @@ fn stale_submitting_becomes_submission_unknown_after_timeout_plus_grace() {
     let err = rec.error().unwrap();
     assert_eq!(err.code, ErrorCode::SubmissionUncertain);
     assert!(err.hint.as_deref().unwrap().contains("before resubmitting"));
+    assert_eq!(err.details.as_ref().unwrap()["charge_possible"], true);
     assert_eq!(rec.updated_at(), ts(121));
     // Terminal from the moment it became stale; stable across repeated reports.
     assert_eq!(rec.completed_at(), Some(ts(120)));
@@ -679,6 +680,22 @@ fn a_record_without_a_model_source_reads_it_as_null() {
     assert_eq!(back.model_source(), None);
     assert_eq!(back.to_view().model_source, None);
     assert_eq!(serde_json::to_value(&back).unwrap()["model_source"], Value::Null);
+}
+
+/// Every `submission_uncertain` says that the request may have been billed. A
+/// record from an earlier version whose stale-submission error lacks
+/// `charge_possible` shows it anyway; the record keeps what was written.
+#[test]
+fn an_uncertain_submission_always_shows_charge_possible() {
+    let mut rec = JobRecord::new(new_job(), ts(0)).unwrap();
+    assert!(rec.resolve_stale_submitting(ts(10_000), Duration::from_secs(60)));
+    let mut value = serde_json::to_value(&rec).unwrap();
+    value["error"]["details"] = Value::Null;
+    let back: JobRecord = serde_json::from_value(value.clone()).unwrap();
+    let shown = back.to_view().error.unwrap();
+    assert_eq!(shown.code, ErrorCode::SubmissionUncertain);
+    assert_eq!(shown.details.unwrap()["charge_possible"], true);
+    assert_eq!(serde_json::to_value(&back).unwrap()["error"], value["error"]);
 }
 
 #[test]
