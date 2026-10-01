@@ -195,6 +195,8 @@ async fn wait_timeout_leaves_the_job_running_and_resumable() {
     assert_eq!(e.code, ErrorCode::WaitTimeout);
     assert_eq!(e.exit_code(), 4);
     assert_eq!(e.job_status, Some(JobStatus::Running));
+    // Running `video generate` again would submit and bill another job.
+    assert_eq!(e.retryable, Some(false));
     let id = e.job_id.clone().unwrap();
     assert!(e.hint.as_deref().unwrap().contains(&format!("iris jobs wait {id}")));
     assert_eq!(store(&f.sandbox).load(&JobId::parse(&id).unwrap()).unwrap().status(), JobStatus::Running);
@@ -287,13 +289,15 @@ async fn failed_downloads_keep_the_job_succeeded_and_a_later_download_needs_no_r
     let mut w = Vec::new();
     let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::DownloadFailed);
-    assert_eq!(e.retryable, Some(true));
+    // Running `video generate` again would submit a second job; `jobs download`
+    // (named by the hint) is the command that may succeed when run again.
+    assert_eq!(e.retryable, Some(false));
     assert_eq!(e.job_status, Some(JobStatus::Succeeded));
     let id = e.job_id.clone().unwrap();
     let rec = store(&f.sandbox).load(&JobId::parse(&id).unwrap()).unwrap();
     assert_eq!(rec.status(), JobStatus::Succeeded);
     assert_eq!(rec.outputs()[0].download_state, DownloadState::Failed);
-    assert!(rec.outputs()[0].last_error.is_some());
+    assert_eq!(rec.outputs()[0].last_error.as_ref().unwrap().retryable, Some(true));
     assert!(files_in(&f.sandbox.work()).is_empty(), "no partial file: {:?}", files_in(&f.sandbox.work()));
 
     // The host recovers; `jobs download` fetches without resubmitting.
@@ -428,8 +432,8 @@ async fn outputs_are_artifact_expired_only_on_410_or_after_the_retention_period(
     assert_eq!(rec.status(), JobStatus::Succeeded);
     assert_eq!(rec.outputs()[0].download_state, DownloadState::Expired);
 
-    // A 403 inside the retention period is a retryable download failure; the
-    // output stays re-downloadable and a later download works.
+    // A 403 inside the retention period is a retryable download failure (for
+    // `jobs download`); the output stays re-downloadable and a later download works.
     let f = Fixture::new().await;
     Mock::given(method("GET"))
         .and(path(FILE_PATH))
@@ -443,13 +447,14 @@ async fn outputs_are_artifact_expired_only_on_410_or_after_the_retention_period(
     let ctx = f.ctx();
     let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::DownloadFailed);
-    assert_eq!(e.retryable, Some(true));
+    assert_eq!(e.retryable, Some(false), "running `video generate` again would submit a second job");
     assert_eq!(e.provider_status, Some(403));
     assert_eq!(e.job_status, Some(JobStatus::Succeeded));
     let id = e.job_id.clone().unwrap();
     assert!(e.hint.as_deref().unwrap().contains(&format!("iris jobs download {id}")), "{e:?}");
     let rec = store(&f.sandbox).load(&JobId::parse(&id).unwrap()).unwrap();
     assert_eq!(rec.outputs()[0].download_state, DownloadState::Failed);
+    assert_eq!(rec.outputs()[0].last_error.as_ref().unwrap().retryable, Some(true));
     let res = jobs::status(&ctx, &id, true, &mut w).await.unwrap();
     assert_eq!(res.next_steps, vec![format!("iris jobs download {id}")]);
     let res = jobs::download(&ctx, &id, &Target::default(), &mut w).await.unwrap();
@@ -501,8 +506,11 @@ async fn outputs_are_artifact_expired_only_on_410_or_after_the_retention_period(
     gemini.videos().push_poll(Ok(remote_success(&f.uri())));
     let ctx = context(f.settings(), vec![gemini]);
     let e = video::run(&ctx, vargs("x"), &mut w).await.unwrap_err();
-    assert_eq!((e.code, e.retryable), (ErrorCode::DownloadFailed, Some(true)));
+    assert_eq!(e.code, ErrorCode::DownloadFailed);
     assert!(e.hint.as_deref().unwrap().contains("documents no retention period"), "{e:?}");
+    let rec = store(&f.sandbox).load(&JobId::parse(e.job_id.as_deref().unwrap()).unwrap()).unwrap();
+    assert_eq!(rec.outputs()[0].download_state, DownloadState::Failed);
+    assert_eq!(rec.outputs()[0].last_error.as_ref().unwrap().retryable, Some(true));
 
     // ... and if the host still serves the file, it is saved.
     let f = Fixture::new().await;
@@ -638,6 +646,10 @@ async fn ctrl_c_while_waiting_leaves_the_job_running() {
     assert_eq!(e.code, ErrorCode::Interrupted);
     assert_eq!(e.job_status, Some(JobStatus::Running));
     assert!(e.hint.as_deref().unwrap().contains("iris jobs wait"));
+    // As for an interrupt while the submission is in flight: the job exists and
+    // may be billed, and running the command again would submit another one.
+    assert_eq!(e.retryable, Some(false));
+    assert_eq!(e.details.get("charge_possible"), Some(&serde_json::json!(true)));
     let id = JobId::parse(e.job_id.as_deref().unwrap()).unwrap();
     assert_eq!(store(&f.sandbox).load(&id).unwrap().status(), JobStatus::Running);
 }

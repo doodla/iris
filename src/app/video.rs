@@ -15,7 +15,8 @@
 //! the command returns after submission; otherwise it waits and downloads like
 //! `jobs wait`, except that a file which appeared at the target since the
 //! preflight never blocks saving the paid output (`<stem>.<n>.<ext>`,
-//! `output_renamed`).
+//! `output_renamed`), and that no error is retryable (an interrupt is reported
+//! as during the submission), for the same reason.
 //!
 //! Once the provider has been contacted, no outcome is reported with exit 2
 //! ("nothing was sent"), and failing to update the local record never hides
@@ -334,7 +335,7 @@ async fn generate(
             };
             match wait_parsed(ctx, &job_id, &wait, SaveMode::Generated, warnings).await {
                 Ok(result) => Ok(GenerationOutcome::Completed(result)),
-                Err(e) => Err(after_acceptance(ctx, e, &record)),
+                Err(e) => Err(not_retryable_as_is(after_acceptance(ctx, e, &record))),
             }
         }
         Err(e) if is_uncertain(&e) => {
@@ -483,6 +484,21 @@ fn after_acceptance(ctx: &AppContext, e: IrisError, record: &JobRecord) -> IrisE
         return recode(e, ErrorCode::ProviderError, |m| format!("could not check job {id}: {m}"), resume);
     }
     if e.hint.is_none() { e.with_hint(resume) } else { e }
+}
+
+/// An error after the provider accepted the job, as `video generate` reports it.
+/// Running the command again would submit and bill another job, so the error is
+/// never retryable as is, whatever `jobs wait` or `jobs download` would say about
+/// it: the hint names the `iris jobs` command that continues a job that is still
+/// running or has succeeded (the error of a job that ended without success is
+/// not retryable anyway). A delay asked for before trying again goes too (the
+/// contract keeps `retry_after_seconds` null on an error that is not
+/// retryable). An interrupt also says that the job may be billed, like one
+/// during the submission.
+fn not_retryable_as_is(mut e: IrisError) -> IrisError {
+    e.retryable = Some(false);
+    e.retry_after = None;
+    if e.code == ErrorCode::Interrupted { e.with_detail("charge_possible", true) } else { e }
 }
 
 /// `e` under another code (with that code's default retryability), keeping its

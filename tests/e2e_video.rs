@@ -968,6 +968,7 @@ fn a_wait_limit_exits_4_and_leaves_the_job_running() {
         .run();
     let v = out.err(4, "wait_timeout");
     assert_eq!(v["error"]["category"], "pending");
+    assert_eq!(v["error"]["retryable"], true, "running `jobs wait` again resumes the wait");
     assert_eq!(v["error"]["job_id"], id.as_str());
     assert_eq!(v["error"]["provider"], "gemini");
     assert_eq!(v["error"]["job_status"], "running");
@@ -1421,6 +1422,41 @@ fn a_failed_download_keeps_the_job_succeeded_and_a_later_download_recovers() {
     assert_eq!(veo.submits(), 1);
     assert_eq!(files_in(&sb.work()), [format!("{id}.mp4")]);
     // The five retried file-host fetches and the recovery carried no credential.
+    veo.assert_no_credential_leaks();
+}
+
+#[test]
+fn a_rate_limited_download_names_the_download_and_video_generate_is_never_retryable_once_submitted() {
+    let sb = Sandbox::new();
+    let veo = VeoMock::start();
+    veo.succeed();
+    // A delay longer than Iris waits on its own ends the download at once.
+    veo.file.set(json_response(429, json!({ "error": "slow down" })).insert_header("retry-after", "3600"));
+
+    let v = sb
+        .iris()
+        .gemini(&veo.api)
+        .args(["video", "generate", PROMPT, "-m", VEO_LITE, "--duration", "4", "--json"])
+        .run()
+        .err(1, "rate_limited");
+    let error = &v["error"];
+    let id = error["job_id"].as_str().unwrap().to_string();
+    assert_eq!(error["job_status"], "succeeded");
+    // Running `video generate` again would submit and bill a second job.
+    assert_eq!(error["retryable"], false);
+    assert_eq!(error["retry_after_seconds"], Value::Null);
+    let hint = error["hint"].as_str().unwrap();
+    assert!(hint.contains("wait 3600s") && hint.contains(&format!("`iris jobs download {id}`")), "{hint}");
+    assert!(!hint.contains("command again"), "{hint}");
+    assert_eq!(veo.submits(), 1);
+
+    // `jobs download` is the command to run again, after the delay.
+    let v = sb.iris().gemini(&veo.api).args(["jobs", "download", &id, "--json"]).run().err(1, "rate_limited");
+    let error = &v["error"];
+    assert_eq!(error["retryable"], true);
+    assert_eq!(error["retry_after_seconds"], 3600);
+    assert!(error["hint"].as_str().unwrap().contains(&format!("`iris jobs download {id}`")), "{error}");
+    assert_eq!(veo.submits(), 1);
     veo.assert_no_credential_leaks();
 }
 

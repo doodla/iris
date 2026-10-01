@@ -25,6 +25,12 @@ All notable changes to this project are documented in this file. The format foll
   default config file and state directory under the current directory, so a video job recorded in
   one directory was missing from another. A command that needs a default path now fails with
   `config_invalid`, as a relative `IRIS_STATE_DIR` already did.
+- **`video generate` no longer calls an error retryable after it submits its job.** It reported a
+  wait limit, an interrupt, or a failed download with `retryable: true`, although running the
+  command again submits and pays for a second video. Every error that it reports after submitting
+  its job now has `retryable: false`, and an interrupt also has `details.charge_possible: true`, as
+  an interrupt during the submission does. The hint of a rate-limited download now names
+  `iris jobs download` instead of telling you to run the command again.
 - **A long output name in a non-Latin script works.** Iris names the temporary file of a save
   after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
   than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
