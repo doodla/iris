@@ -67,7 +67,7 @@ examples on this page are formatted for reading and shortened:
 | `provider_code` | string or null | The provider's own error code, for diagnosis. |
 | `provider_request_id` | string or null | The provider's ID for the request, for its support team. |
 | `job_id`, `job_status`, `remote_operation_id` | string or null | The job that the error concerns, if any. |
-| `details` | object | Fields that depend on the code. See each code below. |
+| `details` | object or null | Fields that depend on the code, or `null` if the error has none. See each code below. |
 
 Some fields have specific rules:
 
