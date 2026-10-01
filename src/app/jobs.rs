@@ -602,9 +602,11 @@ pub(crate) fn with_job_context(e: IrisError, rec: &JobRecord) -> IrisError {
 
 /// When a record that is still `submitting` will be reported as
 /// `submission_unknown` (the stale-`submitting` rule of docs/concepts/video-jobs.md): its creation time
-/// plus the store's paid-submit budget and grace period.
+/// plus the paid-submit budget the rule uses (the larger of the store's and the
+/// one the submitting process recorded) and the grace period.
 pub(crate) fn submission_unknown_at(ctx: &AppContext, rec: &JobRecord) -> Option<Timestamp> {
-    rec.created_at().checked_add(ctx.store.submit_budget().saturating_add(jobs::SUBMIT_GRACE)).ok()
+    let budget = rec.effective_submit_budget(ctx.store.submit_budget());
+    rec.created_at().checked_add(budget.saturating_add(jobs::SUBMIT_GRACE)).ok()
 }
 
 /// "at about <time>" for [`submission_unknown_at`], or "later" if unknown.

@@ -78,6 +78,11 @@ All notable changes to this project are documented in this file. The format foll
   link was in the path of the state or output directory, `doctor` reported the directory as `ok`,
   to be created on first use, although every command that needs it fails. The check is now an
   `error` that names what's in the way.
+- **The time a stuck submission becomes `submission_unknown` is right.** Messages about a job
+  that's still `submitting` say when Iris will report it as `submission_unknown`. They counted
+  only this process's submission budget, but the rule uses the larger of that and the budget that
+  the submitting process recorded, so they named too early a time for a job submitted with longer
+  time limits.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.

@@ -1281,6 +1281,41 @@ async fn an_unknown_submission_without_a_recorded_error_is_reported_as_possibly_
     assert_eq!(e.details["charge_possible"], true);
 }
 
+/// The time Iris names for a record left `submitting` to become
+/// `submission_unknown` is the time the rule applies it: the larger of this
+/// process's submission budget and the one that the submitting process recorded.
+#[tokio::test]
+async fn the_time_a_submission_becomes_unknown_uses_the_recorded_budget() {
+    let f = Fixture::new().await;
+    let mut s = f.settings();
+    s.wait_timeout = Resolved { value: Duration::from_millis(200), source: SettingSource::Flag };
+    let ctx = context(s, vec![f.gemini.clone()]);
+    let mut w = Vec::new();
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    let path = store(&f.sandbox).record_path(&JobId::parse(&id).unwrap());
+    let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    value["status"] = serde_json::json!("submitting");
+    for key in
+        ["remote_operation_id", "provider_request_id", "submitted_at", "completed_at", "last_checked_at"]
+    {
+        value[key] = serde_json::Value::Null;
+    }
+    // The submitting process had a longer budget than this one (about 37 minutes).
+    value["submit_budget_seconds"] = serde_json::json!(7200);
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let created: jiff::Timestamp = value["created_at"].as_str().unwrap().parse().unwrap();
+    let unknown_at = created.checked_add(Duration::from_secs(7200 + 60)).unwrap();
+
+    let wait = WaitArgs { download: true, target: Target::default() };
+    let e = jobs::wait(&ctx, &id, &wait, &mut w).await.unwrap_err();
+    assert_eq!(e.code, ErrorCode::WaitTimeout);
+    assert!(
+        e.message.contains(&format!("becomes submission_unknown at about {unknown_at}")),
+        "{}",
+        e.message
+    );
+}
+
 /// Iris never picks a video model: without `-m` the config file's `video.model` is
 /// used and recorded as `model_source: config`; with neither, `model_required`
 /// comes before any record or request, in a dry run too.
