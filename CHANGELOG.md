@@ -21,6 +21,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A long output name in a non-Latin script works.** Iris names the temporary file of a save
+  after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
+  than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
+  paid image went to the state directory's `unsaved/` folder instead, and a video download failed.
 - **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
   the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
   which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.
