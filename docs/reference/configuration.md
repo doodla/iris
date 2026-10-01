@@ -217,6 +217,11 @@ While the config file is invalid, some commands still work:
 | State directory | `$XDG_STATE_HOME/iris`, or `~/.local/state/iris` | `~/Library/Application Support/iris` |
 | Jobs directory | `STATE_DIR/jobs` | `STATE_DIR/jobs` |
 
+Your home directory, `~`, is `HOME`, or your account's home directory if `HOME` isn't set. Iris uses
+`HOME`, `XDG_CONFIG_HOME`, and `XDG_STATE_HOME` only when they're absolute paths. If `HOME` is a
+relative path, a command that needs a default path fails with `config_invalid`. To fix it, set
+`HOME` to an absolute path, or set `IRIS_CONFIG` and `IRIS_STATE_DIR`.
+
 On macOS, the config file is inside the state directory. Keep this in mind before you delete the
 state directory. See [Uninstall Iris](../guides/install.md#uninstall-iris).
 

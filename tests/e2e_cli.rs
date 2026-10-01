@@ -1583,6 +1583,36 @@ fn veo_duration_is_an_integer_with_listed_values() {
     assert_eq!(sb.record(id)["request"]["duration"], 8, "the default, as an integer");
 }
 
+/// A relative `HOME` would put the default config file and state directory under
+/// the current directory, so a job recorded in one directory would be missing from
+/// the next: a command that needs a default path fails with `config_invalid`
+/// instead, and absolute `IRIS_CONFIG` and `IRIS_STATE_DIR` still work.
+#[test]
+fn a_relative_home_is_not_used_for_default_paths() {
+    let sb = Sandbox::new();
+    let out = sb
+        .iris()
+        .env("HOME", "relative/home")
+        .env_remove("IRIS_STATE_DIR")
+        .args(["config", "path", "--json"])
+        .run();
+    let v = out.err(2, "config_invalid");
+    let message = v["error"]["message"].as_str().unwrap();
+    assert!(message.contains("HOME is 'relative/home', not an absolute path"), "{v}");
+    assert!(!sb.work().join("relative").exists(), "nothing was created under the current directory");
+
+    let config = sb.write("config.toml", "");
+    let v = sb
+        .iris()
+        .env("HOME", "relative/home")
+        .env("IRIS_CONFIG", &config)
+        .args(["config", "path", "--json"])
+        .run()
+        .ok();
+    assert_eq!(v["result"]["config_file"], config.to_str().unwrap(), "{v}");
+    assert_eq!(v["result"]["state_dir"], sb.state().to_str().unwrap(), "{v}");
+}
+
 /// `doctor` applies the rule of the commands that create the state and output
 /// directories: a file or a broken symbolic link in the path is in the way, so the
 /// directory is an error, not one that "will be created on first use".

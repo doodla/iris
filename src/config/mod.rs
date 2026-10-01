@@ -633,8 +633,12 @@ fn layered<T>(
 
 fn default_paths(env: &EnvSnapshot) -> Result<PlatformPaths, IrisError> {
     let home = env.home().ok_or_else(|| {
-        IrisError::new(ErrorCode::ConfigInvalid, "cannot determine the home directory (HOME is not set)")
-            .with_hint("set HOME, or set IRIS_CONFIG and IRIS_STATE_DIR explicitly")
+        let why = match env.var("HOME") {
+            Some(home) => format!("HOME is '{home}', not an absolute path"),
+            None => "HOME is not set".to_string(),
+        };
+        IrisError::new(ErrorCode::ConfigInvalid, format!("cannot determine the home directory ({why})"))
+            .with_hint("set HOME to an absolute path, or set IRIS_CONFIG and IRIS_STATE_DIR explicitly")
     })?;
     Ok(platform_paths(env.platform(), home, env.var("XDG_CONFIG_HOME"), env.var("XDG_STATE_HOME")))
 }
