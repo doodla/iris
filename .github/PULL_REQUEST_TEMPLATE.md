@@ -17,6 +17,7 @@ both) and updated the docs. If not, write "None." -->
 
 <!-- Check what you ran locally. CONTRIBUTING.md has the exact commands. -->
 
+- [ ] `sh scripts/check.sh`, which runs the checks below (name any that it skipped)
 - [ ] `cargo fmt --all --check`
 - [ ] `cargo clippy --all-targets --locked -- -D warnings`
 - [ ] `cargo test --locked`
