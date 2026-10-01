@@ -77,6 +77,11 @@ use this flow:
 3. Save the video. `iris jobs wait` downloads it, unless you pass `--no-download`. To download it
    again later, run `iris jobs download`, which never generates it again.
 
+Many agent tools stop a command that runs longer than a few minutes, and a stopped command might
+print no JSON document. So set `--timeout` below your tool's limit, such as `--timeout 90s` for a
+2-minute limit, and run `iris jobs wait` again while it exits with 4. The job keeps running between
+the waits.
+
 Each step is safe to repeat. The following POSIX shell script implements the flow:
 
 ```sh
