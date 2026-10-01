@@ -23,6 +23,12 @@ set -u
 
 ROOT=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT" || exit 1
+# Every check runs in the checkout the script belongs to; a copy elsewhere
+# would check whatever is around it.
+if ! grep -q '^name = "iris"$' Cargo.toml 2>/dev/null; then
+    echo "check.sh: $ROOT is not an Iris checkout; run the scripts/check.sh of the checkout to check" >&2
+    exit 2
+fi
 
 usage="usage: sh scripts/check.sh [--fix] [--msrv]"
 fix=0
