@@ -735,9 +735,9 @@ reason:
 
 **Decision.**
 
-- Releases ship three archives: `x86_64-unknown-linux-musl`, a static binary, and
-  `x86_64-apple-darwin` and `aarch64-apple-darwin`, each built on a native runner. There's no
-  Linux arm64 or Windows build.
+- Releases ship four archives: `x86_64-unknown-linux-musl` and `aarch64-unknown-linux-musl`, static
+  binaries, and `x86_64-apple-darwin` and `aarch64-apple-darwin`, each built on a native runner.
+  There's no Windows build.
 - CI runs formatting, Clippy with warnings denied, offline tests on Linux and macOS, the
   minimum-Rust-version check, and `cargo deny` for advisories and licenses, with actions pinned to
   commit SHAs. The advisory scan also runs weekly.
@@ -751,8 +751,14 @@ reason:
 **Why.**
 
 - A `-gnu` binary built on a recent runner needs at least that runner's glibc, and fails on older
-  distributions. The musl build is statically linked, and runs on any x86_64 Linux kernel 3.2 or
-  later, whatever the host's C library.
+  distributions. The musl builds are statically linked, and run whatever the host's C library, on
+  Linux kernel 3.2 or later for x86_64, and 4.1 or later for arm64, the minimums in Rust's platform
+  table.
+- Arm64 Linux machines, such as ARM servers and the Linux containers that Docker runs on Apple
+  silicon, can't run the x86_64 build. GitHub's arm64 Linux runners are free for public
+  repositories, so that build is native like the others, and CI's release dry run covers both Linux
+  targets. Ubuntu's `musl-tools` names its compiler `musl-gcc`, which the `cc` crate finds on its
+  own only for x86_64, so the arm64 build names it in `CC_aarch64_unknown_linux_musl`.
 - Rust's platform table gives macOS 10.12 as the minimum for `x86_64-apple-darwin`, and macOS 11.0
   for `aarch64-apple-darwin`. The macOS 13 runner image was retired, so the Intel build uses the
   current Intel runner label.
@@ -774,6 +780,7 @@ reason:
   tool, and publishes exactly the text that was checked.
 
 **Sources.** [Rust platform support](https://doc.rust-lang.org/nightly/rustc/platform-support.html) ·
+[GitHub-hosted runners (arm64 Linux, checked 2026-10-01)](https://docs.github.com/en/actions/reference/runners/github-hosted-runners) ·
 [GitHub-hosted runner images](https://github.com/actions/runner-images) ·
 [macOS 13 runner retirement](https://github.blog/changelog/2025-09-19-github-actions-macos-13-runner-image-is-closing-down/) ·
 [cargo-deny-action](https://github.com/EmbarkStudios/cargo-deny-action) ·
