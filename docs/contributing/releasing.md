@@ -62,7 +62,7 @@ instead. Each is set in one place, and named in a few others:
 
 | Version | Set in | Also named in | How a change is checked |
 |---|---|---|---|
-| The release Rust toolchain | `RELEASE_RUST_TOOLCHAIN` in `.github/workflows/release.yml` | Nowhere else: `ci.yml` and `toolchain.yml` read it from `release.yml` | CI's release dry run builds the Linux archive with it. Run the Release workflow by hand for the macOS archives, as [Change the release toolchain](#change-the-release-toolchain) says. |
+| The release Rust toolchain | `RELEASE_RUST_TOOLCHAIN` in `.github/workflows/release.yml` | Nowhere else: `ci.yml` and `toolchain.yml` read it from `release.yml` | CI's release dry run builds the Linux archives with it. Run the Release workflow by hand for the macOS archives, as [Change the release toolchain](#change-the-release-toolchain) says. |
 | cargo-about | `cargo_about_version` in `scripts/package-release.sh` | The cargo-about install steps of `ci.yml` and `release.yml`, and this page | CI's release dry run packages with it. Compare the `THIRD-PARTY-LICENSES` that it generates with the old one. |
 | parse-changelog | The `parse-changelog@` install step of `release.yml` | This page | Run the Release workflow by hand. Its summary shows the release notes that it read. |
 | The minimum Rust version | `rust-version` in `Cargo.toml` | `CONTRIBUTING.md`, [Install Iris](../guides/install.md), and the reason for it in [Decisions](decisions.md#dependencies-and-toolchain) | CI's `msrv` job reads it from `Cargo.toml`, and checks and tests Iris with it. |
