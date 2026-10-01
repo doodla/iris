@@ -84,7 +84,11 @@ fn text_lines(text: &str) -> Vec<(usize, &str)> {
     let mut out = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim_start();
-        let marker: String = trimmed.chars().take_while(|c| *c == '`' || *c == '~').collect();
+        // A fence is three or more of one character, backticks or tildes, never mixed.
+        let marker: String = match trimmed.chars().next() {
+            Some(c @ ('`' | '~')) => trimmed.chars().take_while(|x| *x == c).collect(),
+            _ => String::new(),
+        };
         if marker.len() >= 3 {
             match &fence {
                 None => fence = Some(marker),
@@ -346,5 +350,10 @@ fn the_checks_catch_problems() {
         anchors("# A b\n## Step 1: Do it, now\n### `label_in_use`\n## A b\n```\n# not a heading\n```\n");
     let expected: BTreeSet<String> =
         ["a-b", "step-1-do-it-now", "label_in_use", "a-b-1"].into_iter().map(String::from).collect();
+    assert_eq!(headings, expected);
+    // A fence is three of one character: a line that starts with an inline `~` is
+    // text, so the headings after it keep their anchors.
+    let headings = anchors("`~` is home.\n## After\n~~~\n## In tildes\n~~~\n## Last\n");
+    let expected: BTreeSet<String> = ["after", "last"].into_iter().map(String::from).collect();
     assert_eq!(headings, expected);
 }
