@@ -317,6 +317,33 @@ async fn server_errors_are_retried_and_x_should_retry_false_is_respected() {
     assert_eq!(server.received_requests().await.unwrap().len(), 1);
 }
 
+/// Every 5xx status, and 408, is retried, as for a free status read: the error each
+/// one would end in is a retryable server error, so it never ends the download on the
+/// first attempt.
+#[tokio::test]
+async fn every_server_error_status_is_retried() {
+    for status in [408u16, 500, 501, 502, 503, 504, 507, 520, 522, 524, 529, 599] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(status))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(media(100), "video/mp4"))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let url = format!("{}/x.mp4", server.uri());
+        let done = fetch(&url, &base_of(&server), &dir.path().join("p"), Duration::from_secs(5))
+            .await
+            .unwrap_or_else(|e| panic!("HTTP {status} was not retried: {e:?}"));
+        assert_eq!(done.attempts, 2, "HTTP {status}");
+    }
+}
+
 #[tokio::test]
 async fn retry_after_beyond_the_cap_stops_immediately() {
     let server = MockServer::start().await;
