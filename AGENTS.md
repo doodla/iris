@@ -86,9 +86,10 @@ source for that.
 ## Working in this repository
 
 - Respect unrelated work: do not revert, reformat, or "clean up" code outside your task.
-- Before claiming something works, run it: `cargo fmt --check`, `cargo clippy
-  --all-targets -- -D warnings`, `cargo test`, and any command you document. Say
-  plainly what you did not verify.
+- Before claiming something works, run it: `sh scripts/check.sh` runs every check that
+  CI runs and ends with a summary (`--fix` also formats the code and regenerates the
+  generated files), and run any command you document. Say plainly what you did not
+  verify, including any check that the script skipped.
 - Commits: one coherent, reviewable change per commit, including its tests and docs;
   each commit builds and passes tests; concise imperative subject, reasoning in the
   body. Stage explicit paths and review the staged diff. Never commit secrets,

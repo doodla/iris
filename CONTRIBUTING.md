@@ -60,28 +60,33 @@ fake keys set through the process environment, never through arguments. Keep it 
 
 ## Before you open a pull request
 
-Run the same checks as CI:
+Run the same checks as CI with one command:
+
+```sh
+sh scripts/check.sh
+```
+
+It runs every check below, even after one fails, and ends with one line per check: `ok`, `FAILED`,
+or `skipped` when a tool such as `cargo-deny` or ShellCheck isn't installed. It exits with 1 if a
+check failed. Add `--fix` to format the code and regenerate the generated files first, and `--msrv`
+to also check and test with the minimum Rust version.
+
+To run a check by itself:
 
 ```sh
 cargo fmt --all --check
 cargo clippy --all-targets --locked -- -D warnings
 cargo test --locked
-cargo check --locked --all-targets   # CI also runs this on the minimum Rust version
-cargo deny check                     # dependency licenses and advisories
-```
-
-If you changed `install.sh`, `scripts/`, `tests/installer/`, or `tests/live/`, also run ShellCheck,
-the installer's offline tests, and the offline test of `scripts/live-verify.sh`:
-
-```sh
+cargo deny check                                    # dependency licenses and advisories
 shellcheck -s sh install.sh
 shellcheck scripts/*.sh tests/installer/*.sh tests/live/*.sh
-sh tests/installer/run.sh
-cargo build --locked && sh tests/live/mock-run.sh
+sh tests/installer/run.sh                           # the installer's offline tests
+cargo build --locked && sh tests/live/mock-run.sh   # the offline test of scripts/live-verify.sh
+cargo check --locked --all-targets                  # CI also runs this on the minimum Rust version
 ```
 
 Some changes need generated files updated. `cargo test` checks both files and fails until you
-regenerate them:
+regenerate them, which `sh scripts/check.sh --fix` does. To regenerate one by itself:
 
 - **The JSON output.** If you changed a result or error type, regenerate the JSON Schema and review
   its diff:
