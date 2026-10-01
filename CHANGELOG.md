@@ -21,6 +21,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A relative `HOME` is refused instead of used.** With `HOME` set to a relative path, Iris put its
+  default config file and state directory under the current directory, so a video job recorded in
+  one directory was missing from another. A command that needs a default path now fails with
+  `config_invalid`, as a relative `IRIS_STATE_DIR` already did.
 - **A long output name in a non-Latin script works.** Iris names the temporary file of a save
   after its target, and cut that name to 120 characters instead of 120 bytes. A valid name of more
   than 235 bytes, such as 78 Chinese characters, made the temporary file's name too long, so a
