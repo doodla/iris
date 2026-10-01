@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
+  about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
+  printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.
