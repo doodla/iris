@@ -90,7 +90,21 @@ async fn run_checked(
     let counts =
         InputCounts { images: args.images.len(), mask: args.mask.is_some(), ..InputCounts::default() };
     let mut raw = common.options.clone();
-    let mut opts = catalog::validate_request(spec, op, &raw, counts, &ctx.catalog.models())?;
+    // With no format given, a declared `format` option follows the -o extension.
+    // It joins the options before they are validated, so that a rule that depends
+    // on the format (-O compression needs jpeg or webp) sees the format the image
+    // will have, not the default.
+    if !raw.iter().any(|o| o.name == "format")
+        && spec.options_for(op).any(|o| o.name == "format")
+        && let Some(implied) = artifacts::implied_format(common.output.as_deref(), spec.outputs.media_types)
+    {
+        raw.push(RawOption {
+            name: "format".to_string(),
+            value: implied.to_string(),
+            source: OptionSource::Flag("-o/--output extension"),
+        });
+    }
+    let opts = catalog::validate_request(spec, op, &raw, counts, &ctx.catalog.models())?;
     request::check_prompt(spec, &common.prompt)?;
 
     let images = args
@@ -105,8 +119,7 @@ async fn run_checked(
         .transpose()?;
     request::check_request(spec, common, &opts, images.iter().chain(&mask))?;
 
-    // Output planning. With no explicit format, a declared `format` option follows
-    // the -o extension.
+    // Output planning.
     let count = request::effective_count(spec, op, &opts);
     let format = opts.get("format").and_then(|v| v.as_str()).map(str::to_string);
     let out_dir = ctx.settings.output_dir.value.clone();
@@ -123,17 +136,6 @@ async fn run_checked(
     let media_types = spec.outputs.media_types;
     let plan =
         artifacts::plan_outputs(&path_request(count, format.as_deref(), output_path, &out_dir, media_types))?;
-    if format.is_none()
-        && let Some(implied) = plan.implied_format
-        && spec.options_for(op).any(|o| o.name == "format")
-    {
-        raw.push(RawOption {
-            name: "format".to_string(),
-            value: implied.to_string(),
-            source: OptionSource::Flag("-o/--output extension"),
-        });
-        opts = catalog::validate_request(spec, op, &raw, counts, &ctx.catalog.models())?;
-    }
     warnings.extend(plan.warnings.iter().cloned());
     // Without a format option the provider chooses the type, so the image may be
     // saved under another extension than planned.

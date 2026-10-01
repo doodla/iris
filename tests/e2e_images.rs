@@ -112,6 +112,51 @@ fn openai_generate_saves_the_image_and_sends_the_documented_request() {
     assert!(!sb.jobs_dir().exists(), "synchronous image calls never create job records");
 }
 
+/// The `-o` extension chooses the format before the options are checked, so an
+/// option that needs jpeg or webp, such as `-O compression`, works with `-o x.jpg`
+/// as with `--format jpeg`.
+#[test]
+fn compression_works_with_the_format_that_the_output_extension_chooses() {
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on("POST", OPENAI_GENERATIONS, openai_images(&[&jpeg(64, 48)], "req_e2e_jpeg"));
+
+    for (name, format) in [("fox.jpg", "jpeg"), ("fox.webp", "webp")] {
+        let v = sb
+            .iris()
+            .openai(&api)
+            .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "--size", "1024x1024"])
+            .args(["--quality", "low", "-O", "compression=80", "-o", name, "--dry-run", "--json"])
+            .run()
+            .ok();
+        assert_eq!(v["result"]["options"]["format"], format, "{v}");
+        assert_eq!(v["result"]["options"]["compression"], 80, "{v}");
+    }
+    assert_eq!(api.total(), 0, "dry runs send nothing");
+
+    let out = sb
+        .iris()
+        .openai(&api)
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "--size", "1024x1024"])
+        .args(["--quality", "low", "-O", "compression=80", "-o", "fox.jpg", "--json"])
+        .run();
+    out.ok();
+    let reqs = api.hits("POST", OPENAI_GENERATIONS);
+    assert_eq!(reqs.len(), 1);
+    let body = body_json(&reqs[0]);
+    assert_eq!((&body["output_format"], &body["output_compression"]), (&json!("jpeg"), &json!(80)), "{body}");
+    assert_eq!(files_in(&sb.work()), ["fox.jpg"]);
+
+    // A png output still refuses it, naming the format.
+    let out = sb
+        .iris()
+        .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "--size", "1024x1024"])
+        .args(["--quality", "low", "-O", "compression=80", "-o", "fox.png", "--dry-run", "--json"])
+        .run();
+    let v = out.err(2, "invalid_argument");
+    assert_eq!(v["error"]["details"]["constraint"], "compression_requires_jpeg_or_webp", "{v}");
+}
+
 #[test]
 fn openai_generate_in_human_mode_prints_saved_paths() {
     let sb = Sandbox::new();

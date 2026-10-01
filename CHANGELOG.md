@@ -21,6 +21,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **`-O compression` works with the format that `-o` chooses.** With `-o fox.jpg` or `-o fox.webp`
+  and no `--format`, the GPT Image models refused `-O compression` as if the output were PNG,
+  because the options were checked before the `-o` extension set the format. The extension now
+  sets it first, as with `--format jpeg`.
 - **A relative `HOME` is refused instead of used.** With `HOME` set to a relative path, Iris put its
   default config file and state directory under the current directory, so a video job recorded in
   one directory was missing from another. A command that needs a default path now fails with
