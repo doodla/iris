@@ -45,7 +45,7 @@ env:
   # "stable", so a release never depends on which stable was current when the
   # tag was pushed, and bumped deliberately (docs/contributing/releasing.md).
   # CI on main runs current stable and the MSRV.
-  RELEASE_RUST_TOOLCHAIN: "1.94.1"
+  RELEASE_RUST_TOOLCHAIN: "1.98.1"
 
 jobs:
   verify:

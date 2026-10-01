@@ -1,7 +1,8 @@
 # Releasing Iris
 
-This page is for maintainers. It describes how to cut a release, what a release archive contains,
-and how to test the installer and the release path before you publish.
+This page is for maintainers. It describes how to cut a release, how to update the tool versions
+that releases pin, what a release archive contains, and how to test the installer and the release
+path before you publish.
 
 ## Cut a release
 
@@ -54,7 +55,27 @@ The release is created only when every job passes. If a job fails, nothing is pu
 again if it failed for a temporary reason. Otherwise, fix the problem on `main` and release a new
 version, rather than moving a pushed tag.
 
-## Change the release toolchain
+## Update the pinned tools
+
+Dependabot keeps the crates and the GitHub Actions current. These four versions are pinned by hand
+instead. Each is set in one place, and named in a few others:
+
+| Version | Set in | Also named in | How a change is checked |
+|---|---|---|---|
+| The release Rust toolchain | `RELEASE_RUST_TOOLCHAIN` in `.github/workflows/release.yml` | Nowhere else: `ci.yml` and `toolchain.yml` read it from `release.yml` | CI's release dry run builds the Linux archive with it. Run the Release workflow by hand for the macOS archives, as [Change the release toolchain](#change-the-release-toolchain) says. |
+| cargo-about | `cargo_about_version` in `scripts/package-release.sh` | The cargo-about install steps of `ci.yml` and `release.yml`, and this page | CI's release dry run packages with it. Compare the `THIRD-PARTY-LICENSES` that it generates with the old one. |
+| parse-changelog | The `parse-changelog@` install step of `release.yml` | This page | Run the Release workflow by hand. Its summary shows the release notes that it read. |
+| The minimum Rust version | `rust-version` in `Cargo.toml` | `CONTRIBUTING.md`, [Install Iris](../guides/install.md), and the reason for it in [Decisions](decisions.md#dependencies-and-toolchain) | CI's `msrv` job reads it from `Cargo.toml`, and checks and tests Iris with it. |
+
+To update a version, change every place in its row in one pull request. `cargo test` fails while two
+places name different versions of a tool, or while the release toolchain is older than the minimum
+Rust version (`tests/release_pins.rs`).
+
+The Release toolchain workflow (`.github/workflows/toolchain.yml`) runs every Monday. It fails when
+the release toolchain is more than three minor versions behind the newest stable Rust, about 18
+weeks, as a reminder to move releases to a newer Rust version.
+
+### Change the release toolchain
 
 The release workflow checks and builds with one pinned Rust version, `RELEASE_RUST_TOOLCHAIN` at the
 top of `.github/workflows/release.yml`, not with whatever `stable` is when a tag is pushed. Every
@@ -77,10 +98,8 @@ change there.
 
 - If an update to `aws-lc-sys` or `aws-lc-rs` changes that crate's `LICENSE` file, read the new
   file, and put its SHA-256 in `about.toml`. Its comments explain why those two files are listed.
-- Packaging accepts only one cargo-about version, `cargo_about_version` in
-  `scripts/package-release.sh`, so that the same commit always gives the same archive. To move to a
-  newer version, change it there, in the cargo-about install steps of `ci.yml` and `release.yml`,
-  and on this page. Then compare the file that it generates with the old one.
+- Packaging accepts only one cargo-about version, so that the same commit always gives the same
+  archive. To move to a newer version, see [Update the pinned tools](#update-the-pinned-tools).
 
 ## What a release archive contains
 
