@@ -681,6 +681,40 @@ fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory(
     assert_eq!(std::fs::read(sb.path("out")).unwrap(), b"in the way", "the file in the way is untouched");
 }
 
+/// A symbolic link to a directory at a planned output path is a directory for the
+/// preflight, as a real one is: with `--overwrite`, a numbered path of `-n 2` that
+/// is such a link is refused before the paid request, instead of the image failing
+/// to save there after it. Without `--overwrite` it is refused the same way.
+#[test]
+fn a_symlink_to_a_directory_at_an_output_path_is_refused_before_paying() {
+    for extra in [&["--overwrite"][..], &[][..]] {
+        let sb = Sandbox::new();
+        std::fs::create_dir_all(sb.path("real-dir")).unwrap();
+        std::os::unix::fs::symlink(sb.path("real-dir"), sb.path("g-1.png")).unwrap();
+        let image = png(10, 10);
+        let (sb, api, out) = {
+            let api = MockApi::start();
+            api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image, &image], "req_e2e_symlink"));
+            let out = sb
+                .iris()
+                .openai(&api)
+                .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, PROMPT, "--size", "1024x1024"])
+                .args(["--quality", "low", "-n", "2", "-o", "g.png", "--json"])
+                .args(extra)
+                .run();
+            (sb, api, out)
+        };
+        let v = out.err(2, "invalid_argument");
+        assert_eq!(v["error"]["details"]["path"], sb.path("g-1.png").to_str().unwrap(), "{extra:?}: {v}");
+        assert!(v["error"]["message"].as_str().unwrap().contains("symbolic link to a directory"), "{v}");
+        assert_eq!(api.total(), 0, "{extra:?}: nothing was sent");
+        assert!(
+            sb.path("g-1.png").is_symlink() && sb.path("real-dir").is_dir(),
+            "both are left as they were"
+        );
+    }
+}
+
 /// Gemini image models take no output format, so an `-o` extension cannot be
 /// requested: the plan says the provider chooses the type (dry run and real run),
 /// and when it returns JPEG for `-o g.png` the image is saved as `g.jpg`.
