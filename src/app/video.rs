@@ -298,6 +298,10 @@ async fn generate(
             }
         }
     };
+    // The select takes the provider's answer first, so an interrupt that arrived
+    // with it was not seen there. It still counts: the wait below would start from
+    // the interrupts seen by then, and lose it. (One before sending returned above.)
+    let deferred = deferred || ctx.interrupt.delivered() > delivered;
 
     let now = ctx.now();
     match submission {

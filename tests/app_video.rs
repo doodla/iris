@@ -556,6 +556,39 @@ async fn first_ctrl_c_during_submission_is_deferred_until_the_operation_id_is_re
     assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0, "no waiting after an interrupt");
 }
 
+/// An interrupt that arrives together with the provider's answer (both are ready
+/// when the command next looks) is not lost: the job is recorded and the command
+/// stops as for any interrupt during the submission, instead of waiting for the job.
+#[tokio::test]
+async fn an_interrupt_that_arrives_with_the_providers_answer_is_not_lost() {
+    let f = Fixture::new().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gemini = Arc::new(FakeProvider {
+        video: Some(FakeVideo { submit_gate: Some(gate.clone()), ..FakeVideo::default() }),
+        ..FakeProvider::gemini()
+    });
+    let interrupt = Interrupt::manual();
+    let mut s = f.settings();
+    // Bounds the wait that follows if the interrupt is lost.
+    s.wait_timeout = Resolved { value: Duration::from_millis(300), source: SettingSource::Flag };
+    let ctx = context_with_interrupt(s, vec![gemini.clone()], interrupt.clone());
+    let mut w = Vec::new();
+    let entered = gemini.videos().submit_entered.clone();
+    let run = video::run(&ctx, vargs("x"), &mut w);
+    let driver = async {
+        entered.notified().await;
+        interrupt.trigger();
+        gate.notify_one();
+    };
+    let (r, ()) = tokio::join!(run, driver);
+    let e = r.unwrap_err();
+    assert_eq!((e.code, e.exit_code()), (ErrorCode::Interrupted, 130), "{e:?}");
+    assert_eq!(e.job_status, Some(JobStatus::Running));
+    assert_eq!(e.retryable, Some(false));
+    assert_eq!(e.details["charge_possible"], true);
+    assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0, "no waiting after an interrupt");
+}
+
 /// After a first interrupt, a submission that ends unprocessed (never sent, or
 /// rejected before processing: the HTTP layer then sends it no more) leaves no job:
 /// the record goes and running the command again is harmless. Any other answer is
