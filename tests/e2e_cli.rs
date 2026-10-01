@@ -222,6 +222,33 @@ fn usage_errors_in_json_mode_are_a_single_envelope_with_exit_2() {
     assert!(!sb.jobs_dir().exists());
 }
 
+/// A usage error that quotes an argument never prints a configured key that ended
+/// up in it: the key reads `[REDACTED]`, in human mode as in JSON mode, as in every
+/// other error Iris prints.
+#[test]
+fn usage_errors_never_print_a_configured_key() {
+    let sb = Sandbox::new();
+    let cases: [&[&str]; 3] = [
+        &["jobs", "list", "--limit", OPENAI_KEY],
+        &["version", GEMINI_KEY],
+        &["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", &format!("--{OPENAI_KEY}")],
+    ];
+    for args in cases {
+        for json in [false, true] {
+            let mut iris = sb.iris();
+            iris.keys().args(args);
+            if json {
+                iris.arg("--json");
+            }
+            let out = iris.run();
+            assert_eq!(out.code, 2, "{args:?} json={json}: {out:?}");
+            out.assert_hygiene();
+            let printed = if json { &out.stdout } else { &out.stderr };
+            assert!(printed.contains("[REDACTED]"), "{args:?} json={json}: {printed}");
+        }
+    }
+}
+
 // ----- scenario 13: dry runs -----------------------------------------------------------------------
 
 #[test]

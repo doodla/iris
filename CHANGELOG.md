@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
+  about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
+  printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.
 - **A wait limit too large to use is refused before anything is sent.** An enormous wait limit or
   poll interval, such as `--timeout 18446744073709551615` or a `wait_timeout` of the largest TOML
   integer, was accepted, and `video generate` then stopped with `internal_error` after its paid
