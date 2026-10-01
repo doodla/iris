@@ -5,12 +5,16 @@
 # release notes are the version's section of CHANGELOG.md; a tag without one,
 # or with an empty one, fails in the first job, before anything is built.
 #
-# Runtime compatibility of the three published archives (documented here so
+# Runtime compatibility of the four published archives (documented here so
 # this workflow's claims about what each archive runs on match
 # docs/guides/install.md):
 #   - iris-vX.Y.Z-x86_64-unknown-linux-musl.tar.gz: statically linked
 #     (musl libc, static-pie) — runs on any x86_64 Linux kernel >= 3.2,
 #     regardless of the host's glibc version or absence of one.
+#   - iris-vX.Y.Z-aarch64-unknown-linux-musl.tar.gz: the same for arm64
+#     Linux kernels >= 4.1, the floor Rust's platform table gives for arm64
+#     Linux (https://doc.rust-lang.org/nightly/rustc/platform-support.html,
+#     checked 2026-10-01).
 #   - iris-vX.Y.Z-x86_64-apple-darwin.tar.gz: macOS 10.12+ (Sierra and
 #     later) — rustc's documented default deployment target for this
 #     triple (https://doc.rust-lang.org/nightly/rustc/platform-support.html,
@@ -152,16 +156,19 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # The three v1 release targets, each on its native runner: musl
-          # gives portable static Linux binaries, and native macOS runners
-          # cover the two Apple targets. macos_deployment_target pins
-          # MACOSX_DEPLOYMENT_TARGET to the exact floor documented in the
+          # The release targets, each on its native runner: musl gives
+          # portable static Linux binaries for x86_64 and arm64, and native
+          # macOS runners cover the two Apple targets. macos_deployment_target
+          # pins MACOSX_DEPLOYMENT_TARGET to the exact floor documented in the
           # header comment above; without it, the real minimum is whatever
           # rustc/cc default to at build time, which a future toolchain or a C
           # dependency's build script (e.g. aws-lc-sys) could silently
           # raise without this workflow noticing.
           - target: x86_64-unknown-linux-musl
             os: ubuntu-24.04
+            macos_deployment_target: ""
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-24.04-arm
             macos_deployment_target: ""
           - target: x86_64-apple-darwin
             os: macos-15-intel
@@ -183,7 +190,7 @@ jobs:
         run: sh scripts/check-release-toolchain.sh "$RELEASE_RUST_TOOLCHAIN"
 
       - name: Install musl toolchain
-        if: matrix.target == 'x86_64-unknown-linux-musl'
+        if: runner.os == 'Linux'
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -198,6 +205,11 @@ jobs:
           # binary as version.git_commit. build.rs reads only this variable,
           # never GITHUB_SHA itself.
           IRIS_GIT_COMMIT: ${{ github.sha }}
+          # The C code of aws-lc-sys is compiled with the cc crate, which looks
+          # for aarch64-linux-musl-gcc for this target; Ubuntu's musl-tools
+          # names its compiler musl-gcc (the x86_64 musl target finds that name
+          # on its own). Only builds for this target read the variable.
+          CC_aarch64_unknown_linux_musl: musl-gcc
         run: cargo build --release --locked --target ${{ matrix.target }}
 
       - name: Install cargo-about (generates THIRD-PARTY-LICENSES)
@@ -258,11 +270,12 @@ jobs:
           ls -l
 
           # Fail closed rather than publishing whatever happened to match
-          # dist/*.tar.gz: require exactly the three release archives (see
+          # dist/*.tar.gz: require exactly the four release archives (see
           # docs/guides/install.md) for this version, and nothing else, before
           # anyone downloads them.
           expected=$(printf '%s\n' \
             "iris-v${VERSION}-x86_64-unknown-linux-musl.tar.gz" \
+            "iris-v${VERSION}-aarch64-unknown-linux-musl.tar.gz" \
             "iris-v${VERSION}-x86_64-apple-darwin.tar.gz" \
             "iris-v${VERSION}-aarch64-apple-darwin.tar.gz" | LC_ALL=C sort)
           actual=$(find . -maxdepth 1 -type f -name '*.tar.gz' -printf '%f\n' | LC_ALL=C sort)

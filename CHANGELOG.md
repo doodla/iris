@@ -6,6 +6,13 @@ All notable changes to this project are documented in this file. The format foll
 
 ## [Unreleased]
 
+### Added
+
+- **Linux arm64 releases.** Each release includes `aarch64-unknown-linux-musl`, a static binary
+  for arm64 Linux, such as ARM servers and the Linux containers that Docker runs on Apple silicon,
+  and the installer installs it there. See
+  [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
+
 ### Changed
 
 - **The installer falls back to git tags.** When GitHub's `releases/latest` page can't be read and

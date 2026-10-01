@@ -101,7 +101,7 @@ If you changed documented behavior, update the page that's its home, as the
 command that you document against the built binary. `cargo test` also checks the docs' links and
 parts of their style.
 
-CI also tests on macOS, checks the crate's package contents, and runs the Linux release path. See
+CI also tests on macOS, checks the crate's package contents, and runs the Linux release paths. See
 [Releasing Iris](docs/contributing/releasing.md#test-the-release-path).
 
 ## Compatibility

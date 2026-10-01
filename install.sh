@@ -18,8 +18,8 @@
 #                          repository whose tags step 3 falls back to.
 #
 # What it does, in order:
-#   1. Detects the platform: Linux x86_64, macOS x86_64 or macOS arm64 (arm64 is
-#      preferred on Apple silicon even under Rosetta). Anything else fails.
+#   1. Detects the platform: Linux x86_64 or arm64, macOS x86_64 or arm64 (arm64
+#      is preferred on Apple silicon even under Rosetta). Anything else fails.
 #   2. Needs curl (or wget), tar, and sha256sum (or shasum). A wget that says
 #      it does not verify HTTPS certificates (BusyBox's built-in TLS) is refused.
 #   3. Resolves "latest" by following <base>/latest to .../tag/<tag> (no API).
@@ -50,9 +50,10 @@
 
 set -u
 
-# Linux release target: musl gives a static binary that runs on any x86_64
-# Linux kernel; kept in one variable here in case that ever needs to change.
+# Linux release targets: musl gives static binaries that run whatever the C
+# library of the system, if any; kept in variables in case that ever changes.
 LINUX_X86_64_TARGET=x86_64-unknown-linux-musl
+LINUX_ARM64_TARGET=aarch64-unknown-linux-musl
 DEFAULT_BASE_URL=https://github.com/doodla/iris/releases
 DEFAULT_GIT_URL=https://github.com/doodla/iris
 NL='
@@ -136,7 +137,11 @@ detect_target() {
   target=
   case $os in
     Linux)
-      if [ "$arch" = x86_64 ]; then target=$LINUX_X86_64_TARGET; fi
+      case $arch in
+        x86_64) target=$LINUX_X86_64_TARGET ;;
+        # The kernel says aarch64; some environments report arm64.
+        aarch64 | arm64) target=$LINUX_ARM64_TARGET ;;
+      esac
       ;;
     Darwin)
       # Under Rosetta, uname -m says x86_64 on Apple silicon; use native arm64.
@@ -153,7 +158,7 @@ detect_target() {
       ;;
   esac
   if [ -z "$target" ]; then
-    die "unsupported platform: $os $arch (release builds exist for Linux x86_64, macOS x86_64 and macOS arm64; elsewhere, build from source: https://github.com/doodla/iris)"
+    die "unsupported platform: $os $arch (release builds exist for Linux x86_64 and arm64, and macOS x86_64 and arm64; elsewhere, build from source: https://github.com/doodla/iris)"
   fi
 }
 
@@ -341,7 +346,7 @@ find_expected_sum() {
     fi
   done <"$tmp_dir/SHA256SUMS"
   case $matches in
-    0) die "SHA256SUMS for $tag has no line for $archive_name; refusing to install an unverified archive" ;;
+    0) die "SHA256SUMS for $tag has no line for $archive_name; refusing to install an unverified archive. If release $tag has no build for $target, choose another version with --version, or build from source: https://github.com/doodla/iris" ;;
     1) ;;
     *) die "SHA256SUMS for $tag lists $archive_name more than once" ;;
   esac
