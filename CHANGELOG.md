@@ -40,6 +40,10 @@ All notable changes to this project are documented in this file. The format foll
   job had been submitted. Every duration setting is now at most a year, and a longer one fails
   with `invalid_argument` or `config_invalid` before anything is sent. See
   [Configuration reference](https://github.com/doodla/iris/blob/main/docs/reference/configuration.md#settings).
+- **`iris doctor` reports a directory that can't be created.** When a file or a broken symbolic
+  link was in the path of the state or output directory, `doctor` reported the directory as `ok`,
+  to be created on first use, although every command that needs it fails. The check is now an
+  `error` that names what's in the way.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.

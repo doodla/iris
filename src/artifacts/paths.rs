@@ -464,33 +464,50 @@ fn prove_writable(probe: &Path, dir: &Path) -> Result<(), IrisError> {
 /// The nearest existing ancestor of `dir` (itself included) must be a directory;
 /// returns it (`None` only for a relative `dir` none of whose ancestors exists).
 fn check_ancestors(dir: &Path) -> Result<Option<&Path>, IrisError> {
+    match nearest_ancestor(dir) {
+        Ok(Some(Ancestor::Dir(existing))) => Ok(Some(existing)),
+        Ok(Some(Ancestor::Blocked(ancestor, what))) => Err(IrisError::invalid(format!(
+            "output directory {} cannot be used: {} is {what}",
+            dir.display(),
+            ancestor.display()
+        ))
+        .with_detail("path", ancestor.to_string_lossy().into_owned())
+        .with_hint(DIR_HINT)),
+        Ok(None) => Ok(None),
+        Err(e) => {
+            Err(location_error(format_args!("cannot check output directory {}", dir.display()), dir, &e))
+        }
+    }
+}
+
+/// The nearest existing ancestor of a directory (the directory itself included),
+/// which decides whether the directory exists or can be created.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Ancestor<'a> {
+    /// A directory: the directory itself, or where it would be created.
+    Dir(&'a Path),
+    /// Something else, in the way: the path, and what it is ("not a directory", or
+    /// "a broken symbolic link"). The directory cannot be created.
+    Blocked(&'a Path, &'static str),
+}
+
+/// The nearest existing ancestor of `dir`, itself included, following symbolic
+/// links; `Ok(None)` only for a relative `dir` none of whose ancestors exists. An
+/// error is one that stopped the search, such as a component that cannot be
+/// searched.
+pub fn nearest_ancestor(dir: &Path) -> io::Result<Option<Ancestor<'_>>> {
     for ancestor in dir.ancestors().filter(|a| !a.as_os_str().is_empty()) {
-        let blocked = |what: &str| {
-            IrisError::invalid(format!(
-                "output directory {} cannot be used: {} is {what}",
-                dir.display(),
-                ancestor.display()
-            ))
-            .with_detail("path", ancestor.to_string_lossy().into_owned())
-            .with_hint(DIR_HINT)
-        };
         match fs::metadata(ancestor) {
-            Ok(meta) if meta.is_dir() => return Ok(Some(ancestor)),
-            Ok(_) => return Err(blocked("not a directory")),
+            Ok(meta) if meta.is_dir() => return Ok(Some(Ancestor::Dir(ancestor))),
+            Ok(_) => return Ok(Some(Ancestor::Blocked(ancestor, "not a directory"))),
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
                 if fs::symlink_metadata(ancestor).is_ok() {
-                    return Err(blocked("a broken symbolic link"));
+                    return Ok(Some(Ancestor::Blocked(ancestor, "a broken symbolic link")));
                 }
             }
             // A path component further up is a file; the loop reaches it next.
             Err(e) if e.kind() == io::ErrorKind::NotADirectory => {}
-            Err(e) => {
-                return Err(location_error(
-                    format_args!("cannot check output directory {}", dir.display()),
-                    dir,
-                    &e,
-                ));
-            }
+            Err(e) => return Err(e),
         }
     }
     Ok(None)

@@ -1583,6 +1583,40 @@ fn veo_duration_is_an_integer_with_listed_values() {
     assert_eq!(sb.record(id)["request"]["duration"], 8, "the default, as an integer");
 }
 
+/// `doctor` applies the rule of the commands that create the state and output
+/// directories: a file or a broken symbolic link in the path is in the way, so the
+/// directory is an error, not one that "will be created on first use".
+#[test]
+fn doctor_reports_a_directory_that_cannot_be_created() {
+    let sb = Sandbox::new();
+    std::fs::write(sb.path("afile"), b"").unwrap();
+    std::os::unix::fs::symlink(sb.path("missing"), sb.path("dangling")).unwrap();
+    for (var, id) in [("IRIS_OUTPUT_DIR", "output_dir"), ("IRIS_STATE_DIR", "state_dir")] {
+        let check = |dir: &Path| {
+            let v = sb.iris().env(var, dir).args(["doctor", "--json"]).run().ok();
+            v["result"]["checks"].as_array().unwrap().iter().find(|c| c["id"] == id).unwrap().clone()
+        };
+        let blocked = [
+            ("afile/sub", format!("cannot be created: {} is not a directory", sb.path("afile").display())),
+            (
+                "dangling/sub",
+                format!("cannot be created: {} is a broken symbolic link", sb.path("dangling").display()),
+            ),
+            ("afile", "exists but is not a directory".to_string()),
+            ("dangling", "exists but is a broken symbolic link".to_string()),
+        ];
+        for (dir, says) in blocked {
+            let c = check(&sb.path(dir));
+            assert_eq!(c["status"], "error", "{var}={dir}: {c}");
+            assert!(c["message"].as_str().unwrap().ends_with(&says), "{var}={dir}: {c}");
+        }
+        let c = check(&sb.path("new/sub"));
+        assert_eq!(c["status"], "ok", "{var}: {c}");
+        assert!(c["message"].as_str().unwrap().ends_with("it will be created on first use"), "{c}");
+    }
+    assert!(!sb.path("new").exists(), "doctor creates nothing");
+}
+
 /// `doctor --check-access` checks every catalog model of each provider whose key is
 /// set, with one free metadata read each.
 #[test]
