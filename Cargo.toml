@@ -65,7 +65,7 @@ signal-hook = { version = "0.4.4", default-features = false }
 
 [dev-dependencies]
 assert_cmd = "2.2.2"
-jsonschema = { version = "0.57.0", default-features = false }
+jsonschema = { version = "0.58.1", default-features = false }
 predicates = "3.1.4"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "time"] }
 wiremock = "0.6.5"
