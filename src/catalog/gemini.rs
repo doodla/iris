@@ -400,13 +400,14 @@ pub fn estimate_from_usage(spec: &ModelSpec, usage: &Usage) -> Option<CostEstima
             .iter()
             .filter(|d| d.get("modality").and_then(|m| m.as_str()) == Some("IMAGE"))
             .filter_map(|d| d.get("tokenCount").and_then(serde_json::Value::as_u64))
-            .sum::<u64>()
+            .fold(0, u64::saturating_add)
     });
     let (image_tokens, note) = match itemized_image {
         Some(n) => (n.min(candidates), ""),
         None => (candidates, "; image tokens not itemized, all output priced as image"),
     };
-    let text_tokens = candidates - image_tokens + thoughts;
+    // The counts are the provider's: sums saturate rather than overflow.
+    let text_tokens = (candidates - image_tokens).saturating_add(thoughts);
     let per_token = |tokens: u64, per_m: f64| tokens as f64 * per_m / 1_000_000.0;
     let amount = per_token(prompt, rates.input_per_m)
         + per_token(image_tokens, rates.image_output_per_m)

@@ -433,13 +433,14 @@ fn decode_image(
 }
 
 /// Normalize `usageMetadata`: input = prompt tokens; output = candidate plus
-/// thinking tokens (both billed as output); total as reported.
+/// thinking tokens (both billed as output, the sum saturating: the counts are the
+/// provider's); total as reported.
 fn usage_from_metadata(meta: &serde_json::Value) -> Option<Usage> {
     let provider_usage = client::sanitize_usage(meta)?;
     let get = |k: &str| meta.get(k).and_then(serde_json::Value::as_u64);
     let output = match (get("candidatesTokenCount"), get("thoughtsTokenCount")) {
         (None, None) => None,
-        (c, t) => Some(c.unwrap_or(0) + t.unwrap_or(0)),
+        (c, t) => Some(c.unwrap_or(0).saturating_add(t.unwrap_or(0))),
     };
     Some(Usage {
         input_tokens: get("promptTokenCount"),
