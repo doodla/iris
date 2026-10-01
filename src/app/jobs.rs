@@ -659,6 +659,7 @@ pub(crate) fn job_error(rec: &JobRecord) -> IrisError {
                 ErrorCode::SubmissionUncertain,
                 format!("it is unknown whether the provider accepted job {id}"),
             )
+            .with_detail("charge_possible", true)
             .with_hint("check the provider console before resubmitting; Iris never resubmits automatically"),
             status => IrisError::internal(format!("job {id} is {status}")),
         },

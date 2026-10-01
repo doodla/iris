@@ -1201,8 +1201,33 @@ async fn an_accepted_job_whose_record_vanished_exits_5_with_the_remote_id() {
     assert_eq!(e.exit_code(), 5);
     assert_eq!(e.remote_operation_id.as_deref(), Some("models/fake-video-1/operations/op0"));
     assert_eq!(e.details["provider_accepted"], true);
+    assert_eq!(e.details["charge_possible"], true);
     assert!(e.hint.as_deref().unwrap().contains("do not resubmit"), "{:?}", e.hint);
     assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0);
+}
+
+/// A job whose submission outcome is unknown says that the request may have been
+/// billed, whatever left it that way: `jobs wait` reports `submission_uncertain`
+/// with `charge_possible` also for a record that holds no error at all.
+#[tokio::test]
+async fn an_unknown_submission_without_a_recorded_error_is_reported_as_possibly_billed() {
+    let f = Fixture::new().await;
+    let ctx = f.ctx();
+    let mut w = Vec::new();
+    let id = completed(video::run(&ctx, detached("x"), &mut w).await.unwrap()).job.job_id;
+    let path = store(&f.sandbox).record_path(&JobId::parse(&id).unwrap());
+    let mut value: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    value["status"] = serde_json::json!("submission_unknown");
+    value["remote_operation_id"] = serde_json::Value::Null;
+    value["completed_at"] = value["created_at"].clone();
+    value["error"] = serde_json::Value::Null;
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+
+    let wait = WaitArgs { download: true, target: Target::default() };
+    let e = jobs::wait(&ctx, &id, &wait, &mut w).await.unwrap_err();
+    assert_eq!((e.code, e.exit_code()), (ErrorCode::SubmissionUncertain, 5));
+    assert_eq!(e.retryable, Some(false));
+    assert_eq!(e.details["charge_possible"], true);
 }
 
 /// Iris never picks a video model: without `-m` the config file's `video.model` is

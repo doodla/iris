@@ -46,6 +46,12 @@ All notable changes to this project are documented in this file. The format foll
   them, start a UTF-8 file with one. Iris sent it to the provider as part of the prompt, and a
   file that held only one passed as a non-empty prompt. Iris now removes it, from `--prompt-file`
   and `--prompt-stdin` alike.
+- **Every uncertain submission says that it may have been billed.** Iris documents that
+  `submission_uncertain` always has `details.charge_possible: true`, but three cases left it out: a
+  video job whose submitting process stopped, reported once the submission budget has passed; a
+  video job that the provider accepted, but whose record Iris couldn't keep; and a
+  `submission_unknown` record that holds no error. Job records that an earlier version wrote now
+  show it too.
 - **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
   about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
   printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.

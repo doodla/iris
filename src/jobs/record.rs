@@ -634,9 +634,16 @@ impl JobRecord {
     /// submission; the recorded hint follows, marked as the one given when the
     /// error was recorded, because its advice ("wait and run the command again")
     /// was meant for that moment and would be wrong read as advice for the command
-    /// replaying it. The record keeps the error as it was written.
+    /// replaying it. A `submission_uncertain` error always shows
+    /// `details.charge_possible: true`. The record keeps the error as it was
+    /// written.
     pub fn error_view(&self) -> Option<ErrorBody> {
         let mut body = self.error.as_ref().map(Preserved::view)?;
+        // Every uncertain submission may have been billed, which the error says;
+        // a stale-submission error written by an earlier version did not.
+        if body.code == ErrorCode::SubmissionUncertain {
+            body.details.get_or_insert_with(Map::new).insert("charge_possible".to_string(), json!(true));
+        }
         let ended =
             matches!(self.status, JobStatus::Failed | JobStatus::Expired | JobStatus::SubmissionUnknown);
         if ended && body.retryable != Some(false) {
@@ -793,6 +800,7 @@ impl JobRecord {
             "Iris stopped while submitting this job, before the provider's operation id was recorded; \
              the provider may or may not have accepted (and billed) the request",
         )
+        .with_detail("charge_possible", true)
         .with_hint(
             "check the provider console for the request before resubmitting; Iris never resubmits automatically",
         );
