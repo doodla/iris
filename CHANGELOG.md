@@ -14,6 +14,9 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A requested delay is rounded up, not down.** When a provider asked to wait a fraction of a
+  second, `retry_after_seconds` dropped the fraction: OpenAI's `retry-after-ms: 1500` became 1, so a
+  caller that waited that long retried too early. Iris now rounds it up, to 2.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.
