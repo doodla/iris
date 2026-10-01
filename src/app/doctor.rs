@@ -8,6 +8,7 @@
 
 use std::path::Path;
 
+use crate::artifacts::paths::{Ancestor, nearest_ancestor};
 use crate::config::{EnvSnapshot, Settings};
 use crate::domain::{ProviderId, Warning};
 use crate::error::IrisError;
@@ -207,25 +208,31 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
     }
 }
 
-/// Writable if it exists; creatable if its nearest existing ancestor is writable.
+/// Writable if it exists; creatable if its nearest existing ancestor is a writable
+/// directory, as a command that creates it requires: a file or a broken symbolic
+/// link anywhere in its path is in the way.
 fn dir_check(id: &str, label: &str, dir: &Path) -> DoctorCheck {
     let shown = dir.display();
-    if dir.exists() && !dir.is_dir() {
-        return check(id, CheckStatus::Error, format!("{label} {shown} exists but is not a directory"));
-    }
-    let exists = dir.is_dir();
-    let Some(probe_dir) = dir.ancestors().find(|a| a.is_dir()) else {
-        return check(id, CheckStatus::Error, format!("{label} {shown} cannot be created"));
+    let error = |message: String| check(id, CheckStatus::Error, message);
+    let probe_dir = match nearest_ancestor(dir) {
+        Ok(Some(Ancestor::Dir(existing))) => existing,
+        Ok(Some(Ancestor::Blocked(path, what))) if path == dir => {
+            return error(format!("{label} {shown} exists but is {what}"));
+        }
+        Ok(Some(Ancestor::Blocked(path, what))) => {
+            return error(format!("{label} {shown} cannot be created: {} is {what}", path.display()));
+        }
+        Ok(None) => return error(format!("{label} {shown} cannot be created")),
+        Err(e) => return error(format!("cannot check {label} {shown}: {e}")),
     };
+    let exists = probe_dir == dir;
     match tempfile::Builder::new().prefix(".iris-doctor-").tempfile_in(probe_dir) {
         Ok(_) if exists => ok(id, format!("{label} {shown} is writable")),
         Ok(_) => ok(id, format!("{label} {shown} does not exist yet; it will be created on first use")),
-        Err(e) if exists => check(id, CheckStatus::Error, format!("{label} {shown} is not writable: {e}")),
-        Err(e) => check(
-            id,
-            CheckStatus::Error,
-            format!("{label} {shown} cannot be created ({} is not writable: {e})", probe_dir.display()),
-        ),
+        Err(e) if exists => error(format!("{label} {shown} is not writable: {e}")),
+        Err(e) => {
+            error(format!("{label} {shown} cannot be created ({} is not writable: {e})", probe_dir.display()))
+        }
     }
 }
 

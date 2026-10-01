@@ -14,6 +14,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **`iris doctor` reports a directory that can't be created.** When a file or a broken symbolic
+  link was in the path of the state or output directory, `doctor` reported the directory as `ok`,
+  to be created on first use, although every command that needs it fails. The check is now an
+  `error` that names what's in the way.
 - **A wait limit too large to use is refused before anything is sent.** An enormous wait limit or
   poll interval, such as `--timeout 18446744073709551615` or a `wait_timeout` of the largest TOML
   integer, was accepted, and `video generate` then stopped with `internal_error` after its paid
