@@ -47,6 +47,10 @@ All notable changes to this project are documented in this file. The format foll
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.
+- **A JPEG that was cut off is refused.** Its data decoded anyway, with the missing part filled in
+  gray, so Iris accepted it, and sent it in a paid request as an input image. Iris now checks that
+  a JPEG ends with its end-of-image marker, so a cut-off input image fails with
+  `input_file_invalid` before anything is sent.
 
 ## [0.1.0] - 2026-09-25
 

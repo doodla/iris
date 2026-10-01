@@ -36,6 +36,18 @@ pub fn jpeg(width: u32, height: u32) -> Vec<u8> {
     encode(image::DynamicImage::ImageRgb8(img), image::ImageFormat::Jpeg)
 }
 
+/// A baseline JPEG of noise: nearly all of it is scan data, so cutting it in half
+/// cuts the scan, not the header.
+pub fn noisy_jpeg(width: u32, height: u32) -> Vec<u8> {
+    let mut seed = 0x2545_f491_u32;
+    let img = image::RgbImage::from_fn(width, height, |_, _| {
+        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+        let [r, g, b, _] = seed.to_be_bytes();
+        image::Rgb([r, g, b])
+    });
+    encode(image::DynamicImage::ImageRgb8(img), image::ImageFormat::Jpeg)
+}
+
 fn bx(kind: &[u8; 4], payload: &[u8]) -> Vec<u8> {
     let mut out = ((8 + payload.len()) as u32).to_be_bytes().to_vec();
     out.extend_from_slice(kind);

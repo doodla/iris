@@ -218,12 +218,46 @@ pub fn inspect_image(bytes: &[u8]) -> Result<ImageDetails, IrisError> {
     let img = reader
         .decode()
         .map_err(|e| invalid_media(format!("content is not a decodable {media_type} image: {e}")))?;
+    if media_type == JPEG && jpeg_is_cut_off(bytes) {
+        return Err(invalid_media(format!(
+            "content is not a whole {media_type} image: it stops before the end-of-image marker"
+        )));
+    }
     Ok(ImageDetails {
         media_type,
         width: img.width(),
         height: img.height(),
         has_alpha: img.color().has_alpha(),
     })
+}
+
+/// Whether a JPEG stops inside its image data. The decoder fills in what is missing
+/// (gray rows) rather than failing, so a file that was cut off decodes anyway. This
+/// walks the marker segments from the start to the first scan, then looks for the
+/// end-of-image marker, which scan data never contains (a 0xFF data byte is
+/// followed by 0x00). Segments are skipped by their length, so an embedded
+/// thumbnail's own markers don't count. False whenever the walk can't reach a scan,
+/// so an unusual but whole file is never refused.
+fn jpeg_is_cut_off(bytes: &[u8]) -> bool {
+    let mut i = 2; // after the start-of-image marker that sniffing checked
+    loop {
+        let (Some(&0xFF), Some(&marker)) = (bytes.get(i), bytes.get(i + 1)) else {
+            return false;
+        };
+        match marker {
+            0xFF => i += 1,               // a fill byte before a marker
+            0xDA => break,                // the first scan
+            0x01 | 0xD0..=0xD7 => i += 2, // markers without a length
+            0xD8 | 0xD9 => return false,  // no scan to check
+            _ => {
+                let (Some(&high), Some(&low)) = (bytes.get(i + 2), bytes.get(i + 3)) else {
+                    return false;
+                };
+                i += 2 + usize::from(u16::from_be_bytes([high, low]));
+            }
+        }
+    }
+    !bytes[i..].windows(2).any(|pair| pair == [0xFF, 0xD9])
 }
 
 /// Decode a PNG and report its dimensions and whether it has an alpha channel
