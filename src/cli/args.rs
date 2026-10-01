@@ -243,7 +243,8 @@ pub struct PromptArgs {
     /// Prompt text
     #[arg(value_name = "PROMPT")]
     pub prompt: Option<OsString>,
-    /// Read the prompt from a UTF-8 file (trailing whitespace is trimmed)
+    /// Read the prompt from a UTF-8 file (a leading byte order mark and trailing whitespace are
+    /// removed)
     #[arg(short = 'f', long, value_name = "PATH")]
     pub prompt_file: Option<PathBuf>,
     /// Read the prompt from standard input (must not be a terminal)

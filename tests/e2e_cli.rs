@@ -222,6 +222,29 @@ fn usage_errors_in_json_mode_are_a_single_envelope_with_exit_2() {
     assert!(!sb.jobs_dir().exists());
 }
 
+/// A prompt file's leading byte order mark, which Notepad writes, is not part of the
+/// prompt: the plan's fingerprint is that of the text after it, and a file that holds
+/// only one is an empty prompt.
+#[test]
+fn a_byte_order_mark_at_the_start_of_a_prompt_file_is_not_part_of_the_prompt() {
+    let sb = Sandbox::new();
+    sb.write("bom.txt", b"\xEF\xBB\xBFa fox\r\n");
+    sb.write("only-bom.txt", b"\xEF\xBB\xBF\r\n");
+    let plan = |prompt: &[&str]| {
+        sb.iris()
+            .args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "--quality", "low", "--size", "1024x1024"])
+            .args(prompt)
+            .args(["--dry-run", "--json"])
+            .run()
+    };
+    let from_file = plan(&["-f", "bom.txt"]).ok();
+    let inline = plan(&["a fox"]).ok();
+    assert_eq!(from_file["result"]["prompt_fingerprint"], inline["result"]["prompt_fingerprint"]);
+    assert_eq!(from_file["result"]["prompt_fingerprint"]["chars"], 5);
+    let v = plan(&["-f", "only-bom.txt"]).err(2, "invalid_argument");
+    assert_eq!(v["error"]["message"], "the prompt is empty");
+}
+
 // ----- scenario 13: dry runs -----------------------------------------------------------------------
 
 #[test]

@@ -14,6 +14,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Fixed
 
+- **A byte order mark at the start of a prompt file isn't sent.** Some editors, Notepad among
+  them, start a UTF-8 file with one. Iris sent it to the provider as part of the prompt, and a
+  file that held only one passed as a non-empty prompt. Iris now removes it, from `--prompt-file`
+  and `--prompt-stdin` alike.
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.
