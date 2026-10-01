@@ -915,6 +915,19 @@ fn a_rate_limited_paid_request_is_retried_and_then_succeeds() {
     assert!(out.elapsed < std::time::Duration::from_secs(30), "{:?}", out.elapsed);
 }
 
+/// A delay asked for in milliseconds is reported in whole seconds rounded up: a
+/// caller that waits `retry_after_seconds` never retries before the provider asked.
+#[test]
+fn a_fractional_retry_delay_is_reported_rounded_up() {
+    let limited =
+        openai_error(429, "requests", Some("rate_limit_exceeded"), "Rate limit reached for requests.")
+            .insert_header("retry-after-ms", "60500");
+    let (_sb, api, out) = openai_run(limited, &[]);
+    let v = out.err(1, "rate_limited");
+    assert_eq!(v["error"]["retry_after_seconds"], 61, "{v}");
+    assert_eq!(api.total(), 1);
+}
+
 /// A paid request that may have been billed is never presented as retryable.
 fn assert_not_retryable_if_charged(v: &Value) {
     if v["error"]["details"]["charge_possible"] == true {

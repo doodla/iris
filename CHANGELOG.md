@@ -31,6 +31,9 @@ All notable changes to this project are documented in this file. The format foll
 - **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
   about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
   printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.
+- **A requested delay is rounded up, not down.** When a provider asked to wait a fraction of a
+  second, `retry_after_seconds` dropped the fraction: OpenAI's `retry-after-ms: 1500` became 1, so a
+  caller that waited that long retried too early. Iris now rounds it up, to 2.
 - **A wait limit too large to use is refused before anything is sent.** An enormous wait limit or
   poll interval, such as `--timeout 18446744073709551615` or a `wait_timeout` of the largest TOML
   integer, was accepted, and `video generate` then stopped with `internal_error` after its paid

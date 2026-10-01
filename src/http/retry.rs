@@ -56,7 +56,7 @@ use serde::de::DeserializeOwned;
 
 use super::{HttpClient, upload_allowance};
 use crate::domain::ProviderId;
-use crate::error::{ErrorCode, IrisError};
+use crate::error::{ErrorCode, IrisError, whole_seconds_up};
 use crate::redact;
 
 /// Maximum characters of provider text kept in messages and details (see docs/reference/errors.md).
@@ -944,7 +944,7 @@ pub(crate) fn over_cap(mut error: IrisError, requested: Duration, cap: Duration)
         error.hint = Some(format!(
             "the provider asked to wait {}s before retrying, longer than the {}s Iris waits automatically; \
              run the command again later",
-            requested.as_secs().max(1),
+            whole_seconds_up(requested),
             cap.as_secs()
         ));
     }
@@ -1125,6 +1125,22 @@ mod tests {
         assert_eq!(retry_after_from_headers(&headers(&[("retry-after", "soon")]), now), None);
         assert_eq!(retry_after_from_headers(&headers(&[("retry-after", "-3")]), now), None);
         assert_eq!(retry_after_from_headers(&HeaderMap::new(), now), None);
+    }
+
+    /// Half a second over the cap is still over it: the hint must not claim the
+    /// provider asked for no more than Iris waits.
+    #[test]
+    fn a_delay_over_the_cap_is_named_rounded_up() {
+        let error = IrisError::new(ErrorCode::DownloadFailed, "the file host is busy");
+        let error = over_cap(error, Duration::from_millis(60_500), Duration::from_secs(60));
+        assert_eq!((error.code, error.retry_after_seconds()), (ErrorCode::RateLimited, Some(61)));
+        assert_eq!(
+            error.hint.as_deref(),
+            Some(
+                "the provider asked to wait 61s before retrying, longer than the 60s Iris waits \
+                 automatically; run the command again later"
+            )
+        );
     }
 
     #[test]

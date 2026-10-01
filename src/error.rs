@@ -448,6 +448,19 @@ impl IrisError {
     pub fn category(&self) -> ErrorCategory {
         self.code.category()
     }
+
+    /// `retry_after` as the JSON error's `retry_after_seconds` shows it (see
+    /// [`whole_seconds_up`]).
+    pub fn retry_after_seconds(&self) -> Option<u64> {
+        self.retry_after.map(whole_seconds_up)
+    }
+}
+
+/// A delay in whole seconds, as Iris reports a delay that the provider asked for:
+/// rounded up, so that waiting the reported time is never shorter than the request,
+/// and at least 1.
+pub fn whole_seconds_up(delay: Duration) -> u64 {
+    delay.as_secs().saturating_add(u64::from(delay.subsec_nanos() > 0)).max(1)
 }
 
 pub type Result<T, E = IrisError> = std::result::Result<T, E>;
@@ -499,5 +512,26 @@ mod tests {
         assert_eq!(ErrorCode::JobNotReady.exit_code(), 4);
         assert_eq!(ErrorCode::SubmissionUncertain.exit_code(), 5);
         assert_eq!(ErrorCode::Interrupted.exit_code(), 130);
+    }
+
+    /// OpenAI's `retry-after-ms` and Google's `RetryInfo` can ask for a fraction of
+    /// a second: waiting the reported whole seconds must not retry too early.
+    #[test]
+    fn a_requested_delay_is_reported_in_whole_seconds_rounded_up() {
+        let cases = [
+            (Duration::ZERO, 1),
+            (Duration::from_millis(250), 1),
+            (Duration::from_secs(1), 1),
+            (Duration::from_millis(1500), 2),
+            (Duration::from_secs(2), 2),
+            (Duration::from_millis(60_500), 61),
+            (Duration::new(u64::MAX, 1), u64::MAX),
+        ];
+        for (delay, seconds) in cases {
+            assert_eq!(whole_seconds_up(delay), seconds, "{delay:?}");
+        }
+        let e = IrisError::new(ErrorCode::RateLimited, "slow down");
+        assert_eq!(e.retry_after_seconds(), None);
+        assert_eq!(e.with_retry_after(Duration::from_millis(1500)).retry_after_seconds(), Some(2));
     }
 }
