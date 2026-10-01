@@ -50,7 +50,7 @@ use super::paths;
 
 /// Maximum `<stem>.<n>.<ext>` suffix tried by [`FinalizeMode::RenameOnConflict`].
 const MAX_RENAME_ATTEMPTS: u32 = 9999;
-/// Longest part of the target name reused in a temp file name.
+/// Longest part of the target name, in bytes, reused in a temp file name.
 const MAX_NAME_IN_PART: usize = 120;
 /// Random characters at the end of a temp file name.
 const PART_RANDOM_CHARS: usize = 8;
@@ -282,11 +282,16 @@ fn same_file(a: &fs::Metadata, b: &fs::Metadata) -> bool {
     }
 }
 
-/// `.<name>.iris-part-` for `target` (the name cut to [`MAX_NAME_IN_PART`] characters).
+/// `.<name>.iris-part-` for `target`, the name cut to [`MAX_NAME_IN_PART`] bytes at a
+/// character boundary: with the random characters, the temp file's name stays well
+/// within the 255-byte name limit of common file systems, whatever the characters.
 fn part_prefix(target: &Path) -> String {
     let name = target.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-    let name: String = name.chars().take(MAX_NAME_IN_PART).collect();
-    format!(".{name}.iris-part-")
+    let mut end = name.len().min(MAX_NAME_IN_PART);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(".{}.iris-part-", &name[..end])
 }
 
 /// Validate and save a paid synchronous image (bytes held in memory) to `target`.
