@@ -323,18 +323,20 @@ fn names_a_stream(path: &Path) -> bool {
 
 /// Check planned paths before any paid request: an existing file without
 /// `overwrite` is `output_exists` (exit 2, nothing sent); an existing directory is
-/// always `invalid_argument`, and so is a path that cannot be used as given (a file
-/// where a directory should be, no permission to look).
+/// always `invalid_argument`, and so is a symbolic link to one (saving refuses it,
+/// which would be after the request was paid for), and a path that cannot be used
+/// as given (a file where a directory should be, no permission to look).
 pub fn preflight(paths: &[PathBuf], overwrite: bool) -> Result<(), IrisError> {
     for path in paths {
-        match std::fs::symlink_metadata(path) {
-            Ok(meta) if meta.is_dir() => {
-                return Err(IrisError::invalid(format!(
-                    "output path {} is an existing directory",
-                    path.display()
-                ))
+        let is_a = |what: &str| {
+            IrisError::invalid(format!("output path {} is {what}", path.display()))
                 .with_detail("path", path.to_string_lossy().into_owned())
-                .with_hint(DIR_HINT));
+                .with_hint(DIR_HINT)
+        };
+        match std::fs::symlink_metadata(path) {
+            Ok(meta) if meta.is_dir() => return Err(is_a("an existing directory")),
+            Ok(meta) if meta.is_symlink() && std::fs::metadata(path).is_ok_and(|m| m.is_dir()) => {
+                return Err(is_a("a symbolic link to a directory"));
             }
             Ok(_) if !overwrite => return Err(output_exists(path)),
             Ok(_) => {}

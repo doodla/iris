@@ -25,6 +25,12 @@ All notable changes to this project are documented in this file. The format foll
   and no `--format`, the GPT Image models refused `-O compression` as if the output were PNG,
   because the options were checked before the `-o` extension set the format. The extension now
   sets it first, as with `--format jpeg`.
+- **A symbolic link to a directory at an output path is refused before paying.** With
+  `--overwrite`, a path that `-n` numbers, such as `g-1.png`, passed the check when it was a
+  symbolic link to a directory. Iris sent the paid request, and then saved that image in the state
+  directory's `unsaved/` folder, because it couldn't replace the link. Iris now refuses the link
+  with `invalid_argument` before it sends anything, as it refuses a directory, with or without
+  `--overwrite`.
 - **A relative `HOME` is refused instead of used.** With `HOME` set to a relative path, Iris put its
   default config file and state directory under the current directory, so a video job recorded in
   one directory was missing from another. A command that needs a default path now fails with
