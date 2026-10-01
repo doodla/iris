@@ -1083,12 +1083,17 @@ async fn download_outputs(
                     format!("iris jobs download {id}")
                 };
                 let e = refused_or_gone(e, &rec, now, &retry);
-                let e = if e.code == ErrorCode::ArtifactExpired || e.hint.is_some() {
-                    e
-                } else {
-                    e.with_hint(format!(
+                let e = match e.retry_after_seconds() {
+                    // A rate limit's own hint says to run "the command" again, which
+                    // for `video generate` would submit a new job: name the download.
+                    Some(seconds) if e.code == ErrorCode::RateLimited => e.with_hint(format!(
+                        "the job itself succeeded, but the file host asked to wait {seconds}s before downloading \
+                         again; then retry the download with `{retry}` (nothing is regenerated)"
+                    )),
+                    _ if e.code == ErrorCode::ArtifactExpired || e.hint.is_some() => e,
+                    _ => e.with_hint(format!(
                         "the job itself succeeded; retry the download with `{retry}` (nothing is regenerated)"
-                    ))
+                    )),
                 };
                 // A file saved earlier stays the output's artifact (see
                 // `JobRecord::mark_output_failed`); say what became of it.

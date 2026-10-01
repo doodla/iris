@@ -123,7 +123,7 @@ Some fields have specific rules:
 | `wait_timeout` | pending | 4 | true | The wait limit passed. The video job continues remotely. |
 | `job_not_ready` | pending | 4 | true | The video job is still running, so its outputs aren't ready. |
 | `submission_uncertain` | uncertain | 5 | false | A paid request might or might not have been processed. |
-| `interrupted` | interrupted | 130 | true (false while a paid request was in flight) | The command was interrupted. |
+| `interrupted` | interrupted | 130 | true (false once the command has sent a paid request) | The command was interrupted. |
 
 The following sections describe the codes whose `details` or behavior need more than one line.
 
@@ -323,8 +323,10 @@ The command stopped because of Ctrl+C, SIGTERM, or SIGHUP, and exited with code 
 one envelope, however the process was interrupted.
 
 - By default, `retryable` is `true`: running the command again is harmless.
-- While a paid request is in flight, `retryable` is `false` and `details.charge_possible` is `true`,
-  because running the command again could pay twice.
+- Once the command has sent a paid request, `retryable` is `false` and `details.charge_possible` is
+  `true`, because running the command again could pay twice. This includes an interrupt while
+  `iris video generate` waits for its job or downloads the video. To resume the job, run
+  `iris jobs wait JOB_ID`.
 - If the interrupt arrives before Iris starts sending a video request, Iris sends nothing, writes no
   job, and reports `retryable: true`.
 
@@ -359,6 +361,9 @@ new request, which is billed again. See
 - `retryable` is never an instruction to resend a paid request automatically. Iris itself never
   resends a paid request whose outcome is unknown. See
   [How Iris handles paid requests](../concepts/paid-requests.md).
+- Once `iris video generate` has submitted its job, every error that it reports has
+  `retryable: false`, because running it again submits and pays for another job. Unless the job
+  has ended without success, the hint names the `iris jobs` command that continues it.
 
 ### Errors of ended jobs
 
