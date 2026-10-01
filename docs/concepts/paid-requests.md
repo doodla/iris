@@ -44,7 +44,8 @@ OpenAI does for `insufficient_quota`. Iris doesn't retry it.
 Between attempts, Iris waits with exponential backoff from 1 second up to 30 seconds, with jitter.
 When the provider asks for a delay, for example with a `Retry-After` header, Iris waits for up to 60
 seconds. If the provider asks for a longer delay, Iris stops with `rate_limited` and reports the
-delay in `retry_after_seconds`.
+delay in `retry_after_seconds`. After Ctrl+C, SIGTERM, or SIGHUP, Iris doesn't send a paid request
+again. See [Interrupting a paid request](#interrupting-a-paid-request).
 
 Both providers recommend retrying server errors and timeouts. For paid requests, Iris doesn't,
 because neither provider offers a way to send a request again without risking a second charge. For

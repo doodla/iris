@@ -548,6 +548,57 @@ async fn first_ctrl_c_during_submission_is_deferred_until_the_operation_id_is_re
     assert_eq!(gemini.videos().poll_calls.load(Ordering::SeqCst), 0, "no waiting after an interrupt");
 }
 
+/// After a first interrupt, a submission that ends unprocessed (never sent, or
+/// rejected before processing: the HTTP layer then sends it no more) leaves no job:
+/// the record goes and running the command again is harmless. Any other answer is
+/// reported as without the interrupt.
+#[tokio::test]
+async fn an_interrupted_submission_that_was_not_processed_leaves_no_job() {
+    let f = Fixture::new().await;
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let gemini = Arc::new(FakeProvider {
+        video: Some(FakeVideo { submit_gate: Some(gate.clone()), ..FakeVideo::default() }),
+        ..FakeProvider::gemini()
+    });
+    let not_sent = IrisError::new(ErrorCode::NetworkError, "could not connect to the API")
+        .with_provider(ProviderId::Gemini)
+        .with_detail("charge_possible", false);
+    let refused = IrisError::new(ErrorCode::InvalidArgument, "the request is malformed")
+        .with_provider(ProviderId::Gemini)
+        .with_provider_status(400);
+    gemini.videos().push_submit(Err(not_sent));
+    gemini.videos().push_submit(Err(refused));
+    let interrupt = Interrupt::manual();
+    let ctx = context_with_interrupt(f.settings(), vec![gemini.clone()], interrupt.clone());
+    let entered = gemini.videos().submit_entered.clone();
+    let interrupted_submission = || async {
+        let mut w = Vec::new();
+        let run = video::run(&ctx, vargs("x"), &mut w);
+        let driver = async {
+            entered.notified().await;
+            interrupt.trigger();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            gate.notify_one();
+        };
+        tokio::join!(run, driver).0.unwrap_err()
+    };
+
+    let e = interrupted_submission().await;
+    assert_eq!((e.code, e.exit_code()), (ErrorCode::Interrupted, 130));
+    assert_eq!(e.retryable, Some(true), "nothing was accepted or billed");
+    assert_eq!(e.details["cause_code"], "network_error");
+    assert_eq!(e.job_id, None);
+    assert!(e.hint.as_deref().unwrap().contains("run the same command again"), "{e:?}");
+    let listing = store(&f.sandbox).list().unwrap();
+    assert!(listing.records.is_empty() && listing.unreadable.is_empty(), "no record is left");
+
+    let e = interrupted_submission().await;
+    assert_eq!((e.code, e.provider_status), (ErrorCode::InvalidArgument, Some(400)));
+    assert_eq!(e.job_status, Some(JobStatus::Failed));
+    let id = JobId::parse(e.job_id.as_deref().unwrap()).unwrap();
+    assert_eq!(store(&f.sandbox).load(&id).unwrap().status(), JobStatus::Failed);
+}
+
 #[tokio::test]
 async fn second_ctrl_c_during_submission_exits_at_once_leaving_the_record_submitting() {
     let f = Fixture::new().await;

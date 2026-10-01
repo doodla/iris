@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use serde_json::json;
+use tokio::sync::watch;
 
 use crate::artifacts::{self, Naming, PathRequest};
 use crate::catalog::{self, InputCounts, ResolvedModel};
@@ -33,7 +34,7 @@ use crate::domain::{JobStatus, ModelSource, Operation, ProviderId, Warning};
 use crate::error::{ErrorCategory, ErrorCode, IrisError, exit};
 use crate::jobs::{self, JobId, JobLabel, JobRecord, NewJob, OutputPlan, PromptRecord};
 use crate::output::results::{JobResult, PlanResult, PlanWait, PromptFingerprint, WaitSetting};
-use crate::providers::{InputRole, VideoRequest};
+use crate::providers::{InputRole, ProviderContext, VideoRequest};
 
 use super::context::AppContext;
 use super::jobs::{
@@ -251,8 +252,12 @@ async fn generate(
         return Err(discard_unsent(ctx, &job_id, e, ctx.now()));
     }
     // From here on the request may be in flight: the first interrupt is deferred
-    // until the provider answers.
+    // until the provider answers, and stops any further attempt. A retry (after a
+    // rate limit, which the provider answers before processing the request) would
+    // be a new paid request, sent after the caller asked Iris to stop.
     let mut deferred = false;
+    let (stop_attempts, attempts_stopped) = watch::channel(false);
+    let pctx = ProviderContext { http: pctx.http.with_retry_stop(attempts_stopped), ..pctx };
     let submission = {
         let submit = video.submit(&req, &pctx);
         tokio::pin!(submit);
@@ -262,10 +267,11 @@ async fn generate(
                 result = &mut submit => break result,
                 () = ctx.interrupt.after(seen), if !deferred => {
                     deferred = true;
+                    stop_attempts.send_replace(true);
                     ctx.progress.line(format!(
-                        "Interrupt received: waiting for the provider to acknowledge job {job_id} so it can be \
-                         recorded; interrupt again (Ctrl-C) to stop immediately (the job may then be \
-                         unrecoverable)"
+                        "Interrupt received: nothing more will be sent; waiting for the provider's answer to the \
+                         request in flight, if any, so that job {job_id} can be recorded; interrupt again (Ctrl-C) \
+                         to stop immediately (the job may then be unrecoverable)"
                     ));
                 }
                 () = ctx.interrupt.after(seen + 1), if deferred => {
@@ -348,6 +354,22 @@ async fn generate(
         // A local refusal inside the adapter (exit 2 without any provider status):
         // nothing was sent, so no job exists and its record is dropped.
         Err(e) if e.exit_code() == exit::USAGE && e.provider_status.is_none() => {
+            Err(discard_unsent(ctx, &job_id, e, now))
+        }
+        // Interrupted, and the last attempt was not processed: the provider
+        // rejected it first (a rate limit) or it was never sent, which is what
+        // makes a paid submission retryable. No job exists, so the record is
+        // dropped, as for an interrupt before sending, and the same command (label
+        // included) can run again.
+        Err(e) if deferred && e.retryable == Some(true) => {
+            let hint = "nothing was accepted or billed; run the same command again to submit the request"
+                .to_string();
+            let e = recode(
+                e,
+                ErrorCode::Interrupted,
+                |m| format!("interrupted; nothing more was sent, and job {job_id} was not accepted: {m}"),
+                hint,
+            );
             Err(discard_unsent(ctx, &job_id, e, now))
         }
         Err(e) => {

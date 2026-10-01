@@ -618,6 +618,9 @@ impl HttpClient {
     ///   The returned error carries the requested delay as `retry_after` only when
     ///   retrying could help: never for a [`Verdict::Final`] or an error whose
     ///   `retryable` is `Some(false)`.
+    /// * On a client with a retry stop ([`HttpClient::with_retry_stop`]), a call
+    ///   that would be retried after the stop was raised returns the outcome of its
+    ///   last attempt instead, as if it had no attempts left.
     /// * Returns the first 2xx response (with its attempt count), or an [`HttpError`].
     /// * A 2xx body longer than [`Call::max_body`] is not read further and never
     ///   retried. For a [`RetryClass::PaidSubmit`] call the provider answered, so the
@@ -714,7 +717,10 @@ impl HttpClient {
                         "retrying after HTTP {}",
                         status.as_u16()
                     );
-                    tokio::time::sleep(delay).await;
+                    if !self.wait_to_retry(delay).await {
+                        tracing::debug!(method = %method, url = %url, attempt, "retry stopped by the caller");
+                        return Err(HttpError::Error(error));
+                    }
                 }
                 Err(ReadError::TooLarge { status, headers, declared }) => {
                     tracing::debug!(
@@ -753,22 +759,26 @@ impl HttpClient {
                         after_send = failure.after_send,
                         "http transport failure"
                     );
-                    if !call.class.retries_transport(failure.kind, failure.after_send)
-                        || attempt >= max_attempts
+                    if call.class.retries_transport(failure.kind, failure.after_send)
+                        && attempt < max_attempts
                     {
-                        return Err(HttpError::Transport(TransportError {
-                            kind: failure.kind,
-                            after_send: failure.after_send,
-                            status: failure.status,
-                            attempts: attempt,
-                            class: call.class,
-                            provider: call.provider,
-                            url,
-                            message: failure.message,
-                        }));
+                        let delay =
+                            full_jitter(schedule.next().unwrap_or(self.retry.cap).min(self.retry.cap));
+                        if self.wait_to_retry(delay).await {
+                            continue;
+                        }
+                        tracing::debug!(method = %method, url = %url, attempt, "retry stopped by the caller");
                     }
-                    let delay = full_jitter(schedule.next().unwrap_or(self.retry.cap).min(self.retry.cap));
-                    tokio::time::sleep(delay).await;
+                    return Err(HttpError::Transport(TransportError {
+                        kind: failure.kind,
+                        after_send: failure.after_send,
+                        status: failure.status,
+                        attempts: attempt,
+                        class: call.class,
+                        provider: call.provider,
+                        url,
+                        message: failure.message,
+                    }));
                 }
             }
         }
