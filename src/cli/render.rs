@@ -339,9 +339,11 @@ impl Output {
                         .with_detail("suggestions", suggestions);
                     self.failure(command, &error, Vec::new())
                 } else {
-                    write(&self.stderr, &text);
+                    // The error quotes the arguments it is about, which may hold a key:
+                    // scrubbed like every other error, as the JSON envelope is.
+                    write(&self.stderr, &redact::scrub(&text));
                     if let Some((_, hint)) = option {
-                        write(&self.stderr, &format!("hint: {hint}\n"));
+                        write(&self.stderr, &redact::scrub(&format!("hint: {hint}\n")));
                     }
                     crate::error::exit::USAGE
                 }

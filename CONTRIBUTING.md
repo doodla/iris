@@ -130,4 +130,5 @@ Don't open a public issue for a vulnerability. Follow the [security policy](SECU
 
 ## Release Iris
 
-Maintainers cut releases. See [Releasing Iris](docs/contributing/releasing.md).
+Maintainers cut releases, and update the tool versions that are pinned by hand, such as the Rust
+toolchain that builds releases. See [Releasing Iris](docs/contributing/releasing.md).

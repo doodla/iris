@@ -175,7 +175,8 @@ Options:
 
 Prompt (exactly one source):
   -f, --prompt-file <PATH>
-          Read the prompt from a UTF-8 file (trailing whitespace is trimmed)
+          Read the prompt from a UTF-8 file (a leading byte order mark and trailing whitespace are
+          removed)
 
       --prompt-stdin
           Read the prompt from standard input (must not be a terminal)
@@ -284,7 +285,8 @@ Inputs:
 
 Prompt (exactly one source):
   -f, --prompt-file <PATH>
-          Read the prompt from a UTF-8 file (trailing whitespace is trimmed)
+          Read the prompt from a UTF-8 file (a leading byte order mark and trailing whitespace are
+          removed)
 
       --prompt-stdin
           Read the prompt from standard input (must not be a terminal)
@@ -446,7 +448,8 @@ Inputs:
 
 Prompt (exactly one source):
   -f, --prompt-file <PATH>
-          Read the prompt from a UTF-8 file (trailing whitespace is trimmed)
+          Read the prompt from a UTF-8 file (a leading byte order mark and trailing whitespace are
+          removed)
 
       --prompt-stdin
           Read the prompt from standard input (must not be a terminal)

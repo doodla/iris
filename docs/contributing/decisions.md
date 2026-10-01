@@ -739,7 +739,8 @@ reason:
   commit SHAs. The advisory scan also runs weekly.
 - CI on `main` uses the current stable Rust and the minimum version. Releases are checked and built
   with one pinned Rust version, which the release workflow logs (`rustc -Vv`), and which
-  maintainers bump deliberately.
+  maintainers bump deliberately. A weekly workflow fails when that version falls too far behind
+  stable.
 - A release's notes are its version's `CHANGELOG.md` section, read with parse-changelog. A tag
   without a section, or with an empty one, isn't released.
 
@@ -756,6 +757,9 @@ reason:
 - With `stable`, a Rust release that lands between CI on `main` and the tag push would change the
   compiler, and Clippy's lints, under an already-tested commit. No record would say which compiler
   built an archive. A pinned version makes a release repeatable, and its log says what built it.
+- Dependabot doesn't update a pinned toolchain, so nothing would show that the pin had aged. The
+  weekly check compares it with the newest stable Rust, and its limit is in
+  [Update the pinned tools](releasing.md#update-the-pinned-tools).
 - GitHub's generated notes list pull requests, not the user-facing changes that the changelog
   records. parse-changelog is the established tool for reading one version's section of such a file;
   create-gh-release-action uses it. A simple line-based extractor stops early at a reference-link

@@ -17,6 +17,19 @@ All notable changes to this project are documented in this file. The format foll
 - **Downloads retry every server error.** A download retried only HTTP 500, 502, 503, and 504 of
   the 5xx statuses, though Iris documents retrying downloads on the same errors as a status check,
   which include every 5xx. An HTTP 520 from a CDN, for example, ended the download at once.
+- **A byte order mark at the start of a prompt file isn't sent.** Some editors, Notepad among
+  them, start a UTF-8 file with one. Iris sent it to the provider as part of the prompt, and a
+  file that held only one passed as a non-empty prompt. Iris now removes it, from `--prompt-file`
+  and `--prompt-stdin` alike.
+- **Usage errors in human mode redact API keys.** A usage error quotes the argument that it's
+  about, so a key typed as an argument value, such as `--limit` followed by a pasted key, was
+  printed on stderr. JSON mode already redacted it. Both modes now show `[REDACTED]`.
+- **A wait limit too large to use is refused before anything is sent.** An enormous wait limit or
+  poll interval, such as `--timeout 18446744073709551615` or a `wait_timeout` of the largest TOML
+  integer, was accepted, and `video generate` then stopped with `internal_error` after its paid
+  job had been submitted. Every duration setting is now at most a year, and a longer one fails
+  with `invalid_argument` or `config_invalid` before anything is sent. See
+  [Configuration reference](https://github.com/doodla/iris/blob/main/docs/reference/configuration.md#settings).
 - **Redaction replaces a credential whole when it contains the other one.** If one API key was a
   prefix or substring of the other, output could show the longer key's remainder next to
   `[REDACTED]`. Iris now replaces longer credentials first.

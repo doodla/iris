@@ -39,7 +39,7 @@ Give each command exactly one prompt source:
 | Source | How |
 |---|---|
 | An argument | `iris image generate -m nano-banana-2 "a watercolor fox"` |
-| A file | `-f PATH` or `--prompt-file PATH`. The file must be UTF-8. Iris trims trailing whitespace. |
+| A file | `-f PATH` or `--prompt-file PATH`. The file must be UTF-8. Iris removes a leading byte order mark and trailing whitespace. |
 | Standard input | `--prompt-stdin`, when standard input isn't a terminal |
 
 For example, to read the prompt from standard input:
