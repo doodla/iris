@@ -158,7 +158,7 @@ pub static MODELS: &[ModelSpec] = &[
         inputs: InputSpec { /* image counts, media types, sizes, mask rules, frames, references,
                                inline request cap */ },
         options: OPTIONS,                              // every accepted option, typed (see below)
-        outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },
+        outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1, exact_size_option: None },
         limits: Limits { max_prompt_chars: Some(2000) },
         pricing: PRICING,                              // &[PriceRule { .. }], with source_url + as_of
         access_notes: &["Preview model", "Paid tier required"],
@@ -197,6 +197,11 @@ adapter can send. Then fill in the declarations:
   and `tests/cli_process.rs::every_typed_flag_is_declared_by_some_model_for_its_command`. Never
   declare an option that your adapter can't send: if the provider accepts it but your adapter has
   nowhere to put it yet, leave it out of the catalog.
+- **Outputs.** List every media type that the provider documents for the model in
+  `OutputSpec::media_types`: Iris warns with `output_type_undeclared` when a saved output has
+  another type. If an option sets the exact pixel size of every image as `WxH`, name it in
+  `exact_size_option`, and Iris warns with `output_size_mismatch` when a saved image has another
+  size. Name it only when the provider documents that the size is exact, or a live run showed it.
 - **Inputs.** Declare the input rules that the provider documents in `InputSpec`: accepted types
   and sizes, and mask rules (`MaskSpec`). If inputs are sent inline, add a limit on the whole
   request (`RequestSizeLimit`), with allowances for the JSON that your adapter adds. Iris enforces

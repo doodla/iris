@@ -99,8 +99,13 @@ const INPUTS: InputSpec = InputSpec {
     max_request: None,
 };
 
-const OUTPUTS: OutputSpec =
-    OutputSpec { media_types: &["image/png", "image/jpeg", "image/webp"], max_count: 10 };
+/// `size` is the pixel size of each generated image (Images API reference: "The size
+/// of the generated images"), so a saved image of another size is reported.
+const OUTPUTS: OutputSpec = OutputSpec {
+    media_types: &["image/png", "image/jpeg", "image/webp"],
+    max_count: 10,
+    exact_size_option: Some("size"),
+};
 
 const LIMITS: Limits = Limits { max_prompt_chars: Some(32_000) };
 

@@ -773,7 +773,7 @@ static TEST_SPEC: ModelSpec = ModelSpec {
     operations: &[Operation::VideoGenerate],
     inputs: InputSpec::NONE,
     options: TEST_OPTIONS,
-    outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },
+    outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1, exact_size_option: None },
     limits: Limits { max_prompt_chars: None },
     pricing: &[],
     access_notes: &[],

@@ -2629,7 +2629,9 @@
                 "status_refresh_failed",
                 "output_item_unusable",
                 "output_saved_elsewhere",
-                "output_extension_may_change"
+                "output_extension_may_change",
+                "output_type_undeclared",
+                "output_size_mismatch"
               ]
             },
             {

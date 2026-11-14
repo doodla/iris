@@ -312,6 +312,7 @@ async fn run_checked(
             ));
     }
     let saved = saving.saved;
+    warnings.extend(check_saved(spec, &opts, &resolved.id, &saved));
 
     // Prefer the provider-reported usage (covers every returned image); fall back to
     // the pre-call estimate for the number of images actually returned.
@@ -528,4 +529,57 @@ fn save_all(
         }
     }
     saving
+}
+
+/// What the catalog says every saved output should be, checked against what was
+/// saved, for every provider alike: a type the model is not declared to return is
+/// `output_type_undeclared`, and an image whose pixels differ from the size the
+/// request set (the model's [`exact_size_option`](crate::catalog::OutputSpec::exact_size_option))
+/// is `output_size_mismatch`. Both keep the image: it was paid for.
+fn check_saved(
+    spec: &crate::catalog::ModelSpec,
+    opts: &crate::catalog::ResolvedOptions,
+    model: &str,
+    saved: &[Artifact],
+) -> Vec<Warning> {
+    let declared = spec.outputs.media_types;
+    let requested = spec
+        .outputs
+        .exact_size_option
+        .and_then(|name| opts.get(name))
+        .and_then(|value| value.as_str().and_then(pixel_size).map(|size| (value.to_string(), size)));
+    let mut warnings = Vec::new();
+    for artifact in saved {
+        if !declared.contains(&artifact.media_type.as_str()) {
+            warnings.push(Warning::new(
+                WarningCode::OutputTypeUndeclared,
+                format!(
+                    "{} is {}, which {model} is not declared to return ({}); it was saved under its real type",
+                    artifact.path,
+                    artifact.media_type,
+                    declared.join(", ")
+                ),
+            ));
+        }
+        if let (Some((asked, (w, h))), Some(width), Some(height)) =
+            (&requested, artifact.width, artifact.height)
+            && (u64::from(width), u64::from(height)) != (*w, *h)
+        {
+            warnings.push(Warning::new(
+                WarningCode::OutputSizeMismatch,
+                format!(
+                    "{} is {width}x{height}, but the request asked for {asked}: the provider ignored or changed \
+                     the size. The image was kept; the cost estimate assumes the requested size",
+                    artifact.path
+                ),
+            ));
+        }
+    }
+    warnings
+}
+
+/// `(width, height)` of a `WxH` value; `None` for anything else (such as `auto`).
+fn pixel_size(value: &str) -> Option<(u64, u64)> {
+    let (w, h) = value.split_once('x')?;
+    Some((w.parse().ok()?, h.parse().ok()?))
 }

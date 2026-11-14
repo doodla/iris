@@ -78,7 +78,11 @@ const SIZE: OptionSpec = OptionSpec {
 const OPTIONS: &[OptionSpec] = &[COUNT, SIZE];
 
 /// The provider chooses the format; both are kept under their sniffed type.
-const OUTPUTS: OutputSpec = OutputSpec { media_types: &["image/jpeg", "image/png"], max_count: 1 };
+/// `size` is checked against every saved image (`output_size_mismatch`): the gateway's
+/// guide does not document the field, so the check catches a provider that ignores it.
+/// A live request of 768x768 on 2026-11-14 returned a 768x768 image.
+const OUTPUTS: OutputSpec =
+    OutputSpec { media_types: &["image/jpeg", "image/png"], max_count: 1, exact_size_option: Some("size") };
 
 const LIMITS: Limits = Limits { max_prompt_chars: None };
 

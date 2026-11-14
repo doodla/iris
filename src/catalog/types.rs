@@ -135,6 +135,10 @@ pub struct OutputSpec {
     pub media_types: &'static [&'static str],
     /// Maximum number of outputs per request.
     pub max_count: u32,
+    /// The option whose `WxH` value is the exact pixel size of every output, if the
+    /// provider documents (or Iris has verified) that it is. The app compares each
+    /// saved image with it and warns with `output_size_mismatch` when they differ.
+    pub exact_size_option: Option<&'static str>,
 }
 
 /// Other declared limits.

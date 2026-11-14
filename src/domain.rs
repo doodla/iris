@@ -337,6 +337,10 @@ pub enum WarningCode {
     /// The model takes no output format: the provider picks the image type, so an
     /// `-o` extension may be changed when the image is saved.
     OutputExtensionMayChange,
+    /// A saved output's type is not one the model's catalog entry declares.
+    OutputTypeUndeclared,
+    /// A saved image's pixel size differs from the size the request set.
+    OutputSizeMismatch,
 }
 
 impl WarningCode {
@@ -361,6 +365,8 @@ impl WarningCode {
         WarningCode::OutputItemUnusable,
         WarningCode::OutputSavedElsewhere,
         WarningCode::OutputExtensionMayChange,
+        WarningCode::OutputTypeUndeclared,
+        WarningCode::OutputSizeMismatch,
     ];
 
     /// The public snake_case code.
@@ -381,6 +387,8 @@ impl WarningCode {
             WarningCode::UnexpectedOutputCount => "unexpected_output_count",
             WarningCode::StatusRefreshFailed => "status_refresh_failed",
             WarningCode::OutputItemUnusable => "output_item_unusable",
+            WarningCode::OutputTypeUndeclared => "output_type_undeclared",
+            WarningCode::OutputSizeMismatch => "output_size_mismatch",
             WarningCode::OutputSavedElsewhere => "output_saved_elsewhere",
             WarningCode::OutputExtensionMayChange => "output_extension_may_change",
         }

@@ -8,6 +8,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- **Saved images are checked against the catalog.** Iris warns with `output_type_undeclared` when
+  a saved output's type isn't one that `models show` lists for the model, and with
+  `output_size_mismatch` when an image's pixel size differs from the `--size` that you asked for
+  (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. See
+  [Errors](https://github.com/doodla/iris/blob/main/docs/reference/errors.md#warning-codes).
 - **Vercel AI Gateway provider.** `iris image generate` can run Black Forest Labs' FLUX 3 Image
   and FLUX 3 Image Klein (`-m bfl/flux-3-image`, `-m bfl/flux-3-image-klein`) through the Vercel AI
   Gateway, with the key in `AI_GATEWAY_API_KEY` and the base URL in `IRIS_VERCEL_BASE_URL` or
