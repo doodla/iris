@@ -12,18 +12,23 @@
 //!   description, and its prices (`pricing.image`, and per-size prices in
 //!   `pricing.image_dimension_quality_pricing`).
 //!
-//! Iris declares only what those sources support (docs/contributing/decisions.md,
-//! "Vercel AI Gateway"):
+//! Iris declares only what those sources support, with one exception verified live
+//! (docs/contributing/decisions.md, "Vercel AI Gateway"):
 //!
-//! * models: FLUX 3 Image and FLUX 3 Image Klein, whose listed prices depend only on
-//!   a size of five square classes, so a cost can be estimated before the request.
-//!   The gateway lists many more image models, but most have no published price, or
-//!   prices by token usage or options that its Images endpoint does not document.
+//! * models: FLUX 3 Image and FLUX 3 Image Klein. `models list` compares image models
+//!   on one 1024x1024 image, so a model needs a request known to give that size. The
+//!   FLUX 3 prices name five square sizes, including 1024x1024. Other gateway image
+//!   models have a flat price but no size Iris could ask for, or no price, or prices
+//!   by token usage.
 //! * operations: `image.generate` only. The gateway's edit guide does not list these
 //!   models among those that accept input images, and warns that a model without mask
 //!   support may ignore the mask.
 //! * options: `size`, the five square sizes the price list names, and `count`, fixed
-//!   at 1 and never sent. The guide documents no other request field for these models.
+//!   at 1 and never sent. The guide does not document `size` for the Images endpoint:
+//!   a live request on 2026-11-14 asked for 768x768 and got 768x768, and the app checks
+//!   every saved image against the requested size (`output_size_mismatch`).
+//! * lifecycle: `ga`. The gateway's model list has no lifecycle field, and neither
+//!   model is marked preview or deprecated, so Iris assumes general availability.
 
 use crate::domain::{Billing, CostEstimate, Operation, ProviderId, format_usd};
 
@@ -152,7 +157,8 @@ pub static MODELS: &[ModelSpec] = &[
         id: "bfl/flux-3-image",
         provider: ProviderId::Vercel,
         display_name: "FLUX 3 Image (Black Forest Labs, via Vercel AI Gateway)",
-        summary: "Black Forest Labs' FLUX 3 image model, in five square sizes from 768x768 to 4096x4096",
+        summary: "Black Forest Labs' FLUX 3 image generation model, priced in five square sizes from 768x768 to \
+                  4096x4096",
         aliases: &[],
         lifecycle: Lifecycle::Ga,
         billing: Billing::Paid,
@@ -172,8 +178,8 @@ pub static MODELS: &[ModelSpec] = &[
         id: "bfl/flux-3-image-klein",
         provider: ProviderId::Vercel,
         display_name: "FLUX 3 Image Klein (Black Forest Labs, via Vercel AI Gateway)",
-        summary: "Black Forest Labs' smaller, faster FLUX 3 model with open weights, at about a fifth of FLUX 3 \
-                  Image's price",
+        summary: "Black Forest Labs' smaller, faster FLUX 3 model with open weights, at a fifth of FLUX 3 Image's \
+                  price for a 1024x1024 image and less at larger sizes",
         aliases: &[],
         lifecycle: Lifecycle::Ga,
         billing: Billing::Paid,

@@ -190,30 +190,43 @@ variable that the gateway's documentation uses, and goes in `Authorization: Bear
 **Why.**
 
 - The image generation guide documents the Images endpoint for image-only models, by example:
-  `model`, `prompt`, `n`, and `response_format: "b64_json"`, with base64 images in `data[]`. It
-  documents no other request field for these models, so Iris sends no other field.
-- The two FLUX 3 models are the gateway image models whose listed prices depend only on a size that
-  the price list names: five square classes from 768x768 to 4096x4096. So `size` accepts exactly
-  those five, and Iris can estimate a cost before the request. When you set no size, the estimate
-  uses the listed base price (`pricing.image`). Most other gateway image models have no listed
-  price, or are priced by token usage or options that the Images endpoint doesn't document, so Iris
-  couldn't estimate them honestly.
+  `model`, `prompt`, `n`, and `response_format: "b64_json"`, with base64 images in `data[]`.
+- `models list` compares every image model on the cost of one 1024x1024 image, so a model needs a
+  request that's known to give that size. The two FLUX 3 models are the gateway image models whose
+  listed prices name sizes: five square classes from 768x768 to 4096x4096, including 1024x1024. So
+  `size` accepts exactly those five, and Iris estimates the cost before the request. When you set no
+  size, the estimate uses the listed base price (`pricing.image`). Ten other gateway image models
+  have a flat per-image price, such as `bfl/flux-pro-1.1` and `spacexai/grok-imagine-image`, but no
+  documented way to ask for a 1024x1024 image. The rest have no listed price, or are priced by token
+  usage.
+- `size` is the one field that Iris sends without documentation: the guide doesn't list it for the
+  Images endpoint, and the price list names sizes but isn't an API reference. A live request on
+  2026-11-14 asked for 768x768 and got a 768x768 image. Because one run isn't documentation, the
+  model declares `size` as its exact output size, and Iris checks every saved image against it: an
+  image of another size is kept, with an `output_size_mismatch` warning that says the cost estimate
+  assumed the requested size.
 - Iris requests one image per call and never sends `n`. The guide shows `n` but not its limit for
   these models.
 - The edit guide doesn't list the FLUX 3 models among those that accept input images, and warns
   that a model without mask support may ignore the mask. Ignoring a mask would silently drop part of
   a paid request, so Iris offers no edits through the gateway.
-- The gateway documents video jobs only through its JavaScript SDK (`experimental_startVideo` and
-  `experimental_getVideoStatus`). It calls the HTTP requests behind them the provider's wire format,
-  not an API. Iris doesn't build a recoverable job on an undocumented interface.
+- The gateway documents video jobs only through its SDKs: the JavaScript AI SDK's
+  `experimental_startVideo` and `experimental_getVideoStatus`, and a Python SDK in beta. It
+  documents no HTTP API for starting a job or reading its status. Iris doesn't build a recoverable
+  job on an undocumented interface.
 - The rate-limit page says that a 429 "is not a failure of your request" and that "the same request
-  can succeed later without changes", so the `PaidSubmit` class retries it. The gateway documents
-  no idempotency key for images and no 5xx response as "not processed", so an HTTP 408 or 5xx, or a
-  timeout after sending, is `submission_uncertain`.
+  can succeed later without changes, so retry it". AGENTS.md allows retrying a rate-limit rejection,
+  so the `PaidSubmit` class retries a 429. The page doesn't say "not billed". One case remains: with
+  your own provider key (BYOK), the gateway retries a failed request with Vercel's keys, so a 429 on
+  that second attempt can follow a first attempt that the provider may have billed you for.
+- The gateway documents no idempotency key for images and no 5xx response as "not processed", so
+  an HTTP 408 or 5xx, or a timeout after sending, is `submission_uncertain`.
 - The REST API reference documents `include_availability` as each model's eligibility under the
   team's configuration, and says that a model can serve a request when its status is `eligible` and
   the account's `http` runtime is `available`. That's a better access check than the public model
-  list, which responds without a key.
+  list, which responds without a key. Iris reads that list once for all the models it checks. A
+  `transient` ineligibility, or a verdict for another runtime than `http`, is `unknown`, not
+  `unavailable`.
 
 **Sources.** [Image generation with the OpenAI-compatible API](https://vercel.com/docs/ai-gateway/modalities/image-generation/openai) ·
 [Video generation](https://vercel.com/docs/ai-gateway/modalities/video-generation) ·

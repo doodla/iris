@@ -225,6 +225,9 @@ async fn the_error_table_maps_each_documented_answer() {
         (402, "quota_for_entity_exceeded", ErrorCode::QuotaExceeded),
         (403, "forbidden", ErrorCode::PermissionDenied),
         (404, "model_not_found", ErrorCode::PermissionDenied),
+        (409, "conflict", ErrorCode::InvalidArgument),
+        (413, "payload_too_large", ErrorCode::InvalidArgument),
+        (422, "invalid_request_error", ErrorCode::InvalidArgument),
     ];
     for (status, kind, code) in cases {
         let server = MockServer::start().await;
@@ -375,4 +378,15 @@ fn the_access_scope_says_the_check_covers_eligibility_and_admission() {
     let scope = VercelProvider::new().access_scope();
     assert_eq!(scope.available, "eligible for this key's team");
     assert!(scope.basis.contains("funds, quota"), "{}", scope.basis);
+}
+
+#[tokio::test]
+async fn a_429_that_does_not_clear_is_rate_limited_after_a_bounded_number_of_tries() {
+    let server = MockServer::start().await;
+    mount(&server, gateway_error(429, "Rate limit exceeded", "rate_limit_exceeded")).await;
+    let e = generate_err(&server).await;
+    assert_eq!(e.code, ErrorCode::RateLimited);
+    let sent = requests(&server).await.len();
+    assert!((2..=5).contains(&sent), "retried, but boundedly: {sent} requests");
+    assert!(e.details.get("charge_possible").is_none_or(|v| v == &json!(false)), "{:?}", e.details);
 }

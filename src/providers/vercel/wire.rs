@@ -107,9 +107,16 @@ pub(super) fn availability(body: &[u8], model: &str) -> Availability {
     let Some(row) = models.iter().find(|m| m.get("id").and_then(Value::as_str) == Some(model)) else {
         return Availability::Ineligible;
     };
-    let status = row.pointer("/model_eligibility/status").and_then(Value::as_str);
-    match (status, account) {
+    let eligibility = row.get("model_eligibility");
+    let field = |key: &str| eligibility.and_then(|e| e.get(key)).and_then(Value::as_str);
+    // The verdict must be for HTTP requests; a row without a runtime is read as one.
+    if field("evaluated_runtime").is_some_and(|runtime| runtime != "http") {
+        return Availability::Unknown;
+    }
+    match (field("status"), account) {
         (Some("eligible"), Some("available")) => Availability::Eligible,
+        // A transient ineligibility is a passing state, not an answer.
+        (Some("ineligible"), _) if field("category") == Some("transient") => Availability::Unknown,
         (Some("ineligible"), _) | (_, Some("unavailable")) => Availability::Ineligible,
         _ => Availability::Unknown,
     }
@@ -154,6 +161,25 @@ mod tests {
         assert_eq!(e.kind.as_deref(), Some("rate_limit_exceeded"));
         let e = WireError::parse(br#"{"error": "plain"}"#);
         assert_eq!(e.message.as_deref(), Some("plain"));
+    }
+
+    #[test]
+    fn a_transient_or_non_http_verdict_is_unknown() {
+        let body = |eligibility: serde_json::Value| {
+            serde_json::to_vec(&serde_json::json!({
+                "data": [{"id": "m", "model_eligibility": eligibility}],
+                "request_context_availability": {"http": {"status": "available"}}
+            }))
+            .unwrap()
+        };
+        let transient = serde_json::json!({"status": "ineligible", "category": "transient", "reason": "x"});
+        assert!(matches!(availability(&body(transient), "m"), Availability::Unknown));
+        let policy = serde_json::json!({"status": "ineligible", "category": "policy"});
+        assert!(matches!(availability(&body(policy), "m"), Availability::Ineligible));
+        let websocket = serde_json::json!({"status": "eligible", "evaluated_runtime": "realtime_websocket"});
+        assert!(matches!(availability(&body(websocket), "m"), Availability::Unknown));
+        let http = serde_json::json!({"status": "eligible", "evaluated_runtime": "http"});
+        assert!(matches!(availability(&body(http), "m"), Availability::Eligible));
     }
 
     #[test]
