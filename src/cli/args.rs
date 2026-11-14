@@ -37,8 +37,8 @@ returns a job id that later commands (iris jobs status/wait/download) resume, ev
 process that uses the same state directory (`iris config path`).
 
 Credentials are read only from the OPENAI_API_KEY, GEMINI_API_KEY, and AI_GATEWAY_API_KEY \
-environment variables. Provider usage is billed by the provider to your API account; Iris reports \
-cost estimates only.
+environment variables. Provider usage is billed by the provider to your API account (for the \
+Vercel AI Gateway, your team's AI Gateway Credits); Iris reports cost estimates only.
 
 With --json, every command prints exactly one JSON document on stdout (schema: `iris schema`); \
 progress and diagnostics go to stderr. Iris never prompts interactively.";

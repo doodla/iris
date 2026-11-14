@@ -1782,3 +1782,44 @@ fn doctor_checks_vercel_access_with_one_read_of_the_model_list() {
         );
     }
 }
+
+/// `models show --check-access` for a gateway model reports the team-eligibility scope,
+/// and a refused model list is an error, not an unknown result.
+#[test]
+fn models_show_checks_vercel_access_in_the_gateways_terms() {
+    let model = "bfl/flux-3-image-klein";
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on(
+        "GET",
+        "/v1/models",
+        json_response(
+            200,
+            serde_json::json!({"object": "list",
+                "data": [{"id": model, "model_eligibility": {"evaluated_runtime": "http", "status": "eligible"}}],
+                "request_context_availability": {"http": {"status": "available"}}}),
+        ),
+    );
+    let v = sb.iris().vercel(&api).args(["models", "show", model, "--check-access", "--json"]).run().ok();
+    let access = &v["result"]["model"]["access"];
+    assert_eq!(access["account_access"], "available", "{v}");
+    assert_eq!(access["checked_scope"], "team_eligibility", "{v}");
+    assert_eq!(v["result"]["model"]["billing"], "paid_with_free_tier", "{v}");
+    let human = sb.iris().vercel(&api).args(["models", "show", model, "--check-access"]).run();
+    assert!(
+        human.human().contains("account access: available: eligible for this key's team"),
+        "{}",
+        human.stdout
+    );
+
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on(
+        "GET",
+        "/v1/models",
+        json_response(403, serde_json::json!({"error": {"message": "team blocked"}})),
+    );
+    let out = sb.iris().vercel(&api).args(["models", "show", model, "--check-access", "--json"]).run();
+    let v = out.json();
+    assert_eq!(v["error"]["code"], "permission_denied", "{v}");
+}

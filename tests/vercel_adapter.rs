@@ -243,7 +243,7 @@ async fn the_error_table_maps_each_documented_answer() {
 }
 
 #[tokio::test]
-async fn a_429_is_retried_because_the_gateway_documents_it_as_not_processed() {
+async fn a_429_is_retried_because_the_gateway_says_to_retry_it() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(GEN))
@@ -401,4 +401,18 @@ async fn a_429_that_does_not_clear_is_rate_limited_after_a_bounded_number_of_tri
     let sent = requests(&server).await.len();
     assert!((2..=5).contains(&sent), "retried, but boundedly: {sent} requests");
     assert!(e.details.get("charge_possible").is_none_or(|v| v == &json!(false)), "{:?}", e.details);
+}
+
+#[tokio::test]
+async fn a_429_asking_for_a_longer_wait_than_iris_allows_stops_with_the_delay() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        gateway_error(429, "Rate limit exceeded", "rate_limit_exceeded").insert_header("retry-after", "120"),
+    )
+    .await;
+    let e = generate_err(&server).await;
+    assert_eq!(e.code, ErrorCode::RateLimited);
+    assert_eq!(e.retry_after, Some(Duration::from_secs(120)), "the requested delay is reported");
+    assert_eq!(requests(&server).await.len(), 1, "a delay over the 60-second limit is not waited for");
 }

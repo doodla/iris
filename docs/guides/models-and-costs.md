@@ -255,7 +255,7 @@ sets it.
 > [!IMPORTANT]
 > Each provider bills its API usage separately, to your own API account. A ChatGPT Plus or Pro
 > subscription, the Gemini app, a Google AI plan, or a Google Flow subscription doesn't include API
-> access. The Vercel AI Gateway bills its models to your Vercel team's AI Gateway Credits.
+> access.
 
 The models also have these requirements:
 

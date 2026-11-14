@@ -76,7 +76,7 @@ The layering protects two invariants:
 - `providers` never touches the file layout of jobs or artifacts. An adapter returns bytes for an
   image call, or an operation ID and status for a video call, never a path.
 - Only adapters know a provider's wire format. Every request to a provider's API is built inside an
-  adapter: generation, video submission, status checks, and the metadata call behind
+  adapter: generation, video submission, status checks, and the free access check behind
   `--check-access`. The one network call that `app` makes itself is the download of a finished
   job's output. `app::jobs` asks the adapter whether it may fetch the recorded URI
   (`VideoProvider::check_output_uri`), attaches the provider's credential header only when the URI
@@ -105,8 +105,9 @@ The layering protects two invariants:
 
 Image generation and video generation are different kinds of operation, so they have different
 traits. A provider implements the shared `Provider` trait, for its identity, credential header,
-documentation link, and the free `check_access` metadata call. It then provides `image()`,
-`video()`, or both:
+documentation link, and the free access check (`check_access`, `check_access_many`, and
+`access_scope`, which says what the check establishes). It then provides `image()`, `video()`, or
+both:
 
 ```rust
 #[async_trait]
@@ -117,6 +118,11 @@ pub trait Provider: Send + Sync {
     /// The provider's official documentation (shown by `providers list`).
     fn docs_url(&self) -> &'static str;
     async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError>;
+    /// Several models at once (default: one by one).
+    async fn check_access_many(&self, model_ids: &[&str], ctx: &ProviderContext)
+        -> Vec<Result<AccountAccess, IrisError>> { /* each in turn */ }
+    /// What the check establishes (default: `AccessScope::ModelMetadata`).
+    fn access_scope(&self) -> AccessScope { AccessScope::ModelMetadata }
     fn image(&self) -> Option<&dyn ImageProvider> { None }
     fn video(&self) -> Option<&dyn VideoProvider> { None }
 }

@@ -43,7 +43,7 @@ fn assert_ulid(value: &str) {
 fn openai_generate_saves_the_image_and_sends_the_documented_request() {
     let sb = Sandbox::new();
     let api = MockApi::start();
-    let image = png(64, 48);
+    let image = png(1024, 1024);
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_gen_1"));
 
     let out = sb
@@ -73,7 +73,10 @@ fn openai_generate_saves_the_image_and_sends_the_documented_request() {
     assert_eq!(r["status"], "succeeded");
     assert_eq!(r["provider_request_id"], "req_e2e_gen_1");
     assert_eq!(artifacts(&v).len(), 1);
-    assert_artifact(&artifacts(&v)[0], &sb.path("fox.png"), &image, "image/png", (64, 48));
+    let codes: Vec<&str> =
+        v["warnings"].as_array().unwrap().iter().map(|w| w["code"].as_str().unwrap()).collect();
+    assert!(!codes.contains(&"output_size_mismatch"), "the image has the requested size: {codes:?}");
+    assert_artifact(&artifacts(&v)[0], &sb.path("fox.png"), &image, "image/png", (1024, 1024));
 
     // The cost is an estimate from the reported usage, and says so.
     let cost = &r["cost_estimate"];
@@ -1420,4 +1423,46 @@ fn vercel_generate_saves_the_image_with_a_pre_call_estimate_and_sends_the_docume
     );
     assert_eq!(api.total(), 1);
     api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {VERCEL_KEY}"))));
+}
+
+#[test]
+fn vercel_image_of_another_size_is_kept_with_a_size_warning() {
+    use base64::Engine as _;
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    let image = jpeg(512, 512);
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&image);
+    api.on(
+        "POST",
+        "/v1/images/generations",
+        json_response(200, json!({"created": 1_790_000_000, "data": [{"b64_json": b64}]})),
+    );
+    let v = sb
+        .iris()
+        .vercel(&api)
+        .args([
+            "image",
+            "generate",
+            "-m",
+            "bfl/flux-3-image-klein",
+            PROMPT,
+            "--size",
+            "768x768",
+            "-o",
+            "fox.jpg",
+        ])
+        .arg("--json")
+        .run()
+        .ok();
+    assert_artifact(&artifacts(&v)[0], &sb.path("fox.jpg"), &image, "image/jpeg", (512, 512));
+    let warning = v["warnings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|w| w["code"] == "output_size_mismatch")
+        .unwrap_or_else(|| panic!("a size warning: {v}"));
+    let message = warning["message"].as_str().unwrap();
+    assert!(message.contains("is 512x512, but the request asked for 768x768"), "{message}");
+    assert!(message.contains("the cost estimate is for the requested size"), "{message}");
+    assert_eq!(api.total(), 1, "a size mismatch never resends the paid request");
 }

@@ -148,8 +148,8 @@ Replace the following:
 
 > [!IMPORTANT]
 > Each provider bills your API account, and a ChatGPT, Gemini app, or Google AI subscription doesn't
-> include API access. The Vercel AI Gateway bills your team's AI Gateway Credits. For what each model requires, see
-> [Check your access](models-and-costs.md#check-your-access).
+> include API access. The Vercel AI Gateway bills your team's AI Gateway Credits. For what each
+> model requires, see [Check your access](models-and-costs.md#check-your-access).
 
 ## Check your setup
 
@@ -175,8 +175,9 @@ The output is similar to the following:
 Healthy.
 ```
 
-`iris doctor` reports only whether each key is set, not its value. To also check that your keys
-can see each model, add `--check-access`. It makes one free metadata request per model.
+`iris doctor` reports only whether each key is set, not its value. To also check that you can use
+each model, add `--check-access`. Its requests are free; for what each provider's check covers, see
+[Check your access](models-and-costs.md#check-your-access).
 
 > [!NOTE]
 > Iris uses your system's trusted certificates for HTTPS. On a minimal container image, install

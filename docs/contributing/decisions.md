@@ -29,8 +29,9 @@ decision that depends on it.
 **Decision.** Each provider adapter is a small REST client on `reqwest`, inside
 `src/providers/PROVIDER/`. Iris uses no provider SDK crate.
 
-**Why.** Neither provider publishes an official Rust SDK: OpenAI lists only a community library for
-Rust, and Google's official Gemini SDKs cover Python, JavaScript and TypeScript, Go, Java, and C#.
+**Why.** No provider that Iris supports publishes an official Rust SDK: OpenAI lists only a
+community library for Rust, Google's official Gemini SDKs cover Python, JavaScript and TypeScript,
+Go, Java, and C#, and Vercel's AI SDK covers TypeScript and Python.
 The community crates that were evaluated don't fit Iris's rules:
 
 - `async-openai` retries POST requests on 429 and 5xx by default. Turning that off needs an
@@ -181,11 +182,12 @@ tried, and the provider documents no support for it.
 ### Vercel AI Gateway: image-only models through the OpenAI-compatible Images endpoint
 
 **Decision.** Iris reaches the Vercel AI Gateway with `POST /v1/images/generations`, sending
-`model`, `prompt`, `response_format: "b64_json"`, and `size` only when you set one. It registers
-one model, `bfl/flux-3-image-klein`, for image generation only, and declines `bfl/flux-3-image`. It doesn't
-offer image edits or video through the gateway. `--check-access` reads
-`GET /v1/models?include_availability` with the key. The key comes from `AI_GATEWAY_API_KEY`, the
-variable that the gateway's documentation uses, and goes in `Authorization: Bearer`.
+`model`, `prompt`, `response_format: "b64_json"`, and `size` only when you set one. It registers one
+model, `bfl/flux-3-image-klein`, for image generation only, and declines `bfl/flux-3-image`. It
+doesn't offer image edits or video through the gateway. `--check-access` reads `GET
+/v1/models?include_availability` with the key. The key comes from `AI_GATEWAY_API_KEY`, the variable
+that the gateway's documentation uses, and goes in `Authorization: Bearer`.
+
 
 **Why.**
 
@@ -454,9 +456,10 @@ that trying again can't help, such as an uncertain paid submission or a used-up 
 waited it out and sent the request again could pay twice, or only fail again. An
 `x-should-retry: false` response header, which OpenAI sends, stops retries.
 
-**Why.** Both providers' guidance says to retry 5xx errors and timeouts, and OpenAI's official
-Python SDK resends a POST on connection errors, 408, 409, 429, and 5xx. But neither the Images API
-nor Veo offers an idempotency key, or a way to find a request whose response was lost. Resending an
+**Why.** OpenAI's and Google's guidance says to retry 5xx errors and timeouts, and OpenAI's official
+Python SDK resends a POST on connection errors, 408, 409, 429, and 5xx. But neither the Images API,
+Veo, nor the Vercel AI Gateway's Images endpoint offers an idempotency key, or a way to find a
+request whose response was lost. Resending an
 ambiguous paid request can generate, and bill, the same output twice. So Iris retries paid
 requests only where the provider has said that the request wasn't processed, and leaves every other
 decision to the caller. Rate-limit retries follow OpenAI's guidance to honor `Retry-After` as a
@@ -476,11 +479,12 @@ will wait.
 **Decision.** A paid request whose outcome is unknown is reported as `submission_uncertain` (exit
 code 5), and never resubmitted:
 
-- **Images, both providers:** a timeout or a lost connection after the request was sent, or a
+- **Images, every provider:** a timeout or a lost connection after the request was sent, or a
   response that couldn't be read in full, because it was cut off or longer than the 512 MiB that
   Iris reads. The error has `retryable: false`, `details.charge_possible: true`, and
   `job_id: null`.
 - **OpenAI images:** also an HTTP 408 or 5xx response, except the documented overload rejection.
+- **Vercel AI Gateway images:** also an HTTP 408 or 5xx response.
 - **Gemini images:** an HTTP 4xx or 5xx response isn't uncertain. It keeps its ordinary code, such
   as a retryable `provider_error` for a 5xx, without `charge_possible`.
 - **Veo:** a 408 or 5xx response, a timeout or reset after sending, or a 2xx response without a
@@ -492,8 +496,8 @@ Ctrl+C, SIGTERM, or SIGHUP while a paid request is in flight reports `interrupte
 interrupt waits for the response, so that the operation name is recorded.
 
 **Why.** Google's billing documentation says that requests that fail with a 400 or 500 error aren't
-charged, so a Gemini error response proves that nothing was billed. OpenAI makes no such
-statement, and neither provider documents whether a request that timed out on the client was
+charged, so a Gemini error response proves that nothing was billed. OpenAI and Vercel make no such
+statement, and no provider documents whether a request that timed out on the client was
 processed. Veo keeps the strict rule for every 5xx, because such a response doesn't prove that no
 operation was created. An operation that exists runs, and is billed if it succeeds, with nothing for
 Iris to follow it by. Exit code 5 and `charge_possible` tell a caller to check the provider's usage

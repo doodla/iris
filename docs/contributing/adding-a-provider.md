@@ -47,8 +47,10 @@ src/providers/seedance/
   wire.rs     -- request/response types (private)
 ```
 
-Implement `Provider`: `id`, the credential header, `docs_url`, and the free `check_access` metadata
-call. The default base URL comes from `ProviderId`. Then implement `VideoProvider`: `submit`,
+Implement `Provider`: `id`, the credential header, `docs_url`, and the free `check_access` call.
+If that call establishes more than that the key can see the model, return its `AccessScope` from
+`access_scope`, adding a value if none fits. If one request covers several models, override
+`check_access_many` to make it once. The default base URL comes from `ProviderId`. Then implement `VideoProvider`: `submit`,
 `poll`, and `output_retention`, and optionally `validate`, which runs the local checks that
 `submit` makes before the job record is written, and `check_output_uri`. For the trait
 definitions, see [Architecture](architecture.md#sync-and-async-two-provider-traits). A provider

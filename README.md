@@ -1,9 +1,9 @@
 # Iris
 
 Iris is a command-line tool that generates images and videos with OpenAI and Google models, and
-images with Black Forest Labs' FLUX 3 Image Klein through the Vercel AI Gateway. You can also use it to edit
-images. It gives you and your agents one interface across providers, with JSON
-output, cost estimates before you spend, and video jobs that you can resume from any process.
+images with Black Forest Labs' FLUX 3 Image Klein through the Vercel AI Gateway. You can also use it
+to edit images. It gives you and your agents one interface across providers, with JSON output, cost
+estimates before you spend, and video jobs that you can resume from any process.
 
 ```sh
 iris image generate -m gpt-image-2.5-sunburst "a watercolor fox in a misty forest" -o fox.png
@@ -16,9 +16,9 @@ iris image generate -m gpt-image-2.5-sunburst "a watercolor fox in a misty fores
 
 ## Why Iris
 
-- **One CLI for OpenAI, Google, and the Vercel AI Gateway.** Generate and edit images with GPT
-  Image and Nano Banana, generate images with FLUX 3 Image Klein through the gateway, and generate videos with
-  Veo, with the same commands and flags.
+- **One CLI for OpenAI, Google, and the Vercel AI Gateway.** Generate and edit images with GPT Image
+  and Nano Banana, generate images with FLUX 3 Image Klein through the gateway, and generate videos
+  with Veo, with the same commands and flags.
 - **Built for agents.** With `--json`, every command prints one JSON document that follows a
   published schema, and every error has a stable code and exit code.
 - **Costs before you pay.** A dry run checks a request and estimates its cost without sending it,

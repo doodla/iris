@@ -51,9 +51,10 @@ The schema encodes the rules of the output, not only its shapes:
 - An error's `category` is the one that its `code` belongs to, for every code that the schema lists.
 - Error codes, commands, warning codes, provider IDs, `billing` values, and `access.checked_scope`
   values are open sets. The schema lists the known values and accepts any other value of the same
-  form: a snake_case word, or, for a command, snake_case words joined by dots. An envelope from a later version of Iris with the same
-  `schema_version` still validates. Every other enumeration, such as `category` or a status, is
-  closed.
+  form: a snake_case word, or, for a command, snake_case words joined by dots. An envelope from a
+  later version of Iris with the same `schema_version` still validates. Every other enumeration,
+  such as `category` or a status, is closed.
+
 
 ## Versioning
 
@@ -198,7 +199,7 @@ If Iris refuses a deletion, it deletes nothing and reports `invalid_argument`. S
 | `display_name` | string | The model's name, such as `GPT Image 2.5 Sunburst`. |
 | `summary` | string | What the model is for, and its trade-off, from the provider's documentation. |
 | `aliases` | array of strings | Other names that `-m` accepts, such as dated snapshots and nicknames. |
-| `lifecycle` | string | `ga`, `preview`, or `deprecated`, as the provider documents it. |
+| `lifecycle` | string | `ga`, `preview`, or `deprecated`, as the provider documents it. A model whose provider documents no stage is `ga` unless the provider marks it preview or deprecated; its catalog entry says so. |
 | `billing` | string | `paid` if requests are billed to the provider account at its published prices and the provider offers no free tier. `paid_with_free_tier` if requests are billed at the provider's published prices and the provider has a free tier that may cover some requests; the model's access requirements say what's known. The set is open: read a value that you don't know as "requests may cost money". |
 | `operations` | array of strings | What the model can do: `image.generate`, `image.edit`, or `video.generate`. |
 | `standard_cost` | [Standard cost](#standard-cost) or null | What the same standard output costs with this model. `null` if Iris can't estimate the model's cost before a request. |

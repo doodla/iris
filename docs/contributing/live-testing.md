@@ -224,8 +224,8 @@ reported as one. Mock mode requires:
 - `IRIS_OPENAI_BASE_URL`, `IRIS_GEMINI_BASE_URL`, and `IRIS_VERCEL_BASE_URL`, because a provider
   left at its default would be the real, paid API.
 - Each base URL is an `http` or `https` URL on `127.0.0.1`, `localhost`, or `[::1]`.
-- `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `AI_GATEWAY_API_KEY` are unset or fake: they must start with `fake-` or `test-`.
-  Run the script under `env -i`, so that it inherits no real key.
+- `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `AI_GATEWAY_API_KEY` are unset or fake: they must start
+  with `fake-` or `test-`. Run the script under `env -i`, so that it inherits no real key.
 
 The Veo marker of a mock run is `iris-live/veo-submitted.mock`, so a mock run never blocks a live
 one. Point `HOME` or `XDG_STATE_HOME` at a temporary directory to keep the run out of your own state
