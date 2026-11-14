@@ -293,11 +293,14 @@ pub struct AccessView {
     pub credential_present: bool,
     /// Documented account requirements (tier, verification, allowlists).
     pub requirements: Vec<String>,
-    /// Result of `--check-access` (`not_checked` without it): `available` means the
-    /// provider's model metadata is visible to this key. Billing tier, prepaid credit,
-    /// and organization verification are not checked.
+    /// Result of `--check-access` (`not_checked` without it): `available` means at
+    /// least that the model is visible to this key; `checked_basis` says what the
+    /// provider's check covered.
     pub account_access: AccountAccess,
     pub checked_at: Option<String>,
+    /// What the access check covered and what it did not, in the provider's terms
+    /// (null when not checked).
+    pub checked_basis: Option<String>,
 }
 
 /// `models.show`.

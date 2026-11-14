@@ -236,7 +236,7 @@ and `pricing`:
   "access": { "credential_env": "OPENAI_API_KEY", "credential_present": true,
               "requirements": ["API Organization Verification may be required for GPT Image models",
                                "Paid usage tier required (no free-tier limits listed)"],
-              "account_access": "not_checked", "checked_at": null },
+              "account_access": "not_checked", "checked_at": null, "checked_basis": null },
   "capabilities_source": "catalog", "catalog_as_of": "2026-09-24",
   "docs_url": "https://developers.openai.com/api/docs/guides/image-generation"
 }
@@ -255,10 +255,11 @@ and `pricing`:
 | `docs_url` | The provider's documentation for the model. |
 
 `access.account_access` is `not_checked`, unless you pass `--check-access`. Then Iris makes one
-free metadata request and reports `available`, `unavailable`, or `unknown`, and sets `checked_at`.
-`available` means only that the model is visible to your key. It doesn't check billing tier,
-prepaid credit, or organization verification, so a paid request can still fail with
-`permission_denied` or `quota_exceeded`.
+free request and reports `available`, `unavailable`, or `unknown`, and sets `checked_at` and
+`checked_basis`. `available` means at least that the model is visible to your key.
+`checked_basis` says what else the provider's check covered. For OpenAI and Gemini it covers
+nothing else: billing tier, prepaid credit, and organization verification aren't checked. Either
+way, a paid request can still fail with `permission_denied` or `quota_exceeded`.
 
 #### Options
 

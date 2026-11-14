@@ -637,11 +637,16 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     let v = f.run(&["models", "show", "fake-video-1", "--check-access", "--json"]).await.json();
     assert_eq!(v["result"]["model"]["access"]["account_access"], "available");
     assert!(v["result"]["model"]["access"]["checked_at"].is_string());
+    assert_eq!(
+        v["result"]["model"]["access"]["checked_basis"],
+        "model metadata only; billing tier, prepaid credit, and organization verification are not checked"
+    );
     assert_eq!(f.gemini.access_calls.load(Ordering::SeqCst), 1);
     let run = f.run(&["models", "show", "fake-video-1", "--check-access"]).await;
-    assert!(run.stdout.contains("account access: visible to this key (checked "), "{}", run.stdout);
+    assert!(run.stdout.contains("account access: available (checked "), "{}", run.stdout);
     assert!(
-        run.stdout.contains("model metadata only, billing and verification not checked"),
+        run.stdout
+            .contains("model metadata only; billing tier, prepaid credit, and organization verification"),
         "{}",
         run.stdout
     );

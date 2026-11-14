@@ -4,9 +4,16 @@
       "properties": {
         "account_access": {
           "$ref": "#/$defs/AccountAccess",
-          "description": "Result of `--check-access` (`not_checked` without it): `available` means the\nprovider's model metadata is visible to this key. Billing tier, prepaid credit,\nand organization verification are not checked."
+          "description": "Result of `--check-access` (`not_checked` without it): `available` means at\nleast that the model is visible to this key; `checked_basis` says what the\nprovider's check covered."
         },
         "checked_at": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "checked_basis": {
+          "description": "What the access check covered and what it did not, in the provider's terms\n(null when not checked).",
           "type": [
             "string",
             "null"
@@ -31,7 +38,8 @@
         "credential_present",
         "requirements",
         "account_access",
-        "checked_at"
+        "checked_at",
+        "checked_basis"
       ],
       "type": "object"
     },

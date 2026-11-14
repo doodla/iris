@@ -86,9 +86,9 @@ pub fn show(
     Ok(ModelShowResult { model: capabilities(spec, env.credential(spec.provider).is_some()) })
 }
 
-/// `models show --check-access`: asks the provider (free metadata call) whether the
-/// model [`show`] described is visible to the key; billing tier, credit, and
-/// organization verification are not part of that check.
+/// `models show --check-access`: asks the provider (one free call) whether the model
+/// [`show`] described is usable with the key, and records what that check covered
+/// (`checked_basis`, the provider's [`access_scope`](crate::providers::Provider::access_scope)).
 pub async fn check_access(
     ctx: &AppContext,
     shown: &mut ModelShowResult,
@@ -108,6 +108,7 @@ pub async fn check_access(
     };
     model.access.account_access = access;
     model.access.checked_at = Some(ctx.now().to_string());
+    model.access.checked_basis = Some(adapter.access_scope().basis.to_string());
     Ok(())
 }
 
@@ -173,6 +174,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
             requirements: m.access_notes.iter().map(|n| n.to_string()).collect(),
             account_access: AccountAccess::NotChecked,
             checked_at: None,
+            checked_basis: None,
         },
         capabilities_source: "catalog".to_string(),
         catalog_as_of: crate::catalog::checked_on(m.provider).to_string(),

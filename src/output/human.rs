@@ -12,7 +12,6 @@ use serde_json::Value;
 use crate::domain::{
     Artifact, Billing, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode, format_usd,
 };
-use crate::providers::AccountAccess;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
 use super::results::*;
@@ -525,14 +524,11 @@ fn model_show(m: &ModelCapabilities) -> String {
         }
     }
     let a = &m.access;
-    let access = match a.account_access {
-        AccountAccess::Available => "visible to this key".to_string(),
-        AccountAccess::Unavailable => "not visible to this key".to_string(),
-        other => lifecycle(&other),
-    };
-    let checked = match &a.checked_at {
-        Some(t) => format!(" (checked {t}; model metadata only, billing and verification not checked)"),
-        None => String::new(),
+    let access = lifecycle(&a.account_access);
+    let checked = match (&a.checked_at, &a.checked_basis) {
+        (Some(t), Some(basis)) => format!(" (checked {t}; {basis})"),
+        (Some(t), None) => format!(" (checked {t})"),
+        _ => String::new(),
     };
     let _ = writeln!(
         out,

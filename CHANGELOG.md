@@ -27,6 +27,12 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- **Access checks say what they checked.** `models show --check-access` adds
+  `access.checked_basis`, which says what the provider's check covered, and `doctor` words each
+  access result the same way. A Vercel AI Gateway model is reported as eligible or not for your
+  team, instead of as visible or not to your key, and the gateway's model list is read once per
+  `doctor --check-access` run instead of once per model. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **The installer falls back to git tags.** When GitHub's `releases/latest` page can't be read and
   `git` is installed, `install.sh` installs the highest `vX.Y.Z` tag that has a published release,
   and warns that it did. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).

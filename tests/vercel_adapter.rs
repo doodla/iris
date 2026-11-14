@@ -346,3 +346,33 @@ async fn check_access_reads_the_teams_eligibility_with_one_authenticated_read() 
     let e = access(&server, gateway_error(401, "bad key", "authentication_error")).await.unwrap_err();
     assert_eq!(e.code, ErrorCode::AuthenticationFailed);
 }
+
+#[tokio::test]
+async fn checking_several_models_reads_the_list_once_and_answers_each() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(catalog("eligible", "available"))
+        .mount(&server)
+        .await;
+    let results = VercelProvider::new().check_access_many(&[MODEL, "bfl/not-listed"], &ctx(&server)).await;
+    let results: Vec<AccountAccess> = results.into_iter().map(Result::unwrap).collect();
+    assert_eq!(results, [AccountAccess::Available, AccountAccess::Unavailable]);
+    assert_eq!(requests(&server).await.len(), 1, "one read answers every model");
+
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(gateway_error(401, "bad key", "authentication_error"))
+        .mount(&server)
+        .await;
+    let results = VercelProvider::new().check_access_many(&[MODEL, "bfl/other"], &ctx(&server)).await;
+    assert!(results.iter().all(|r| r.as_ref().unwrap_err().code == ErrorCode::AuthenticationFailed));
+}
+
+#[test]
+fn the_access_scope_says_the_check_covers_eligibility_and_admission() {
+    let scope = VercelProvider::new().access_scope();
+    assert_eq!(scope.available, "eligible for this key's team");
+    assert!(scope.basis.contains("funds, quota"), "{}", scope.basis);
+}

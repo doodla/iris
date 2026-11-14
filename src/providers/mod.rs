@@ -234,6 +234,26 @@ pub enum AccountAccess {
     Unknown,
 }
 
+/// What a provider's free access check establishes, in the words doctor and
+/// `models show` use for its result.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AccessCheckScope {
+    /// Said of a model the check found usable, e.g. "visible to this key".
+    pub available: &'static str,
+    /// Said of a model the check found not usable.
+    pub unavailable: &'static str,
+    /// What the check covers and what it does not, e.g. "model metadata only; …".
+    pub basis: &'static str,
+}
+
+/// The scope of a model metadata read: whether the key can see the model, and nothing
+/// about billing or verification.
+pub const METADATA_ONLY: AccessCheckScope = AccessCheckScope {
+    available: "visible to this key",
+    unavailable: "not visible to this key or its project (the metadata read found no model)",
+    basis: "model metadata only; billing tier, prepaid credit, and organization verification are not checked",
+};
+
 /// How a provider authenticates: header name and value prefix.
 #[derive(Debug, Clone, Copy)]
 pub struct CredentialHeader {
@@ -265,6 +285,26 @@ pub trait Provider: Send + Sync {
 
     /// Free metadata call (model lookup) to check whether this account can see `model_id`.
     async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError>;
+
+    /// [`Self::check_access`] for several models, one result per model in order. The
+    /// default checks them one by one; a provider whose check reads one list for
+    /// every model overrides it to read the list once.
+    async fn check_access_many(
+        &self,
+        model_ids: &[&str],
+        ctx: &ProviderContext,
+    ) -> Vec<Result<AccountAccess, IrisError>> {
+        let mut results = Vec::with_capacity(model_ids.len());
+        for id in model_ids {
+            results.push(self.check_access(id, ctx).await);
+        }
+        results
+    }
+
+    /// What [`Self::check_access`] establishes. The default is a model metadata read.
+    fn access_scope(&self) -> AccessCheckScope {
+        METADATA_ONLY
+    }
 
     fn image(&self) -> Option<&dyn ImageProvider> {
         None

@@ -25,8 +25,8 @@ use async_trait::async_trait;
 
 use super::openai_compat::{ImagesResponse, decode_items};
 use super::{
-    AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest, Provider,
-    ProviderContext,
+    AccessCheckScope, AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider,
+    ImageRequest, Provider, ProviderContext,
 };
 use crate::domain::ProviderId;
 use crate::error::IrisError;
@@ -63,7 +63,31 @@ impl Provider for VercelProvider {
     }
 
     async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError> {
-        client::check_access(model_id, ctx).await
+        let mut results = client::check_access(&[model_id], ctx).await;
+        results
+            .pop()
+            .unwrap_or_else(|| Err(IrisError::internal("the Vercel access check returned no result")))
+    }
+
+    /// One read of the annotated model list answers every model.
+    async fn check_access_many(
+        &self,
+        model_ids: &[&str],
+        ctx: &ProviderContext,
+    ) -> Vec<Result<AccountAccess, IrisError>> {
+        client::check_access(model_ids, ctx).await
+    }
+
+    /// The gateway evaluates the team's stored settings and its account admission,
+    /// so its answer covers more than a metadata read (REST API reference, "Team
+    /// availability annotations").
+    fn access_scope(&self) -> AccessCheckScope {
+        AccessCheckScope {
+            available: "eligible for this key's team",
+            unavailable: "not eligible for this key's team, or the team cannot make requests now",
+            basis: "the gateway's eligibility check of the team's settings and account admission (funds, quota, \
+                    verification); a budget or the upstream provider can still refuse a request",
+        }
     }
 
     fn image(&self) -> Option<&dyn ImageProvider> {

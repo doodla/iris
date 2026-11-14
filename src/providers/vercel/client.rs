@@ -208,13 +208,24 @@ pub(super) fn bad_response(resp: &HttpResponse, why: &str) -> IrisError {
     )
 }
 
-/// `GET {base}/models?include_availability` (free, authenticated, `IdempotentRead`):
-/// eligible for this team → available, ineligible or not listed → unavailable,
-/// `unknown` or an unreadable list → unknown; 401 → `authentication_failed`. Other
-/// answers are unknown; transport failures are errors.
-pub(super) async fn check_access(model: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError> {
-    let auth =
-        AuthHeader::new(super::CREDENTIAL_HEADER.name, super::CREDENTIAL_HEADER.prefix, &ctx.credential)?;
+/// `GET {base}/models?include_availability` (free, authenticated, `IdempotentRead`),
+/// read once for every model in `models`: eligible for this team → available,
+/// ineligible or not listed → unavailable, `unknown` or an unreadable list → unknown.
+/// A 401 is `authentication_failed` for every model; other answers are unknown, and
+/// transport failures are errors.
+pub(super) async fn check_access(
+    models: &[&str],
+    ctx: &ProviderContext,
+) -> Vec<Result<AccountAccess, IrisError>> {
+    let all = |result: Result<AccountAccess, IrisError>| models.iter().map(|_| result.clone()).collect();
+    let auth = match AuthHeader::new(
+        super::CREDENTIAL_HEADER.name,
+        super::CREDENTIAL_HEADER.prefix,
+        &ctx.credential,
+    ) {
+        Ok(auth) => auth,
+        Err(e) => return all(Err(e)),
+    };
     let url = format!("{}?include_availability", endpoint(ctx, "models"));
     let call = Call::new(RetryClass::IdempotentRead, ctx.timeouts.poll)
         .with_request_id_header(REQUEST_ID_HEADER)
@@ -222,19 +233,24 @@ pub(super) async fn check_access(model: &str, ctx: &ProviderContext) -> Result<A
     let result = ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), classify_read).await;
     let error = match result {
         Ok(resp) => {
-            return Ok(match wire::availability(&resp.body, model) {
-                Availability::Eligible => AccountAccess::Available,
-                Availability::Ineligible => AccountAccess::Unavailable,
-                Availability::Unknown => AccountAccess::Unknown,
-            });
+            return models
+                .iter()
+                .map(|model| {
+                    Ok(match wire::availability(&resp.body, model) {
+                        Availability::Eligible => AccountAccess::Available,
+                        Availability::Ineligible => AccountAccess::Unavailable,
+                        Availability::Unknown => AccountAccess::Unknown,
+                    })
+                })
+                .collect();
         }
         Err(HttpError::Error(e)) => match e.provider_status {
             Some(401) | None => e,
-            Some(_) => return Ok(AccountAccess::Unknown),
+            Some(_) => return all(Ok(AccountAccess::Unknown)),
         },
         Err(e) => e.into_iris(),
     };
-    Err(scrub_credential(error, ctx))
+    all(Err(scrub_credential(error, ctx)))
 }
 
 fn classify_read(resp: &HttpResponse) -> Verdict {
