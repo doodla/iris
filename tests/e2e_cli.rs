@@ -349,10 +349,8 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
             base.clone().args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run"]).run();
         assert!(out.human().starts_with("Dry run: nothing was sent"), "{}", out.stdout);
         assert!(
-            out.human().contains(
-                "\n  billing:    paid (requests are billed to the provider account at its published prices; no \
-                 free tier)\n"
-            ),
+            out.human()
+                .contains("\n  billing:    paid (requests are billed at the provider's published prices)\n"),
             "{}",
             out.stdout
         );

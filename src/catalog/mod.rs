@@ -26,7 +26,7 @@ pub const CATALOG_AS_OF: &str = "2026-09-24";
 pub fn checked_on(provider: ProviderId) -> &'static str {
     match provider {
         ProviderId::OpenAi | ProviderId::Gemini => CATALOG_AS_OF,
-        ProviderId::Vercel => vercel::PRICING_AS_OF,
+        ProviderId::Vercel => vercel::CATALOG_AS_OF,
     }
 }
 

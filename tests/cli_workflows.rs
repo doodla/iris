@@ -670,10 +670,8 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
         run.stdout
     );
     assert!(
-        run.stdout.contains(
-            "\n  billing:     paid (requests are billed to the provider account at its published prices; no free \
-             tier)\n"
-        ),
+        run.stdout
+            .contains("\n  billing:     paid (requests are billed at the provider's published prices)\n"),
         "{}",
         run.stdout
     );

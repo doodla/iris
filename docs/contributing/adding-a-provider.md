@@ -183,8 +183,10 @@ pub const DECLINED: &[DeclinedName] = &[DeclinedName {
 ```
 
 Add the module to `src/catalog/mod.rs`: `pub mod seedance;`, its `MODELS` in the `all()` chain, its
-`DECLINED` names in the `declined_names()` chain, and a `model_id_syntax` arm for the IDs that its
-adapter can send. Then fill in the declarations:
+`DECLINED` names in the `declined_names()` chain, a `model_id_syntax` arm for the IDs that its
+adapter can send, and a `checked_on` arm with the date that you checked its entries: the module's
+own `CATALOG_AS_OF`, as `catalog/vercel.rs` has. `models show` reports that date as
+`catalog_as_of`. Then fill in the declarations:
 
 - **Options.** Declare every option that the model accepts as an `OptionSpec`: `OptionKind::Enum`
   of strings, `IntegerEnum` of integers, `Integer { min, max }`, `Boolean`, `Text { max_chars }`,
@@ -285,8 +287,9 @@ Everything that a provider like the Seedance example touches.
 
 - `src/providers/seedance/`, the adapter, and in `src/providers/mod.rs`, `pub mod seedance;` and
   one `Registry::builtin()` line.
-- `src/catalog/seedance.rs`, and in `src/catalog/mod.rs`, its `pub mod`, its models in `all()`, its
-  declined names in `declined_names()`, and a `model_id_syntax` arm.
+- `src/catalog/seedance.rs`, with its own `CATALOG_AS_OF`, and in `src/catalog/mod.rs`, its
+  `pub mod`, its models in `all()`, its declined names in `declined_names()`, and an arm in each of
+  `model_id_syntax` and `checked_on`.
 - `ProviderId` in `src/domain.rs`: the variant, the `ALL` entry, and one arm in each of `as_str`,
   `display_name`, `credential_env`, `default_base_url`, and `base_url_env`. The compiler checks the
   arms, and the `domain` unit tests check the `ALL` entry and the names (see

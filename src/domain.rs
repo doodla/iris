@@ -190,8 +190,8 @@ pub enum ModelSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Billing {
-    /// Requests are billed to the provider account at its published prices; the
-    /// provider offers no free tier.
+    /// Requests are billed at the provider's published prices. Whether a free tier
+    /// covers the model is a per-model fact, in its access notes.
     Paid,
 }
 
@@ -211,9 +211,7 @@ impl Billing {
     /// What the value means, for human output and the published schema.
     pub const fn description(self) -> &'static str {
         match self {
-            Billing::Paid => {
-                "requests are billed to the provider account at its published prices; no free tier"
-            }
+            Billing::Paid => "requests are billed at the provider's published prices",
         }
     }
 }

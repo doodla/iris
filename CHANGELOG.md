@@ -32,6 +32,10 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- **`billing` no longer claims there's no free tier.** `paid` now means that requests are billed at
+  the provider's published prices. Whether a free tier covers a model is in its access notes,
+  because the Vercel AI Gateway has a free tier for a subset of models. `models show` also reports
+  each provider's own `catalog_as_of` date, so the Vercel models show the day they were checked.
 - **Access checks say what they checked.** `models show --check-access` adds
   `access.checked_basis`, which says what the provider's check covered, and `doctor` words each
   access result the same way. A Vercel AI Gateway model is reported as eligible or not for your

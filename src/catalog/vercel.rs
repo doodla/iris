@@ -35,8 +35,8 @@ use super::types::{
 
 /// The gateway's model list, where the prices below are published.
 pub const PRICING_URL: &str = "https://ai-gateway.vercel.sh/v1/models";
-/// Date the prices and capabilities were checked.
-pub const PRICING_AS_OF: &str = "2026-11-14";
+/// Date these catalog entries (capabilities and prices) were checked.
+pub const CATALOG_AS_OF: &str = "2026-11-14";
 /// Image generation guide for the OpenAI-compatible API.
 pub const DOCS_URL: &str = "https://vercel.com/docs/ai-gateway/modalities/image-generation/openai";
 
@@ -86,75 +86,59 @@ const OUTPUTS: OutputSpec =
 
 const LIMITS: Limits = Limits { max_prompt_chars: None };
 
-/// Account notes from the pricing and rate-limit pages
-/// (<https://vercel.com/docs/ai-gateway/pricing>, <https://vercel.com/docs/ai-gateway/rate-limits>),
+/// Account notes from the pricing page (<https://vercel.com/docs/ai-gateway/pricing>),
 /// checked 2026-11-14.
 const ACCESS_NOTES: &[&str] = &[
-    "Billed from the team's AI Gateway Credits at the provider's list price; a budget can refuse requests \
-     (HTTP 402)",
-    "The free tier has lower per-model rate limits and only free-tier-eligible models",
+    "Billed from the team's AI Gateway Credits at the provider's list price, unless you bring your own \
+     provider key, which the provider bills directly",
+    "The free tier's monthly credit covers only a subset of models (the gateway's Free Tier filter); other \
+     models need purchased AI Gateway Credits",
+    "A budget can refuse requests (HTTP 402); add-on surcharges, such as 5% on a regional endpoint, are not \
+     in Iris's estimate",
 ];
 
-/// Published prices of one model: the base per-image price, and per size.
+/// The published prices of one model, declared once: [`Rates::rules`] (what `models
+/// show` lists) is built from the same values the estimator reads.
 #[derive(Debug, Clone, Copy)]
 struct Rates {
-    model: &'static str,
     /// `pricing.image`: the price of an image without a size.
     base: f64,
     /// `pricing.image_dimension_quality_pricing`: (size, USD per image).
     per_size: &'static [(&'static str, f64)],
-}
-
-const RATES: &[Rates] = &[
-    Rates {
-        model: "bfl/flux-3-image",
-        base: 0.048,
-        per_size: &[
-            ("768x768", 0.041),
-            ("1024x1024", 0.048),
-            ("1536x1536", 0.07),
-            ("2048x2048", 0.1),
-            ("4096x4096", 0.607),
-        ],
-    },
-    Rates {
-        model: "bfl/flux-3-image-klein",
-        base: 0.009,
-        per_size: &[
-            ("768x768", 0.008),
-            ("1024x1024", 0.009),
-            ("1536x1536", 0.011),
-            ("2048x2048", 0.014),
-            ("4096x4096", 0.036),
-        ],
-    },
-];
-
-fn rates_for(model: &str) -> Option<&'static Rates> {
-    RATES.iter().find(|r| r.model == model)
+    rules: &'static [PriceRule],
 }
 
 const fn price(description: &'static str, usd: f64) -> PriceRule {
-    PriceRule { description, unit: "image", usd, source_url: PRICING_URL, as_of: PRICING_AS_OF }
+    PriceRule { description, unit: "image", usd, source_url: PRICING_URL, as_of: CATALOG_AS_OF }
 }
 
-const FLUX_3_PRICING: &[PriceRule] = &[
-    price("Generated image, size not given", 0.048),
-    price("Generated image, 768x768", 0.041),
-    price("Generated image, 1024x1024", 0.048),
-    price("Generated image, 1536x1536", 0.07),
-    price("Generated image, 2048x2048", 0.1),
-    price("Generated image, 4096x4096", 0.607),
-];
+/// [`Rates`] from a base price and the per-size prices.
+macro_rules! rates {
+    ($base:expr; $(($size:literal, $usd:expr)),+ $(,)?) => {
+        Rates {
+            base: $base,
+            per_size: &[$(($size, $usd)),+],
+            rules: &[
+                price("Generated image, size not given", $base),
+                $(price(concat!("Generated image, ", $size), $usd)),+
+            ],
+        }
+    };
+}
 
-const FLUX_3_KLEIN_PRICING: &[PriceRule] = &[
-    price("Generated image, size not given", 0.009),
-    price("Generated image, 768x768", 0.008),
-    price("Generated image, 1024x1024", 0.009),
-    price("Generated image, 1536x1536", 0.011),
-    price("Generated image, 2048x2048", 0.014),
-    price("Generated image, 4096x4096", 0.036),
-];
+const FLUX_3: Rates = rates!(0.048;
+    ("768x768", 0.041), ("1024x1024", 0.048), ("1536x1536", 0.07), ("2048x2048", 0.1), ("4096x4096", 0.607));
+
+const FLUX_3_KLEIN: Rates = rates!(0.009;
+    ("768x768", 0.008), ("1024x1024", 0.009), ("1536x1536", 0.011), ("2048x2048", 0.014), ("4096x4096", 0.036));
+
+fn rates_for(model: &str) -> Option<&'static Rates> {
+    match model {
+        "bfl/flux-3-image" => Some(&FLUX_3),
+        "bfl/flux-3-image-klein" => Some(&FLUX_3_KLEIN),
+        _ => None,
+    }
+}
 
 /// No gateway names are declined yet.
 pub const DECLINED: &[DeclinedName] = &[];
@@ -177,7 +161,7 @@ pub static MODELS: &[ModelSpec] = &[
         options: OPTIONS,
         outputs: OUTPUTS,
         limits: LIMITS,
-        pricing: FLUX_3_PRICING,
+        pricing: FLUX_3.rules,
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: None,
@@ -198,7 +182,7 @@ pub static MODELS: &[ModelSpec] = &[
         options: OPTIONS,
         outputs: OUTPUTS,
         limits: LIMITS,
-        pricing: FLUX_3_KLEIN_PRICING,
+        pricing: FLUX_3_KLEIN.rules,
         access_notes: ACCESS_NOTES,
         docs_url: DOCS_URL,
         validate: None,
@@ -230,7 +214,7 @@ fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEst
             spec.id
         ),
         PRICING_URL,
-        PRICING_AS_OF,
+        CATALOG_AS_OF,
     ))
 }
 
@@ -239,20 +223,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_model_has_rates_for_every_declared_size_and_matching_price_rules() {
+    fn every_model_has_a_price_for_every_declared_size() {
         for m in MODELS {
             let rates = rates_for(m.id).unwrap_or_else(|| panic!("{} has no rates", m.id));
+            let listed: Vec<(&str, f64)> = m.pricing.iter().map(|p| (p.description, p.usd)).collect();
+            let declared: Vec<(&str, f64)> = rates.rules.iter().map(|p| (p.description, p.usd)).collect();
+            assert_eq!(listed, declared, "{} lists its own rate table", m.id);
             for size in SIZES {
-                let (_, usd) = rates.per_size.iter().find(|(s, _)| s == size).expect(size);
-                assert!(
-                    m.pricing.iter().any(|p| p.description.ends_with(size) && p.usd == *usd),
-                    "{} {size}",
-                    m.id
-                );
+                assert!(rates.per_size.iter().any(|(s, _)| s == size), "{} {size}", m.id);
             }
-            assert!(
-                m.pricing.iter().any(|p| p.description.ends_with("size not given") && p.usd == rates.base)
-            );
         }
     }
 }

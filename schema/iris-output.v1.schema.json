@@ -125,7 +125,7 @@
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ],
-      "description": "Whether a model's requests cost money: one of the listed values (paid: requests are billed to the provider account at its published prices; no free tier), or a value a later version of this schema_version adds. Read a value you do not know as: requests may cost money.",
+      "description": "Whether a model's requests cost money: one of the listed values (paid: requests are billed at the provider's published prices), or a value a later version of this schema_version adds. Read a value you do not know as: requests may cost money.",
       "type": "string"
     },
     "CheckStatus": {
