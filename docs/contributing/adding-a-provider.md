@@ -105,10 +105,10 @@ doesn't:
   `VideoProvider::check_output_uri`. `providers/gemini/veo.rs::validate_output_uri` shows the
   pattern: the same origin and a narrow path shape. A refused URI fails that output's download,
   never the job.
-- **Redact before an error can leak.** Pass provider error text through `redact::scrub`, which
-  removes configured credential values, before it reaches `IrisError`.
-  `providers/openai/client.rs::scrub_credential` is the reference: it cleans every string field of
-  an error.
+- **Redact before an error can leak.** Use the shared helpers in `providers/errors.rs`, not your
+  own copies: `clean` and `annotate` make provider text display-safe before it reaches
+  `IrisError`, and `scrub_credential` removes the adapter's own key from every string field of an
+  error.
 
 ## Step 3: Give the provider its identity
 

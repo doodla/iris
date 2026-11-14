@@ -6,6 +6,7 @@
 //!
 //! Provider wire types live only inside `providers/<name>/`.
 
+pub(crate) mod errors;
 pub mod gemini;
 pub mod openai;
 pub mod vercel;

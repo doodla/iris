@@ -16,11 +16,9 @@ use reqwest::header::CONTENT_TYPE;
 use super::wire::{self, Availability, WireError};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
-use crate::http::{
-    AuthHeader, Call, HttpError, HttpResponse, PROVIDER_TEXT_MAX, RetryClass, TransportError, Verdict,
-};
+use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, TransportError, Verdict};
+use crate::providers::errors::{self, scrub_credential};
 use crate::providers::{AccountAccess, ProviderContext};
-use crate::redact;
 
 /// Response header Vercel sets on every answer, identifying the request.
 pub(super) const REQUEST_ID_HEADER: &str = "x-vercel-id";
@@ -65,34 +63,6 @@ pub(super) async fn post_paid(
         }
     };
     Err(scrub_credential(error, ctx))
-}
-
-/// Remove the context's own credential from every string of an error (provider text
-/// is already scrubbed of the configured credentials by [`redact::scrub`]).
-fn scrub_credential(mut e: IrisError, ctx: &ProviderContext) -> IrisError {
-    let secrets = [ctx.credential.expose().trim().to_string()];
-    let scrub = |s: &mut String| {
-        if let std::borrow::Cow::Owned(clean) = redact::scrub_with(s, &secrets) {
-            *s = clean;
-        }
-    };
-    let data = &mut *e;
-    scrub(&mut data.message);
-    for field in [&mut data.hint, &mut data.provider_code, &mut data.provider_request_id] {
-        if let Some(s) = field.as_mut() {
-            scrub(s);
-        }
-    }
-    let mut stack: Vec<&mut serde_json::Value> = data.details.values_mut().collect();
-    while let Some(value) = stack.pop() {
-        match value {
-            serde_json::Value::String(s) => scrub(s),
-            serde_json::Value::Array(items) => stack.extend(items.iter_mut()),
-            serde_json::Value::Object(map) => stack.extend(map.values_mut()),
-            _ => {}
-        }
-    }
-    e
 }
 
 /// A paid request may have reached the gateway but no complete answer arrived:
@@ -212,40 +182,14 @@ fn error_from(resp: &HttpResponse, wire: &WireError, code: ErrorCode, message: S
     e
 }
 
-/// Attach `provider_code` (`error.code`, else `error.type`) and
-/// `details.provider_message` (the scrubbed message, or a scrubbed body excerpt).
+/// Attach the provider code (`error.code`, else `error.type`) and message.
 fn annotate(e: &mut IrisError, resp: &HttpResponse, wire: &WireError) {
-    if let Some(code) = wire.code.as_deref().or(wire.kind.as_deref()).and_then(provider_code) {
-        e.provider_code = Some(code);
-    }
-    let message = match &wire.message {
-        Some(m) => clean(m, PROVIDER_TEXT_MAX),
-        None => resp.body_snippet(PROVIDER_TEXT_MAX),
-    };
-    if !message.trim().is_empty() {
-        e.details.insert("provider_message".to_string(), message.into());
-    }
+    errors::annotate(e, resp, wire.code.as_deref().or(wire.kind.as_deref()), wire.message.as_deref());
 }
 
+/// `": <provider message>"` for human messages, or empty.
 fn provider_suffix(wire: &WireError) -> String {
-    match &wire.message {
-        Some(m) => format!(": {}", clean(m, PROVIDER_TEXT_MAX)),
-        None => String::new(),
-    }
-}
-
-/// Provider text made display-safe: URLs redacted, secrets scrubbed, truncated.
-fn clean(text: &str, max: usize) -> String {
-    let text = crate::http::redact_urls_in_text(text);
-    redact::truncate(redact::scrub(&text).trim(), max)
-}
-
-/// Accept a provider error code only if it looks like an identifier.
-fn provider_code(raw: &str) -> Option<String> {
-    let ok = !raw.is_empty()
-        && raw.len() <= 100
-        && raw.chars().all(|c| c.is_ascii_alphanumeric() || "_.-:".contains(c));
-    ok.then(|| redact::scrub(raw).into_owned())
+    errors::provider_suffix(wire.message.as_deref())
 }
 
 /// A 2xx answer Iris cannot use. The request completed, so it may have been billed.
