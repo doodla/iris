@@ -132,10 +132,10 @@ mod tests {
         let mut options = ResolvedOptions::new();
         options.insert("count", OptionValue::Int(1));
         options.insert("size", OptionValue::Str("1024x1024".into()));
-        let body = GenerateBody::new("bfl/flux-3-image", "a fox", &options).unwrap();
+        let body = GenerateBody::new("bfl/flux-3-image-klein", "a fox", &options).unwrap();
         assert_eq!(
             serde_json::to_value(&body).unwrap(),
-            serde_json::json!({"model": "bfl/flux-3-image", "prompt": "a fox", "response_format": "b64_json",
+            serde_json::json!({"model": "bfl/flux-3-image-klein", "prompt": "a fox", "response_format": "b64_json",
                                "size": "1024x1024"})
         );
     }
@@ -186,31 +186,31 @@ mod tests {
     fn availability_follows_the_documented_rule() {
         let body = |status: &str, account: &str| {
             serde_json::to_vec(&serde_json::json!({
-                "data": [{"id": "bfl/flux-3-image", "model_eligibility": {"status": status}}],
+                "data": [{"id": "bfl/flux-3-image-klein", "model_eligibility": {"status": status}}],
                 "request_context_availability": {"http": {"status": account}}
             }))
             .unwrap()
         };
         assert!(matches!(
-            availability(&body("eligible", "available"), "bfl/flux-3-image"),
+            availability(&body("eligible", "available"), "bfl/flux-3-image-klein"),
             Availability::Eligible
         ));
         assert!(matches!(
-            availability(&body("ineligible", "available"), "bfl/flux-3-image"),
+            availability(&body("ineligible", "available"), "bfl/flux-3-image-klein"),
             Availability::Ineligible
         ));
         assert!(matches!(
-            availability(&body("eligible", "unavailable"), "bfl/flux-3-image"),
+            availability(&body("eligible", "unavailable"), "bfl/flux-3-image-klein"),
             Availability::Ineligible
         ));
         assert!(matches!(
-            availability(&body("unknown", "available"), "bfl/flux-3-image"),
+            availability(&body("unknown", "available"), "bfl/flux-3-image-klein"),
             Availability::Unknown
         ));
         assert!(matches!(
             availability(&body("eligible", "available"), "bfl/other"),
             Availability::Ineligible
         ));
-        assert!(matches!(availability(b"nope", "bfl/flux-3-image"), Availability::Unknown));
+        assert!(matches!(availability(b"nope", "bfl/flux-3-image-klein"), Availability::Unknown));
     }
 }

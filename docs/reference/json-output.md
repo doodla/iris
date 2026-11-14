@@ -329,7 +329,7 @@ Check IDs are unique within a result:
 | `state_dir`, `output_dir` | Whether the directories are usable. |
 | `base_url.PROVIDER` | Whether the provider's base URL is overridden. |
 | `jobs` | Whether the local job records are readable. |
-| `access.PROVIDER.MODEL` | With `--check-access`: whether you can use the model, worded as the provider's check covers it (see [Check your access](../guides/models-and-costs.md#check-your-access)). One per catalog model of each provider whose key is set, in catalog order. `MODEL` can contain `/`, as in `access.vercel.bfl/flux-3-image`. |
+| `access.PROVIDER.MODEL` | With `--check-access`: whether you can use the model, worded as the provider's check covers it (see [Check your access](../guides/models-and-costs.md#check-your-access)). One per catalog model of each provider whose key is set, in catalog order. `MODEL` can contain `/`, as in `access.vercel.bfl/flux-3-image-klein`. |
 | `access.PROVIDER` | With `--check-access`: the provider's models weren't checked, for example because its key isn't set. |
 | `access` | With `--check-access`: the configuration is invalid, so no model was checked. |
 

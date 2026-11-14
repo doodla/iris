@@ -182,7 +182,7 @@ tried, and the provider documents no support for it.
 
 **Decision.** Iris reaches the Vercel AI Gateway with `POST /v1/images/generations`, sending
 `model`, `prompt`, `response_format: "b64_json"`, and `size` only when you set one. It registers
-two models, `bfl/flux-3-image` and `bfl/flux-3-image-klein`, for image generation only. It doesn't
+one model, `bfl/flux-3-image-klein`, for image generation only, and declines `bfl/flux-3-image`. It doesn't
 offer image edits or video through the gateway. `--check-access` reads
 `GET /v1/models?include_availability` with the key. The key comes from `AI_GATEWAY_API_KEY`, the
 variable that the gateway's documentation uses, and goes in `Authorization: Bearer`.
@@ -192,24 +192,23 @@ variable that the gateway's documentation uses, and goes in `Authorization: Bear
 - The image generation guide documents the Images endpoint for image-only models, by example:
   `model`, `prompt`, `n`, and `response_format: "b64_json"`, with base64 images in `data[]`.
 - `models list` compares every image model on the cost of one 1024x1024 image, so a model needs a
-  request that's known to give that size. The two FLUX 3 models are the gateway image models whose
-  listed prices name sizes: five square classes from 768x768 to 4096x4096, including 1024x1024. So
-  `size` accepts exactly those five, and Iris estimates the cost before the request. When you set no
-  size, the estimate uses the listed base price (`pricing.image`). Ten other gateway image models
-  have a flat per-image price, such as `bfl/flux-pro-1.1` and `spacexai/grok-imagine-image`, but no
-  documented way to ask for a 1024x1024 image. The rest have no listed price, or are priced by token
-  usage.
-- `size` is the one field that Iris sends without documentation: the guide doesn't list it for the
-  Images endpoint, and the price list names sizes but isn't an API reference. A live request on
-  2026-11-14 asked for 768x768 and got a 768x768 image. Because one run isn't documentation, the
-  model declares `size` as its exact output size, and Iris checks every saved image against it: an
-  image of another size is kept, with an `output_size_mismatch` warning that says the cost estimate
-  assumed the requested size.
+  request that's documented to give that size. For FLUX 3 Image Klein, the Black Forest Labs
+  provider options that the guide links to say "To request exact dimensions, pass `size`", and the
+  gateway's prices for Klein name five square sizes, including 1024x1024. So `size` accepts exactly
+  those five, Iris estimates the cost before the request, and Iris checks every saved image against
+  the requested size (`output_size_mismatch`). When you set no size, the estimate uses the listed
+  base price (`pricing.image`). A live request on 2026-11-14 asked Klein for 768x768 and got a
+  768x768 image.
+- The same page says that for `flux-3-image`, a `size` "is used only to derive a supported aspect
+  ratio", and that a `resolution` tier sets the pixel area. It gives no pixel size per tier, so Iris
+  can't ask for a 1024x1024 image or know which price applies. Iris declines the model and names
+  Klein instead.
+- Many other gateway image models have a flat per-image price but no documented way to ask for a
+  1024x1024 image. Others have no listed price, or are priced by token usage or by style.
 - Iris requests one image per call and never sends `n`. The guide shows `n` but not its limit for
   these models.
-- The edit guide doesn't list the FLUX 3 models among those that accept input images, and warns
-  that a model without mask support may ignore the mask. Ignoring a mask would silently drop part of
-  a paid request, so Iris offers no edits through the gateway.
+- The gateway's model list gives Klein text input only, and the edit guide doesn't list Klein among
+  the models that accept input images, so Iris offers no edits through the gateway.
 - The gateway documents video jobs only through its SDKs: the JavaScript AI SDK's
   `experimental_startVideo` and `experimental_getVideoStatus`, and a Python SDK in beta. It
   documents no HTTP API for starting a job or reading its status. Iris doesn't build a recoverable
@@ -229,6 +228,7 @@ variable that the gateway's documentation uses, and goes in `Authorization: Bear
   `unavailable`.
 
 **Sources.** [Image generation with the OpenAI-compatible API](https://vercel.com/docs/ai-gateway/modalities/image-generation/openai) ·
+[Black Forest Labs provider options](https://ai-sdk.dev/providers/ai-sdk-providers/black-forest-labs) ·
 [Video generation](https://vercel.com/docs/ai-gateway/modalities/video-generation) ·
 [REST API reference](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api) ·
 [Rate limits](https://vercel.com/docs/ai-gateway/rate-limits) ·

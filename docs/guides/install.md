@@ -144,7 +144,7 @@ Replace the following:
 - `OPENAI_KEY`: an API key from the OpenAI API platform. You need it for the GPT Image models.
 - `GEMINI_KEY`: an API key from Google AI Studio. You need it for the Nano Banana and Veo models.
 - `GATEWAY_KEY`: an AI Gateway API key from your Vercel team's AI Gateway settings. You need it for
-  the FLUX 3 models.
+  FLUX 3 Image Klein.
 
 > [!IMPORTANT]
 > Each provider bills your API account, and a ChatGPT, Gemini app, or Google AI subscription doesn't

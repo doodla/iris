@@ -26,7 +26,7 @@ const KEY: &str = "test-vercel-key-000";
 /// The origin of a port nothing listens on (see tests/openai_adapter.rs).
 const DEAD_URL: &str = "http://127.0.0.1:9";
 const GEN: &str = "/v1/images/generations";
-const MODEL: &str = "bfl/flux-3-image";
+const MODEL: &str = "bfl/flux-3-image-klein";
 
 // ---------------------------------------------------------------- fixtures
 

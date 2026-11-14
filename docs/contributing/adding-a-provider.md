@@ -203,7 +203,8 @@ own `CATALOG_AS_OF`, as `catalog/vercel.rs` has. `models show` reports that date
   `OutputSpec::media_types`: Iris warns with `output_type_undeclared` when a saved output has
   another type. If an option sets the exact pixel size of every image as `WxH`, name it in
   `exact_size_option`, and Iris warns with `output_size_mismatch` when a saved image has another
-  size. Name it only when the provider documents that the size is exact, or a live run showed it.
+  size. Name it only when the provider documents that the size is exact: a live run can confirm a
+  documented behavior, but can't stand in for the documentation.
 - **Inputs.** Declare the input rules that the provider documents in `InputSpec`: accepted types
   and sizes, and mask rules (`MaskSpec`). If inputs are sent inline, add a limit on the whole
   request (`RequestSizeLimit`), with allowances for the JSON that your adapter adds. Iris enforces

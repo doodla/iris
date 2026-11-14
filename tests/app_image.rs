@@ -983,6 +983,19 @@ async fn an_image_of_another_size_than_requested_is_kept_with_a_warning() {
     assert_eq!(res.artifacts.len(), 1, "the paid image is kept");
     let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
     assert!(w.message.contains("is 16x8, but the request asked for 1024x1024"), "{}", w.message);
+    assert!(w.message.contains("the cost estimate is for the requested size"), "{}", w.message);
+
+    // With reported usage, the estimate comes from it, and the warning says so.
+    let f = Fixture::new();
+    let mut out = image_output(vec![png(16, 8)]);
+    out.usage = Some(Usage { output_tokens: Some(250), ..Default::default() });
+    f.openai.images().push(Ok(out));
+    let mut a = args("a red kite");
+    a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "low", "--quality")];
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    r.unwrap();
+    let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
+    assert!(w.message.contains("comes from the usage that the provider reported"), "{}", w.message);
 
     // The requested size, or no pixel size at all, gives no warning.
     for (size, image) in [(Some("16x8"), png(16, 8)), (Some("auto"), png(4, 4)), (None, png(4, 4))] {

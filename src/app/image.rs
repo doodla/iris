@@ -312,11 +312,10 @@ async fn run_checked(
             ));
     }
     let saved = saving.saved;
-    warnings.extend(check_saved(spec, &opts, &resolved.id, &saved));
-
     // Prefer the provider-reported usage (covers every returned image); fall back to
     // the pre-call estimate for the number of images actually returned.
     let from_usage = output.usage.as_ref().and_then(|usage| request::estimate_from_usage(&resolved, usage));
+    let cost_from_usage = from_usage.is_some();
     let cost_estimate = match from_usage {
         Some(estimate) => Ok(estimate),
         None if returned == count => pre_estimate,
@@ -325,6 +324,7 @@ async fn run_checked(
     if let Err(reason) = &cost_estimate {
         warnings.push(request::cost_unavailable(reason));
     }
+    warnings.extend(check_saved(spec, &opts, &resolved.id, &saved, cost_from_usage));
     Ok(GenerationOutcome::Completed(ImageResult {
         provider,
         model: resolved.id,
@@ -541,7 +541,13 @@ fn check_saved(
     opts: &crate::catalog::ResolvedOptions,
     model: &str,
     saved: &[Artifact],
+    cost_from_usage: bool,
 ) -> Vec<Warning> {
+    let cost = if cost_from_usage {
+        "the cost estimate comes from the usage that the provider reported"
+    } else {
+        "the cost estimate is for the requested size, so it may not match the charge"
+    };
     let declared = spec.outputs.media_types;
     let requested = spec
         .outputs
@@ -569,7 +575,7 @@ fn check_saved(
                 WarningCode::OutputSizeMismatch,
                 format!(
                     "{} is {width}x{height}, but the request asked for {asked}: the provider ignored or changed \
-                     the size. The image was kept; the cost estimate assumes the requested size",
+                     the size. The image was kept; {cost}",
                     artifact.path
                 ),
             ));

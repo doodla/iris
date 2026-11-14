@@ -1370,7 +1370,7 @@ fn vercel_generate_saves_the_image_with_a_pre_call_estimate_and_sends_the_docume
     use base64::Engine as _;
     let sb = Sandbox::new();
     let api = MockApi::start();
-    let image = jpeg(32, 32);
+    let image = jpeg(768, 768);
     let b64 = base64::engine::general_purpose::STANDARD.encode(&image);
     api.on(
         "POST",
@@ -1382,25 +1382,41 @@ fn vercel_generate_saves_the_image_with_a_pre_call_estimate_and_sends_the_docume
     let v = sb
         .iris()
         .vercel(&api)
-        .args(["image", "generate", "-m", "bfl/flux-3-image", PROMPT, "--size", "1536x1536", "-o", "fox.jpg"])
+        .args([
+            "image",
+            "generate",
+            "-m",
+            "bfl/flux-3-image-klein",
+            PROMPT,
+            "--size",
+            "768x768",
+            "-o",
+            "fox.jpg",
+        ])
         .arg("--json")
         .run()
         .ok();
     let r = &v["result"];
     assert_eq!(r["provider"], "vercel");
-    assert_eq!(r["model"], "bfl/flux-3-image");
+    assert_eq!(r["model"], "bfl/flux-3-image-klein");
     assert_eq!(r["provider_request_id"], "iad1::e2e-1");
-    assert_artifact(&artifacts(&v)[0], &sb.path("fox.jpg"), &image, "image/jpeg", (32, 32));
+    assert_artifact(&artifacts(&v)[0], &sb.path("fox.jpg"), &image, "image/jpeg", (768, 768));
     let cost = &r["cost_estimate"];
-    assert!((cost["amount"].as_f64().unwrap() - 0.07).abs() < 1e-9, "{cost}");
+    assert!((cost["amount"].as_f64().unwrap() - 0.008).abs() < 1e-9, "{cost}");
     assert_eq!(cost["source_url"], "https://ai-gateway.vercel.sh/v1/models");
+    let codes: Vec<&str> =
+        v["warnings"].as_array().unwrap().iter().map(|w| w["code"].as_str().unwrap()).collect();
+    assert!(
+        !codes.contains(&"output_size_mismatch") && !codes.contains(&"output_type_undeclared"),
+        "the image has the requested size and a declared type: {codes:?}"
+    );
 
     let reqs = api.hits("POST", "/v1/images/generations");
     assert_eq!(reqs.len(), 1);
     assert_eq!(header(&reqs[0], "authorization").as_deref(), Some(format!("Bearer {VERCEL_KEY}").as_str()));
     assert_eq!(
         body_json(&reqs[0]),
-        json!({"model": "bfl/flux-3-image", "prompt": PROMPT, "response_format": "b64_json", "size": "1536x1536"})
+        json!({"model": "bfl/flux-3-image-klein", "prompt": PROMPT, "response_format": "b64_json", "size": "768x768"})
     );
     assert_eq!(api.total(), 1);
     api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {VERCEL_KEY}"))));

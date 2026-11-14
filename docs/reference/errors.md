@@ -416,7 +416,7 @@ case.
 | `output_saved_elsewhere` | Iris saved a paid output in the state directory instead of where you asked: an image that it couldn't write there, which is also listed in `artifacts`, or the content of an item that isn't a usable image, kept as a `.bin` file. |
 | `output_extension_may_change` | The model takes no `format` option, so the provider chooses the image type, and the `-o` extension may change. The message names the other paths, where an existing file stops the run without `--overwrite`. Iris reports it before sending, in a dry run too. |
 | `output_type_undeclared` | A saved output's type isn't one that `iris models show` lists for the model. Iris saved it under its real type. |
-| `output_size_mismatch` | A saved image's pixel size differs from the size that the request set, so the provider ignored or changed it. Iris kept the image. The cost estimate still assumes the requested size. |
+| `output_size_mismatch` | A saved image's pixel size differs from the size that the request set, so the provider ignored or changed it. Iris kept the image. The message says whether the cost estimate comes from the usage that the provider reported, or is for the requested size and may not match the charge. |
 
 The warning messages that describe returned items number them by their position in the provider's
 response, from 0. That position can differ from an artifact's `index` when Iris skipped an earlier

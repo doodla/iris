@@ -12,23 +12,28 @@
 //!   description, and its prices (`pricing.image`, and per-size prices in
 //!   `pricing.image_dimension_quality_pricing`).
 //!
-//! Iris declares only what those sources support, with one exception verified live
-//! (docs/contributing/decisions.md, "Vercel AI Gateway"):
+//! * the Black Forest Labs provider options that the guide links to for these
+//!   models (<https://ai-sdk.dev/providers/ai-sdk-providers/black-forest-labs>): for
+//!   `flux-3-image-klein`, "To request exact dimensions, pass `size`".
 //!
-//! * models: FLUX 3 Image and FLUX 3 Image Klein. `models list` compares image models
-//!   on one 1024x1024 image, so a model needs a request known to give that size. The
-//!   FLUX 3 prices name five square sizes, including 1024x1024. Other gateway image
-//!   models have a flat price but no size Iris could ask for, or no price, or prices
-//!   by token usage.
-//! * operations: `image.generate` only. The gateway's edit guide does not list these
-//!   models among those that accept input images, and warns that a model without mask
-//!   support may ignore the mask.
+//! Iris declares only what those sources support (docs/contributing/decisions.md,
+//! "Vercel AI Gateway"):
+//!
+//! * models: FLUX 3 Image Klein. `models list` compares image models on one 1024x1024
+//!   image, so a model needs a request documented to give that size: Klein's `size`
+//!   sets exact dimensions, and its prices name 1024x1024. `bfl/flux-3-image` is
+//!   declined: the same page says its `size` "is used only to derive a supported
+//!   aspect ratio" and a `resolution` tier sets the pixel area, with no documented
+//!   pixel size per tier.
+//! * operations: `image.generate` only. The gateway's model list gives Klein text
+//!   input only, and its edit guide does not list Klein among the models that accept
+//!   input images.
 //! * options: `size`, the five square sizes the price list names, and `count`, fixed
-//!   at 1 and never sent. The guide does not document `size` for the Images endpoint:
-//!   a live request on 2026-11-14 asked for 768x768 and got 768x768, and the app checks
-//!   every saved image against the requested size (`output_size_mismatch`).
-//! * lifecycle: `ga`. The gateway's model list has no lifecycle field, and neither
-//!   model is marked preview or deprecated, so Iris assumes general availability.
+//!   at 1 and never sent. A live request on 2026-11-14 asked for 768x768 and got
+//!   768x768, as documented; the app also checks every saved image against the
+//!   requested size (`output_size_mismatch`).
+//! * lifecycle: `ga`. The gateway's model list has no lifecycle field, and the model
+//!   is not marked preview or deprecated, so Iris assumes general availability.
 
 use crate::domain::{Billing, CostEstimate, Operation, ProviderId, format_usd};
 
@@ -57,7 +62,7 @@ pub const MODEL_ID_SYNTAX: ModelIdSyntax = ModelIdSyntax {
 
 const GENERATE: &[Operation] = &[Operation::ImageGenerate];
 
-/// The square sizes the gateway's price list names for the FLUX 3 models.
+/// The square sizes the gateway's price list names for Klein.
 pub const SIZES: &[&str] = &["768x768", "1024x1024", "1536x1536", "2048x2048", "4096x4096"];
 
 const COUNT: OptionSpec = OptionSpec {
@@ -82,10 +87,9 @@ const SIZE: OptionSpec = OptionSpec {
 
 const OPTIONS: &[OptionSpec] = &[COUNT, SIZE];
 
-/// The provider chooses the format; both are kept under their sniffed type.
-/// `size` is checked against every saved image (`output_size_mismatch`): the gateway's
-/// guide does not document the field, so the check catches a provider that ignores it.
-/// A live request of 768x768 on 2026-11-14 returned a 768x768 image.
+/// The provider chooses the format; both are kept under their sniffed type. Klein's
+/// `size` sets the exact output dimensions (the Black Forest Labs provider options
+/// cited above), so every saved image is checked against it.
 const OUTPUTS: OutputSpec =
     OutputSpec { media_types: &["image/jpeg", "image/png"], max_count: 1, exact_size_option: Some("size") };
 
@@ -131,71 +135,51 @@ macro_rules! rates {
     };
 }
 
-const FLUX_3: Rates = rates!(0.048;
-    ("768x768", 0.041), ("1024x1024", 0.048), ("1536x1536", 0.07), ("2048x2048", 0.1), ("4096x4096", 0.607));
-
 const FLUX_3_KLEIN: Rates = rates!(0.009;
     ("768x768", 0.008), ("1024x1024", 0.009), ("1536x1536", 0.011), ("2048x2048", 0.014), ("4096x4096", 0.036));
 
 fn rates_for(model: &str) -> Option<&'static Rates> {
     match model {
-        "bfl/flux-3-image" => Some(&FLUX_3),
         "bfl/flux-3-image-klein" => Some(&FLUX_3_KLEIN),
         _ => None,
     }
 }
 
-/// No gateway names are declined yet.
-pub const DECLINED: &[DeclinedName] = &[];
+/// Gateway models Iris gives no model, with the reason (sources in the module docs).
+pub const DECLINED: &[DeclinedName] = &[DeclinedName {
+    names: &["bfl/flux-3-image"],
+    families: &[],
+    reason: "The Black Forest Labs provider options that the Vercel AI Gateway links to say that bfl/flux-3-image \
+             uses `size` only for its aspect ratio and sets the pixel area by a resolution tier, with no documented \
+             pixel size per tier, so Iris can't request or price a known output size",
+    instead: &["bfl/flux-3-image-klein"],
+}];
 
 /// The request for the standard output of `image.generate`, one 1024x1024 image.
 const STANDARD: &[&[(&str, &str)]] = &[&[("size", "1024x1024")]];
 
 /// Built-in Vercel AI Gateway models.
-pub static MODELS: &[ModelSpec] = &[
-    ModelSpec {
-        id: "bfl/flux-3-image",
-        provider: ProviderId::Vercel,
-        display_name: "FLUX 3 Image (Black Forest Labs, via Vercel AI Gateway)",
-        summary: "Black Forest Labs' FLUX 3 image generation model, priced in five square sizes from 768x768 to \
-                  4096x4096",
-        aliases: &[],
-        lifecycle: Lifecycle::Ga,
-        billing: Billing::Paid,
-        operations: GENERATE,
-        inputs: InputSpec::NONE,
-        options: OPTIONS,
-        outputs: OUTPUTS,
-        limits: LIMITS,
-        pricing: FLUX_3.rules,
-        access_notes: ACCESS_NOTES,
-        docs_url: DOCS_URL,
-        validate: None,
-        estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
-        estimate_usage: None,
-    },
-    ModelSpec {
-        id: "bfl/flux-3-image-klein",
-        provider: ProviderId::Vercel,
-        display_name: "FLUX 3 Image Klein (Black Forest Labs, via Vercel AI Gateway)",
-        summary: "Black Forest Labs' smaller, faster FLUX 3 model with open weights, at a fifth of FLUX 3 Image's \
-                  price for a 1024x1024 image and less at larger sizes",
-        aliases: &[],
-        lifecycle: Lifecycle::Ga,
-        billing: Billing::Paid,
-        operations: GENERATE,
-        inputs: InputSpec::NONE,
-        options: OPTIONS,
-        outputs: OUTPUTS,
-        limits: LIMITS,
-        pricing: FLUX_3_KLEIN.rules,
-        access_notes: ACCESS_NOTES,
-        docs_url: DOCS_URL,
-        validate: None,
-        estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
-        estimate_usage: None,
-    },
-];
+pub static MODELS: &[ModelSpec] = &[ModelSpec {
+    id: "bfl/flux-3-image-klein",
+    provider: ProviderId::Vercel,
+    display_name: "FLUX 3 Image Klein (Black Forest Labs, via Vercel AI Gateway)",
+    summary: "Black Forest Labs' smaller, faster FLUX 3 image model with open weights, at exact square sizes \
+                  from 768x768 to 4096x4096",
+    aliases: &[],
+    lifecycle: Lifecycle::Ga,
+    billing: Billing::Paid,
+    operations: GENERATE,
+    inputs: InputSpec::NONE,
+    options: OPTIONS,
+    outputs: OUTPUTS,
+    limits: LIMITS,
+    pricing: FLUX_3_KLEIN.rules,
+    access_notes: ACCESS_NOTES,
+    docs_url: DOCS_URL,
+    validate: None,
+    estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
+    estimate_usage: None,
+}];
 
 /// Per-image price for the requested size, or the base price when no size was given.
 fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {

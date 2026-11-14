@@ -1735,39 +1735,50 @@ fn every_provider_starts_without_a_key_and_with_an_unreachable_base_url() {
 /// model list once, and words each result as the gateway's eligibility check.
 #[test]
 fn doctor_checks_vercel_access_with_one_read_of_the_model_list() {
-    let sb = Sandbox::new();
-    let api = MockApi::start();
     let models: Vec<&str> = iris::catalog::all()
         .filter(|m| m.provider == iris::domain::ProviderId::Vercel)
         .map(|m| m.id)
         .collect();
-    let mut rows: Vec<Value> = models
-        .iter()
-        .map(|id| serde_json::json!({"id": id, "model_eligibility": {"evaluated_runtime": "http", "status": "eligible"}}))
-        .collect();
-    // The last model is not eligible for this team.
-    rows.last_mut().unwrap()["model_eligibility"] =
-        serde_json::json!({"evaluated_runtime": "http", "status": "ineligible", "category": "policy"});
-    api.on(
-        "GET",
-        "/v1/models",
-        json_response(
-            200,
-            serde_json::json!({"object": "list", "data": rows,
-                               "request_context_availability": {"http": {"status": "available"}}}),
-        ),
-    );
-    let v = sb.iris().vercel(&api).args(["doctor", "--check-access", "--json"]).run().ok();
-    let checks = v["result"]["checks"].as_array().unwrap();
-    let find = |id: &str| checks.iter().find(|c| c["id"] == id).unwrap_or_else(|| panic!("{id}: {v}"));
-    let first = find(&format!("access.vercel.{}", models[0]));
-    assert_eq!(first["status"], "ok", "{v}");
-    assert!(first["message"].as_str().unwrap().contains("is eligible for this key's team"), "{v}");
-    let last = find(&format!("access.vercel.{}", models.last().unwrap()));
-    assert_eq!(last["status"], "warning", "{v}");
-    assert!(last["message"].as_str().unwrap().contains("not eligible for this key's team"), "{v}");
-    assert!(!last["message"].as_str().unwrap().contains("found no model"), "{v}");
-    assert_eq!(api.count("GET", "/v1/models"), 1, "one read answers every model");
-    assert_eq!(api.total(), 1);
-    api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {VERCEL_KEY}"))));
+    let run = |eligibility: Value| {
+        let sb = Sandbox::new();
+        let api = MockApi::start();
+        let rows: Vec<Value> =
+            models.iter().map(|id| serde_json::json!({"id": id, "model_eligibility": eligibility})).collect();
+        api.on(
+            "GET",
+            "/v1/models",
+            json_response(
+                200,
+                serde_json::json!({"object": "list", "data": rows,
+                                   "request_context_availability": {"http": {"status": "available"}}}),
+            ),
+        );
+        let v = sb.iris().vercel(&api).args(["doctor", "--check-access", "--json"]).run().ok();
+        assert_eq!(api.count("GET", "/v1/models"), 1, "one read answers every model");
+        assert_eq!(api.total(), 1);
+        api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {VERCEL_KEY}"))));
+        v
+    };
+    let find = |v: &Value, model: &str| {
+        let id = format!("access.vercel.{model}");
+        v["result"]["checks"].as_array().unwrap().iter().find(|c| c["id"] == id.as_str()).cloned().unwrap()
+    };
+
+    let v = run(serde_json::json!({"evaluated_runtime": "http", "status": "eligible"}));
+    for model in &models {
+        let check = find(&v, model);
+        assert_eq!(check["status"], "ok", "{v}");
+        assert!(check["message"].as_str().unwrap().contains("is eligible for this key's team"), "{v}");
+    }
+    let v =
+        run(serde_json::json!({"evaluated_runtime": "http", "status": "ineligible", "category": "policy"}));
+    for model in &models {
+        let check = find(&v, model);
+        assert_eq!(check["status"], "warning", "{v}");
+        let message = check["message"].as_str().unwrap();
+        assert!(
+            message.contains("not eligible for this key's team") && !message.contains("found no model"),
+            "{v}"
+        );
+    }
 }

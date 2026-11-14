@@ -166,7 +166,7 @@ In this example, `gpt-image-2.6-preview` stands for a new model ID. Iris sends t
 it, checks the request as if it were the known model, and reports an
 `unverified_model_capabilities` warning. For Gemini and Veo, the ID can contain only letters,
 digits, `.`, `_`, and `-`. For the Vercel AI Gateway, it can also contain `/`, as in
-`bfl/flux-3-image`. Iris doesn't estimate the cost of such a model, because the known model's
+`bfl/flux-3-image-klein`. Iris doesn't estimate the cost of such a model, because the known model's
 prices might not apply. Without an estimate, you can't combine it with `--max-cost`.
 
 ## Set model options

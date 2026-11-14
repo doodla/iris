@@ -38,8 +38,8 @@ the same commit. For the JSON that each command prints with `--json`, see the
 
 ```text
 Iris generates and edits images (OpenAI GPT Image, Google Gemini "Nano Banana"), generates images
-through the Vercel AI Gateway (Black Forest Labs FLUX 3), and generates videos (Google Veo) from one
-agent-friendly command line.
+through the Vercel AI Gateway (Black Forest Labs FLUX 3 Image Klein), and generates videos (Google
+Veo) from one agent-friendly command line.
 
 Every generation command names its model: pass -m/--model, or set the model in the config file
 ([image] model, [video] model). Iris never chooses a model for you; `iris models list` shows the
