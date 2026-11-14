@@ -34,7 +34,7 @@ Iris sorts every HTTP call by what repeating it could cost:
 
 | Call | Attempts | Iris retries after |
 |---|---|---|
-| Paid request: an image generation or edit, or a video submission | Up to 3 | A connection that failed before the request was sent; HTTP 429 for a rate limit; OpenAI's HTTP 503 `server_is_overloaded`, which OpenAI documents as not processed |
+| Paid request: an image generation or edit, or a video submission | Up to 3 | A connection that failed before the request was sent; HTTP 429 for a rate limit, which the Vercel AI Gateway documents as safe to retry; OpenAI's HTTP 503 `server_is_overloaded`, which OpenAI documents as not processed |
 | Free request: a job status check or a model metadata read | Up to 5 | Connection errors, timeouts, and HTTP 408, 429, and 5xx |
 | Download of a finished video | Up to 5 | The same errors as a free request; each attempt starts over with an empty file |
 
@@ -47,8 +47,9 @@ seconds. If the provider asks for a longer delay, Iris stops with `rate_limited`
 delay in `retry_after_seconds`. After Ctrl+C, SIGTERM, or SIGHUP, Iris doesn't send a paid request
 again. See [Interrupting a paid request](#interrupting-a-paid-request).
 
-Both providers recommend retrying server errors and timeouts. For paid requests, Iris doesn't,
-because neither provider offers a way to send a request again without risking a second charge. For
+OpenAI and Google recommend retrying server errors and timeouts. For paid requests, Iris doesn't,
+because no provider that Iris supports offers a way to send a request again without risking a
+second charge. For
 the sources, see
 [Decisions](../contributing/decisions.md#retry-classes-and-why-provider-retry-guidance-is-overridden).
 
@@ -66,6 +67,7 @@ again, check your usage in the provider's console.
 |---|---|
 | Any image request | The request timed out or the connection dropped after it was sent, or the response couldn't be read in full |
 | OpenAI image request | Any of the above, or OpenAI returned HTTP 408 or 5xx other than the documented 503 `server_is_overloaded` |
+| Vercel AI Gateway image request | Any of the above, or the gateway returned HTTP 408 or 5xx |
 | Video submission | The request timed out or the connection dropped after it was sent, Veo returned HTTP 408 or 5xx, or a successful response couldn't be read in full or had no operation name |
 
 A Gemini image request that fails with an HTTP error isn't uncertain, because Google doesn't charge

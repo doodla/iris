@@ -357,3 +357,21 @@ fn the_checks_catch_problems() {
     let expected: BTreeSet<String> = ["after", "last"].into_iter().map(String::from).collect();
     assert_eq!(headings, expected);
 }
+
+/// The pages a new provider must update by hand (docs/contributing/adding-a-provider.md,
+/// "Updated by hand") name every provider: the install guide its key variable, and
+/// Check your access the provider itself.
+#[test]
+fn the_setup_and_access_pages_name_every_provider() {
+    let install = read(Path::new("docs/guides/install.md"));
+    let guide = read(Path::new("docs/guides/models-and-costs.md"));
+    let start = guide.find("## Check your access").expect("a Check your access section");
+    let access = &guide[start..];
+    let access =
+        &access[..access[3..].find("\n## ").map_or(access.len(), |end| end + 3)].to_ascii_lowercase();
+    for provider in iris::domain::ProviderId::ALL {
+        let var = provider.credential_env();
+        assert!(install.contains(&format!("export {var}=")), "install.md does not show how to set {var}");
+        assert!(access.contains(provider.as_str()), "Check your access does not mention {provider}");
+    }
+}

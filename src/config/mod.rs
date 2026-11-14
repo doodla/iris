@@ -17,8 +17,9 @@
 //!   against the current directory; paths in environment variables and in the
 //!   config file must be absolute (or start with `~/`), so where jobs and outputs
 //!   live never depends on the directory a command happens to run in.
-//! * Credentials come only from `OPENAI_API_KEY` / `GEMINI_API_KEY` and are held as
-//!   [`Secret`]s; nothing here ever formats their values.
+//! * Credentials come only from each provider's credential variable
+//!   ([`ProviderId::credential_env`]) and are held as [`Secret`]s; nothing here ever
+//!   formats their values.
 //! * Per-provider settings (`[providers.<id>]`, `IRIS_<PROVIDER>_BASE_URL`) are
 //!   resolved for every provider in [`ProviderId::ALL`]; each provider's id,
 //!   variable names, and default base URL come from [`ProviderId`], so nothing here

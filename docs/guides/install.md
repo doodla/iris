@@ -136,16 +136,19 @@ Iris reads API keys only from environment variables. Set the key for each provid
 ```sh
 export OPENAI_API_KEY="OPENAI_KEY"
 export GEMINI_API_KEY="GEMINI_KEY"
+export AI_GATEWAY_API_KEY="GATEWAY_KEY"
 ```
 
 Replace the following:
 
 - `OPENAI_KEY`: an API key from the OpenAI API platform. You need it for the GPT Image models.
 - `GEMINI_KEY`: an API key from Google AI Studio. You need it for the Nano Banana and Veo models.
+- `GATEWAY_KEY`: an AI Gateway API key from your Vercel team's AI Gateway settings. You need it for
+  the FLUX 3 models.
 
 > [!IMPORTANT]
 > Each provider bills your API account, and a ChatGPT, Gemini app, or Google AI subscription doesn't
-> include API access. For what each model requires, see
+> include API access. The Vercel AI Gateway bills your team's AI Gateway Credits. For what each model requires, see
 > [Check your access](models-and-costs.md#check-your-access).
 
 ## Check your setup
@@ -162,10 +165,12 @@ The output is similar to the following:
 [ok]      config: no config file at /home/you/.config/iris/config.toml (it is optional)
 [ok]      credentials.openai: OPENAI_API_KEY is set
 [ok]      credentials.gemini: GEMINI_API_KEY is set
+[ok]      credentials.vercel: AI_GATEWAY_API_KEY is set
 [ok]      state_dir: state directory /home/you/.local/state/iris does not exist yet; it will be created on first use
 [ok]      output_dir: output directory /home/you is writable
 [ok]      base_url.openai: openai API base URL is the default (https://api.openai.com/v1)
 [ok]      base_url.gemini: gemini API base URL is the default (https://generativelanguage.googleapis.com/)
+[ok]      base_url.vercel: vercel API base URL is the default (https://ai-gateway.vercel.sh/v1)
 [ok]      jobs: 0 local job record(s) readable
 Healthy.
 ```

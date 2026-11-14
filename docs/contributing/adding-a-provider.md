@@ -333,6 +333,15 @@ Everything that a provider like the Seedance example touches.
     [Configuration reference](../reference/configuration.md).
   - The module table in [Architecture](architecture.md), which names `providers/openai/`,
     `providers/gemini/`, and each catalog file.
+  - [Install Iris](../guides/install.md#set-your-api-keys): the key to set, and where the provider
+    issues it.
+  - [Check your access](../guides/models-and-costs.md#check-your-access): the provider's account and
+    billing requirements, and what its `--check-access` confirms (its `Provider::access_scope`).
+  - [How Iris handles paid requests](../concepts/paid-requests.md): the retry table and the
+    uncertain-outcome table, if the provider's rules differ from the others.
+
+  `tests/docs.rs` fails until the install guide and Check your access name every provider's key
+  variable or display name.
   - `CHANGELOG.md`.
   - [Decisions](decisions.md), with the API choices that you made, their sources, and the date
     that you checked them.
