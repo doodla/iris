@@ -1,7 +1,8 @@
 # Iris
 
-Iris is a command-line tool that generates images and videos with OpenAI and Google models. You can
-also use it to edit images. It gives you and your agents one interface across providers, with JSON
+Iris is a command-line tool that generates images and videos with OpenAI and Google models, and
+images with Black Forest Labs' FLUX 3 through the Vercel AI Gateway. You can also use it to edit
+images. It gives you and your agents one interface across providers, with JSON
 output, cost estimates before you spend, and video jobs that you can resume from any process.
 
 ```sh
@@ -10,12 +11,14 @@ iris image generate -m gpt-image-2.5-sunburst "a watercolor fox in a misty fores
 
 > [!IMPORTANT]
 > Iris calls paid APIs with your own API keys, and each provider bills your API account. A ChatGPT,
-> Gemini app, or Google AI subscription doesn't include API access.
+> Gemini app, or Google AI subscription doesn't include API access. The Vercel AI Gateway bills your
+> Vercel team's AI Gateway Credits.
 
 ## Why Iris
 
-- **One CLI for OpenAI and Google.** Generate and edit images with GPT Image and Nano Banana, and
-  generate videos with Veo, with the same commands and flags.
+- **One CLI for OpenAI, Google, and the Vercel AI Gateway.** Generate and edit images with GPT
+  Image and Nano Banana, generate images with FLUX 3 through the gateway, and generate videos with
+  Veo, with the same commands and flags.
 - **Built for agents.** With `--json`, every command prints one JSON document that follows a
   published schema, and every error has a stable code and exit code.
 - **Costs before you pay.** A dry run checks a request and estimates its cost without sending it,
@@ -46,10 +49,12 @@ startup file. To pin a version, build from source, or uninstall, see
    ```sh
    export OPENAI_API_KEY="OPENAI_KEY"
    export GEMINI_API_KEY="GEMINI_KEY"
+   export AI_GATEWAY_API_KEY="GATEWAY_KEY"
    ```
 
-   Replace `OPENAI_KEY` with a key from the OpenAI API platform, and `GEMINI_KEY` with one from
-   Google AI Studio.
+   Replace `OPENAI_KEY` with a key from the OpenAI API platform, `GEMINI_KEY` with one from Google
+   AI Studio, and `GATEWAY_KEY` with an AI Gateway API key from your Vercel team's AI Gateway
+   settings.
 
 2. Check your setup, and fix any `[error]` line that it reports:
 
