@@ -15,6 +15,7 @@ use crate::domain::{
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
 use super::results::*;
+use crate::providers::AccountAccess;
 
 /// Text for stdout and stderr (either may be empty; non-empty text ends with `\n`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -524,9 +525,14 @@ fn model_show(m: &ModelCapabilities) -> String {
         }
     }
     let a = &m.access;
-    let access = lifecycle(&a.account_access);
-    let checked = match (&a.checked_at, &a.checked_basis) {
-        (Some(t), Some(basis)) => format!(" (checked {t}; {basis})"),
+    // In the provider's words when it was checked ("eligible for this key's team").
+    let access = match (a.account_access, a.checked_scope) {
+        (AccountAccess::Available, Some(scope)) => format!("available: {}", scope.available()),
+        (AccountAccess::Unavailable, Some(scope)) => format!("unavailable: {}", scope.unavailable()),
+        (other, _) => lifecycle(&other),
+    };
+    let checked = match (&a.checked_at, a.checked_scope) {
+        (Some(t), Some(scope)) => format!(" (checked {t}; {})", scope.basis()),
         (Some(t), None) => format!(" (checked {t})"),
         _ => String::new(),
     };

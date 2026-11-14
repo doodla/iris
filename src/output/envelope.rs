@@ -6,6 +6,7 @@ use serde::Serialize;
 
 use crate::domain::{Billing, JobStatus, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCategory, ErrorCode, IrisError};
+use crate::providers::AccessScope;
 use crate::redact;
 
 use super::results::*;
@@ -338,6 +339,18 @@ fn add_contract_rules(schema: &mut serde_json::Value) {
             meanings.join("; ")
         ),
         &billing,
+        CODE_PATTERN,
+    );
+    let scopes: Vec<&str> = AccessScope::ALL.iter().map(|s| s.as_str()).collect();
+    let meanings: Vec<String> =
+        AccessScope::ALL.iter().map(|s| format!("{}: {}", s.as_str(), s.basis())).collect();
+    schema["$defs"][AccessScope::schema_name().as_ref()] = open_set(
+        &format!(
+            "What a provider's access check established: one of the listed values ({}), or a value a later version \
+             of this schema_version adds. Read a value you do not know as: the model is at least visible to the key.",
+            meanings.join("; ")
+        ),
+        &scopes,
         CODE_PATTERN,
     );
     let warnings: Vec<&str> = WarningCode::ALL.iter().map(|c| c.as_str()).collect();

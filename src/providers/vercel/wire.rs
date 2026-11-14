@@ -92,34 +92,67 @@ pub(super) enum Availability {
     Unknown,
 }
 
-/// Read the availability of `model` from an annotated model list: the model must be
-/// listed, its `model_eligibility.status` `eligible`, and
-/// `request_context_availability.http.status` `available` (the REST API reference's
-/// rule). A missing model is ineligible; anything unreadable is unknown.
-pub(super) fn availability(body: &[u8], model: &str) -> Availability {
-    let Ok(value) = serde_json::from_slice::<Value>(body) else {
-        return Availability::Unknown;
-    };
-    let Some(models) = value.get("data").and_then(Value::as_array) else {
-        return Availability::Unknown;
-    };
-    let account = value.pointer("/request_context_availability/http/status").and_then(Value::as_str);
-    let Some(row) = models.iter().find(|m| m.get("id").and_then(Value::as_str) == Some(model)) else {
-        return Availability::Ineligible;
-    };
-    let eligibility = row.get("model_eligibility");
-    let field = |key: &str| eligibility.and_then(|e| e.get(key)).and_then(Value::as_str);
-    // The verdict must be for HTTP requests; a row without a runtime is read as one.
-    if field("evaluated_runtime").is_some_and(|runtime| runtime != "http") {
-        return Availability::Unknown;
+/// An annotated model list (`GET /models?include_availability`), parsed once for
+/// every model it answers.
+pub(super) struct AvailabilityList {
+    /// The `model_eligibility` of each listed model, by id; `None` when the body is
+    /// not a readable list.
+    rows: Option<std::collections::HashMap<String, Value>>,
+    /// `request_context_availability.http.status`.
+    account: Option<String>,
+}
+
+impl AvailabilityList {
+    pub fn parse(body: &[u8]) -> AvailabilityList {
+        let value = serde_json::from_slice::<Value>(body).ok();
+        let rows = value.as_ref().and_then(|v| v.get("data")).and_then(Value::as_array).map(|models| {
+            models
+                .iter()
+                .filter_map(|m| {
+                    let id = m.get("id")?.as_str()?;
+                    Some((id.to_string(), m.get("model_eligibility").cloned().unwrap_or(Value::Null)))
+                })
+                .collect()
+        });
+        let account = value
+            .as_ref()
+            .and_then(|v| v.pointer("/request_context_availability/http/status"))
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        AvailabilityList { rows, account }
     }
-    match (field("status"), account) {
-        (Some("eligible"), Some("available")) => Availability::Eligible,
-        // A transient ineligibility is a passing state, not an answer.
-        (Some("ineligible"), _) if field("category") == Some("transient") => Availability::Unknown,
-        (Some("ineligible"), _) | (_, Some("unavailable")) => Availability::Ineligible,
-        _ => Availability::Unknown,
+
+    /// The availability of `model`: it must be listed, its `model_eligibility.status`
+    /// `eligible`, and `request_context_availability.http.status` `available` (the
+    /// REST API reference's rule). A missing model is ineligible; a transient
+    /// ineligibility, a verdict for another runtime than `http`, or anything
+    /// unreadable is unknown.
+    pub fn of(&self, model: &str) -> Availability {
+        let Some(rows) = &self.rows else {
+            return Availability::Unknown;
+        };
+        let Some(eligibility) = rows.get(model) else {
+            return Availability::Ineligible;
+        };
+        let field = |key: &str| eligibility.get(key).and_then(Value::as_str);
+        // The verdict must be for HTTP requests; a row without a runtime is read as one.
+        if field("evaluated_runtime").is_some_and(|runtime| runtime != "http") {
+            return Availability::Unknown;
+        }
+        match (field("status"), self.account.as_deref()) {
+            (Some("eligible"), Some("available")) => Availability::Eligible,
+            // A transient ineligibility is a passing state, not an answer.
+            (Some("ineligible"), _) if field("category") == Some("transient") => Availability::Unknown,
+            (Some("ineligible"), _) | (_, Some("unavailable")) => Availability::Ineligible,
+            _ => Availability::Unknown,
+        }
     }
+}
+
+/// [`AvailabilityList::of`] for one model of a body.
+#[cfg(test)]
+fn availability(body: &[u8], model: &str) -> Availability {
+    AvailabilityList::parse(body).of(model)
 }
 
 #[cfg(test)]

@@ -40,8 +40,9 @@ All notable changes to this project are documented in this file. The format foll
 - **Each provider's catalog date.** `models show` reports each provider's own `catalog_as_of`
   date, so the Vercel model shows the day it was checked. The other models keep their date.
 - **Access checks say what they checked.** `models show --check-access` adds
-  `access.checked_basis`, which says what the provider's check covered, and `doctor` words each
-  access result the same way. A Vercel AI Gateway model is reported as eligible or not for your
+  `access.checked_scope` (`model_metadata` or `team_eligibility`, an open set), and `doctor` and
+  `models show` word each access result in those terms. A refusal of the check, such as an HTTP 403,
+  is reported as an error, not as an unknown result. A Vercel AI Gateway model is reported as eligible or not for your
   team, instead of as visible or not to your key, and the gateway's model list is read once per
   `doctor --check-access` run instead of once per model. See
   [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).

@@ -1,6 +1,6 @@
 //! `doctor`: local health checks (credential presence, configuration validity,
-//! state and output directories, base URL overrides), plus optional free
-//! metadata calls (`--check-access`). Never prints credential values.
+//! state and output directories, base URL overrides), plus optional free access
+//! checks (`--check-access`). Never prints credential values.
 //!
 //! Every check has a unique `id`. The command succeeds (exit 0) whenever the
 //! diagnostics ran; problems are reported through `healthy: false` and `error`
@@ -20,7 +20,7 @@ use super::context::AppContext;
 /// Inputs of `doctor`.
 #[derive(Debug, Clone, Default)]
 pub struct DoctorArgs {
-    /// Perform free metadata calls to check model access.
+    /// Perform free access checks of each provider's models.
     pub check_access: bool,
     /// Whether `GOOGLE_API_KEY` is set (presence only), which Iris ignores.
     pub google_api_key_present: bool,
@@ -183,19 +183,26 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
                 return;
             }
         };
-        for (model, result) in models.iter().zip(results) {
+        // One result per model; a missing one is reported, never skipped.
+        let mut results = results.into_iter();
+        for model in &models {
             let id = format!("access.{provider}.{model}");
+            let result = results.next().unwrap_or_else(|| {
+                Err(IrisError::internal(format!(
+                    "the {provider} access check returned no result for {model}"
+                )))
+            });
             checks.push(match result {
                 Ok(AccountAccess::Available) => {
-                    ok(&id, format!("{model} is {} ({})", scope.available, scope.basis))
+                    ok(&id, format!("{model} is {} ({})", scope.available(), scope.basis()))
                 }
                 Ok(AccountAccess::Unavailable) => {
-                    check(&id, CheckStatus::Warning, format!("{model} is {}", scope.unavailable))
+                    check(&id, CheckStatus::Warning, format!("{model} is {}", scope.unavailable()))
                 }
                 Ok(_) => check(
                     &id,
                     CheckStatus::Warning,
-                    format!("could not determine whether {model} is {}", scope.available),
+                    format!("could not determine whether {model} is {}", scope.available()),
                 ),
                 Err(e) => check(&id, CheckStatus::Error, format!("{model}: {} ({})", e.message, e.code)),
             });

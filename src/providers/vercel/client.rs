@@ -13,7 +13,7 @@
 use bytes::Bytes;
 use reqwest::header::CONTENT_TYPE;
 
-use super::wire::{self, Availability, WireError};
+use super::wire::{Availability, AvailabilityList, WireError};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, TransportError, Verdict};
@@ -211,8 +211,8 @@ pub(super) fn bad_response(resp: &HttpResponse, why: &str) -> IrisError {
 /// `GET {base}/models?include_availability` (free, authenticated, `IdempotentRead`),
 /// read once for every model in `models`: eligible for this team → available,
 /// ineligible or not listed → unavailable, `unknown` or an unreadable list → unknown.
-/// A 401 is `authentication_failed` for every model; other answers are unknown, and
-/// transport failures are errors.
+/// Any refusal (a 401 is `authentication_failed`, a 403 `permission_denied`) and any
+/// transport failure is an error for every model.
 pub(super) async fn check_access(
     models: &[&str],
     ctx: &ProviderContext,
@@ -233,10 +233,11 @@ pub(super) async fn check_access(
     let result = ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), classify_read).await;
     let error = match result {
         Ok(resp) => {
+            let list = AvailabilityList::parse(&resp.body);
             return models
                 .iter()
                 .map(|model| {
-                    Ok(match wire::availability(&resp.body, model) {
+                    Ok(match list.of(model) {
                         Availability::Eligible => AccountAccess::Available,
                         Availability::Ineligible => AccountAccess::Unavailable,
                         Availability::Unknown => AccountAccess::Unknown,
@@ -244,10 +245,8 @@ pub(super) async fn check_access(
                 })
                 .collect();
         }
-        Err(HttpError::Error(e)) => match e.provider_status {
-            Some(401) | None => e,
-            Some(_) => return all(Ok(AccountAccess::Unknown)),
-        },
+        // Every refusal is an error for every model: a 403 (a blocked team or a plan
+        // restriction) or a 404 (a wrong base URL) says nothing about one model.
         Err(e) => e.into_iris(),
     };
     all(Err(scrub_credential(error, ctx)))
@@ -264,6 +263,31 @@ fn classify_read(resp: &HttpResponse) -> Verdict {
                 format!("the Vercel AI Gateway rejected the API key (HTTP 401){}", provider_suffix(&wire)),
             )
             .with_hint("check that AI_GATEWAY_API_KEY holds a valid AI Gateway API key"),
+        ),
+        403 => Verdict::Final(
+            err(
+                ErrorCode::PermissionDenied,
+                format!(
+                    "the Vercel AI Gateway denied access to its model list (HTTP 403){}",
+                    provider_suffix(&wire)
+                ),
+            )
+            .with_hint(
+                "the team may be blocked or its plan may not allow this; check its AI Gateway settings",
+            ),
+        ),
+        404 => Verdict::Final(
+            err(
+                ErrorCode::ProviderError,
+                format!(
+                    "the Vercel AI Gateway has no model list at this URL (HTTP 404){}",
+                    provider_suffix(&wire)
+                ),
+            )
+            .with_retryable(Some(false))
+            .with_hint(
+                "check the base URL (IRIS_VERCEL_BASE_URL or providers.vercel.base_url); it ends in /v1",
+            ),
         ),
         429 => Verdict::RetryableRejection {
             error: err(

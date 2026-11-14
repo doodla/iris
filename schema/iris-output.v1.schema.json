@@ -1,10 +1,25 @@
 {
   "$defs": {
+    "AccessScope": {
+      "anyOf": [
+        {
+          "enum": [
+            "model_metadata",
+            "team_eligibility"
+          ]
+        },
+        {
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      ],
+      "description": "What a provider's access check established: one of the listed values (model_metadata: model metadata only; billing tier, prepaid credit, and organization verification are not checked; team_eligibility: the provider's eligibility check of the team's settings and account admission (funds, quota, verification); a budget or the upstream provider can still refuse a request), or a value a later version of this schema_version adds. Read a value you do not know as: the model is at least visible to the key.",
+      "type": "string"
+    },
     "AccessView": {
       "properties": {
         "account_access": {
           "$ref": "#/$defs/AccountAccess",
-          "description": "Result of `--check-access` (`not_checked` without it): `available` means at\nleast that the model is visible to this key; `checked_basis` says what the\nprovider's check covered."
+          "description": "Result of `--check-access` (`not_checked` without it): `available` means at\nleast that the model is visible to this key; `checked_scope` says what the\nprovider's check established."
         },
         "checked_at": {
           "type": [
@@ -12,12 +27,16 @@
             "null"
           ]
         },
-        "checked_basis": {
-          "description": "What the access check covered and what it did not, in the provider's terms\n(null when not checked).",
-          "type": [
-            "string",
-            "null"
-          ]
+        "checked_scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccessScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the provider's access check establishes (null when not checked): an open\nset, `model_metadata` or `team_eligibility` (docs/reference/json-output.md)."
         },
         "credential_env": {
           "type": "string"
@@ -39,7 +58,7 @@
         "requirements",
         "account_access",
         "checked_at",
-        "checked_basis"
+        "checked_scope"
       ],
       "type": "object"
     },

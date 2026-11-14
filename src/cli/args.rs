@@ -157,10 +157,11 @@ pub enum Command {
     #[command(
         long_about = "Check credential presence (never values; no provider key at all is an error, since every \
                       generation command would fail), configuration validity, state and output directory \
-                      writability, and base URL overrides. --check-access additionally makes free \
-                      metadata calls to see whether every catalog model of each provider whose API key is set \
-                      is visible to your key; they do not check billing tier, prepaid credit, or organization \
-                      verification, so a paid request can still be refused.\n\nExit status: \
+                      writability, and base URL overrides. --check-access additionally asks each provider \
+                      whose API key is set, with free requests, whether you can use each of its catalog models. \
+                      Each result says what the provider's check covered: for OpenAI and Gemini only that the \
+                      model is visible to your key, for the Vercel AI Gateway your team's eligibility and \
+                      account. A paid request can still be refused.\n\nExit status: \
                       doctor exits 0 whenever its checks ran, even when it finds problems. Read `healthy` \
                       (result.healthy with --json) or look for [error] lines instead of relying on the exit \
                       code.",
@@ -756,9 +757,9 @@ pub enum ModelsCommand {
                       published prices, the estimated cost of the standard output that `models list` \
                       compares models on, with the options that give it, and documented access requirements. Without --check-access it reads only the \
                       catalog and whether the API key is set, so it runs even when the config file is invalid. \
-                      --check-access also asks the provider with a free metadata call whether the model is \
-                      visible to your key; billing tier, prepaid credit, and organization verification are \
-                      not checked.",
+                      --check-access also asks the provider, with a free request, whether you can use the \
+                      model, and says what the provider's check covered (access.checked_scope): for OpenAI and \
+                      Gemini only that the model is visible to your key.",
         after_help = "Examples:\n  iris models show nano-banana-2\n  iris models show gpt-image-2 --json\n  iris \
                       models show veo-fast --check-access"
     )]
@@ -780,7 +781,7 @@ pub struct ModelsShowArgs {
     /// Model id or alias
     #[arg(value_name = "MODEL")]
     pub model: String,
-    /// Check with a free metadata call whether the model is visible to your key (needs the provider's API key)
+    /// Check with a free request whether you can use the model (needs the provider's API key)
     #[arg(long)]
     pub check_access: bool,
 }
@@ -823,8 +824,7 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Also check with free metadata calls whether each model of a provider whose API key is set is
-    /// visible to your key
+    /// Also check with free requests whether you can use each model of a provider whose API key is set
     #[arg(long)]
     pub check_access: bool,
 }

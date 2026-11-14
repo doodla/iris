@@ -329,10 +329,6 @@ async fn check_access_reads_the_teams_eligibility_with_one_authenticated_read() 
         (catalog("ineligible", "available"), AccountAccess::Unavailable),
         (catalog("eligible", "unavailable"), AccountAccess::Unavailable),
         (catalog("unknown", "available"), AccountAccess::Unknown),
-        (
-            ResponseTemplate::new(403).set_body_json(json!({"error": {"message": "no"}})),
-            AccountAccess::Unknown,
-        ),
     ];
     for (template, expected) in cases {
         let server = MockServer::start().await;
@@ -345,9 +341,17 @@ async fn check_access_reads_the_teams_eligibility_with_one_authenticated_read() 
             Some(format!("Bearer {KEY}").as_str())
         );
     }
-    let server = MockServer::start().await;
-    let e = access(&server, gateway_error(401, "bad key", "authentication_error")).await.unwrap_err();
-    assert_eq!(e.code, ErrorCode::AuthenticationFailed);
+    // A refusal of the list is an error, never "unknown": it says nothing about one model.
+    for (status, code) in [
+        (401, ErrorCode::AuthenticationFailed),
+        (403, ErrorCode::PermissionDenied),
+        (404, ErrorCode::ProviderError),
+    ] {
+        let server = MockServer::start().await;
+        let e = access(&server, gateway_error(status, "no", "some_error")).await.unwrap_err();
+        assert_eq!(e.code, code, "HTTP {status}");
+        assert_eq!(e.provider_status, Some(status));
+    }
 }
 
 #[tokio::test]
@@ -376,8 +380,10 @@ async fn checking_several_models_reads_the_list_once_and_answers_each() {
 #[test]
 fn the_access_scope_says_the_check_covers_eligibility_and_admission() {
     let scope = VercelProvider::new().access_scope();
-    assert_eq!(scope.available, "eligible for this key's team");
-    assert!(scope.basis.contains("funds, quota"), "{}", scope.basis);
+    assert_eq!(scope, iris::providers::AccessScope::TeamEligibility);
+    assert_eq!(scope.as_str(), "team_eligibility");
+    assert_eq!(scope.available(), "eligible for this key's team");
+    assert!(scope.basis().contains("funds, quota"), "{}", scope.basis());
 }
 
 #[tokio::test]

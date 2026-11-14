@@ -25,8 +25,8 @@ use async_trait::async_trait;
 
 use super::openai_compat::{ImagesResponse, decode_items};
 use super::{
-    AccessCheckScope, AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider,
-    ImageRequest, Provider, ProviderContext,
+    AccessScope, AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
+    Provider, ProviderContext,
 };
 use crate::domain::ProviderId;
 use crate::error::IrisError;
@@ -81,13 +81,8 @@ impl Provider for VercelProvider {
     /// The gateway evaluates the team's stored settings and its account admission,
     /// so its answer covers more than a metadata read (REST API reference, "Team
     /// availability annotations").
-    fn access_scope(&self) -> AccessCheckScope {
-        AccessCheckScope {
-            available: "eligible for this key's team",
-            unavailable: "not eligible for this key's team, or the team cannot make requests now",
-            basis: "the gateway's eligibility check of the team's settings and account admission (funds, quota, \
-                    verification); a budget or the upstream provider can still refuse a request",
-        }
+    fn access_scope(&self) -> AccessScope {
+        AccessScope::TeamEligibility
     }
 
     fn image(&self) -> Option<&dyn ImageProvider> {

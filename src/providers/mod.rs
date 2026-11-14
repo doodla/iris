@@ -234,25 +234,64 @@ pub enum AccountAccess {
     Unknown,
 }
 
-/// What a provider's free access check establishes, in the words doctor and
-/// `models show` use for its result.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AccessCheckScope {
-    /// Said of a model the check found usable, e.g. "visible to this key".
-    pub available: &'static str,
-    /// Said of a model the check found not usable.
-    pub unavailable: &'static str,
-    /// What the check covers and what it does not, e.g. "model metadata only; …".
-    pub basis: &'static str,
+/// What a provider's free access check establishes. An open set in the JSON output
+/// (`access.checked_scope`, docs/reference/json-output.md): a later Iris may add a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessScope {
+    /// A model metadata read: whether the key can see the model, and nothing about
+    /// billing or verification (OpenAI, Gemini).
+    ModelMetadata,
+    /// The provider's eligibility check of the team's settings and account admission
+    /// (the Vercel AI Gateway's `include_availability`).
+    TeamEligibility,
 }
 
-/// The scope of a model metadata read: whether the key can see the model, and nothing
-/// about billing or verification.
-pub const METADATA_ONLY: AccessCheckScope = AccessCheckScope {
-    available: "visible to this key",
-    unavailable: "not visible to this key or its project (the metadata read found no model)",
-    basis: "model metadata only; billing tier, prepaid credit, and organization verification are not checked",
-};
+impl AccessScope {
+    /// Every value, in the documented order.
+    pub const ALL: &'static [AccessScope] = &[AccessScope::ModelMetadata, AccessScope::TeamEligibility];
+
+    /// The serialized value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => "model_metadata",
+            AccessScope::TeamEligibility => "team_eligibility",
+        }
+    }
+
+    /// Said of a model the check found usable, e.g. "visible to this key".
+    pub const fn available(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => "visible to this key",
+            AccessScope::TeamEligibility => "eligible for this key's team",
+        }
+    }
+
+    /// Said of a model the check found not usable.
+    pub const fn unavailable(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => {
+                "not visible to this key or its project (the metadata read found no model)"
+            }
+            AccessScope::TeamEligibility => {
+                "not eligible for this key's team, or the team cannot make requests now"
+            }
+        }
+    }
+
+    /// What the check covers and what it does not.
+    pub const fn basis(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => {
+                "model metadata only; billing tier, prepaid credit, and organization verification are not checked"
+            }
+            AccessScope::TeamEligibility => {
+                "the provider's eligibility check of the team's settings and account admission (funds, quota, \
+                 verification); a budget or the upstream provider can still refuse a request"
+            }
+        }
+    }
+}
 
 /// How a provider authenticates: header name and value prefix.
 #[derive(Debug, Clone, Copy)]
@@ -302,8 +341,8 @@ pub trait Provider: Send + Sync {
     }
 
     /// What [`Self::check_access`] establishes. The default is a model metadata read.
-    fn access_scope(&self) -> AccessCheckScope {
-        METADATA_ONLY
+    fn access_scope(&self) -> AccessScope {
+        AccessScope::ModelMetadata
     }
 
     fn image(&self) -> Option<&dyn ImageProvider> {

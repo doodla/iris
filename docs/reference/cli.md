@@ -969,8 +969,8 @@ typed flag or -O key and the default of each), output types, limits, published p
 cost of the standard output that `models list` compares models on, with the options that give it,
 and documented access requirements. Without --check-access it reads only the catalog and whether the
 API key is set, so it runs even when the config file is invalid. --check-access also asks the
-provider with a free metadata call whether the model is visible to your key; billing tier, prepaid
-credit, and organization verification are not checked.
+provider, with a free request, whether you can use the model, and says what the provider's check
+covered (access.checked_scope): for OpenAI and Gemini only that the model is visible to your key.
 
 Usage: iris models show [OPTIONS] <MODEL>
 
@@ -980,8 +980,7 @@ Arguments:
 
 Options:
       --check-access
-          Check with a free metadata call whether the model is visible to your key (needs the
-          provider's API key)
+          Check with a free request whether you can use the model (needs the provider's API key)
 
       --json
           Machine mode: exactly one JSON document on stdout; progress and diagnostics on stderr
@@ -1186,9 +1185,10 @@ Examples:
 ```text
 Check credential presence (never values; no provider key at all is an error, since every generation
 command would fail), configuration validity, state and output directory writability, and base URL
-overrides. --check-access additionally makes free metadata calls to see whether every catalog model
-of each provider whose API key is set is visible to your key; they do not check billing tier,
-prepaid credit, or organization verification, so a paid request can still be refused.
+overrides. --check-access additionally asks each provider whose API key is set, with free requests,
+whether you can use each of its catalog models. Each result says what the provider's check covered:
+for OpenAI and Gemini only that the model is visible to your key, for the Vercel AI Gateway your
+team's eligibility and account. A paid request can still be refused.
 
 Exit status: doctor exits 0 whenever its checks ran, even when it finds problems. Read `healthy`
 (result.healthy with --json) or look for [error] lines instead of relying on the exit code.
@@ -1197,8 +1197,8 @@ Usage: iris doctor [OPTIONS]
 
 Options:
       --check-access
-          Also check with free metadata calls whether each model of a provider whose API key is set
-          is visible to your key
+          Also check with free requests whether you can use each model of a provider whose API key
+          is set
 
       --json
           Machine mode: exactly one JSON document on stdout; progress and diagnostics on stderr
