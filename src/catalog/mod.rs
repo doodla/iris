@@ -30,6 +30,20 @@ pub fn checked_on(provider: ProviderId) -> &'static str {
     }
 }
 
+/// `(width, height)` of a `WxH` size such as `1024x1024`: one to five digits each,
+/// without a leading zero; `None` for anything else (such as `auto`). Every `WxH`
+/// option, and the app's check of saved image sizes, reads sizes with it.
+pub fn parse_pixel_size(raw: &str) -> Option<(u64, u64)> {
+    let (w, h) = raw.split_once('x')?;
+    let digits = |s: &str| {
+        !s.is_empty() && s.len() <= 5 && !s.starts_with('0') && s.bytes().all(|b| b.is_ascii_digit())
+    };
+    if !digits(w) || !digits(h) {
+        return None;
+    }
+    Some((w.parse().ok()?, h.parse().ok()?))
+}
+
 /// Round a dollar amount to a millionth of a dollar so estimates print cleanly.
 /// Every provider's estimates go through it, so they round the same way.
 pub(crate) fn round_usd(amount: f64) -> f64 {

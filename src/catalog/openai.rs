@@ -349,26 +349,13 @@ pub static MODELS: &[ModelSpec] = &[
     },
 ];
 
-/// Parse a `WIDTHxHEIGHT` size (lowercase `x`, plain decimal digits without leading
-/// zeros or signs). Returns `None` for anything else, including `auto`.
-pub fn parse_size(raw: &str) -> Option<(u64, u64)> {
-    let (w, h) = raw.split_once('x')?;
-    let digits = |s: &str| {
-        !s.is_empty() && s.len() <= 5 && !s.starts_with('0') && s.bytes().all(|b| b.is_ascii_digit())
-    };
-    if !digits(w) || !digits(h) {
-        return None;
-    }
-    Some((w.parse().ok()?, h.parse().ok()?))
-}
-
 /// Validator of the `size` option: `auto`, or `WxH` within the
 /// documented limits of gpt-image-2 and the 2.5 models.
 pub fn validate_size(raw: &str) -> Result<(), String> {
     if raw == "auto" {
         return Ok(());
     }
-    let Some((w, h)) = parse_size(raw) else {
+    let Some((w, h)) = super::parse_pixel_size(raw) else {
         return Err(format!("'{raw}' is neither `auto` nor WIDTHxHEIGHT such as 1024x1024"));
     };
     if w % SIZE_MULTIPLE != 0 || h % SIZE_MULTIPLE != 0 {
@@ -468,7 +455,7 @@ fn estimate_with(
     // `auto` quality or size: the cost depends on the model's choice, so there is no
     // point estimate.
     let base = calculator_base(table, &quality);
-    let dimensions = parse_size(&size);
+    let dimensions = super::parse_pixel_size(&size);
     let (Some(base), Some((w, h))) = (base, dimensions) else {
         return Err(chosen_by_the_model(spec, table, base.is_none(), dimensions.is_none()));
     };

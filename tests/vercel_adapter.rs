@@ -282,6 +282,12 @@ async fn a_timeout_after_sending_is_submission_uncertain_and_never_retried() {
     mount(&server, ok(images_body(vec![b64_item(&jpeg())])).set_delay(Duration::from_secs(5))).await;
     let e = generate_err(&server).await;
     assert_eq!(e.code, ErrorCode::SubmissionUncertain);
+    assert!(
+        e.message.starts_with("the Vercel AI Gateway may have received this image request"),
+        "{}",
+        e.message
+    );
+    assert!(e.hint.as_deref().unwrap().contains("Check the AI Gateway usage page"), "{:?}", e.hint);
     assert_eq!(e.details.get("charge_possible"), Some(&json!(true)));
     assert_eq!(requests(&server).await.len(), 1);
 }

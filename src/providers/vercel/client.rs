@@ -16,7 +16,7 @@ use reqwest::header::CONTENT_TYPE;
 use super::wire::{Availability, AvailabilityList, WireError};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
-use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, TransportError, Verdict};
+use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, Verdict};
 use crate::providers::errors::{self, scrub_credential};
 use crate::providers::{AccountAccess, ProviderContext};
 
@@ -53,7 +53,7 @@ pub(super) async fn post_paid(
         .await;
     let error = match result {
         Ok(response) => return Ok(response),
-        Err(HttpError::Transport(t)) if t.after_send => uncertain_transport(&t),
+        Err(HttpError::Transport(t)) if t.after_send => errors::uncertain_transport(&t, &WORDING, ""),
         Err(e) => {
             let mut e = e.into_iris();
             if e.retryable == Some(false) {
@@ -65,29 +65,13 @@ pub(super) async fn post_paid(
     Err(scrub_credential(error, ctx))
 }
 
-/// A paid request may have reached the gateway but no complete answer arrived:
-/// `submission_uncertain` (not retryable) with `details.charge_possible`.
-fn uncertain_transport(t: &TransportError) -> IrisError {
-    let mut err = t.to_iris();
-    err.code = ErrorCode::SubmissionUncertain;
-    err.retryable = Some(false);
-    let what = match (t.kind, t.status) {
-        (crate::http::TransportKind::Timeout, _) => "the time limit passed",
-        (_, Some(_)) => "the answer could not be read in full",
-        _ => "the connection failed after the request was sent",
-    };
-    err.message = format!(
-        "the Vercel AI Gateway may have received this image request, but no complete response arrived ({what}; \
-         {}): {}",
-        t.url, t.message
-    );
-    err.hint = Some(
-        "Iris did not retry automatically; the gateway may have billed this request. Check the AI Gateway \
-         usage page of your Vercel team before running the command again"
-            .to_string(),
-    );
-    err.with_detail("charge_possible", true)
-}
+/// How the paid-request errors name the gateway.
+const WORDING: errors::PaidWording = errors::PaidWording {
+    provider: VERCEL,
+    who: "the Vercel AI Gateway",
+    usage: "the AI Gateway usage page of your Vercel team",
+    support: "Vercel support",
+};
 
 /// Classify a non-2xx answer to a paid image request:
 ///
@@ -174,12 +158,8 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
 /// An error for a non-2xx answer: provider, status, request id, provider code, and
 /// the scrubbed provider message.
 fn error_from(resp: &HttpResponse, wire: &WireError, code: ErrorCode, message: String) -> IrisError {
-    let mut e = IrisError::new(code, message)
-        .with_provider(VERCEL)
-        .with_provider_status(resp.status.as_u16())
-        .with_provider_request_id(resp.request_id.clone());
-    annotate(&mut e, resp, wire);
-    e
+    let provider_code = wire.code.as_deref().or(wire.kind.as_deref());
+    errors::error_from(resp, VERCEL, code, message, provider_code, wire.message.as_deref())
 }
 
 /// Attach the provider code (`error.code`, else `error.type`) and message.
@@ -194,18 +174,7 @@ fn provider_suffix(wire: &WireError) -> String {
 
 /// A 2xx answer Iris cannot use. The request completed, so it may have been billed.
 pub(super) fn bad_response(resp: &HttpResponse, why: &str) -> IrisError {
-    IrisError::new(
-        ErrorCode::ProviderBadResponse,
-        format!("the Vercel AI Gateway returned an unusable response: {why}"),
-    )
-    .with_provider(VERCEL)
-    .with_provider_status(resp.status.as_u16())
-    .with_provider_request_id(resp.request_id.clone())
-    .with_detail("charge_possible", true)
-    .with_hint(
-        "the request completed, so the gateway may have billed it; Iris did not retry automatically. Quote the \
-         provider request id if you contact Vercel support",
-    )
+    errors::bad_response(resp, why, &WORDING)
 }
 
 /// `GET {base}/models?include_availability` (free, authenticated, `IdempotentRead`),

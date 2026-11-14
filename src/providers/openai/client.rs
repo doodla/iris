@@ -95,30 +95,20 @@ pub(super) async fn post_paid(
     Err(scrub_credential(error, ctx))
 }
 
-/// A paid request may have reached OpenAI but no complete answer arrived (timeout,
-/// reset, truncated body, or an answer over the size limit): `submission_uncertain`
-/// (exit 5, not retryable) with `details.charge_possible`, `details.transport`
-/// (`timeout` or `other`, never relabeled), and the client request id. Never
-/// retried (see docs/concepts/video-jobs.md).
+/// How the paid-request errors name OpenAI.
+const WORDING: errors::PaidWording = errors::PaidWording {
+    provider: OPENAI,
+    who: "OpenAI",
+    usage: "your OpenAI usage",
+    support: "OpenAI support",
+};
+
+/// A paid request may have reached OpenAI but no complete answer arrived:
+/// `submission_uncertain` ([`errors::uncertain_transport`]), with the client request
+/// id to quote.
 fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError {
-    let mut err = t.to_iris();
-    err.code = ErrorCode::SubmissionUncertain;
-    err.retryable = Some(false);
-    let what = match (t.kind, t.status) {
-        (crate::http::TransportKind::Timeout, _) => "the time limit passed",
-        // The status line arrived: the answer was cut off or longer than Iris reads.
-        (_, Some(_)) => "the answer could not be read in full",
-        _ => "the connection failed after the request was sent",
-    };
-    err.message = format!(
-        "OpenAI may have received this image request, but no complete response arrived ({what}; {}): {}",
-        t.url, t.message
-    );
-    err.hint = Some(format!(
-        "Iris did not retry automatically; the provider may have billed this request. Check your OpenAI \
-         usage before running the command again (X-Client-Request-Id {client_request_id})"
-    ));
-    err.with_detail("charge_possible", true).with_detail("client_request_id", client_request_id.to_string())
+    errors::uncertain_transport(t, &WORDING, &format!(" (X-Client-Request-Id {client_request_id})"))
+        .with_detail("client_request_id", client_request_id.to_string())
 }
 
 /// Classify a non-2xx answer to a paid image request:
@@ -329,12 +319,8 @@ fn content_blocked(resp: &HttpResponse, wire: &WireError) -> IrisError {
 /// An error for a non-2xx answer: provider, status, request id, provider code, and
 /// the scrubbed provider message.
 fn error_from(resp: &HttpResponse, wire: &WireError, code: ErrorCode, message: String) -> IrisError {
-    let mut e = IrisError::new(code, message)
-        .with_provider(OPENAI)
-        .with_provider_status(resp.status.as_u16())
-        .with_provider_request_id(resp.request_id.clone());
-    annotate(&mut e, resp, wire);
-    e
+    let provider_code = wire.code.as_deref().or(wire.kind.as_deref());
+    errors::error_from(resp, OPENAI, code, message, provider_code, wire.message.as_deref())
 }
 
 /// Attach the provider code (`error.code`, else `error.type`) and message.
@@ -349,15 +335,7 @@ fn provider_suffix(wire: &WireError) -> String {
 
 /// A 2xx answer Iris cannot use. The request completed, so it may have been billed.
 pub(super) fn bad_response(resp: &HttpResponse, why: &str) -> IrisError {
-    IrisError::new(ErrorCode::ProviderBadResponse, format!("OpenAI returned an unusable response: {why}"))
-        .with_provider(OPENAI)
-        .with_provider_status(resp.status.as_u16())
-        .with_provider_request_id(resp.request_id.clone())
-        .with_detail("charge_possible", true)
-        .with_hint(
-            "the request completed, so OpenAI may have billed it; Iris did not retry automatically. \
-             Quote the provider request id if you contact OpenAI support",
-        )
+    errors::bad_response(resp, why, &WORDING)
 }
 
 /// `GET {base}/models/{model}`: a free metadata read (`IdempotentRead`).

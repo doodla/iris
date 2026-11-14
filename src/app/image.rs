@@ -549,11 +549,9 @@ fn check_saved(
         "the cost estimate is for the requested size, so it may not match the charge"
     };
     let declared = spec.outputs.media_types;
-    let requested = spec
-        .outputs
-        .exact_size_option
-        .and_then(|name| opts.get(name))
-        .and_then(|value| value.as_str().and_then(pixel_size).map(|size| (value.to_string(), size)));
+    let requested = spec.outputs.exact_size_option.and_then(|name| opts.get(name)).and_then(|value| {
+        value.as_str().and_then(crate::catalog::parse_pixel_size).map(|size| (value.to_string(), size))
+    });
     let mut warnings = Vec::new();
     for artifact in saved {
         if !declared.contains(&artifact.media_type.as_str()) {
@@ -582,10 +580,4 @@ fn check_saved(
         }
     }
     warnings
-}
-
-/// `(width, height)` of a `WxH` value; `None` for anything else (such as `auto`).
-fn pixel_size(value: &str) -> Option<(u64, u64)> {
-    let (w, h) = value.split_once('x')?;
-    Some((w.parse().ok()?, h.parse().ok()?))
 }
