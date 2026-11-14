@@ -251,7 +251,7 @@ and `pricing`:
 | `limits` | Other limits, such as `max_prompt_chars`. |
 | `pricing` | The published prices, each with a `description`, a `unit`, the price in `usd`, a `source_url`, and the date checked (`as_of`). |
 | `access` | The API key variable and whether it's set, the documented access `requirements`, and `account_access`. |
-| `capabilities_source`, `catalog_as_of` | Where the capabilities come from, and the date that the catalog was checked against the provider's documentation. |
+| `capabilities_source`, `catalog_as_of` | Where the capabilities come from, and the date that the model's catalog entry was checked against the provider's documentation. |
 | `docs_url` | The provider's documentation for the model. |
 
 `access.account_access` is `not_checked`, unless you pass `--check-access`. Then Iris makes one

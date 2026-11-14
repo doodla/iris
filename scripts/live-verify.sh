@@ -10,7 +10,8 @@
 # Documentation: docs/contributing/live-testing.md. Quick reference:
 # `scripts/live-verify.sh --help`.
 #
-# Credentials come only from OPENAI_API_KEY / GEMINI_API_KEY in the environment.
+# Credentials come only from OPENAI_API_KEY / GEMINI_API_KEY / AI_GATEWAY_API_KEY in
+# the environment.
 # The script never prints, logs, writes, or passes them as arguments (the scan of
 # saved outputs feeds the value to grep through a pipe, not argv). It checks them
 # for presence, and in mock mode also that they are fake (a `fake-`/`test-` prefix).
@@ -72,6 +73,7 @@ Environment:
   IRIS_LIVE_CONFIRM=yes-i-accept-charges    required for every step (not for --plan/--help)
   IRIS_LIVE_VEO_CONFIRM=submit-one-veo-job  also required for step 4, the one Veo submission
   OPENAI_API_KEY, GEMINI_API_KEY            checked for presence only (mock mode: must be fake)
+  AI_GATEWAY_API_KEY                        not used by any step (mock mode: must be fake)
   IRIS_LIVE_BUDGET_USD                      estimated budget of DIR (default 10); set it to
                                             what is left of your overall budget
   IRIS_LIVE_MAX_STEP_USD                    per-step estimate cap (default 0.50)
@@ -88,9 +90,9 @@ Safety:
   * Every paid request is written to the ledger (status=sent, with its estimate)
     as soon as it returns, before any check. A paid step whose request succeeded
     is never sent again; if its output failed a check, a rerun repeats the checks.
-  * IRIS_OPENAI_BASE_URL / IRIS_GEMINI_BASE_URL make a run non-live, so they are
-    refused. IRIS_LIVE_ALLOW_BASE_URL_OVERRIDE=mock-only tests this script against
-    local mock servers instead. It requires BOTH base URLs, each an http(s) URL on
+  * IRIS_OPENAI_BASE_URL / IRIS_GEMINI_BASE_URL / IRIS_VERCEL_BASE_URL make a run
+    non-live, so they are refused. IRIS_LIVE_ALLOW_BASE_URL_OVERRIDE=mock-only tests
+    this script against local mock servers instead. It requires ALL three base URLs, each an http(s) URL on
     127.0.0.1, localhost, or [::1], and fake keys (prefix fake- or test-). Every
     ledger line then says mode=MOCK, which is never live evidence.
 EOF
@@ -163,22 +165,22 @@ case ${IRIS_LIVE_ALLOW_BASE_URL_OVERRIDE:-} in
 esac
 if [ "$MODE" = MOCK ]; then
     # A provider left at its default base URL would be the real, paid API, and a
-    # real key would go with it; so both must point at loopback, and keys must be fake.
-    for var in IRIS_OPENAI_BASE_URL IRIS_GEMINI_BASE_URL; do
+    # real key would go with it; so every one must point at loopback, and keys must be fake.
+    for var in IRIS_OPENAI_BASE_URL IRIS_GEMINI_BASE_URL IRIS_VERCEL_BASE_URL; do
         [ -n "${!var:-}" ] ||
-            die "mock mode needs BOTH IRIS_OPENAI_BASE_URL and IRIS_GEMINI_BASE_URL; $var is not set, so that provider would be the real, paid API"
+            die "mock mode needs IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, and IRIS_VERCEL_BASE_URL; $var is not set, so that provider would be the real, paid API"
         is_loopback_url "${!var}" ||
             die "mock mode: $var must be an http(s) URL on 127.0.0.1, localhost, or [::1]"
     done
-    for var in OPENAI_API_KEY GEMINI_API_KEY; do
+    for var in OPENAI_API_KEY GEMINI_API_KEY AI_GATEWAY_API_KEY; do
         case ${!var:-} in
             "" | fake-* | test-*) ;;
             *) die "mock mode: $var must be unset or a fake key starting with 'fake-' or 'test-' (a real key never goes to a mock; run under env -i)" ;;
         esac
     done
-    say "MOCK MODE: both provider base URLs point at local mock servers; nothing from this run is live evidence"
-elif [ -n "${IRIS_OPENAI_BASE_URL:-}" ] || [ -n "${IRIS_GEMINI_BASE_URL:-}" ]; then
-    die "IRIS_OPENAI_BASE_URL or IRIS_GEMINI_BASE_URL is set, so this would not be a live verification; unset it"
+    say "MOCK MODE: every provider base URL points at local mock servers; nothing from this run is live evidence"
+elif [ -n "${IRIS_OPENAI_BASE_URL:-}" ] || [ -n "${IRIS_GEMINI_BASE_URL:-}" ] || [ -n "${IRIS_VERCEL_BASE_URL:-}" ]; then
+    die "IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, or IRIS_VERCEL_BASE_URL is set, so this would not be a live verification; unset it"
 fi
 
 # ----- binary and directories ------------------------------------------------------------
@@ -238,11 +240,12 @@ require_key() {
     fi
 }
 
-# True if FILE contains the value of OPENAI_API_KEY or GEMINI_API_KEY. The value
+# True if FILE contains the value of OPENAI_API_KEY, GEMINI_API_KEY, or
+# AI_GATEWAY_API_KEY. The value
 # reaches grep through a pipe (printf is a builtin), never through argv.
 leaks_secret() {
     local file=$1 var val
-    for var in OPENAI_API_KEY GEMINI_API_KEY; do
+    for var in OPENAI_API_KEY GEMINI_API_KEY AI_GATEWAY_API_KEY; do
         val=${!var:-}
         [ "${#val}" -ge 8 ] || continue
         if grep -qF -f <(printf '%s\n' "$val") -- "$file"; then

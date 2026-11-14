@@ -21,6 +21,7 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_iris");
 /// and distinctive enough to search for in every output and file.
 pub const OPENAI_KEY: &str = "fake-openai-key-e2e-5b1f0c7d";
 pub const GEMINI_KEY: &str = "fake-gemini-key-e2e-93ad7e21";
+pub const VERCEL_KEY: &str = "fake-vercel-key-e2e-4c62d0b8";
 
 /// Credential variables that must never reach a child from the developer's
 /// environment (the child starts from an empty environment anyway): every
@@ -232,9 +233,16 @@ impl Iris {
         self.env("IRIS_GEMINI_BASE_URL", api.uri()).env("GEMINI_API_KEY", GEMINI_KEY)
     }
 
-    /// Set both fake keys (providers stay unreachable unless a mock is attached).
+    /// Point the Vercel AI Gateway base URL at `api` (`<uri>/v1`) and set the fake key.
+    pub fn vercel(&mut self, api: &MockApi) -> &mut Iris {
+        self.env("IRIS_VERCEL_BASE_URL", format!("{}/v1", api.uri())).env("AI_GATEWAY_API_KEY", VERCEL_KEY)
+    }
+
+    /// Set every fake key (providers stay unreachable unless a mock is attached).
     pub fn keys(&mut self) -> &mut Iris {
-        self.env("OPENAI_API_KEY", OPENAI_KEY).env("GEMINI_API_KEY", GEMINI_KEY)
+        self.env("OPENAI_API_KEY", OPENAI_KEY)
+            .env("GEMINI_API_KEY", GEMINI_KEY)
+            .env("AI_GATEWAY_API_KEY", VERCEL_KEY)
     }
 
     fn command(&self) -> Command {
@@ -442,7 +450,7 @@ impl Out {
     /// Output hygiene of every run: no key anywhere, no terminal escapes, and no
     /// JSON envelope on stderr (diagnostics only).
     pub fn assert_hygiene(&self) {
-        for key in [OPENAI_KEY, GEMINI_KEY] {
+        for key in [OPENAI_KEY, GEMINI_KEY, VERCEL_KEY] {
             assert!(!self.stdout.contains(key), "a key leaked to stdout\n{}", self.describe());
             assert!(!self.stderr.contains(key), "a key leaked to stderr\n{}", self.describe());
         }

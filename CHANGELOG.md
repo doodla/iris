@@ -8,6 +8,13 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- **Vercel AI Gateway provider.** `iris image generate` can run Black Forest Labs' FLUX 3 Image
+  and FLUX 3 Image Klein (`-m bfl/flux-3-image`, `-m bfl/flux-3-image-klein`) through the Vercel AI
+  Gateway, with the key in `AI_GATEWAY_API_KEY` and the base URL in `IRIS_VERCEL_BASE_URL` or
+  `[providers.vercel]`. `--size` takes the five square sizes that the gateway prices, and the cost
+  is estimated before the request. `--check-access` reads the team's eligibility for each model.
+  The gateway's image edits and video aren't offered: see
+  [Decisions](https://github.com/doodla/iris/blob/main/docs/contributing/decisions.md#vercel-ai-gateway-image-only-models-through-the-openai-compatible-images-endpoint).
 - **Jobs commands take a label.** `iris jobs status`, `jobs wait`, `jobs download`, and
   `jobs delete` find a job by the label that `video generate --label` gave it, with `--label`
   instead of the job ID. A script or agent that chose the label can follow its job without keeping

@@ -2295,7 +2295,8 @@
         {
           "enum": [
             "openai",
-            "gemini"
+            "gemini",
+            "vercel"
           ]
         },
         {

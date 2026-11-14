@@ -37,8 +37,9 @@ source for that.
 
 ## Money, credentials, and safety
 
-- Credentials come only from `OPENAI_API_KEY` and `GEMINI_API_KEY`. Never print, log,
-  persist, or put them in URLs, argv, fixtures, or error messages. Check presence only.
+- Credentials come only from `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `AI_GATEWAY_API_KEY`.
+  Never print, log, persist, or put them in URLs, argv, fixtures, or error messages. Check
+  presence only.
 - Paid submissions are never retried automatically unless the request provably did not
   reach the provider, or the provider explicitly rejected it before processing (rate
   limit, documented overload). Ambiguous outcomes are reported as uncertain and never

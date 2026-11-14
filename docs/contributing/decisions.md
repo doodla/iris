@@ -178,6 +178,50 @@ tried, and the provider documents no support for it.
 [python-genai `models.py`](https://github.com/googleapis/python-genai/blob/7672ff6a08b92d45f6718e1195845b818705bad6/google/genai/models.py) ·
 [js-genai converters](https://github.com/googleapis/js-genai/blob/4d7e80b03dda3b9104649cb69bd8471f52f0c207/src/converters/_models_converters.ts)
 
+### Vercel AI Gateway: image-only models through the OpenAI-compatible Images endpoint
+
+**Decision.** Iris reaches the Vercel AI Gateway with `POST /v1/images/generations`, sending
+`model`, `prompt`, `response_format: "b64_json"`, and `size` only when you set one. It registers
+two models, `bfl/flux-3-image` and `bfl/flux-3-image-klein`, for image generation only. It doesn't
+offer image edits or video through the gateway. `--check-access` reads
+`GET /v1/models?include_availability` with the key. The key comes from `AI_GATEWAY_API_KEY`, the
+variable that the gateway's documentation uses, and goes in `Authorization: Bearer`.
+
+**Why.**
+
+- The image generation guide documents the Images endpoint for image-only models, by example:
+  `model`, `prompt`, `n`, and `response_format: "b64_json"`, with base64 images in `data[]`. It
+  documents no other request field for these models, so Iris sends no other field.
+- The two FLUX 3 models are the gateway image models whose listed prices depend only on a size that
+  the price list names: five square classes from 768x768 to 4096x4096. So `size` accepts exactly
+  those five, and Iris can estimate a cost before the request. When you set no size, the estimate
+  uses the listed base price (`pricing.image`). Most other gateway image models have no listed
+  price, or are priced by token usage or options that the Images endpoint doesn't document, so Iris
+  couldn't estimate them honestly.
+- Iris requests one image per call and never sends `n`. The guide shows `n` but not its limit for
+  these models.
+- The edit guide doesn't list the FLUX 3 models among those that accept input images, and warns
+  that a model without mask support may ignore the mask. Ignoring a mask would silently drop part of
+  a paid request, so Iris offers no edits through the gateway.
+- The gateway documents video jobs only through its JavaScript SDK (`experimental_startVideo` and
+  `experimental_getVideoStatus`). It calls the HTTP requests behind them the provider's wire format,
+  not an API. Iris doesn't build a recoverable job on an undocumented interface.
+- The rate-limit page says that a 429 "is not a failure of your request" and that "the same request
+  can succeed later without changes", so the `PaidSubmit` class retries it. The gateway documents
+  no idempotency key for images and no 5xx response as "not processed", so an HTTP 408 or 5xx, or a
+  timeout after sending, is `submission_uncertain`.
+- The REST API reference documents `include_availability` as each model's eligibility under the
+  team's configuration, and says that a model can serve a request when its status is `eligible` and
+  the account's `http` runtime is `available`. That's a better access check than the public model
+  list, which responds without a key.
+
+**Sources.** [Image generation with the OpenAI-compatible API](https://vercel.com/docs/ai-gateway/modalities/image-generation/openai) ·
+[Video generation](https://vercel.com/docs/ai-gateway/modalities/video-generation) ·
+[REST API reference](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api) ·
+[Rate limits](https://vercel.com/docs/ai-gateway/rate-limits) ·
+[Pricing](https://vercel.com/docs/ai-gateway/pricing) ·
+[Model list with prices](https://ai-gateway.vercel.sh/v1/models), all checked 2026-11-14.
+
 ## Models
 
 ### No default model

@@ -17,6 +17,9 @@ pub enum ProviderId {
     OpenAi,
     /// Google Gemini developer API (generativelanguage.googleapis.com), including Veo.
     Gemini,
+    /// Vercel AI Gateway (ai-gateway.vercel.sh), image-only models through its
+    /// OpenAI-compatible Images endpoint.
+    Vercel,
 }
 
 /// The one place that names each provider's fixed identity: its id, display name,
@@ -28,7 +31,7 @@ impl ProviderId {
     /// `Registry::builtin()`, which `providers list` iterates). The compiler does not
     /// check that this list is complete; the `all_lists_every_provider_once` test
     /// below compares it with the enum's variants, the registry, and the catalog.
-    pub const ALL: &'static [ProviderId] = &[ProviderId::OpenAi, ProviderId::Gemini];
+    pub const ALL: &'static [ProviderId] = &[ProviderId::OpenAi, ProviderId::Gemini, ProviderId::Vercel];
 
     /// The provider's id: its serde name, `--provider` value, and the name of its
     /// `[providers.<id>]` config table.
@@ -36,6 +39,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "openai",
             ProviderId::Gemini => "gemini",
+            ProviderId::Vercel => "vercel",
         }
     }
 
@@ -44,6 +48,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "OpenAI",
             ProviderId::Gemini => "Google Gemini API",
+            ProviderId::Vercel => "Vercel AI Gateway",
         }
     }
 
@@ -52,6 +57,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "OPENAI_API_KEY",
             ProviderId::Gemini => "GEMINI_API_KEY",
+            ProviderId::Vercel => "AI_GATEWAY_API_KEY",
         }
     }
 
@@ -63,6 +69,8 @@ impl ProviderId {
             ProviderId::OpenAi => "https://api.openai.com/v1",
             // The origin: the adapter appends the API version (`/v1` or `/v1beta`).
             ProviderId::Gemini => "https://generativelanguage.googleapis.com",
+            // Endpoint paths are appended to it.
+            ProviderId::Vercel => "https://ai-gateway.vercel.sh/v1",
         }
     }
 
@@ -72,6 +80,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "IRIS_OPENAI_BASE_URL",
             ProviderId::Gemini => "IRIS_GEMINI_BASE_URL",
+            ProviderId::Vercel => "IRIS_VERCEL_BASE_URL",
         }
     }
 }

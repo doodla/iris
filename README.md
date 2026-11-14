@@ -99,6 +99,7 @@ Iris doesn't choose a model for you. It supports these models:
 | OpenAI | GPT Image 2.5 Sunburst, GPT Image 2.5 Flare, GPT Image 2 | Generate and edit images |
 | Google | Nano Banana 2, Nano Banana 2 Lite, Nano Banana Pro | Generate and edit images |
 | Google | Veo 3.1, Veo 3.1 Fast, and Veo 3.1 Lite, in preview | Generate videos |
+| Vercel AI Gateway | FLUX 3 Image, FLUX 3 Image Klein (Black Forest Labs) | Generate images |
 
 To compare what each model is for and what it costs, run `iris models list`. Then pass the model
 with `-m`, or set a default in the config file. See

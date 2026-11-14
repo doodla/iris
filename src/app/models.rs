@@ -3,7 +3,7 @@
 //! reported separately and only checked on request (`--check-access`, a free
 //! metadata call).
 
-use crate::catalog::{CATALOG_AS_OF, ModelSpec, OptionKind, OptionSpec, OptionValue};
+use crate::catalog::{ModelSpec, OptionKind, OptionSpec, OptionValue};
 use crate::config::EnvSnapshot;
 use crate::domain::{Operation, ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
@@ -175,7 +175,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
             checked_at: None,
         },
         capabilities_source: "catalog".to_string(),
-        catalog_as_of: CATALOG_AS_OF.to_string(),
+        catalog_as_of: crate::catalog::checked_on(m.provider).to_string(),
         docs_url: m.docs_url.to_string(),
     }
 }

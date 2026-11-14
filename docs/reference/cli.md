@@ -9,7 +9,7 @@ the same commit. For the JSON that each command prints with `--json`, see the
 
 | Command | Description |
 |---|---|
-| [`iris`](#iris) | Generate and edit images and generate videos with OpenAI and Google Gemini/Veo |
+| [`iris`](#iris) | Generate and edit images and generate videos with OpenAI, Google Gemini/Veo, and the Vercel AI Gateway |
 | [`iris image`](#iris-image) | Generate and edit images (synchronous; no job record) |
 | [`iris image generate`](#iris-image-generate) | Generate images from a prompt |
 | [`iris image edit`](#iris-image-edit) | Edit images, or compose a new image from reference images |
@@ -37,8 +37,9 @@ the same commit. For the JSON that each command prints with `--json`, see the
 ## iris
 
 ```text
-Iris generates and edits images (OpenAI GPT Image, Google Gemini "Nano Banana") and generates videos
-(Google Veo) from one agent-friendly command line.
+Iris generates and edits images (OpenAI GPT Image, Google Gemini "Nano Banana"), generates images
+through the Vercel AI Gateway (Black Forest Labs FLUX 3), and generates videos (Google Veo) from one
+agent-friendly command line.
 
 Every generation command names its model: pass -m/--model, or set the model in the config file
 ([image] model, [video] model). Iris never chooses a model for you; `iris models list` shows the
@@ -50,8 +51,9 @@ provider-native job: Iris records it locally, waits, and saves the video; with -
 job id that later commands (iris jobs status/wait/download) resume, even from another process that
 uses the same state directory (`iris config path`).
 
-Credentials are read only from the OPENAI_API_KEY and GEMINI_API_KEY environment variables. Provider
-usage is billed by the provider to your API account; Iris reports cost estimates only.
+Credentials are read only from the OPENAI_API_KEY, GEMINI_API_KEY, and AI_GATEWAY_API_KEY
+environment variables. Provider usage is billed by the provider to your API account; Iris reports
+cost estimates only.
 
 With --json, every command prints exactly one JSON document on stdout (schema: `iris schema`);
 progress and diagnostics go to stderr. Iris never prompts interactively.
@@ -1045,9 +1047,9 @@ Examples:
 
 ```text
 List every provider Iris supports with its operations, the environment variable its API key is read
-from (OPENAI_API_KEY or GEMINI_API_KEY), whether that variable is set (never its value), and the
-base URL requests go to. The key is sent to that base URL, including an override from
-IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, or the config file.
+from (OPENAI_API_KEY, GEMINI_API_KEY, or AI_GATEWAY_API_KEY), whether that variable is set (never
+its value), and the base URL requests go to. The key is sent to that base URL, including an override
+from IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, IRIS_VERCEL_BASE_URL, or the config file.
 
 Usage: iris providers list [OPTIONS]
 

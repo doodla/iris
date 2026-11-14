@@ -32,7 +32,8 @@ Steps 4 to 7 share one Veo job, because video is the expensive part: a run submi
   be a stale build.
 - **Tools.** `jq`, and the standard tools `od`, `awk`, `grep`, and `env`.
 - **API keys.** `OPENAI_API_KEY` and `GEMINI_API_KEY`. The script checks that they're set, and
-  never prints, logs, or writes them.
+  never prints, logs, or writes them. No step uses the Vercel AI Gateway, so `AI_GATEWAY_API_KEY`
+  isn't needed, but the script still scans its outputs for that key's value.
 - **A state location.** `HOME` or `XDG_STATE_HOME`: the default run directory and the machine-wide
   Veo marker are under `${XDG_STATE_HOME:-~/.local/state}/iris-live/`.
 - **Provider access.** OpenAI's GPT Image models may require API Organization Verification. The
@@ -41,8 +42,8 @@ Steps 4 to 7 share one Veo job, because video is the expensive part: a run submi
 
 Iris reads no other configuration during a live run. The script points `IRIS_CONFIG` at an empty
 file and `IRIS_STATE_DIR` at its own directory, and unsets the `IRIS_*` setting overrides for each
-`iris` process. It refuses to run at all if `IRIS_OPENAI_BASE_URL` or `IRIS_GEMINI_BASE_URL` is set,
-because the run wouldn't be live.
+`iris` process. It refuses to run at all if `IRIS_OPENAI_BASE_URL`, `IRIS_GEMINI_BASE_URL`, or
+`IRIS_VERCEL_BASE_URL` is set, because the run wouldn't be live.
 
 ## Steps and costs
 
@@ -220,10 +221,10 @@ LEDGER at=… step=4 status=ok estimated_usd=0 total_usd=0.30216 exit=0 mode=LIV
 ledger line of such a run says `mode=MOCK`. A mock run is never live verification, and must not be
 reported as one. Mock mode requires:
 
-- Both `IRIS_OPENAI_BASE_URL` and `IRIS_GEMINI_BASE_URL`, because a provider left at its default
-  would be the real, paid API.
+- `IRIS_OPENAI_BASE_URL`, `IRIS_GEMINI_BASE_URL`, and `IRIS_VERCEL_BASE_URL`, because a provider
+  left at its default would be the real, paid API.
 - Each base URL is an `http` or `https` URL on `127.0.0.1`, `localhost`, or `[::1]`.
-- `OPENAI_API_KEY` and `GEMINI_API_KEY` are unset or fake: they must start with `fake-` or `test-`.
+- `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `AI_GATEWAY_API_KEY` are unset or fake: they must start with `fake-` or `test-`.
   Run the script under `env -i`, so that it inherits no real key.
 
 The Veo marker of a mock run is `iris-live/veo-submitted.mock`, so a mock run never blocks a live

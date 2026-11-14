@@ -494,6 +494,7 @@ impl Provider for FakeProvider {
         match self.id {
             ProviderId::OpenAi => CredentialHeader { name: "authorization", prefix: "Bearer " },
             ProviderId::Gemini => CredentialHeader { name: "x-goog-api-key", prefix: "" },
+            ProviderId::Vercel => CredentialHeader { name: "authorization", prefix: "Bearer " },
         }
     }
     fn docs_url(&self) -> &'static str {
@@ -619,7 +620,7 @@ impl Sandbox {
         self.work().join(rel)
     }
 
-    /// Environment with fake keys for both providers.
+    /// Environment with fake keys for the providers of the fake registry (OpenAI and Gemini).
     pub fn env(&self) -> EnvSnapshot {
         self.env_without_keys().with_var("OPENAI_API_KEY", OPENAI_KEY).with_var("GEMINI_API_KEY", GEMINI_KEY)
     }

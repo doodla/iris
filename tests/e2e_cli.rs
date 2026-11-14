@@ -1695,14 +1695,17 @@ fn doctor_checks_access_to_every_model_of_a_provider_with_a_key() {
             json_response(200, serde_json::json!({ "id": id, "object": "model" })),
         );
     }
-    // Only the OpenAI key is set, so Gemini is skipped and the mock sees every call.
+    // Only the OpenAI key is set, so Gemini and Vercel are skipped and the mock sees every call.
     let v = sb.iris().openai(&api).args(["doctor", "--check-access", "--json"]).run().ok();
     let checks = v["result"]["checks"].as_array().unwrap();
     let access: Vec<&Value> =
         checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")).collect();
     let ids: Vec<String> = access.iter().map(|c| c["id"].as_str().unwrap().to_string()).collect();
-    let expected: Vec<String> =
-        models.iter().map(|id| format!("access.openai.{id}")).chain(["access.gemini".to_string()]).collect();
+    let expected: Vec<String> = models
+        .iter()
+        .map(|id| format!("access.openai.{id}"))
+        .chain(["access.gemini".to_string(), "access.vercel".to_string()])
+        .collect();
     assert_eq!(ids, expected, "{v}");
     assert!(access[..models.len()].iter().all(|c| c["status"] == "ok"), "{v}");
     assert_eq!(v["result"]["healthy"], true, "{v}");

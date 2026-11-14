@@ -8,6 +8,7 @@
 
 pub mod gemini;
 pub mod openai;
+pub mod vercel;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -330,7 +331,11 @@ pub struct Registry {
 impl Registry {
     pub fn builtin() -> Self {
         Registry {
-            providers: vec![Arc::new(openai::OpenAiProvider::new()), Arc::new(gemini::GeminiProvider::new())],
+            providers: vec![
+                Arc::new(openai::OpenAiProvider::new()),
+                Arc::new(gemini::GeminiProvider::new()),
+                Arc::new(vercel::VercelProvider::new()),
+            ],
         }
     }
 
