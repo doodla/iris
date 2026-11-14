@@ -9,6 +9,7 @@
 pub(crate) mod errors;
 pub mod gemini;
 pub mod openai;
+pub(crate) mod openai_compat;
 pub mod vercel;
 
 use std::path::PathBuf;

@@ -22,18 +22,16 @@ mod client;
 mod wire;
 
 use async_trait::async_trait;
-use base64::Engine as _;
-use base64::engine::general_purpose::STANDARD_PAD_INDIFFERENT;
 
+use super::openai_compat::{ImagesResponse, decode_items};
 use super::{
-    AccountAccess, CredentialHeader, GeneratedImage, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
-    Provider, ProviderContext, UnusableOutput,
+    AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest, Provider,
+    ProviderContext,
 };
-use crate::artifacts::media;
-use crate::domain::{ProviderId, Warning, WarningCode};
+use crate::domain::ProviderId;
 use crate::error::IrisError;
 use crate::http::{AuthHeader, HttpResponse};
-use wire::{GenerateBody, WireImagesResponse};
+use wire::GenerateBody;
 
 /// The gateway's image generation guide.
 pub const DOCS_URL: &str = crate::catalog::vercel::DOCS_URL;
@@ -102,77 +100,26 @@ impl ImageProvider for VercelProvider {
     }
 }
 
-/// Decode an images response: every `data[].b64_json`, typed by its magic bytes.
-/// Paid output is never discarded because of another item: an item that cannot be
-/// used is skipped with `output_item_unusable`, and its content handed to the app.
-/// Only a response with no usable item is `provider_bad_response`. A number of items
-/// other than one is reported with `unexpected_output_count`.
+/// Decode an images response (see `providers::openai_compat`): every item typed by
+/// its magic bytes. Paid output is never discarded because of another item: an item
+/// that cannot be used is skipped with `output_item_unusable`, and its content handed
+/// to the app. Only a response with no usable item is `provider_bad_response`. A
+/// number of items other than one is reported with `unexpected_output_count`.
 fn decode_images(resp: &HttpResponse) -> Result<ImageOutput, ImageFailure> {
-    let parsed = WireImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
+    let parsed = ImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
     if parsed.data.is_empty() {
         return Err(client::bad_response(resp, "it contains no images").into());
     }
-    let returned = parsed.data.len();
-    let mut images = Vec::with_capacity(returned);
-    let mut kept = Vec::new();
-    let mut reasons = Vec::new();
-    for (index, item) in parsed.data.into_iter().enumerate() {
-        let Some(b64) = item.b64_json else {
-            reasons.push(if item.has_url {
-                format!(
-                    "response item {index} is a URL instead of inline base64 data; Iris does not fetch it"
-                )
-            } else {
-                format!("response item {index} has no b64_json data")
-            });
-            continue;
-        };
-        let bytes = match STANDARD_PAD_INDIFFERENT.decode(b64.trim()) {
-            Ok(bytes) => bytes,
-            Err(_) => {
-                reasons.push(format!("response item {index} is not valid base64"));
-                kept.push(UnusableOutput { item: index, bytes: b64.into_bytes() });
-                continue;
-            }
-        };
-        match media::sniff(&bytes) {
-            Some(actual) if media::is_image(actual) => {
-                images.push(GeneratedImage { item: index, media_type: actual.to_string(), bytes })
-            }
-            other => {
-                reasons.push(format!(
-                    "response item {index} should be an image but its content is {}",
-                    other.unwrap_or("not a recognized image")
-                ));
-                kept.push(UnusableOutput { item: index, bytes });
-            }
-        }
+    let decoded = decode_items(parsed.data, "an image", "");
+    if decoded.images.is_empty() {
+        let error = client::bad_response(resp, &decoded.reasons());
+        return Err(ImageFailure { error, unusable: decoded.unusable });
     }
-    if images.is_empty() {
-        return Err(ImageFailure { error: client::bad_response(resp, &reasons.join("; ")), unusable: kept });
-    }
-    let mut warnings: Vec<Warning> = reasons
-        .into_iter()
-        .map(|why| {
-            Warning::new(
-                WarningCode::OutputItemUnusable,
-                format!("{why}; it was skipped and every usable image was kept"),
-            )
-        })
-        .collect();
-    if returned != 1 {
-        warnings.push(Warning::new(
-            WarningCode::UnexpectedOutputCount,
-            format!(
-                "the Vercel AI Gateway returned {returned} items ({} usable) for a request of 1; every usable image \
-                 was kept",
-                images.len()
-            ),
-        ));
-    }
+    let mut warnings = decoded.unusable_warnings();
+    warnings.extend(decoded.count_warning("the Vercel AI Gateway", 1, ""));
     Ok(ImageOutput {
-        images,
-        unusable: kept,
+        images: decoded.images,
+        unusable: decoded.unusable,
         text: None,
         usage: None,
         provider_request_id: resp.request_id.clone(),

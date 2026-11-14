@@ -7,7 +7,7 @@
 //! documents the shape by example (`data[].b64_json`), and its error body as
 //! `{"error": {"message", "type"}}`, sometimes with `code`.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::catalog::ResolvedOptions;
@@ -51,49 +51,6 @@ impl<'a> GenerateBody<'a> {
             }
         }
         Ok(body)
-    }
-}
-
-/// One element of `data[]`.
-pub(super) struct WireImage {
-    pub b64_json: Option<String>,
-    /// True if the element carries a `url` instead of inline data.
-    pub has_url: bool,
-}
-
-/// The parts of an images response Iris uses.
-pub(super) struct WireImagesResponse {
-    pub data: Vec<WireImage>,
-}
-
-#[derive(Deserialize)]
-struct RawImagesResponse {
-    #[serde(default)]
-    data: Option<Value>,
-}
-
-impl WireImagesResponse {
-    /// Parse a success body. `Err` carries a short reason when the body is not the
-    /// documented shape. Base64 strings are moved out of the parsed document.
-    pub fn parse(body: &[u8]) -> Result<WireImagesResponse, String> {
-        let raw: RawImagesResponse = serde_json::from_slice(body)
-            .map_err(|_| "the response body is not the documented JSON object".to_string())?;
-        let items = match raw.data {
-            Some(Value::Array(items)) => items,
-            Some(Value::Null) | None => return Err("the response has no `data` array".to_string()),
-            Some(_) => return Err("the response's `data` field is not an array".to_string()),
-        };
-        let data = items
-            .into_iter()
-            .map(|mut item| WireImage {
-                b64_json: match item.get_mut("b64_json").map(Value::take) {
-                    Some(Value::String(s)) => Some(s),
-                    _ => None,
-                },
-                has_url: item.get("url").and_then(Value::as_str).is_some_and(|u| !u.trim().is_empty()),
-            })
-            .collect();
-        Ok(WireImagesResponse { data })
     }
 }
 
