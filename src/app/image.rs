@@ -228,7 +228,7 @@ async fn run_checked(
         "Requesting {count} image{} from {provider} ({}); this is a {} request",
         if count == 1 { "" } else { "s" },
         request::progress_model(&resolved, model_source, op),
-        spec.billing
+        spec.billing.adjective()
     ));
     // Names every file this command may keep in the state directory.
     let run_id = ulid::Ulid::generate().to_string().to_ascii_lowercase();

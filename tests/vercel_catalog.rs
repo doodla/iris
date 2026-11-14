@@ -156,3 +156,14 @@ fn the_standard_request_rests_on_the_documented_exact_size() {
         assert!(standard.iter().all(|set| set.contains(&("size", "1024x1024"))), "{}: {standard:?}", m.id);
     }
 }
+
+#[test]
+fn only_the_gateway_model_is_paid_with_a_free_tier() {
+    use iris::domain::Billing;
+    for m in catalog::all() {
+        let expected =
+            if m.provider == ProviderId::Vercel { Billing::PaidWithFreeTier } else { Billing::Paid };
+        assert_eq!(m.billing, expected, "{}", m.id);
+    }
+    assert_eq!(Billing::PaidWithFreeTier.adjective(), "paid");
+}

@@ -632,12 +632,13 @@ so it must not turn a paid job into `expired`.
   point estimate is supportable, for example with an `auto` size or quality on OpenAI, Iris says so
   instead of guessing, and the model's estimator names the options to pass for one.
 - Every model declares its `billing`, which `models list`, `models show`, and dry-run plans report.
-  It's `paid` for every model in Iris 0.1.0: requests are billed at the provider's published
-  prices. Whether a free tier covers a model is a per-model fact, so it's in the model's access
-  notes, not in `billing`: the Vercel AI Gateway has a free tier for a subset of its models, while
-  OpenAI and Gemini have none for these models. Not every request is
-  billed: Google doesn't charge for a video that it blocks. Human output derives its "this is a paid
-  request" wording from that value.
+  It's `paid` for every OpenAI and Gemini model: requests are billed to the provider account at its
+  published prices, and neither provider has a free tier for these models. The Vercel AI Gateway
+  model is `paid_with_free_tier`: the gateway has a free tier for a subset of its models, and its
+  docs don't say whether Klein is in it, so `paid`, which promises no free tier, would claim too
+  much. Changing what `paid` means would need a `schema_version` bump, while `billing` is an open
+  set, so the new value is additive. Not every request is billed: Google doesn't charge for a video
+  that it blocks. Human output calls every such request "paid".
 - `--max-cost USD` caps what one generation command may spend. A request whose estimate before
   sending is above the cap, or that has no estimate, is refused before anything is sent
   (`cost_limit_exceeded`), in a dry run too. The cap is given on the command line only, with no

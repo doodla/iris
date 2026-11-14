@@ -544,9 +544,9 @@ fn model_show(m: &ModelCapabilities) -> String {
     out
 }
 
-/// A model's billing and what it means: `paid (requests are billed ...)`.
+/// A model's billing value and what it means: `paid (requests are billed ...)`.
 fn billing(b: Billing) -> String {
-    format!("{b} ({})", b.description())
+    format!("{} ({})", b.as_str(), b.description())
 }
 
 fn yes_no(b: bool) -> &'static str {

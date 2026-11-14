@@ -8,6 +8,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- **`billing: paid_with_free_tier`.** A new value of the open `billing` set: requests are billed at
+  the provider's published prices, and the provider has a free tier that may cover some requests.
+  The Vercel AI Gateway model has it, because Vercel's docs don't say which models its free tier
+  covers. `paid` keeps its meaning, with no free tier. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **Saved images are checked against the catalog.** Iris warns with `output_type_undeclared` when
   a saved output's type isn't one that `models show` lists for the model, and with
   `output_size_mismatch` when an image's pixel size differs from the `--size` that you asked for
@@ -32,10 +37,8 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
-- **`billing` no longer claims there's no free tier.** `paid` now means that requests are billed at
-  the provider's published prices. Whether a free tier covers a model is in its access notes,
-  because the Vercel AI Gateway has a free tier for a subset of models. `models show` also reports
-  each provider's own `catalog_as_of` date, so the Vercel models show the day they were checked.
+- **Each provider's catalog date.** `models show` reports each provider's own `catalog_as_of`
+  date, so the Vercel model shows the day it was checked. The other models keep their date.
 - **Access checks say what they checked.** `models show --check-access` adds
   `access.checked_basis`, which says what the provider's check covered, and `doctor` words each
   access result the same way. A Vercel AI Gateway model is reported as eligible or not for your
@@ -143,6 +146,11 @@ Google models, for people and for agents.
 
 ### Added
 
+- **`billing: paid_with_free_tier`.** A new value of the open `billing` set: requests are billed at
+  the provider's published prices, and the provider has a free tier that may cover some requests.
+  The Vercel AI Gateway model has it, because Vercel's docs don't say which models its free tier
+  covers. `paid` keeps its meaning, with no free tier. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **Image generation and editing** with OpenAI's GPT Image 2.5 Sunburst, GPT Image 2.5 Flare, and
   GPT Image 2, and Google's Nano Banana 2, Nano Banana 2 Lite, and Nano Banana Pro. Edits can use
   several reference images and, with OpenAI, a mask. See

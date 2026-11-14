@@ -199,7 +199,7 @@ If Iris refuses a deletion, it deletes nothing and reports `invalid_argument`. S
 | `summary` | string | What the model is for, and its trade-off, from the provider's documentation. |
 | `aliases` | array of strings | Other names that `-m` accepts, such as dated snapshots and nicknames. |
 | `lifecycle` | string | `ga`, `preview`, or `deprecated`, as the provider documents it. |
-| `billing` | string | `paid` if requests are billed at the provider's published prices. Every model in Iris 0.1.0 is `paid`. The set is open: read a value that you don't know as "requests may cost money". |
+| `billing` | string | `paid` if requests are billed to the provider account at its published prices and the provider offers no free tier. `paid_with_free_tier` if requests are billed at the provider's published prices and the provider has a free tier that may cover some requests; the model's access requirements say what's known. The set is open: read a value that you don't know as "requests may cost money". |
 | `operations` | array of strings | What the model can do: `image.generate`, `image.edit`, or `video.generate`. |
 | `standard_cost` | [Standard cost](#standard-cost) or null | What the same standard output costs with this model. `null` if Iris can't estimate the model's cost before a request. |
 

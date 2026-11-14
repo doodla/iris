@@ -167,7 +167,7 @@ pub static MODELS: &[ModelSpec] = &[ModelSpec {
                   from 768x768 to 4096x4096",
     aliases: &[],
     lifecycle: Lifecycle::Ga,
-    billing: Billing::Paid,
+    billing: Billing::PaidWithFreeTier,
     operations: GENERATE,
     inputs: InputSpec::NONE,
     options: OPTIONS,

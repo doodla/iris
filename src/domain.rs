@@ -185,33 +185,51 @@ pub enum ModelSource {
 }
 
 /// Whether a model's requests cost money, as the catalog declares it. An open set
-/// (docs/reference/json-output.md): a later Iris may add a value, and human output uses each
-/// value as the adjective for a request ("this is a paid request").
+/// (docs/reference/json-output.md): a later Iris may add a value. Human output calls a
+/// request by [`Billing::adjective`] ("this is a paid request").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Billing {
-    /// Requests are billed at the provider's published prices. Whether a free tier
-    /// covers the model is a per-model fact, in its access notes.
+    /// Requests are billed to the provider account at its published prices; the
+    /// provider offers no free tier.
     Paid,
+    /// Requests are billed at the provider's published prices, and the provider has a
+    /// free tier that may cover some requests (the model's access notes say what is
+    /// known about it).
+    PaidWithFreeTier,
 }
 
 impl Billing {
     /// Every value, in the documented order. The compiler does not check that it is
     /// complete; the `billing_values_are_distinct_snake_case_names` test compares it
     /// with the enum's variants.
-    pub const ALL: &'static [Billing] = &[Billing::Paid];
+    pub const ALL: &'static [Billing] = &[Billing::Paid, Billing::PaidWithFreeTier];
 
     /// The serialized value.
     pub const fn as_str(self) -> &'static str {
         match self {
             Billing::Paid => "paid",
+            Billing::PaidWithFreeTier => "paid_with_free_tier",
+        }
+    }
+
+    /// The adjective for a request in human output ("this is a paid request").
+    pub const fn adjective(self) -> &'static str {
+        match self {
+            Billing::Paid | Billing::PaidWithFreeTier => "paid",
         }
     }
 
     /// What the value means, for human output and the published schema.
     pub const fn description(self) -> &'static str {
         match self {
-            Billing::Paid => "requests are billed at the provider's published prices",
+            Billing::Paid => {
+                "requests are billed to the provider account at its published prices; no free tier"
+            }
+            Billing::PaidWithFreeTier => {
+                "requests are billed at the provider's published prices; the provider has a free tier that may \
+                 cover some requests (see the model's access notes)"
+            }
         }
     }
 }

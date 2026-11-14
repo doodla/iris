@@ -206,7 +206,7 @@ Dry run: nothing was sent and nothing was charged.
   provider:   openai
   model:      gpt-image-2.5-sunburst
   async job:  no
-  billing:    paid (requests are billed at the provider's published prices)
+  billing:    paid (requests are billed to the provider account at its published prices; no free tier)
   options:    background=auto compression=100 count=1 format=png moderation=auto quality=low size=1024x1024
   output:     /home/you/iris-<ulid>.png
   credential: OPENAI_API_KEY is set
