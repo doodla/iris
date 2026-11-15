@@ -343,8 +343,9 @@ Everything that a provider like the Seedance example touches.
   - [How Iris handles paid requests](../concepts/paid-requests.md): the retry table and the
     uncertain-outcome table, if the provider's rules differ from the others.
 
-  `tests/docs.rs` fails until the install guide and Check your access name every provider's key
-  variable or display name.
+  `tests/docs.rs` fails until the install guide shows how to set every provider's key, the
+  Configuration reference's key table lists it, and Check your access has a row for the provider
+  in its `--check-access` table.
   - `CHANGELOG.md`.
   - [Decisions](decisions.md), with the API choices that you made, their sources, and the date
     that you checked them.
