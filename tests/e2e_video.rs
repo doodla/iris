@@ -192,6 +192,7 @@ fn run_suggested(sb: &Sandbox, veo: &VeoMock, line: &str) -> Out {
         stdout: String::from_utf8(output.stdout).unwrap(),
         stderr: String::from_utf8(output.stderr).unwrap(),
         elapsed: started.elapsed(),
+        size_mismatch_expected: false,
     }
 }
 

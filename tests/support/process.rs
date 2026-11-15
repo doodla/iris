@@ -164,6 +164,8 @@ pub struct Iris {
     env: BTreeMap<OsString, OsString>,
     cwd: PathBuf,
     stdin: Option<Vec<u8>>,
+    /// Whether the run may report `output_size_mismatch` (see [`Out::assert_hygiene`]).
+    size_mismatch_expected: bool,
 }
 
 impl Iris {
@@ -184,7 +186,7 @@ impl Iris {
         set("https_proxy", OsStr::new(dead));
         set("NO_PROXY", OsStr::new("127.0.0.1,localhost"));
         set("no_proxy", OsStr::new("127.0.0.1,localhost"));
-        Iris { args: Vec::new(), env, cwd: sandbox.work(), stdin: None }
+        Iris { args: Vec::new(), env, cwd: sandbox.work(), stdin: None, size_mismatch_expected: false }
     }
 
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Iris {
@@ -215,6 +217,12 @@ impl Iris {
 
     pub fn current_dir(&mut self, dir: impl AsRef<Path>) -> &mut Iris {
         self.cwd = dir.as_ref().to_path_buf();
+        self
+    }
+
+    /// The mock returns an image of another size than requested on purpose.
+    pub fn expect_size_mismatch(&mut self) -> &mut Iris {
+        self.size_mismatch_expected = true;
         self
     }
 
@@ -268,6 +276,7 @@ impl Iris {
             stdout: String::from_utf8(output.stdout).expect("stdout is UTF-8"),
             stderr: String::from_utf8(output.stderr).expect("stderr is UTF-8"),
             elapsed: started.elapsed(),
+            size_mismatch_expected: self.size_mismatch_expected,
         }
     }
 
@@ -375,6 +384,7 @@ impl Running {
             stdout,
             stderr,
             elapsed: self.started.elapsed(),
+            size_mismatch_expected: false,
         }
     }
 }
@@ -397,6 +407,8 @@ pub struct Out {
     pub stdout: String,
     pub stderr: String,
     pub elapsed: Duration,
+    /// Whether the run may report `output_size_mismatch`.
+    pub size_mismatch_expected: bool,
 }
 
 impl Out {
@@ -455,6 +467,17 @@ impl Out {
             assert!(!self.stderr.contains(key), "a key leaked to stderr\n{}", self.describe());
         }
         assert!(!self.stderr.contains('\u{1b}'), "terminal escapes on stderr\n{}", self.describe());
+        // A mock must return the size that a run asks for, unless the test is about the
+        // mismatch, so that the size check never fires unnoticed.
+        if !self.size_mismatch_expected {
+            for text in [&self.stdout, &self.stderr] {
+                assert!(
+                    !text.contains("output_size_mismatch"),
+                    "unexpected output_size_mismatch (call expect_size_mismatch() if intended)\n{}",
+                    self.describe()
+                );
+            }
+        }
         assert!(
             !self.stderr.contains("\"schema_version\""),
             "an envelope went to stderr\n{}",

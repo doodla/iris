@@ -122,7 +122,7 @@ fn openai_generate_saves_the_image_and_sends_the_documented_request() {
 fn compression_works_with_the_format_that_the_output_extension_chooses() {
     let sb = Sandbox::new();
     let api = MockApi::start();
-    api.on("POST", OPENAI_GENERATIONS, openai_images(&[&jpeg(64, 48)], "req_e2e_jpeg"));
+    api.on("POST", OPENAI_GENERATIONS, openai_images(&[&jpeg(1024, 1024)], "req_e2e_jpeg"));
 
     for (name, format) in [("fox.jpg", "jpeg"), ("fox.webp", "webp")] {
         let v = sb
@@ -164,7 +164,7 @@ fn compression_works_with_the_format_that_the_output_extension_chooses() {
 fn openai_generate_in_human_mode_prints_saved_paths() {
     let sb = Sandbox::new();
     let api = MockApi::start();
-    let image = png(32, 32);
+    let image = png(1024, 1024);
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_gen_2"));
 
     let out = sb
@@ -496,7 +496,7 @@ fn a_gemini_answer_without_an_image_reports_its_charged_usage() {
 
 #[test]
 fn an_unusable_openai_item_never_costs_the_good_image() {
-    let image = png(20, 20);
+    let image = png(1024, 1024);
     let body = json!({
         "created": 1_790_000_000,
         "data": [ { "b64_json": b64(&image) }, { "b64_json": b64(br#"{"error": {"message": "x"}}"#) } ],
@@ -511,7 +511,7 @@ fn an_unusable_openai_item_never_costs_the_good_image() {
     assert_eq!(api.total(), 1);
     assert_eq!(artifacts(&v).len(), 1, "{v}");
     let art = &artifacts(&v)[0];
-    assert_artifact(art, Path::new(art["path"].as_str().unwrap()), &image, "image/png", (20, 20));
+    assert_artifact(art, Path::new(art["path"].as_str().unwrap()), &image, "image/png", (1024, 1024));
     let unusable: Vec<&Value> =
         v["warnings"].as_array().unwrap().iter().filter(|w| w["code"] == "output_item_unusable").collect();
     assert_eq!(unusable.len(), 1, "{v}");
@@ -640,7 +640,7 @@ fn a_mislabeled_or_unlabeled_gemini_image_is_saved_under_its_real_type() {
 fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory() {
     let sb = Sandbox::new();
     let api = MockApi::start();
-    let image = png(10, 10);
+    let image = png(1024, 1024);
     api.on(
         "POST",
         OPENAI_GENERATIONS,
@@ -673,7 +673,7 @@ fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory(
     let art = &artifacts(&v)[0];
     let path = Path::new(art["path"].as_str().unwrap());
     assert_eq!(path.parent().unwrap(), sb.state().join("unsaved"), "{v}");
-    assert_artifact(art, path, &image, "image/png", (10, 10));
+    assert_artifact(art, path, &image, "image/png", (1024, 1024));
     let warning = v["warnings"]
         .as_array()
         .unwrap()
@@ -977,7 +977,7 @@ fn quota_and_billing_refusals_exit_3_without_retrying() {
 
 #[test]
 fn a_rate_limited_paid_request_is_retried_and_then_succeeds() {
-    let image = png(24, 24);
+    let image = png(1024, 1024);
     let limited =
         openai_error(429, "requests", Some("rate_limit_exceeded"), "Rate limit reached for requests.")
             .insert_header("retry-after-ms", "50");
@@ -1076,7 +1076,7 @@ fn a_server_error_on_a_paid_image_request_is_reported_once_and_never_retried() {
 
 #[test]
 fn an_overloaded_openai_503_is_retried_and_then_succeeds() {
-    let image = png(12, 12);
+    let image = png(1024, 1024);
     let overloaded = openai_error(
         503,
         "service_unavailable_error",
@@ -1290,7 +1290,7 @@ fn ctrl_c_during_a_paid_image_call_exits_130_and_is_not_retryable() {
 fn verbose_image_runs_never_reveal_the_key_or_signed_urls() {
     let sb = Sandbox::new();
     let api = MockApi::start();
-    let image = png(16, 16);
+    let image = png(1024, 1024);
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_vv"));
     let out = sb
         .iris()
@@ -1440,6 +1440,7 @@ fn vercel_image_of_another_size_is_kept_with_a_size_warning() {
     let v = sb
         .iris()
         .vercel(&api)
+        .expect_size_mismatch()
         .args([
             "image",
             "generate",

@@ -31,10 +31,11 @@ fn saved_dir(v: &Value) -> std::path::PathBuf {
     path.parent().unwrap().to_path_buf()
 }
 
-/// A mock that answers every provider route with a success.
+/// A mock that answers every provider route with a success, with an image of the size
+/// the tests ask for (1024x1024).
 fn answering_api() -> MockApi {
     let api = MockApi::start();
-    let image = png(8, 8);
+    let image = png(1024, 1024);
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_cli"));
     api.on("POST", OPENAI_EDITS, openai_images(&[&image], "req_e2e_cli"));
     let part = serde_json::json!([inline_part("image/png", &image)]);

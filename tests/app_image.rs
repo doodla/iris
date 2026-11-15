@@ -68,7 +68,19 @@ impl Fixture {
         }
     }
 
+    /// Run, and fail on an `output_size_mismatch`: a fake must return the size that a
+    /// test asks for, unless the test is about the mismatch ([`Self::run_any`]).
     async fn run(
+        &self,
+        op: Operation,
+        a: ImageArgs,
+    ) -> (Result<GenerationOutcome<ImageResult>, IrisError>, Vec<Warning>) {
+        let (r, warnings) = self.run_any(op, a).await;
+        assert!(!has_warning(&warnings, "output_size_mismatch"), "unexpected size mismatch: {warnings:?}");
+        (r, warnings)
+    }
+
+    async fn run_any(
         &self,
         op: Operation,
         a: ImageArgs,
@@ -978,7 +990,7 @@ async fn an_image_of_another_size_than_requested_is_kept_with_a_warning() {
     f.openai.images().push(Ok(image_output(vec![png(16, 8)])));
     let mut a = args("a red kite");
     a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "low", "--quality")];
-    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let (r, warnings) = f.run_any(Operation::ImageGenerate, a).await;
     let res = completed(r.unwrap());
     assert_eq!(res.artifacts.len(), 1, "the paid image is kept");
     let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
@@ -992,7 +1004,7 @@ async fn an_image_of_another_size_than_requested_is_kept_with_a_warning() {
     f.openai.images().push(Ok(out));
     let mut a = args("a red kite");
     a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "low", "--quality")];
-    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let (r, warnings) = f.run_any(Operation::ImageGenerate, a).await;
     r.unwrap();
     let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
     assert!(w.message.contains("comes from the usage that the provider reported"), "{}", w.message);
