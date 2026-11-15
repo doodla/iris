@@ -243,27 +243,6 @@ async fn the_error_table_maps_each_documented_answer() {
 }
 
 #[tokio::test]
-async fn a_429_is_retried_because_the_gateway_says_to_retry_it() {
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path(GEN))
-        .respond_with(gateway_error(429, "Rate limit exceeded", "rate_limit_exceeded"))
-        .up_to_n_times(1)
-        .with_priority(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path(GEN))
-        .respond_with(ok(images_body(vec![b64_item(&jpeg())])))
-        .with_priority(2)
-        .mount(&server)
-        .await;
-    let out = generate(&server, sized("1024x1024")).await.unwrap();
-    assert_eq!(out.images.len(), 1);
-    assert_eq!(requests(&server).await.len(), 2);
-}
-
-#[tokio::test]
 async fn server_errors_are_submission_uncertain_and_never_retried() {
     for status in [408, 500, 502, 503, 504] {
         let server = MockServer::start().await;
@@ -392,27 +371,39 @@ fn the_access_scope_says_the_check_covers_eligibility_and_admission() {
     assert!(scope.basis().contains("funds, quota"), "{}", scope.basis());
 }
 
+/// A 429 on a paid request is not resent: with your own provider key (BYOK), the
+/// gateway may have made a billed attempt before the 429.
 #[tokio::test]
-async fn a_429_that_does_not_clear_is_rate_limited_after_a_bounded_number_of_tries() {
-    let server = MockServer::start().await;
-    mount(&server, gateway_error(429, "Rate limit exceeded", "rate_limit_exceeded")).await;
-    let e = generate_err(&server).await;
-    assert_eq!(e.code, ErrorCode::RateLimited);
-    let sent = requests(&server).await.len();
-    assert!((2..=5).contains(&sent), "retried, but boundedly: {sent} requests");
-    assert!(e.details.get("charge_possible").is_none_or(|v| v == &json!(false)), "{:?}", e.details);
-}
-
-#[tokio::test]
-async fn a_429_asking_for_a_longer_wait_than_iris_allows_stops_with_the_delay() {
+async fn a_429_on_a_paid_request_is_reported_once_and_left_to_the_caller() {
     let server = MockServer::start().await;
     mount(
         &server,
-        gateway_error(429, "Rate limit exceeded", "rate_limit_exceeded").insert_header("retry-after", "120"),
+        gateway_error(429, "Rate limit exceeded", "rate_limit_exceeded").insert_header("retry-after", "7"),
     )
     .await;
     let e = generate_err(&server).await;
     assert_eq!(e.code, ErrorCode::RateLimited);
-    assert_eq!(e.retry_after, Some(Duration::from_secs(120)), "the requested delay is reported");
-    assert_eq!(requests(&server).await.len(), 1, "a delay over the 60-second limit is not waited for");
+    assert_eq!(e.retryable, Some(true), "the caller may retry");
+    assert_eq!(e.retry_after, Some(Duration::from_secs(7)), "the requested delay is reported");
+    assert!(e.hint.as_deref().unwrap().contains("does not resend a paid gateway request"), "{:?}", e.hint);
+    assert_eq!(requests(&server).await.len(), 1, "never resent by Iris");
+}
+
+/// A rate limit or server error on the model list leaves the answer open: unknown for
+/// every model, as for the other providers, not an error that fails doctor.
+#[tokio::test]
+async fn a_list_that_fails_for_a_passing_reason_is_unknown() {
+    for status in [429, 503] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .respond_with(gateway_error(status, "busy", "service_unavailable"))
+            .mount(&server)
+            .await;
+        let results = VercelProvider::new().check_access_many(&[MODEL, "bfl/other"], &ctx(&server)).await;
+        assert!(
+            results.iter().all(|r| matches!(r, Ok(AccountAccess::Unknown))),
+            "HTTP {status}: {results:?}"
+        );
+    }
 }

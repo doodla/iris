@@ -663,3 +663,29 @@ async fn fallback_errors_carry_a_scrubbed_bounded_provider_message() {
     assert!(!msg.contains("SECRETSIG"), "{msg}");
     assert!(msg.chars().count() <= 501, "{}", msg.len());
 }
+
+/// `without_rejection_retries` returns a rate limit at once, with the delay the
+/// provider asked for, instead of retrying it.
+#[tokio::test]
+async fn a_call_without_rejection_retries_returns_a_429_at_once_with_its_delay() {
+    let server = MockServer::start().await;
+    failing_then_ok(&server, 429, 1, &[("retry-after", "3")]).await;
+    let url = format!("{}/v1/images/generations", server.uri());
+    let result = client()
+        .execute(
+            &call(RetryClass::PaidSubmit).without_rejection_retries(),
+            |c| Ok(c.post(&url).json(&json!({"prompt": "a lighthouse"}))),
+            classify,
+        )
+        .await;
+    let e = expect_error(result);
+    assert_eq!(e.code, ErrorCode::RateLimited);
+    assert_eq!(e.retry_after, Some(Duration::from_secs(3)), "the requested delay is kept");
+    assert_eq!(requests(&server).await, 1, "not resent");
+
+    // The same call without the option retries the 429 and succeeds.
+    let server = MockServer::start().await;
+    failing_then_ok(&server, 429, 1, &[("retry-after", "0")]).await;
+    assert!(post(&server.uri(), RetryClass::PaidSubmit).await.is_ok());
+    assert_eq!(requests(&server).await, 2);
+}

@@ -3,9 +3,11 @@
 //! paid-submit policy).
 //!
 //! Paid image requests run under [`RetryClass::PaidSubmit`]: they are resent only
-//! when the gateway provably did not process them: a connection that failed before
-//! sending, or a 429, which the rate-limit page documents as "not a failure of your
-//! request" that "can succeed later without changes". The gateway documents no
+//! when the gateway provably did not process them, which is a connection that failed
+//! before sending. A 429 is not resent: the rate-limit page says to retry it, but with
+//! your own provider key (BYOK) the gateway retries a failed request with Vercel's
+//! keys, so a 429 can follow an attempt that the provider may have billed. The gateway
+//! documents no
 //! idempotency key for its Images endpoint, and no 5xx answer as "not processed", so
 //! any other open outcome (HTTP 408 or 5xx, a timeout or a lost connection after
 //! sending) is `submission_uncertain`: reported, never retried.
@@ -40,9 +42,11 @@ pub(super) async fn post_paid(
     model: &str,
 ) -> Result<HttpResponse, IrisError> {
     let url = endpoint(ctx, path);
+    // A 429 is returned, not resent (see `classify_paid`), with the delay asked for.
     let call = Call::new(RetryClass::PaidSubmit, ctx.timeouts.generate)
         .with_request_id_header(REQUEST_ID_HEADER)
-        .with_provider(VERCEL);
+        .with_provider(VERCEL)
+        .without_rejection_retries();
     let result = ctx
         .http
         .execute(
@@ -77,7 +81,7 @@ const WORDING: errors::PaidWording = errors::PaidWording {
 ///
 /// | answer | code | retried |
 /// |---|---|---|
-/// | 429 | `rate_limited` | yes, honoring `Retry-After` |
+/// | 429 | `rate_limited` (retryable by the caller) | no: with BYOK an earlier attempt may have been billed |
 /// | 402 (budget or credits) | `quota_exceeded` | no |
 /// | 400, 409, 422, 413 | `invalid_argument` | no |
 /// | 401 | `authentication_failed` | no |
@@ -90,12 +94,20 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
     let says = provider_suffix(&wire);
     let err = |code: ErrorCode, message: String| error_from(resp, &wire, code, message);
     match status {
+        // Not retried: with your own provider key (BYOK), the gateway retries a failed
+        // request with Vercel's keys, so a 429 can follow an attempt that the provider
+        // may have billed (docs/contributing/decisions.md, "Vercel AI Gateway").
         429 => Verdict::RetryableRejection {
-            error: err(ErrorCode::RateLimited, format!("the Vercel AI Gateway is rate limiting requests (HTTP 429){says}"))
+            error: err(
+                ErrorCode::RateLimited,
+                format!("the Vercel AI Gateway is rate limiting requests (HTTP 429){says}"),
+            )
+            .with_retryable(Some(true))
                 .with_hint(
-                    "wait and run the command again; the free tier has lower per-model limits, and buying AI \
-                     Gateway Credits removes the gateway's own limits",
-                ),
+                    "wait and run the command again; Iris does not resend a paid gateway request itself, because \
+                     with your own provider key an earlier attempt may have been billed. The free tier has lower \
+                     per-model limits, and buying AI Gateway Credits removes the gateway's own limits",
+            ),
             retry_after: None,
         },
         402 => Verdict::Final(
@@ -133,7 +145,10 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
                 format!("model '{model}' is not available on the Vercel AI Gateway (HTTP 404){says}"),
             )
             .about_model(model)
-            .with_hint("`iris models show <MODEL> --check-access` checks availability for free"),
+            .with_hint(
+                "`iris models show <MODEL> --check-access` checks availability for free; if every model gets this \
+                 error, check the base URL (IRIS_VERCEL_BASE_URL or providers.vercel.base_url), which ends in /v1",
+            ),
         ),
         408 | 500..=599 => Verdict::Final(
             err(
@@ -180,8 +195,8 @@ pub(super) fn bad_response(resp: &HttpResponse, why: &str) -> IrisError {
 /// `GET {base}/models?include_availability` (free, authenticated, `IdempotentRead`),
 /// read once for every model in `models`: eligible for this team → available,
 /// ineligible or not listed → unavailable, `unknown` or an unreadable list → unknown.
-/// Any refusal (a 401 is `authentication_failed`, a 403 `permission_denied`) and any
-/// transport failure is an error for every model.
+/// A 401, 403, or 404 is an error for every model; a rate limit, a server error, or a
+/// network failure that outlasted the retries is unknown, as for the other providers.
 pub(super) async fn check_access(
     models: &[&str],
     ctx: &ProviderContext,
@@ -214,9 +229,16 @@ pub(super) async fn check_access(
                 })
                 .collect();
         }
-        // Every refusal is an error for every model: a 403 (a blocked team or a plan
-        // restriction) or a 404 (a wrong base URL) says nothing about one model.
-        Err(e) => e.into_iris(),
+        // A refusal is an error for every model: a 401, a 403 (a blocked team or a plan
+        // restriction), or a 404 (a wrong base URL) says nothing about one model.
+        Err(HttpError::Error(e)) if matches!(e.provider_status, Some(401 | 403 | 404)) => e,
+        // A rate limit, a server error, or a network failure that outlasted the retries
+        // leaves the answer open, as for the other providers.
+        Err(other) => {
+            let err = other.into_iris();
+            tracing::debug!(code = %err.code, "vercel access check inconclusive");
+            return all(Ok(AccountAccess::Unknown));
+        }
     };
     all(Err(scrub_credential(error, ctx)))
 }

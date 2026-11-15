@@ -296,6 +296,22 @@ async fn run_checked(
         .map(|replanned| (replanned.paths, FinalizeMode::RenameOnConflict))
     };
     let saving = save_all(ctx, &run_id, &output, &planned, warnings);
+    // Prefer the provider-reported usage (covers every returned image); fall back to
+    // the pre-call estimate for the number of images actually returned.
+    let from_usage = output.usage.as_ref().and_then(|usage| request::estimate_from_usage(&resolved, usage));
+    let used_usage = from_usage.is_some();
+    let cost_estimate = match from_usage {
+        Some(estimate) => Ok(estimate),
+        None if returned == count => pre_estimate,
+        None => request::estimate(&resolved, op, &opts, returned),
+    };
+    let cost_source = match (&cost_estimate, used_usage) {
+        (Err(_), _) => CostSource::None,
+        (Ok(_), true) => CostSource::Usage,
+        (Ok(_), false) => CostSource::Requested,
+    };
+    // Every saved image is checked, also when another could not be saved.
+    warnings.extend(check_saved(spec, &opts, &resolved.id, &saving.saved, cost_source));
     if let Some(e) = saving.failure {
         let paths = |artifacts: &[Artifact]| artifacts.iter().map(|a| a.path.clone()).collect::<Vec<_>>();
         let e = kept.report(e, saving.elsewhere);
@@ -312,19 +328,9 @@ async fn run_checked(
             ));
     }
     let saved = saving.saved;
-    // Prefer the provider-reported usage (covers every returned image); fall back to
-    // the pre-call estimate for the number of images actually returned.
-    let from_usage = output.usage.as_ref().and_then(|usage| request::estimate_from_usage(&resolved, usage));
-    let cost_from_usage = from_usage.is_some();
-    let cost_estimate = match from_usage {
-        Some(estimate) => Ok(estimate),
-        None if returned == count => pre_estimate,
-        None => request::estimate(&resolved, op, &opts, returned),
-    };
     if let Err(reason) = &cost_estimate {
         warnings.push(request::cost_unavailable(reason));
     }
-    warnings.extend(check_saved(spec, &opts, &resolved.id, &saved, cost_from_usage));
     Ok(GenerationOutcome::Completed(ImageResult {
         provider,
         model: resolved.id,
@@ -541,12 +547,14 @@ fn check_saved(
     opts: &crate::catalog::ResolvedOptions,
     model: &str,
     saved: &[Artifact],
-    cost_from_usage: bool,
+    cost_source: CostSource,
 ) -> Vec<Warning> {
-    let cost = if cost_from_usage {
-        "the cost estimate comes from the usage that the provider reported"
-    } else {
-        "the cost estimate is for the requested size, so it may not match the charge"
+    let cost = match cost_source {
+        CostSource::Usage => "the cost estimate comes from the usage that the provider reported",
+        CostSource::Requested => {
+            "the cost estimate is for the requested size, so it may not match the charge"
+        }
+        CostSource::None => "Iris has no cost estimate for this request",
     };
     let declared = spec.outputs.media_types;
     let requested = spec.outputs.exact_size_option.and_then(|name| opts.get(name)).and_then(|value| {
@@ -580,4 +588,15 @@ fn check_saved(
         }
     }
     warnings
+}
+
+/// Where a generation's cost estimate came from, for the `output_size_mismatch` message.
+#[derive(Debug, Clone, Copy)]
+enum CostSource {
+    /// The usage that the provider reported, which reflects the image it made.
+    Usage,
+    /// The catalog's prices for the request as sent.
+    Requested,
+    /// There is no estimate.
+    None,
 }

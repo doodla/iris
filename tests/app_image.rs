@@ -1009,6 +1009,17 @@ async fn an_image_of_another_size_than_requested_is_kept_with_a_warning() {
     let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
     assert!(w.message.contains("comes from the usage that the provider reported"), "{}", w.message);
 
+    // Without any estimate, the warning does not mention one that does not exist.
+    let f = Fixture::new();
+    f.openai.images().push(Ok(image_output(vec![png(16, 8)])));
+    let mut a = args("a red kite");
+    a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "auto", "--quality")];
+    let (r, warnings) = f.run_any(Operation::ImageGenerate, a).await;
+    r.unwrap();
+    assert!(has_warning(&warnings, "cost_estimate_unavailable"));
+    let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
+    assert!(w.message.contains("Iris has no cost estimate for this request"), "{}", w.message);
+
     // The requested size, or no pixel size at all, gives no warning.
     for (size, image) in [(Some("16x8"), png(16, 8)), (Some("auto"), png(4, 4)), (None, png(4, 4))] {
         let f = Fixture::new();

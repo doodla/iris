@@ -201,7 +201,9 @@ needs no per-provider download code.
   didn't reach the provider, such as a connection failure before sending, or that the provider
   explicitly rejected before processing, such as a documented rate limit or overload. Every other
   open outcome is reported as `submission_uncertain`, with no job for an image call and a
-  `submission_unknown` job for a video, and Iris never sends it again.
+  `submission_unknown` job for a video, and Iris never sends it again. An adapter whose provider
+  doesn't prove a rate-limit rejection unbilled, such as the Vercel AI Gateway, calls
+  `Call::without_rejection_retries`, and the rejection is returned with its requested delay.
 - **Persisted state survives crashes and concurrent processes.** `jobs::JobStore` writes to a
   temporary file in the same directory, calls `sync_all`, and renames it into place. A per-job lock
   (`.lock`), held only for each read-modify-write, serializes updates. The store's lock

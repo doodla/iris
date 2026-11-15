@@ -216,10 +216,12 @@ that the gateway's documentation uses, and goes in `Authorization: Bearer`.
   documents no HTTP API for starting a job or reading its status. Iris doesn't build a recoverable
   job on an undocumented interface.
 - The rate-limit page says that a 429 "is not a failure of your request" and that "the same request
-  can succeed later without changes, so retry it". AGENTS.md allows retrying a rate-limit rejection,
-  so the `PaidSubmit` class retries a 429. The page doesn't say "not billed". One case remains: with
-  your own provider key (BYOK), the gateway retries a failed request with Vercel's keys, so a 429 on
-  that second attempt can follow a first attempt that the provider may have billed you for.
+  can succeed later without changes, so retry it", but it doesn't say "not billed". With your own
+  provider key (BYOK), the gateway retries a failed request with Vercel's keys, so a 429 on that
+  second attempt can follow a first attempt that the provider may have billed you for. So Iris
+  doesn't resend a paid gateway request after a 429: it reports `rate_limited`, retryable, with the
+  delay that the gateway asked for, and you decide. The access check, which is free, still retries
+  a 429.
 - The gateway documents no idempotency key for images and no 5xx response as "not processed", so
   an HTTP 408 or 5xx, or a timeout after sending, is `submission_uncertain`.
 - The REST API reference documents `include_availability` as each model's eligibility under the

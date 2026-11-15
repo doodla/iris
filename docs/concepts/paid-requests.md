@@ -34,7 +34,7 @@ Iris sorts every HTTP call by what repeating it could cost:
 
 | Call | Attempts | Iris retries after |
 |---|---|---|
-| Paid request: an image generation or edit, or a video submission | Up to 3 | A connection that failed before the request was sent; HTTP 429 for a rate limit, which the Vercel AI Gateway says to retry; OpenAI's HTTP 503 `server_is_overloaded`, which OpenAI documents as not processed |
+| Paid request: an image generation or edit, or a video submission | Up to 3 | A connection that failed before the request was sent; HTTP 429 for a rate limit, except from the Vercel AI Gateway, which Iris reports as `rate_limited` with the requested delay and doesn't resend; OpenAI's HTTP 503 `server_is_overloaded`, which OpenAI documents as not processed |
 | Free request: a job status check or a model metadata read | Up to 5 | Connection errors, timeouts, and HTTP 408, 429, and 5xx |
 | Download of a finished video | Up to 5 | The same errors as a free request; each attempt starts over with an empty file |
 

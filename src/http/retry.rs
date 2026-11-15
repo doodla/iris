@@ -298,6 +298,10 @@ pub struct Call {
     /// `Content-Length` or actually received) is not read further and never
     /// retried: see [`HttpClient::execute`] for how it is reported.
     pub max_body: u64,
+    /// Whether a [`Verdict::RetryableRejection`] is retried (when the class allows
+    /// it). When it is not, the error is returned at once, still carrying the delay
+    /// the provider asked for (`retry_after`), for the caller to decide.
+    pub retry_rejections: bool,
 }
 
 impl Call {
@@ -305,7 +309,22 @@ impl Call {
     /// request id header, no provider, and the class's body limit
     /// ([`RetryClass::default_max_body`]).
     pub fn new(class: RetryClass, timeout: Duration) -> Self {
-        Call { class, timeout, request_id_header: None, provider: None, max_body: class.default_max_body() }
+        Call {
+            class,
+            timeout,
+            request_id_header: None,
+            provider: None,
+            max_body: class.default_max_body(),
+            retry_rejections: true,
+        }
+    }
+
+    /// Return a rejection the class would retry (a rate limit) at once instead, with
+    /// the provider's requested delay. For a paid request whose rejection the provider
+    /// does not prove unbilled.
+    pub fn without_rejection_retries(mut self) -> Self {
+        self.retry_rejections = false;
+        self
     }
 
     /// Read at most `bytes` of a successful response body (see [`Call::max_body`]).
@@ -687,7 +706,8 @@ impl HttpClient {
                     }
 
                     let verdict = classify(&resp);
-                    let retry_allowed = call.class.retries_verdict(&verdict);
+                    let retry_allowed = call.class.retries_verdict(&verdict)
+                        && (call.retry_rejections || !matches!(verdict, Verdict::RetryableRejection { .. }));
                     let is_final = matches!(verdict, Verdict::Final(_));
                     let (error, body_delay) = verdict.into_parts();
                     let header_delay = retry_after_from_headers(&resp.headers, jiff::Timestamp::now());

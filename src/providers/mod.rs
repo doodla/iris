@@ -6,10 +6,10 @@
 //!
 //! Provider wire types live only inside `providers/<name>/`.
 
-pub(crate) mod errors;
+mod errors;
 pub mod gemini;
 pub mod openai;
-pub(crate) mod openai_compat;
+mod openai_compat;
 pub mod vercel;
 
 use std::path::PathBuf;

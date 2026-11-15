@@ -79,7 +79,10 @@ impl WireError {
         };
         match error {
             // Some answers carry the message as a bare string.
-            Value::String(s) => WireError { message: Some(s.trim().to_string()), ..WireError::default() },
+            Value::String(s) => WireError {
+                message: Some(s.trim().to_string()).filter(|m| !m.is_empty()),
+                ..WireError::default()
+            },
             _ => WireError { message: text("message"), kind: text("type"), code: text("code") },
         }
     }
@@ -139,11 +142,15 @@ impl AvailabilityList {
         if field("evaluated_runtime").is_some_and(|runtime| runtime != "http") {
             return Availability::Unknown;
         }
+        // An account that can't make requests decides the answer for every model.
+        if self.account.as_deref() == Some("unavailable") {
+            return Availability::Ineligible;
+        }
         match (field("status"), self.account.as_deref()) {
             (Some("eligible"), Some("available")) => Availability::Eligible,
             // A transient ineligibility is a passing state, not an answer.
             (Some("ineligible"), _) if field("category") == Some("transient") => Availability::Unknown,
-            (Some("ineligible"), _) | (_, Some("unavailable")) => Availability::Ineligible,
+            (Some("ineligible"), _) => Availability::Ineligible,
             _ => Availability::Unknown,
         }
     }
@@ -194,6 +201,16 @@ mod tests {
         assert_eq!(e.kind.as_deref(), Some("rate_limit_exceeded"));
         let e = WireError::parse(br#"{"error": "plain"}"#);
         assert_eq!(e.message.as_deref(), Some("plain"));
+    }
+
+    #[test]
+    fn an_account_that_cannot_make_requests_decides_before_a_transient_verdict() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "data": [{"id": "m", "model_eligibility": {"status": "ineligible", "category": "transient"}}],
+            "request_context_availability": {"http": {"status": "unavailable"}}
+        }))
+        .unwrap();
+        assert!(matches!(availability(&body, "m"), Availability::Ineligible));
     }
 
     #[test]
