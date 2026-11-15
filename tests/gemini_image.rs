@@ -1120,3 +1120,20 @@ fn the_provider_declares_origin_base_url_header_auth_and_retention() {
     let gemini = registry.get(ProviderId::Gemini).unwrap();
     assert!(gemini.image().is_some() && gemini.video().is_some());
 }
+
+/// The adapter removes its own key from every error, even a key that is not in the
+/// environment (a library caller's), which the environment-based scrub cannot know.
+#[tokio::test]
+async fn the_contexts_own_key_never_appears_in_an_error() {
+    let server = MockServer::start().await;
+    let body = google_error(400, "INVALID_ARGUMENT", &format!("bad request for key {KEY}"), json!([]));
+    Mock::given(method("POST"))
+        .and(path(GENERATE_PATH))
+        .respond_with(ResponseTemplate::new(400).set_body_json(body))
+        .mount(&server)
+        .await;
+    let e = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap_err().error;
+    let text = format!("{} {:?} {:?} {:?}", e.message, e.hint, e.details, e.provider_code);
+    assert!(text.contains("bad request for key"), "the provider's message is kept: {text}");
+    assert!(!text.contains(KEY), "{text}");
+}
