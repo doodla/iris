@@ -18,7 +18,7 @@ use crate::artifacts::media;
 use crate::domain::{ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::HttpResponse;
-use crate::providers::errors;
+use crate::providers::errors::{self, PaidWording};
 use crate::providers::{GeneratedImage, UnusableOutput};
 
 /// The `error` member of an error body, or `None` when the body is not a JSON object
@@ -181,11 +181,44 @@ pub(crate) struct DecodedItems {
     pub returned: usize,
 }
 
+/// What an adapter's Images endpoint returns, declared once per adapter: the facts
+/// that [`decode_items`] and [`DecodedItems::count_warning`] phrase their reasons and
+/// warnings from.
+pub(crate) struct ImagesApi {
+    /// How the provider is named in its errors and warnings.
+    pub wording: &'static PaidWording,
+    /// The request field that sets the number of images (`n`), when the adapter sends
+    /// one.
+    pub count_field: Option<&'static str>,
+    /// The models that the provider documents as returning base64 only (e.g. "GPT
+    /// image models"), which the reason for a URL item names.
+    pub base64_only: Option<&'static str>,
+}
+
+/// The type every item of a response should have.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ExpectedItem {
+    /// Any image type: the provider chooses the format.
+    AnyImage,
+    /// This media type, e.g. `image/png`.
+    MediaType(&'static str),
+}
+
+impl std::fmt::Display for ExpectedItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExpectedItem::AnyImage => f.write_str("an image"),
+            ExpectedItem::MediaType(media_type) => f.write_str(media_type),
+        }
+    }
+}
+
 /// Decode every item into an image typed by its magic bytes, or say why it cannot
-/// be used. Paid output is never discarded because of another item. `expected`
-/// phrases the reason for content that is not an image ("should be image/png"), and
-/// `url_note` is added to the reason for an item that is a URL.
-pub(crate) fn decode_items(items: Vec<ImageItem>, expected: &str, url_note: &str) -> DecodedItems {
+/// be used. Paid output is never discarded because of another item. The reason for
+/// content that is not an image names `expected`, and the reason for an item that is
+/// a URL names `api.base64_only`.
+pub(crate) fn decode_items(items: Vec<ImageItem>, expected: ExpectedItem, api: &ImagesApi) -> DecodedItems {
+    let url_note = api.base64_only.map(|models| format!(" ({models} return base64)")).unwrap_or_default();
     let returned = items.len();
     let mut out = DecodedItems {
         images: Vec::with_capacity(returned),
@@ -253,9 +286,10 @@ impl DecodedItems {
     }
 
     /// `unexpected_output_count` when the response held a number of items other
-    /// than `wanted`. `who` names the provider ("OpenAI"), and `asked` how the count
-    /// was requested (" (n)", or empty).
-    pub fn count_warning(&self, who: &str, wanted: i64, asked: &str) -> Option<Warning> {
+    /// than `wanted`.
+    pub fn count_warning(&self, api: &ImagesApi, wanted: i64) -> Option<Warning> {
+        let who = api.wording.who;
+        let asked = api.count_field.map(|field| format!(" ({field})")).unwrap_or_default();
         let returned = self.returned;
         if i64::try_from(returned).ok() == Some(wanted) {
             return None;
@@ -289,6 +323,41 @@ mod tests {
             request_id: Some("req_1".to_string()),
             attempts: 1,
         }
+    }
+
+    const WORDING: PaidWording =
+        PaidWording { provider: ProviderId::OpenAi, who: "OpenAI", usage: "usage", support: "support" };
+
+    fn item(b64: Option<&str>, url: bool) -> ImageItem {
+        ImageItem { b64_json: b64.map(str::to_string), has_url: url, revised_prompt: None }
+    }
+
+    #[test]
+    fn reasons_and_warnings_are_phrased_from_the_declared_facts() {
+        let documented =
+            ImagesApi { wording: &WORDING, count_field: Some("n"), base64_only: Some("GPT image models") };
+        let plain = ImagesApi { wording: &WORDING, count_field: None, base64_only: None };
+        let text = base64::engine::general_purpose::STANDARD.encode(b"not an image");
+        let items = || vec![item(None, true), item(Some(&text), false)];
+
+        let decoded = decode_items(items(), ExpectedItem::MediaType("image/png"), &documented);
+        assert_eq!(
+            decoded.reasons(),
+            "response item 0 is a URL instead of inline base64 data (GPT image models return base64); Iris does \
+             not fetch it; response item 1 should be image/png but its content is not a recognized image"
+        );
+        let count = decoded.count_warning(&documented, 1).unwrap().message;
+        assert!(count.starts_with("OpenAI returned 2 items (0 usable) for a request of 1 (n);"), "{count}");
+        assert!(decoded.count_warning(&documented, 2).is_none());
+
+        let decoded = decode_items(items(), ExpectedItem::AnyImage, &plain);
+        assert_eq!(
+            decoded.reasons(),
+            "response item 0 is a URL instead of inline base64 data; Iris does not fetch it; response item 1 \
+             should be an image but its content is not a recognized image"
+        );
+        let count = decoded.count_warning(&plain, 1).unwrap().message;
+        assert!(count.starts_with("OpenAI returned 2 items (0 usable) for a request of 1;"), "{count}");
     }
 
     #[test]

@@ -70,7 +70,7 @@ pub(super) async fn post_paid(
 }
 
 /// How the paid-request errors name the gateway.
-const WORDING: errors::PaidWording = errors::PaidWording {
+pub(super) const WORDING: errors::PaidWording = errors::PaidWording {
     provider: VERCEL,
     who: "the Vercel AI Gateway",
     usage: "the AI Gateway usage page of your Vercel team",

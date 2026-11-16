@@ -96,7 +96,7 @@ pub(super) async fn post_paid(
 }
 
 /// How the paid-request errors name OpenAI.
-const WORDING: errors::PaidWording = errors::PaidWording {
+pub(super) const WORDING: errors::PaidWording = errors::PaidWording {
     provider: OPENAI,
     who: "OpenAI",
     usage: "your OpenAI usage",

@@ -138,11 +138,20 @@ macro_rules! rates {
 const FLUX_3_KLEIN: Rates = rates!(0.009;
     ("768x768", 0.008), ("1024x1024", 0.009), ("1536x1536", 0.011), ("2048x2048", 0.014), ("4096x4096", 0.036));
 
-fn rates_for(model: &str) -> Option<&'static Rates> {
-    match model {
-        "bfl/flux-3-image-klein" => Some(&FLUX_3_KLEIN),
-        _ => None,
-    }
+/// An [`Estimator`] bound to one model's [`Rates`], so the estimate reads the rates
+/// that model declares, without a lookup by model id.
+macro_rules! estimator {
+    ($rates:path, $standard:expr) => {
+        Estimator {
+            estimate: {
+                fn estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
+                    estimate_image(&$rates, spec, input)
+                }
+                estimate
+            },
+            standard: $standard,
+        }
+    };
 }
 
 /// Gateway models Iris gives no model, with the reason (sources in the module docs).
@@ -177,16 +186,17 @@ pub static MODELS: &[ModelSpec] = &[ModelSpec {
     access_notes: ACCESS_NOTES,
     docs_url: DOCS_URL,
     validate: None,
-    estimate: Some(Estimator { estimate: estimate_image, standard: STANDARD }),
+    estimate: Some(estimator!(FLUX_3_KLEIN, STANDARD)),
     estimate_usage: None,
 }];
 
-/// Per-image price for the requested size, or the base price when no size was given.
-fn estimate_image(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
-    let Some(rates) = rates_for(spec.id) else {
-        // Unreachable for the catalog: a test checks a rate table for every model.
-        return Err(format!("Iris has no published per-image price of {} for this request", spec.id));
-    };
+/// Per-image price for the requested size at `rates`, or the base price when no size
+/// was given.
+fn estimate_image(
+    rates: &Rates,
+    spec: &ModelSpec,
+    input: &EstimateInput<'_>,
+) -> Result<CostEstimate, String> {
     let size = spec.effective(input.options, "size").and_then(|v| v.as_str().map(str::to_string));
     let (per_image, what) = match size.as_deref() {
         None => (rates.base, "size not given".to_string()),
@@ -213,14 +223,25 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_model_has_a_price_for_every_declared_size() {
+    fn every_model_estimates_each_listed_price() {
         for m in MODELS {
-            let rates = rates_for(m.id).unwrap_or_else(|| panic!("{} has no rates", m.id));
-            let listed: Vec<(&str, f64)> = m.pricing.iter().map(|p| (p.description, p.usd)).collect();
-            let declared: Vec<(&str, f64)> = rates.rules.iter().map(|p| (p.description, p.usd)).collect();
-            assert_eq!(listed, declared, "{} lists its own rate table", m.id);
+            let estimate = |options: &[(&str, &str)]| {
+                let mut resolved = crate::catalog::ResolvedOptions::new();
+                for (name, value) in options {
+                    resolved.insert(*name, crate::catalog::OptionValue::Str((*value).into()));
+                }
+                let input =
+                    EstimateInput { operation: Operation::ImageGenerate, options: &resolved, count: 1 };
+                (m.estimate.expect("every gateway model has an estimator").estimate)(m, &input)
+                    .unwrap_or_else(|why| panic!("{}: {why}", m.id))
+                    .amount
+            };
+            let listed =
+                |description: &str| m.pricing.iter().find(|p| p.description == description).map(|p| p.usd);
+            assert_eq!(Some(estimate(&[])), listed("Generated image, size not given"), "{}", m.id);
             for size in SIZES {
-                assert!(rates.per_size.iter().any(|(s, _)| s == size), "{} {size}", m.id);
+                let description = format!("Generated image, {size}");
+                assert_eq!(Some(estimate(&[("size", size)])), listed(&description), "{} {size}", m.id);
             }
         }
     }

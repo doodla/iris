@@ -25,7 +25,7 @@ use async_trait::async_trait;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
 
-use super::openai_compat::{ImagesResponse, decode_items};
+use super::openai_compat::{ExpectedItem, ImagesApi, ImagesResponse, decode_items};
 use super::{
     AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest, InputImage,
     Provider, ProviderContext, with_reported_usage,
@@ -241,6 +241,11 @@ fn media_type_for_format(format: &str) -> Option<&'static str> {
     }
 }
 
+/// What the Images API returns: the count is sent as `n`, and GPT Image models
+/// return base64 only.
+const IMAGES_API: ImagesApi =
+    ImagesApi { wording: &client::WORDING, count_field: Some("n"), base64_only: Some("GPT image models") };
+
 /// What a paid request asked for, to check the response against.
 struct Expected {
     /// `output_format` sent; `None` means the provider default (png).
@@ -302,7 +307,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
     // The echo (pushed last) is the most specific statement.
     let expected = expectations.last().map_or(media::PNG, |(_, media_type)| media_type);
 
-    let decoded = decode_items(parsed.data, expected, " (GPT image models return base64)");
+    let decoded = decode_items(parsed.data, ExpectedItem::MediaType(expected), &IMAGES_API);
     if decoded.images.is_empty() {
         let mut err = client::bad_response(resp, &decoded.reasons());
         if let Some(actual) = decoded.problems.first().and_then(|p| p.actual) {
@@ -330,7 +335,7 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         }
     }
     warnings.extend(decoded.unusable_warnings());
-    warnings.extend(decoded.count_warning("OpenAI", expect.count.unwrap_or(1), " (n)"));
+    warnings.extend(decoded.count_warning(&IMAGES_API, expect.count.unwrap_or(1)));
 
     // Text in the result is always reported with `provider_text_output`
     // (docs/reference/json-output.md), as the Gemini adapter does.
