@@ -73,7 +73,7 @@ pub async fn run(
         )
         .with_provider_request_id(request_id.clone())
     })?;
-    interpret(parsed, status, requested_count(req), request_id)
+    interpret(parsed, status, requested_count(req), req.output_types, request_id)
 }
 
 /// Requests reaching the adapter were validated against the catalog; anything the
@@ -266,7 +266,9 @@ struct Unusable {
 /// Every non-thought part with `inlineData` is a returned item, whatever its label.
 /// Each is judged by its bytes, never by its label, and paid output is never
 /// discarded because of another item: a valid image is kept under its sniffed type
-/// (with `output_format_mismatch` when the label differs or is missing); an item that
+/// (with `output_format_mismatch` when the label differs or is missing, and the
+/// catalog declares the type for the model: the app reports any other type as
+/// `output_type_undeclared`); an item that
 /// is not a usable image is skipped with `output_item_unusable`, its content handed
 /// to the app in `unusable` to be saved as received. Only an answer without any
 /// usable image is an error (with that content in the failure); it completed, so it
@@ -277,6 +279,7 @@ fn interpret(
     resp: GenerateContentResponse,
     status: u16,
     requested: usize,
+    output_types: &[&str],
     header_request_id: Option<String>,
 ) -> Result<ImageOutput, ImageFailure> {
     let request_id =
@@ -300,8 +303,11 @@ fn interpret(
         let declared = blob.mime_type.as_deref().map(str::trim).filter(|m| !m.is_empty());
         match decode_image(index, declared, blob.data.as_deref().unwrap_or("")) {
             Ok((image, mismatch)) => {
+                // A type the catalog doesn't declare is the app's `output_type_undeclared`.
+                if output_types.contains(&image.media_type.as_str()) {
+                    mismatches.extend(mismatch);
+                }
                 images.push(image);
-                mismatches.extend(mismatch);
             }
             Err(problem) => unusable.push((index, problem)),
         }

@@ -101,6 +101,7 @@ fn generate_request(opts: ResolvedOptions) -> ImageRequest {
         images: vec![],
         mask: None,
         options: opts,
+        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     }
 }
 
@@ -226,6 +227,7 @@ async fn edit_sends_the_prompt_first_then_every_reference_in_order_with_all_opti
             ("resolution", s("512")),
             ("thinking_level", s("high")),
         ]),
+        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     };
 
     let out = GeminiProvider::new().edit(&req, &ctx(&server)).await.unwrap();
@@ -1001,6 +1003,7 @@ async fn requests_above_twenty_megabytes_fail_locally_with_zero_requests() {
         images: vec![input(big, "image/png", "big.png")],
         mask: None,
         options: ResolvedOptions::new(),
+        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     };
     let err = GeminiProvider::new().edit(&req, &ctx(&server)).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);

@@ -418,6 +418,10 @@ case.
 | `output_type_undeclared` | A saved output's type isn't one that `iris models show` lists for the model. Iris saved it under its real type. |
 | `output_size_mismatch` | A saved image's pixel size differs from the size that the request set, so the provider ignored or changed it. Iris kept the image. The message says whether the cost estimate comes from the usage that the provider reported, or is for the requested size and may not match the charge. |
 
+One image gets at most one of `output_format_mismatch` and `output_type_undeclared`. An image of a
+type that the model isn't declared to return gets `output_type_undeclared`, even when it also
+differs from the type that you requested.
+
 The warning messages that describe returned items number them by their position in the provider's
 response, from 0. That position can differ from an artifact's `index` when Iris skipped an earlier
 item. `unexpected_output_count` counts every item, usable or not.

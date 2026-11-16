@@ -77,6 +77,11 @@ pub struct ImageRequest {
     pub images: Vec<InputImage>,
     pub mask: Option<InputImage>,
     pub options: ResolvedOptions,
+    /// The media types the catalog declares for the model's outputs
+    /// (`OutputSpec::media_types`). An adapter reports `output_format_mismatch` only
+    /// for an image of one of these types: the app reports every other type as
+    /// `output_type_undeclared`, so one image never gets both warnings.
+    pub output_types: &'static [&'static str],
 }
 
 /// Validated request for `video.generate`.

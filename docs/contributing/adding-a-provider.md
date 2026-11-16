@@ -203,7 +203,8 @@ own `CATALOG_AS_OF`, as `catalog/vercel.rs` has. `models show` reports that date
   nowhere to put it yet, leave it out of the catalog.
 - **Outputs.** List every media type that the provider documents for the model in
   `OutputSpec::media_types`: Iris warns with `output_type_undeclared` when a saved output has
-  another type. If an option sets the exact pixel size of every image as `WxH`, name it in
+  another type. The adapter receives these types as `ImageRequest::output_types`, and reports
+  `output_format_mismatch` only for an image of one of them, so one image never gets both. If an option sets the exact pixel size of every image as `WxH`, name it in
   `exact_size_option`, and Iris warns with `output_size_mismatch` when a saved image has another
   size. Name it only when the provider documents that the size is exact: a live run can confirm a
   documented behavior, but can't stand in for the documentation.

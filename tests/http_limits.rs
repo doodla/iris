@@ -454,6 +454,7 @@ async fn generate_image(provider: ProviderId, server: &Server) -> IrisError {
         images: Vec::new(),
         mask: None,
         options: ResolvedOptions::new(),
+        output_types: iris::catalog::find(model).expect("a catalog model").outputs.media_types,
     };
     let ctx = adapter_ctx(&base, Duration::from_secs(20));
     let result = match provider {

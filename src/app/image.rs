@@ -222,6 +222,7 @@ async fn run_checked(
         images,
         mask,
         options: opts.clone(),
+        output_types: spec.outputs.media_types,
     };
     let created_at = ctx.now();
     ctx.progress.line(format!(
