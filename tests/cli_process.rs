@@ -655,7 +655,26 @@ fn models_list_is_consistent_with_the_catalog() {
             .map(|c| c["id"].as_str().unwrap())
             .collect();
         assert_eq!(shown, declared, "{}", spec.id);
+        // So is the option that sets the exact pixel size, which saved images are checked against.
+        let outputs = &v["result"]["model"]["outputs"];
+        assert_eq!(
+            outputs["exact_size_option"],
+            serde_json::json!(spec.outputs.exact_size_option),
+            "{}",
+            spec.id
+        );
     }
+    // The GPT Image and gateway models name `size`; Gemini and Veo name none.
+    let exact = |id: &str| {
+        run(iris(&sandbox).args(["models", "show", id, "--json"])).json()["result"]["model"]["outputs"]
+            ["exact_size_option"]
+            .clone()
+    };
+    assert_eq!(exact("bfl/flux-3-image-klein"), "size");
+    assert_eq!(exact("gpt-image-2.5-sunburst"), "size");
+    assert!(exact("gemini-3-pro-image").is_null());
+    let human = run(iris(&sandbox).args(["models", "show", "bfl/flux-3-image-klein"])).stdout;
+    assert!(human.contains("(at most 1 per request; size sets the exact pixel size)"), "{human}");
 }
 
 /// A request breaking a published constraint names it in `details.constraint`.

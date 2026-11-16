@@ -154,6 +154,7 @@ fn capabilities(m: &ModelSpec, credential_present: bool) -> ModelCapabilities {
         outputs: OutputsView {
             media_types: m.outputs.media_types.iter().map(|t| t.to_string()).collect(),
             max_count: m.outputs.max_count,
+            exact_size_option: m.outputs.exact_size_option.map(str::to_string),
         },
         limits: LimitsView { max_prompt_chars: m.limits.max_prompt_chars },
         pricing: m

@@ -454,7 +454,16 @@ fn model_show(m: &ModelCapabilities) -> String {
     }
     field(
         "outputs",
-        format!("{} (at most {} per request)", join(&m.outputs.media_types), m.outputs.max_count),
+        format!(
+            "{} (at most {} per request{})",
+            join(&m.outputs.media_types),
+            m.outputs.max_count,
+            m.outputs
+                .exact_size_option
+                .as_deref()
+                .map(|option| format!("; {option} sets the exact pixel size"))
+                .unwrap_or_default()
+        ),
     );
     field(
         "prompt",

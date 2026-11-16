@@ -271,6 +271,10 @@ pub struct ConstraintView {
 pub struct OutputsView {
     pub media_types: Vec<String>,
     pub max_count: u32,
+    /// The option whose `WxH` value is the exact pixel size of every image, e.g. `size`,
+    /// or null. When it's set, Iris checks each saved image against it and warns with
+    /// `output_size_mismatch` when they differ.
+    pub exact_size_option: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, JsonSchema)]

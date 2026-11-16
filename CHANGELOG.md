@@ -19,6 +19,11 @@ All notable changes to this project are documented in this file. The format foll
   (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. An image of an
   undeclared type gets only `output_type_undeclared`, not `output_format_mismatch` as well. See
   [Errors](https://github.com/doodla/iris/blob/main/docs/reference/errors.md#warning-codes).
+- **`models show` names the exact-size option.** `outputs.exact_size_option` names the option whose
+  `WxH` value is the exact pixel size of every image, such as `size`, or is `null`. When it's set,
+  Iris checks each saved image against it (`output_size_mismatch`), so an agent can tell before a
+  request whether `--size` is enforced. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **Vercel AI Gateway provider.** `iris image generate` can run Black Forest Labs' FLUX 3 Image
   Klein (`-m bfl/flux-3-image-klein`) through the Vercel AI Gateway, with the key in
   `AI_GATEWAY_API_KEY` and the base URL in `IRIS_VERCEL_BASE_URL` or `[providers.vercel]`. `--size`
