@@ -15,7 +15,7 @@
 use bytes::Bytes;
 use reqwest::header::CONTENT_TYPE;
 
-use super::wire::{Availability, AvailabilityList, WireError};
+use super::wire::{Availability, AvailabilityList, parse_error};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, Verdict};
@@ -90,9 +90,9 @@ const WORDING: errors::PaidWording = errors::PaidWording {
 /// | 408, 500–599 | `submission_uncertain` (`charge_possible`, not retryable) | no |
 fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
     let status = resp.status.as_u16();
-    let wire = WireError::parse(&resp.body);
-    let says = provider_suffix(&wire);
-    let err = |code: ErrorCode, message: String| error_from(resp, &wire, code, message);
+    let wire = parse_error(&resp.body);
+    let says = wire.suffix();
+    let err = |code: ErrorCode, message: String| wire.error(resp, VERCEL, code, message);
     match status {
         // Not retried: with your own provider key (BYOK), the gateway retries a failed
         // request with Vercel's keys, so a 429 can follow an attempt that the provider
@@ -164,27 +164,10 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
         ),
         _ => {
             let mut e = resp.fallback_error(Some(VERCEL));
-            annotate(&mut e, resp, &wire);
+            wire.annotate(&mut e, resp);
             Verdict::Final(e)
         }
     }
-}
-
-/// An error for a non-2xx answer: provider, status, request id, provider code, and
-/// the scrubbed provider message.
-fn error_from(resp: &HttpResponse, wire: &WireError, code: ErrorCode, message: String) -> IrisError {
-    let provider_code = wire.code.as_deref().or(wire.kind.as_deref());
-    errors::error_from(resp, VERCEL, code, message, provider_code, wire.message.as_deref())
-}
-
-/// Attach the provider code (`error.code`, else `error.type`) and message.
-fn annotate(e: &mut IrisError, resp: &HttpResponse, wire: &WireError) {
-    errors::annotate(e, resp, wire.code.as_deref().or(wire.kind.as_deref()), wire.message.as_deref());
-}
-
-/// `": <provider message>"` for human messages, or empty.
-fn provider_suffix(wire: &WireError) -> String {
-    errors::provider_suffix(wire.message.as_deref())
 }
 
 /// A 2xx answer Iris cannot use. The request completed, so it may have been billed.
@@ -244,24 +227,21 @@ pub(super) async fn check_access(
 }
 
 fn classify_read(resp: &HttpResponse) -> Verdict {
-    let wire = WireError::parse(&resp.body);
+    let wire = parse_error(&resp.body);
     let status = resp.status.as_u16();
-    let err = |code: ErrorCode, message: String| error_from(resp, &wire, code, message);
+    let err = |code: ErrorCode, message: String| wire.error(resp, VERCEL, code, message);
     match status {
         401 => Verdict::Final(
             err(
                 ErrorCode::AuthenticationFailed,
-                format!("the Vercel AI Gateway rejected the API key (HTTP 401){}", provider_suffix(&wire)),
+                format!("the Vercel AI Gateway rejected the API key (HTTP 401){}", wire.suffix()),
             )
             .with_hint("check that AI_GATEWAY_API_KEY holds a valid AI Gateway API key"),
         ),
         403 => Verdict::Final(
             err(
                 ErrorCode::PermissionDenied,
-                format!(
-                    "the Vercel AI Gateway denied access to its model list (HTTP 403){}",
-                    provider_suffix(&wire)
-                ),
+                format!("the Vercel AI Gateway denied access to its model list (HTTP 403){}", wire.suffix()),
             )
             .with_hint(
                 "the team may be blocked or its plan may not allow this; check its AI Gateway settings",
@@ -270,10 +250,7 @@ fn classify_read(resp: &HttpResponse) -> Verdict {
         404 => Verdict::Final(
             err(
                 ErrorCode::ProviderError,
-                format!(
-                    "the Vercel AI Gateway has no model list at this URL (HTTP 404){}",
-                    provider_suffix(&wire)
-                ),
+                format!("the Vercel AI Gateway has no model list at this URL (HTTP 404){}", wire.suffix()),
             )
             .with_retryable(Some(false))
             .with_hint(
@@ -297,7 +274,7 @@ fn classify_read(resp: &HttpResponse) -> Verdict {
         },
         _ => {
             let mut e = resp.fallback_error(Some(VERCEL));
-            annotate(&mut e, resp, &wire);
+            wire.annotate(&mut e, resp);
             Verdict::Final(e)
         }
     }

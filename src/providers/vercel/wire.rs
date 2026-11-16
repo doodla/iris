@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::catalog::ResolvedOptions;
 use crate::error::IrisError;
+use crate::providers::openai_compat::{ErrorBody, error_member, text_field};
 
 /// `POST /images/generations` body. No `Debug`: it holds the prompt.
 #[derive(Serialize)]
@@ -54,37 +55,15 @@ impl<'a> GenerateBody<'a> {
     }
 }
 
-/// A gateway error body, read defensively.
-#[derive(Debug, Default)]
-pub(super) struct WireError {
-    pub message: Option<String>,
-    /// `error.type`, e.g. `rate_limit_exceeded`, `model_not_found`.
-    pub kind: Option<String>,
-    /// `error.code`, when present.
-    pub code: Option<String>,
-}
-
-impl WireError {
-    pub fn parse(body: &[u8]) -> WireError {
-        let Ok(value) = serde_json::from_slice::<Value>(body) else {
-            return WireError::default();
-        };
-        let Some(error) = value.get("error") else {
-            return WireError::default();
-        };
-        let text = |key: &str| match error.get(key) {
-            Some(Value::String(s)) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
-            Some(Value::Number(n)) => Some(n.to_string()),
-            _ => None,
-        };
-        match error {
-            // Some answers carry the message as a bare string.
-            Value::String(s) => WireError {
-                message: Some(s.trim().to_string()).filter(|m| !m.is_empty()),
-                ..WireError::default()
-            },
-            _ => WireError { message: text("message"), kind: text("type"), code: text("code") },
+/// A gateway error body, read defensively: the OpenAI-style object, or a bare
+/// message string, which some answers carry instead.
+pub(super) fn parse_error(body: &[u8]) -> ErrorBody {
+    match error_member(body) {
+        Some(Value::String(s)) => {
+            ErrorBody { message: text_field(Some(&Value::String(s))), ..ErrorBody::default() }
         }
+        Some(error) => ErrorBody::from_member(&error),
+        None => ErrorBody::default(),
     }
 }
 
@@ -192,15 +171,17 @@ mod tests {
 
     #[test]
     fn error_bodies_are_read_defensively() {
-        let e = WireError::parse(b"<html>bad gateway</html>");
+        let e = parse_error(b"<html>bad gateway</html>");
         assert!(e.message.is_none() && e.kind.is_none());
-        let e = WireError::parse(
-            br#"{"error": {"message": " Rate limit exceeded ", "type": "rate_limit_exceeded"}}"#,
-        );
+        let e =
+            parse_error(br#"{"error": {"message": " Rate limit exceeded ", "type": "rate_limit_exceeded"}}"#);
         assert_eq!(e.message.as_deref(), Some("Rate limit exceeded"));
         assert_eq!(e.kind.as_deref(), Some("rate_limit_exceeded"));
-        let e = WireError::parse(br#"{"error": "plain"}"#);
+        let e = parse_error(br#"{"error": "plain"}"#);
         assert_eq!(e.message.as_deref(), Some("plain"));
+        let e = parse_error(br#"{"error": {"message": "m", "code": 7}}"#);
+        assert_eq!(e.code.as_deref(), Some("7"));
+        assert!(e.is("7"));
     }
 
     #[test]

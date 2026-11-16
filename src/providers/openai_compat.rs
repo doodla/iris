@@ -1,11 +1,13 @@
-//! The OpenAI Images response shape (`{"data": [{"b64_json": …}, …]}`), shared by
-//! the adapters whose endpoints return it: OpenAI's Images API and the Vercel AI
+//! The OpenAI Images response shape (`{"data": [{"b64_json": …}, …]}`) and the
+//! OpenAI-style error body (`{"error": {"message", "type", "code"}}`), shared by the
+//! adapters whose endpoints return them: OpenAI's Images API and the Vercel AI
 //! Gateway's OpenAI-compatible Images endpoint. Private to `providers` (see
 //! docs/contributing/architecture.md): only adapters read it.
 //!
-//! This module parses the body and decodes each item. What a provider expected of
-//! the items (a requested format, a count, usage) stays in its adapter, which turns
-//! the decoded items into an `ImageOutput` or `ImageFailure`.
+//! This module parses the bodies and decodes each item. What a provider expected of
+//! the items (a requested format, a count, usage), and what an error status means,
+//! stay in its adapter, which turns the decoded items into an `ImageOutput` or
+//! `ImageFailure`, and an error body into an `IrisError`.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_PAD_INDIFFERENT;
@@ -13,8 +15,82 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::artifacts::media;
-use crate::domain::{Warning, WarningCode};
+use crate::domain::{ProviderId, Warning, WarningCode};
+use crate::error::{ErrorCode, IrisError};
+use crate::http::HttpResponse;
+use crate::providers::errors;
 use crate::providers::{GeneratedImage, UnusableOutput};
+
+/// The `error` member of an error body, or `None` when the body is not a JSON object
+/// with one (gateways may send HTML).
+pub(crate) fn error_member(body: &[u8]) -> Option<Value> {
+    match serde_json::from_slice::<Value>(body) {
+        Ok(Value::Object(mut top)) => top.remove("error"),
+        _ => None,
+    }
+}
+
+/// A non-empty string field, trimmed, or a number as text.
+pub(crate) fn text_field(value: Option<&Value>) -> Option<String> {
+    match value {
+        Some(Value::String(s)) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
+        Some(Value::Number(n)) => Some(n.to_string()),
+        _ => None,
+    }
+}
+
+/// The fields every OpenAI-style error body may carry, read defensively: any of them
+/// may be missing.
+#[derive(Debug, Default)]
+pub(crate) struct ErrorBody {
+    pub message: Option<String>,
+    /// `error.type`.
+    pub kind: Option<String>,
+    pub code: Option<String>,
+}
+
+impl ErrorBody {
+    /// The fields of an `error` object; anything else yields an empty `ErrorBody`.
+    pub fn from_member(error: &Value) -> ErrorBody {
+        ErrorBody {
+            message: text_field(error.get("message")),
+            kind: text_field(error.get("type")),
+            code: text_field(error.get("code")),
+        }
+    }
+
+    /// True if `code` or `type` equals `value`.
+    pub fn is(&self, value: &str) -> bool {
+        self.code.as_deref() == Some(value) || self.kind.as_deref() == Some(value)
+    }
+
+    /// The provider code to report: `error.code`, else `error.type`.
+    fn provider_code(&self) -> Option<&str> {
+        self.code.as_deref().or(self.kind.as_deref())
+    }
+
+    /// An error for a non-2xx answer: provider, status, request id, provider code,
+    /// and the scrubbed provider message ([`errors::error_from`]).
+    pub fn error(
+        &self,
+        resp: &HttpResponse,
+        provider: ProviderId,
+        code: ErrorCode,
+        message: String,
+    ) -> IrisError {
+        errors::error_from(resp, provider, code, message, self.provider_code(), self.message.as_deref())
+    }
+
+    /// Attach the provider code and message to an error ([`errors::annotate`]).
+    pub fn annotate(&self, e: &mut IrisError, resp: &HttpResponse) {
+        errors::annotate(e, resp, self.provider_code(), self.message.as_deref());
+    }
+
+    /// `": <provider message>"` for human messages, or empty ([`errors::provider_suffix`]).
+    pub fn suffix(&self) -> String {
+        errors::provider_suffix(self.message.as_deref())
+    }
+}
 
 /// One element of `data[]`.
 pub(crate) struct ImageItem {
@@ -198,5 +274,48 @@ impl DecodedItems {
     /// The reasons of every problem, joined, for an error when no image was usable.
     pub fn reasons(&self) -> String {
         self.problems.iter().map(|p| p.why.as_str()).collect::<Vec<_>>().join("; ")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn response(body: &'static [u8]) -> HttpResponse {
+        HttpResponse {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            headers: reqwest::header::HeaderMap::new(),
+            body: bytes::Bytes::from_static(body),
+            request_id: Some("req_1".to_string()),
+            attempts: 1,
+        }
+    }
+
+    #[test]
+    fn an_error_member_is_read_only_from_a_json_object() {
+        assert!(error_member(b"<html>bad gateway</html>").is_none());
+        assert!(error_member(br#"[{"error": {}}]"#).is_none());
+        assert_eq!(error_member(br#"{"error": "plain"}"#), Some(Value::String("plain".into())));
+        let e = ErrorBody::from_member(&Value::String("plain".into()));
+        assert!(e.message.is_none() && e.kind.is_none() && e.code.is_none());
+    }
+
+    #[test]
+    fn errors_carry_the_code_else_the_type_and_the_cleaned_message() {
+        let resp = response(br#"{"error": {"message": " too big ", "type": "invalid_request_error"}}"#);
+        let body = ErrorBody::from_member(&error_member(&resp.body).unwrap());
+        assert_eq!(body.suffix(), ": too big");
+        let e = body.error(&resp, ProviderId::Vercel, ErrorCode::InvalidArgument, "rejected".into());
+        assert_eq!(e.provider_code.as_deref(), Some("invalid_request_error"));
+        assert_eq!(e.provider_status, Some(400));
+        assert_eq!(e.provider_request_id.as_deref(), Some("req_1"));
+        assert_eq!(e.details.get("provider_message"), Some(&Value::String("too big".into())));
+
+        let body = ErrorBody { code: Some("c".into()), kind: Some("t".into()), message: None };
+        let mut e = IrisError::new(ErrorCode::ProviderError, "x");
+        body.annotate(&mut e, &resp);
+        assert_eq!(e.provider_code.as_deref(), Some("c"));
+        assert!(body.is("c") && body.is("t") && !body.is("x"));
+        assert_eq!(body.suffix(), "");
     }
 }
