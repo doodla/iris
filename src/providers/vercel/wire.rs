@@ -77,34 +77,38 @@ pub(super) enum Availability {
 /// An annotated model list (`GET /models?include_availability`), parsed once for
 /// every model it answers.
 pub(super) struct AvailabilityList {
-    /// The `model_eligibility` of each listed model, by id; `None` when the body is
-    /// not a readable list.
+    /// The `model_eligibility` of each requested model that the list names, by id;
+    /// `None` when the body is not a readable list.
     rows: Option<std::collections::HashMap<String, Value>>,
     /// `request_context_availability.http.status`.
     account: Option<String>,
 }
 
 impl AvailabilityList {
-    pub fn parse(body: &[u8]) -> AvailabilityList {
-        let value = serde_json::from_slice::<Value>(body).ok();
-        let rows = value.as_ref().and_then(|v| v.get("data")).and_then(Value::as_array).map(|models| {
-            models
-                .iter()
-                .filter_map(|m| {
-                    let id = m.get("id")?.as_str()?;
-                    Some((id.to_string(), m.get("model_eligibility").cloned().unwrap_or(Value::Null)))
-                })
-                .collect()
-        });
+    /// Parse the list, keeping only the rows of the `wanted` models. The gateway lists
+    /// every model it routes to, so the other rows are dropped, and the kept values are
+    /// moved out of the parsed document, never copied.
+    pub fn parse(body: &[u8], wanted: &[&str]) -> AvailabilityList {
+        let mut value = serde_json::from_slice::<Value>(body).ok();
         let account = value
             .as_ref()
             .and_then(|v| v.pointer("/request_context_availability/http/status"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        let rows =
+            value.as_mut().and_then(|v| v.get_mut("data")).and_then(Value::as_array_mut).map(|models| {
+                models
+                    .iter_mut()
+                    .filter_map(|m| {
+                        let id = m.get("id")?.as_str().filter(|id| wanted.contains(id))?.to_string();
+                        Some((id, m.get_mut("model_eligibility").map(Value::take).unwrap_or(Value::Null)))
+                    })
+                    .collect()
+            });
         AvailabilityList { rows, account }
     }
 
-    /// The availability of `model`: it must be listed, its `model_eligibility.status`
+    /// The availability of `model`, one of the `wanted` models: it must be listed, its `model_eligibility.status`
     /// `eligible`, and `request_context_availability.http.status` `available` (the
     /// REST API reference's rule). A missing model is ineligible; a transient
     /// ineligibility, a verdict for another runtime than `http`, or anything
@@ -138,7 +142,7 @@ impl AvailabilityList {
 /// [`AvailabilityList::of`] for one model of a body.
 #[cfg(test)]
 fn availability(body: &[u8], model: &str) -> Availability {
-    AvailabilityList::parse(body).of(model)
+    AvailabilityList::parse(body, &[model]).of(model)
 }
 
 #[cfg(test)]
@@ -211,6 +215,25 @@ mod tests {
         assert!(matches!(availability(&body(websocket), "m"), Availability::Unknown));
         let http = serde_json::json!({"status": "eligible", "evaluated_runtime": "http"});
         assert!(matches!(availability(&body(http), "m"), Availability::Eligible));
+    }
+
+    #[test]
+    fn only_the_requested_models_are_kept_and_each_is_answered() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "data": [
+                {"id": "a", "model_eligibility": {"status": "eligible"}},
+                {"id": "b", "model_eligibility": {"status": "ineligible", "category": "policy"}},
+                {"id": "c", "model_eligibility": {"status": "eligible"}},
+                {"id": 7}, {"model_eligibility": {}}
+            ],
+            "request_context_availability": {"http": {"status": "available"}}
+        }))
+        .unwrap();
+        let list = AvailabilityList::parse(&body, &["a", "b", "missing"]);
+        assert_eq!(list.rows.as_ref().map(|rows| rows.len()), Some(2), "c is not kept");
+        assert!(matches!(list.of("a"), Availability::Eligible));
+        assert!(matches!(list.of("b"), Availability::Ineligible));
+        assert!(matches!(list.of("missing"), Availability::Ineligible));
     }
 
     #[test]

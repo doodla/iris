@@ -200,7 +200,7 @@ pub(super) async fn check_access(
     let result = ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), classify_read).await;
     let error = match result {
         Ok(resp) => {
-            let list = AvailabilityList::parse(&resp.body);
+            let list = AvailabilityList::parse(&resp.body, models);
             return models
                 .iter()
                 .map(|model| {
