@@ -165,7 +165,8 @@ iris image generate -m gpt-image-2.6-preview --capabilities-from gpt-image-2.5-s
 In this example, `gpt-image-2.6-preview` stands for a new model ID. Iris sends the ID as you typed
 it, checks the request as if it were the known model, and reports an
 `unverified_model_capabilities` warning. For Gemini and Veo, the ID can contain only letters,
-digits, `.`, `_`, and `-`. Iris doesn't estimate the cost of such a model, because the known model's
+digits, `.`, `_`, and `-`. For the Vercel AI Gateway, it can also contain `/`, as in
+`bfl/flux-3-image-klein`. Iris doesn't estimate the cost of such a model, because the known model's
 prices might not apply. Without an estimate, you can't combine it with `--max-cost`.
 
 ## Set model options
@@ -265,12 +266,22 @@ The models also have these requirements:
   day, and it already rejects unrestricted standard keys. Use an auth API key.
 - The GPT Image models need a paid OpenAI usage tier, and OpenAI might require API Organization
   Verification for them.
+- The Vercel AI Gateway models are billed from your team's AI Gateway Credits. The free tier's
+  monthly credit covers only some gateway models, and the others need purchased credits. If you
+  bring your own provider key, that provider bills you directly. A budget can refuse a request with
+  HTTP 402, which Iris reports as `quota_exceeded`. Iris's estimate leaves out add-on charges, such
+  as the 5% surcharge on a regional endpoint.
 
 `iris models show MODEL` lists a model's documented access requirements. To check that your key
-can see a model, add `--check-access`. To check every model of each provider whose key is set, run
-`iris doctor --check-access`. Each check is one free metadata request. It confirms only that the
-model is visible to your key, not your billing tier, prepaid credit, or organization verification,
-so a paid request can still fail.
+can use a model, add `--check-access`. To check every model of each provider whose key is set, run
+`iris doctor --check-access`. Each check is free, and the result says what it covered:
+
+| Provider | What `--check-access` confirms |
+|---|---|
+| OpenAI, Gemini | Only that the model is visible to your key. Billing tier, prepaid credit, and organization verification aren't checked. |
+| Vercel AI Gateway | That the model is eligible for your team, and that your account can make requests, including funds and quota. A budget or the upstream provider can still refuse a request. |
+
+Either way, a paid request can still fail.
 
 ## What's next
 

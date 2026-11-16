@@ -32,10 +32,13 @@ providers.openai.request_timeout  5m                                          de
 providers.gemini.base_url         https://generativelanguage.googleapis.com/  default
 providers.gemini.request_timeout  5m                                          default
 providers.gemini.submit_timeout   1m                                          default
+providers.vercel.base_url         https://ai-gateway.vercel.sh/v1             default
+providers.vercel.request_timeout  5m                                          default
 log                               warn                                        default
 credentials (presence only):
   OPENAI_API_KEY: set
   GEMINI_API_KEY: not set
+  AI_GATEWAY_API_KEY: not set
 ```
 
 ## Settings
@@ -51,6 +54,7 @@ credentials (presence only):
 | Store prompt text in job records | `jobs.store_prompts` | `IRIS_STORE_PROMPTS` | | `false` |
 | OpenAI base URL | `providers.openai.base_url` | `IRIS_OPENAI_BASE_URL` | | `https://api.openai.com/v1` |
 | Gemini base URL | `providers.gemini.base_url` | `IRIS_GEMINI_BASE_URL` | | `https://generativelanguage.googleapis.com` |
+| Vercel AI Gateway base URL | `providers.vercel.base_url` | `IRIS_VERCEL_BASE_URL` | | `https://ai-gateway.vercel.sh/v1` |
 | Request time limit | `providers.PROVIDER.request_timeout` | | | `5m` |
 | Video submission time limit | `providers.gemini.submit_timeout` | | | `1m` |
 | Config file | | `IRIS_CONFIG` | `--config` | See [Config file](#config-file) |
@@ -87,6 +91,7 @@ Iris reads API keys only from these environment variables:
 |---|---|
 | OpenAI | `OPENAI_API_KEY` |
 | Google Gemini, for images and Veo | `GEMINI_API_KEY` |
+| Vercel AI Gateway, for images | `AI_GATEWAY_API_KEY` |
 
 Iris doesn't read keys from flags, and it rejects a config file that contains one. See
 [Validation](#validation). It also ignores `GOOGLE_API_KEY`, which Google's SDKs prefer when both
@@ -193,7 +198,7 @@ error[config_invalid]: config file /home/you/bad.toml: `providers.openai.typo_fi
 A credential in the config file:
 
 ```text
-error[config_invalid]: config file /home/you/bad2.toml: `providers.openai.api_key`: credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY, never from the config file
+error[config_invalid]: config file /home/you/bad2.toml: `providers.openai.api_key`: credentials are read only from OPENAI_API_KEY / GEMINI_API_KEY / AI_GATEWAY_API_KEY, never from the config file
   hint: fix the config file, or point --config / IRIS_CONFIG at another file
 ```
 

@@ -7,7 +7,7 @@
 //! their optional fields are loosely documented (e.g. `usage` is described as
 //! "gpt-image-1 only" but returned by newer models).
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::catalog::{OptionValue, ResolvedOptions};
@@ -117,74 +117,6 @@ pub(super) struct EditBody<'a> {
     pub mask: Option<ImageRef>,
     #[serde(flatten)]
     pub options: WireOptions,
-}
-
-/// One decoded element of `data[]` in an `ImagesResponse`.
-pub(super) struct WireImage {
-    /// `b64_json`, if present.
-    pub b64_json: Option<String>,
-    /// True if the element carries a `url` (not supported for GPT image models).
-    pub has_url: bool,
-    pub revised_prompt: Option<String>,
-}
-
-/// The parts of an `ImagesResponse` Iris uses.
-pub(super) struct WireImagesResponse {
-    pub data: Vec<WireImage>,
-    /// Echoed `output_format` (`png` / `jpeg` / `webp`), if present.
-    pub output_format: Option<String>,
-    pub usage: Option<Usage>,
-}
-
-/// Top level of an `ImagesResponse`; unknown fields (`created`, `size`, …) are skipped
-/// without being materialized, and every used field is read leniently.
-#[derive(Deserialize)]
-struct RawImagesResponse {
-    #[serde(default)]
-    data: Option<Value>,
-    #[serde(default)]
-    output_format: Option<Value>,
-    #[serde(default)]
-    usage: Option<Value>,
-}
-
-impl WireImagesResponse {
-    /// Parse a success body. `Err` carries a short reason when the body is not the
-    /// documented shape (not a JSON object, no `data` array). Base64 strings are moved
-    /// out of the parsed document, never copied (responses can be tens of MB).
-    pub fn parse(body: &[u8]) -> Result<WireImagesResponse, String> {
-        let raw: RawImagesResponse = serde_json::from_slice(body)
-            .map_err(|_| "the response body is not the documented JSON object".to_string())?;
-        let items = match raw.data {
-            Some(Value::Array(items)) => items,
-            Some(Value::Null) | None => return Err("the response has no `data` array".to_string()),
-            Some(_) => return Err("the response's `data` field is not an array".to_string()),
-        };
-        let data = items
-            .into_iter()
-            .map(|mut item| {
-                let b64_json = match item.get_mut("b64_json").map(Value::take) {
-                    Some(Value::String(s)) => Some(s),
-                    _ => None,
-                };
-                WireImage {
-                    b64_json,
-                    has_url: item.get("url").and_then(Value::as_str).is_some_and(|u| !u.trim().is_empty()),
-                    revised_prompt: item
-                        .get("revised_prompt")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string),
-                }
-            })
-            .collect();
-        Ok(WireImagesResponse {
-            data,
-            output_format: raw.output_format.as_ref().and_then(Value::as_str).map(str::to_ascii_lowercase),
-            usage: raw.usage.as_ref().and_then(parse_usage),
-        })
-    }
 }
 
 /// Read an `ImagesUsage` object defensively: token counts that are not

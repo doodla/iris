@@ -148,7 +148,11 @@ pub static FAKE_IMAGE_MODEL: ModelSpec = ModelSpec {
         max_request: None,
     },
     options: FAKE_IMAGE_OPTIONS,
-    outputs: OutputSpec { media_types: &["image/png", "image/jpeg", "image/webp"], max_count: 4 },
+    outputs: OutputSpec {
+        media_types: &["image/png", "image/jpeg", "image/webp"],
+        max_count: 4,
+        exact_size_option: Some("size"),
+    },
     limits: Limits { max_prompt_chars: Some(100) },
     pricing: &[PriceRule {
         description: "per image (fake)",
@@ -215,7 +219,7 @@ pub static FAKE_GEMINI_IMAGE: ModelSpec = ModelSpec {
         max_request: Some(FAKE_REQUEST_LIMIT),
     },
     options: FAKE_GEMINI_IMAGE_OPTIONS,
-    outputs: OutputSpec { media_types: &["image/png", "image/jpeg"], max_count: 1 },
+    outputs: OutputSpec { media_types: &["image/png", "image/jpeg"], max_count: 1, exact_size_option: None },
     limits: Limits { max_prompt_chars: None },
     pricing: &[],
     access_notes: &[],
@@ -308,7 +312,7 @@ pub static FAKE_VIDEO_MODEL: ModelSpec = ModelSpec {
         max_request: Some(FAKE_REQUEST_LIMIT),
     },
     options: FAKE_VIDEO_OPTIONS,
-    outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },
+    outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1, exact_size_option: None },
     limits: Limits { max_prompt_chars: Some(200) },
     pricing: &[PriceRule {
         description: "per second (fake)",
@@ -494,6 +498,7 @@ impl Provider for FakeProvider {
         match self.id {
             ProviderId::OpenAi => CredentialHeader { name: "authorization", prefix: "Bearer " },
             ProviderId::Gemini => CredentialHeader { name: "x-goog-api-key", prefix: "" },
+            ProviderId::Vercel => CredentialHeader { name: "authorization", prefix: "Bearer " },
         }
     }
     fn docs_url(&self) -> &'static str {
@@ -619,7 +624,7 @@ impl Sandbox {
         self.work().join(rel)
     }
 
-    /// Environment with fake keys for both providers.
+    /// Environment with fake keys for the providers of the fake registry (OpenAI and Gemini).
     pub fn env(&self) -> EnvSnapshot {
         self.env_without_keys().with_var("OPENAI_API_KEY", OPENAI_KEY).with_var("GEMINI_API_KEY", GEMINI_KEY)
     }

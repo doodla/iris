@@ -228,7 +228,7 @@ async fn run_checked(
         "Requesting {count} image{} from {provider} ({}); this is a {} request",
         if count == 1 { "" } else { "s" },
         request::progress_model(&resolved, model_source, op),
-        spec.billing
+        spec.billing.adjective()
     ));
     // Names every file this command may keep in the state directory.
     let run_id = ulid::Ulid::generate().to_string().to_ascii_lowercase();
@@ -296,6 +296,22 @@ async fn run_checked(
         .map(|replanned| (replanned.paths, FinalizeMode::RenameOnConflict))
     };
     let saving = save_all(ctx, &run_id, &output, &planned, warnings);
+    // Prefer the provider-reported usage (covers every returned image); fall back to
+    // the pre-call estimate for the number of images actually returned.
+    let from_usage = output.usage.as_ref().and_then(|usage| request::estimate_from_usage(&resolved, usage));
+    let used_usage = from_usage.is_some();
+    let cost_estimate = match from_usage {
+        Some(estimate) => Ok(estimate),
+        None if returned == count => pre_estimate,
+        None => request::estimate(&resolved, op, &opts, returned),
+    };
+    let cost_source = match (&cost_estimate, used_usage) {
+        (Err(_), _) => CostSource::None,
+        (Ok(_), true) => CostSource::Usage,
+        (Ok(_), false) => CostSource::Requested,
+    };
+    // Every saved image is checked, also when another could not be saved.
+    warnings.extend(check_saved(spec, &opts, &resolved.id, &saving.saved, cost_source));
     if let Some(e) = saving.failure {
         let paths = |artifacts: &[Artifact]| artifacts.iter().map(|a| a.path.clone()).collect::<Vec<_>>();
         let e = kept.report(e, saving.elsewhere);
@@ -312,15 +328,6 @@ async fn run_checked(
             ));
     }
     let saved = saving.saved;
-
-    // Prefer the provider-reported usage (covers every returned image); fall back to
-    // the pre-call estimate for the number of images actually returned.
-    let from_usage = output.usage.as_ref().and_then(|usage| request::estimate_from_usage(&resolved, usage));
-    let cost_estimate = match from_usage {
-        Some(estimate) => Ok(estimate),
-        None if returned == count => pre_estimate,
-        None => request::estimate(&resolved, op, &opts, returned),
-    };
     if let Err(reason) = &cost_estimate {
         warnings.push(request::cost_unavailable(reason));
     }
@@ -528,4 +535,68 @@ fn save_all(
         }
     }
     saving
+}
+
+/// What the catalog says every saved output should be, checked against what was
+/// saved, for every provider alike: a type the model is not declared to return is
+/// `output_type_undeclared`, and an image whose pixels differ from the size the
+/// request set (the model's [`exact_size_option`](crate::catalog::OutputSpec::exact_size_option))
+/// is `output_size_mismatch`. Both keep the image: it was paid for.
+fn check_saved(
+    spec: &crate::catalog::ModelSpec,
+    opts: &crate::catalog::ResolvedOptions,
+    model: &str,
+    saved: &[Artifact],
+    cost_source: CostSource,
+) -> Vec<Warning> {
+    let cost = match cost_source {
+        CostSource::Usage => "the cost estimate comes from the usage that the provider reported",
+        CostSource::Requested => {
+            "the cost estimate is for the requested size, so it may not match the charge"
+        }
+        CostSource::None => "Iris has no cost estimate for this request",
+    };
+    let declared = spec.outputs.media_types;
+    let requested = spec.outputs.exact_size_option.and_then(|name| opts.get(name)).and_then(|value| {
+        value.as_str().and_then(crate::catalog::parse_pixel_size).map(|size| (value.to_string(), size))
+    });
+    let mut warnings = Vec::new();
+    for artifact in saved {
+        if !declared.contains(&artifact.media_type.as_str()) {
+            warnings.push(Warning::new(
+                WarningCode::OutputTypeUndeclared,
+                format!(
+                    "{} is {}, which {model} is not declared to return ({}); it was saved under its real type",
+                    artifact.path,
+                    artifact.media_type,
+                    declared.join(", ")
+                ),
+            ));
+        }
+        if let (Some((asked, (w, h))), Some(width), Some(height)) =
+            (&requested, artifact.width, artifact.height)
+            && (u64::from(width), u64::from(height)) != (*w, *h)
+        {
+            warnings.push(Warning::new(
+                WarningCode::OutputSizeMismatch,
+                format!(
+                    "{} is {width}x{height}, but the request asked for {asked}: the provider ignored or changed \
+                     the size. The image was kept; {cost}",
+                    artifact.path
+                ),
+            ));
+        }
+    }
+    warnings
+}
+
+/// Where a generation's cost estimate came from, for the `output_size_mismatch` message.
+#[derive(Debug, Clone, Copy)]
+enum CostSource {
+    /// The usage that the provider reported, which reflects the image it made.
+    Usage,
+    /// The catalog's prices for the request as sent.
+    Requested,
+    /// There is no estimate.
+    None,
 }

@@ -49,11 +49,12 @@ The schema encodes the rules of the output, not only its shapes:
 - `ok: true` requires a result and a `null` error, and `ok: false` requires the reverse.
 - A successful envelope's `result` has the result type of its `command`.
 - An error's `category` is the one that its `code` belongs to, for every code that the schema lists.
-- Error codes, commands, warning codes, provider IDs, and `billing` values are open sets. The schema
-  lists the known values and accepts any other value of the same form: a snake_case word, or, for a
-  command, snake_case words joined by dots. An envelope from a later version of Iris with the same
-  `schema_version` still validates. Every other enumeration, such as `category` or a status, is
-  closed.
+- Error codes, commands, warning codes, provider IDs, `billing` values, and `access.checked_scope`
+  values are open sets. The schema lists the known values and accepts any other value of the same
+  form: a snake_case word, or, for a command, snake_case words joined by dots. An envelope from a
+  later version of Iris with the same `schema_version` still validates. Every other enumeration,
+  such as `category` or a status, is closed.
+
 
 ## Versioning
 
@@ -198,8 +199,8 @@ If Iris refuses a deletion, it deletes nothing and reports `invalid_argument`. S
 | `display_name` | string | The model's name, such as `GPT Image 2.5 Sunburst`. |
 | `summary` | string | What the model is for, and its trade-off, from the provider's documentation. |
 | `aliases` | array of strings | Other names that `-m` accepts, such as dated snapshots and nicknames. |
-| `lifecycle` | string | `ga`, `preview`, or `deprecated`, as the provider documents it. |
-| `billing` | string | `paid` if requests are billed at the provider's published prices. Every model in Iris 0.1.0 is `paid`. The set is open: read a value that you don't know as "requests may cost money". |
+| `lifecycle` | string | `ga`, `preview`, or `deprecated`, as the provider documents it. A model whose provider documents no stage is `ga` unless the provider marks it preview or deprecated; its catalog entry says so. |
+| `billing` | string | `paid` if requests are billed to the provider account at its published prices and the provider offers no free tier. `paid_with_free_tier` if requests are billed at the provider's published prices and the provider has a free tier that may cover some requests; the model's access requirements say what's known. The set is open: read a value that you don't know as "requests may cost money". |
 | `operations` | array of strings | What the model can do: `image.generate`, `image.edit`, or `video.generate`. |
 | `standard_cost` | [Standard cost](#standard-cost) or null | What the same standard output costs with this model. `null` if Iris can't estimate the model's cost before a request. |
 
@@ -236,7 +237,7 @@ and `pricing`:
   "access": { "credential_env": "OPENAI_API_KEY", "credential_present": true,
               "requirements": ["API Organization Verification may be required for GPT Image models",
                                "Paid usage tier required (no free-tier limits listed)"],
-              "account_access": "not_checked", "checked_at": null },
+              "account_access": "not_checked", "checked_at": null, "checked_scope": null },
   "capabilities_source": "catalog", "catalog_as_of": "2026-09-24",
   "docs_url": "https://developers.openai.com/api/docs/guides/image-generation"
 }
@@ -251,14 +252,21 @@ and `pricing`:
 | `limits` | Other limits, such as `max_prompt_chars`. |
 | `pricing` | The published prices, each with a `description`, a `unit`, the price in `usd`, a `source_url`, and the date checked (`as_of`). |
 | `access` | The API key variable and whether it's set, the documented access `requirements`, and `account_access`. |
-| `capabilities_source`, `catalog_as_of` | Where the capabilities come from, and the date that the catalog was checked against the provider's documentation. |
+| `capabilities_source`, `catalog_as_of` | Where the capabilities come from, and the date that the model's catalog entry was checked against the provider's documentation. |
 | `docs_url` | The provider's documentation for the model. |
 
 `access.account_access` is `not_checked`, unless you pass `--check-access`. Then Iris makes one
-free metadata request and reports `available`, `unavailable`, or `unknown`, and sets `checked_at`.
-`available` means only that the model is visible to your key. It doesn't check billing tier,
-prepaid credit, or organization verification, so a paid request can still fail with
-`permission_denied` or `quota_exceeded`.
+free request and reports `available`, `unavailable`, or `unknown`, and sets `checked_at` and
+`checked_scope`. `checked_scope` says what the provider's check established, and is an open set:
+
+| `checked_scope` | `available` means | `unavailable` means |
+|---|---|---|
+| `model_metadata` | The model is visible to your key. | The key doesn't see the model. |
+| `team_eligibility` | The model is eligible for your key's team, and the team can make requests. | The model isn't eligible for the team, or the team can't make requests now. |
+
+Read a scope that you don't know as `model_metadata`. For what each provider's check leaves out,
+see [Check your access](../guides/models-and-costs.md#check-your-access). A paid request can still
+fail with `permission_denied` or `quota_exceeded`.
 
 #### Options
 
@@ -328,7 +336,7 @@ Check IDs are unique within a result:
 | `state_dir`, `output_dir` | Whether the directories are usable. |
 | `base_url.PROVIDER` | Whether the provider's base URL is overridden. |
 | `jobs` | Whether the local job records are readable. |
-| `access.PROVIDER.MODEL` | With `--check-access`: whether the model is visible to your key. One per catalog model of each provider whose key is set, in catalog order. |
+| `access.PROVIDER.MODEL` | With `--check-access`: whether you can use the model, worded as the provider's check covers it (see [Check your access](../guides/models-and-costs.md#check-your-access)). One per catalog model of each provider whose key is set, in catalog order. `MODEL` can contain `/`, as in `access.vercel.bfl/flux-3-image-klein`. |
 | `access.PROVIDER` | With `--check-access`: the provider's models weren't checked, for example because its key isn't set. |
 | `access` | With `--check-access`: the configuration is invalid, so no model was checked. |
 

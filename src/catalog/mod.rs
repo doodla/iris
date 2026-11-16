@@ -1,6 +1,6 @@
 //! The model catalog: every model Iris knows, with declared capabilities.
 //!
-//! Provider modules (`openai`, `gemini`, `veo`) contribute their static
+//! Provider modules (`openai`, `gemini`, `veo`, `vercel`) contribute their static
 //! declarations: the models, and the names Iris declines ([`DeclinedName`]).
 
 pub mod gemini;
@@ -8,6 +8,7 @@ pub mod openai;
 pub mod options;
 pub mod types;
 pub mod veo;
+pub mod vercel;
 
 pub use options::{InputCounts, OptionSource, OptionValue, RawOption, ResolvedOptions, validate_request};
 pub use types::*;
@@ -19,6 +20,30 @@ use crate::error::{ErrorCode, IrisError};
 /// provider documentation.
 pub const CATALOG_AS_OF: &str = "2026-09-24";
 
+/// Date `provider`'s catalog entries (capabilities and prices) were last checked
+/// against its documentation: [`CATALOG_AS_OF`], except for a provider whose entries
+/// were checked on another day.
+pub fn checked_on(provider: ProviderId) -> &'static str {
+    match provider {
+        ProviderId::OpenAi | ProviderId::Gemini => CATALOG_AS_OF,
+        ProviderId::Vercel => vercel::CATALOG_AS_OF,
+    }
+}
+
+/// `(width, height)` of a `WxH` size such as `1024x1024`: one to five digits each,
+/// without a leading zero; `None` for anything else (such as `auto`). Every `WxH`
+/// option, and the app's check of saved image sizes, reads sizes with it.
+pub fn parse_pixel_size(raw: &str) -> Option<(u64, u64)> {
+    let (w, h) = raw.split_once('x')?;
+    let digits = |s: &str| {
+        !s.is_empty() && s.len() <= 5 && !s.starts_with('0') && s.bytes().all(|b| b.is_ascii_digit())
+    };
+    if !digits(w) || !digits(h) {
+        return None;
+    }
+    Some((w.parse().ok()?, h.parse().ok()?))
+}
+
 /// Round a dollar amount to a millionth of a dollar so estimates print cleanly.
 /// Every provider's estimates go through it, so they round the same way.
 pub(crate) fn round_usd(amount: f64) -> f64 {
@@ -27,7 +52,7 @@ pub(crate) fn round_usd(amount: f64) -> f64 {
 
 /// All built-in models, grouped by provider in a stable order.
 pub fn all() -> impl Iterator<Item = &'static ModelSpec> {
-    openai::MODELS.iter().chain(gemini::MODELS.iter()).chain(veo::MODELS.iter())
+    openai::MODELS.iter().chain(gemini::MODELS.iter()).chain(veo::MODELS.iter()).chain(vercel::MODELS.iter())
 }
 
 /// Look up a model by id or alias (case-sensitive ids; aliases are lowercase).
@@ -46,7 +71,11 @@ pub fn find_in(
 
 /// Every name Iris declines ([`DeclinedName`]), grouped by provider like [`all`].
 pub fn declined_names() -> impl Iterator<Item = &'static DeclinedName> {
-    openai::DECLINED.iter().chain(gemini::DECLINED.iter()).chain(veo::DECLINED.iter())
+    openai::DECLINED
+        .iter()
+        .chain(gemini::DECLINED.iter())
+        .chain(veo::DECLINED.iter())
+        .chain(vercel::DECLINED.iter())
 }
 
 /// The declined name `name` is, if Iris deliberately gives it no model. Its
@@ -314,6 +343,7 @@ pub fn model_id_syntax(provider: ProviderId) -> ModelIdSyntax {
     match provider {
         ProviderId::OpenAi => openai::MODEL_ID_SYNTAX,
         ProviderId::Gemini => gemini::MODEL_ID_SYNTAX,
+        ProviderId::Vercel => vercel::MODEL_ID_SYNTAX,
     }
 }
 

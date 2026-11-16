@@ -12,10 +12,10 @@ use serde_json::Value;
 use crate::domain::{
     Artifact, Billing, CostEstimate, JobStatus, ModelSource, Operation, Warning, WarningCode, format_usd,
 };
-use crate::providers::AccountAccess;
 
 use super::envelope::{CommandName, ErrorBody, ResultPayload};
 use super::results::*;
+use crate::providers::AccountAccess;
 
 /// Text for stdout and stderr (either may be empty; non-empty text ends with `\n`).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -525,14 +525,16 @@ fn model_show(m: &ModelCapabilities) -> String {
         }
     }
     let a = &m.access;
-    let access = match a.account_access {
-        AccountAccess::Available => "visible to this key".to_string(),
-        AccountAccess::Unavailable => "not visible to this key".to_string(),
-        other => lifecycle(&other),
+    // In the provider's words when it was checked ("eligible for this key's team").
+    let access = match (a.account_access, a.checked_scope) {
+        (AccountAccess::Available, Some(scope)) => format!("available: {}", scope.available()),
+        (AccountAccess::Unavailable, Some(scope)) => format!("unavailable: {}", scope.unavailable()),
+        (other, _) => lifecycle(&other),
     };
-    let checked = match &a.checked_at {
-        Some(t) => format!(" (checked {t}; model metadata only, billing and verification not checked)"),
-        None => String::new(),
+    let checked = match (&a.checked_at, a.checked_scope) {
+        (Some(t), Some(scope)) => format!(" (checked {t}; {})", scope.basis()),
+        (Some(t), None) => format!(" (checked {t})"),
+        _ => String::new(),
     };
     let _ = writeln!(
         out,
@@ -548,9 +550,9 @@ fn model_show(m: &ModelCapabilities) -> String {
     out
 }
 
-/// A model's billing and what it means: `paid (requests are billed ...)`.
+/// A model's billing value and what it means: `paid (requests are billed ...)`.
 fn billing(b: Billing) -> String {
-    format!("{b} ({})", b.description())
+    format!("{} ({})", b.as_str(), b.description())
 }
 
 fn yes_no(b: bool) -> &'static str {

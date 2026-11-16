@@ -76,7 +76,7 @@ The layering protects two invariants:
 - `providers` never touches the file layout of jobs or artifacts. An adapter returns bytes for an
   image call, or an operation ID and status for a video call, never a path.
 - Only adapters know a provider's wire format. Every request to a provider's API is built inside an
-  adapter: generation, video submission, status checks, and the metadata call behind
+  adapter: generation, video submission, status checks, and the free access check behind
   `--check-access`. The one network call that `app` makes itself is the download of a finished
   job's output. `app::jobs` asks the adapter whether it may fetch the recorded URI
   (`VideoProvider::check_output_uri`), attaches the provider's credential header only when the URI
@@ -91,8 +91,8 @@ The layering protects two invariants:
 | `error` | `IrisError`, `ErrorCode`, `ErrorCategory`, and the mapping to exit codes. See the [Errors reference](../reference/errors.md). |
 | `secret` | The `Secret` type. Its `Debug` and `Display` print `***`, and it never implements `Serialize`. Credentials are `Secret` values from the moment Iris reads them from the environment. |
 | `redact` | `redact_url`, which removes user information and replaces query values with `REDACTED` except for an allowlist; `scrub`, which removes any configured credential value from text; and `truncate`. Every error message, provider message, log line, and persisted `last_error` passes through them before it reaches stdout, stderr, or disk. |
-| `catalog` | The static model catalog: each model's summary, operations, inputs, typed options with defaults and allowed values, outputs, prices, cost estimators, and access notes, and the names that Iris declines. Each provider's declarations are in `catalog/openai.rs`, `catalog/gemini.rs`, and `catalog/veo.rs`. |
-| `providers` | The `Provider`, `ImageProvider`, and `VideoProvider` traits, `ProviderContext`, and `Registry::builtin()`. Each provider's wire types and HTTP calls are private to `providers/openai/` or `providers/gemini/`. |
+| `catalog` | The static model catalog: each model's summary, operations, inputs, typed options with defaults and allowed values, outputs, prices, cost estimators, and access notes, and the names that Iris declines. Each provider's declarations are in `catalog/openai.rs`, `catalog/gemini.rs`, `catalog/veo.rs`, and `catalog/vercel.rs`. |
+| `providers` | The `Provider`, `ImageProvider`, and `VideoProvider` traits, `ProviderContext`, and `Registry::builtin()`. Each provider's wire types and HTTP calls are private to `providers/openai/`, `providers/gemini/`, or `providers/vercel/`. Code that several adapters share stays inside `providers`: `providers/errors.rs` (credential scrubbing and provider error text) and `providers/openai_compat.rs` (the OpenAI Images response shape, which the Vercel AI Gateway also returns). |
 | `http` | The shared HTTP client, the retry executor with its retry classes (see [Where invariants live](#where-invariants-live)), streaming downloads with the credential-origin rule, and error classification helpers. |
 | `jobs` | Persisted job records (`JobRecord`, versioned) and `JobStore`, which owns `STATE_DIR/jobs/`: atomic writes, per-job locks, listing without locks, and local deletion. Only `video.generate` creates records. |
 | `artifacts` | Output path planning and file names (`paths`); media sniffing and validation, including image decoding and the ISO-BMFF structure of videos (`media`); input image validation (`input`); atomic finalization through `.NAME.iris-part-RANDOM` temporary files, without replacing an existing file unless `--overwrite` is given (`finalize`, `download`); and the `unsaved` fallback for paid outputs that can't be saved where requested (`fallback`). |
@@ -105,8 +105,9 @@ The layering protects two invariants:
 
 Image generation and video generation are different kinds of operation, so they have different
 traits. A provider implements the shared `Provider` trait, for its identity, credential header,
-documentation link, and the free `check_access` metadata call. It then provides `image()`,
-`video()`, or both:
+documentation link, and the free access check (`check_access`, `check_access_many`, and
+`access_scope`, which says what the check establishes). It then provides `image()`, `video()`, or
+both:
 
 ```rust
 #[async_trait]
@@ -117,6 +118,11 @@ pub trait Provider: Send + Sync {
     /// The provider's official documentation (shown by `providers list`).
     fn docs_url(&self) -> &'static str;
     async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError>;
+    /// Several models at once (default: one by one).
+    async fn check_access_many(&self, model_ids: &[&str], ctx: &ProviderContext)
+        -> Vec<Result<AccountAccess, IrisError>> { /* each in turn */ }
+    /// What the check establishes (default: `AccessScope::ModelMetadata`).
+    fn access_scope(&self) -> AccessScope { AccessScope::ModelMetadata }
     fn image(&self) -> Option<&dyn ImageProvider> { None }
     fn video(&self) -> Option<&dyn VideoProvider> { None }
 }
@@ -195,7 +201,9 @@ needs no per-provider download code.
   didn't reach the provider, such as a connection failure before sending, or that the provider
   explicitly rejected before processing, such as a documented rate limit or overload. Every other
   open outcome is reported as `submission_uncertain`, with no job for an image call and a
-  `submission_unknown` job for a video, and Iris never sends it again.
+  `submission_unknown` job for a video, and Iris never sends it again. An adapter whose provider
+  doesn't prove a rate-limit rejection unbilled, such as the Vercel AI Gateway, calls
+  `Call::without_rejection_retries`, and the rejection is returned with its requested delay.
 - **Persisted state survives crashes and concurrent processes.** `jobs::JobStore` writes to a
   temporary file in the same directory, calls `sync_all`, and renames it into place. A per-job lock
   (`.lock`), held only for each read-modify-write, serializes updates. The store's lock

@@ -1,6 +1,6 @@
 //! `doctor`: local health checks (credential presence, configuration validity,
-//! state and output directories, base URL overrides), plus optional free
-//! metadata calls (`--check-access`). Never prints credential values.
+//! state and output directories, base URL overrides), plus optional free access
+//! checks (`--check-access`). Never prints credential values.
 //!
 //! Every check has a unique `id`. The command succeeds (exit 0) whenever the
 //! diagnostics ran; problems are reported through `healthy: false` and `error`
@@ -20,7 +20,7 @@ use super::context::AppContext;
 /// Inputs of `doctor`.
 #[derive(Debug, Clone, Default)]
 pub struct DoctorArgs {
-    /// Perform free metadata calls to check model access.
+    /// Perform free access checks of each provider's models.
     pub check_access: bool,
     /// Whether `GOOGLE_API_KEY` is set (presence only), which Iris ignores.
     pub google_api_key_present: bool,
@@ -147,9 +147,11 @@ pub async fn run(target: DoctorTarget<'_>, args: &DoctorArgs, warnings: &mut Vec
 
 /// One check per catalog model of each provider whose key is set
 /// (`access.<provider>.<model>`), in catalog order. One check per provider
-/// (`access.<provider>`) when its models could not be checked. A model the metadata
-/// read finds is only *visible to the key*: billing tier, credit, and organization
-/// verification are not part of that read.
+/// (`access.<provider>`) when its models could not be checked. Each result is worded
+/// in the provider's own terms ([`Provider::access_scope`](crate::providers::Provider::access_scope)): for most providers a
+/// found model is only *visible to the key*, with billing and verification unchecked.
+/// A provider's models are checked together ([`Provider::check_access_many`](crate::providers::Provider::check_access_many)), so a
+/// provider that reads one list for every model reads it once.
 async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
     for provider in ProviderId::ALL {
         let id = format!("access.{provider}");
@@ -171,36 +173,36 @@ async fn access_checks(ctx: &AppContext, checks: &mut Vec<DoctorCheck>) {
                     continue;
                 }
             };
-        for model in models {
+        let scope = adapter.access_scope();
+        ctx.interrupt.arm();
+        let seen = ctx.interrupt.count();
+        let results = tokio::select! {
+            r = adapter.check_access_many(&models, &pctx) => r,
+            () = ctx.interrupt.after(seen) => {
+                checks.push(check(&id, CheckStatus::Warning, "interrupted".to_string()));
+                return;
+            }
+        };
+        // One result per model; a missing one is reported, never skipped.
+        let mut results = results.into_iter();
+        for model in &models {
             let id = format!("access.{provider}.{model}");
-            ctx.interrupt.arm();
-            let seen = ctx.interrupt.count();
-            let result = tokio::select! {
-                r = adapter.check_access(model, &pctx) => r,
-                () = ctx.interrupt.after(seen) => {
-                    checks.push(check(&id, CheckStatus::Warning, "interrupted".to_string()));
-                    return;
-                }
-            };
+            let result = results.next().unwrap_or_else(|| {
+                Err(IrisError::internal(format!(
+                    "the {provider} access check returned no result for {model}"
+                )))
+            });
             checks.push(match result {
-                Ok(AccountAccess::Available) => ok(
-                    &id,
-                    format!(
-                        "{model} is visible to this key (model metadata only; billing tier, prepaid credit, \
-                         and organization verification are not checked)"
-                    ),
-                ),
-                Ok(AccountAccess::Unavailable) => check(
-                    &id,
-                    CheckStatus::Warning,
-                    format!(
-                        "{model} is not visible to this key or its project (the metadata read found no model)"
-                    ),
-                ),
+                Ok(AccountAccess::Available) => {
+                    ok(&id, format!("{model} is {} ({})", scope.available(), scope.basis()))
+                }
+                Ok(AccountAccess::Unavailable) => {
+                    check(&id, CheckStatus::Warning, format!("{model} is {}", scope.unavailable()))
+                }
                 Ok(_) => check(
                     &id,
                     CheckStatus::Warning,
-                    format!("could not determine whether {model} is visible to this key"),
+                    format!("could not determine whether {model} is {}", scope.available()),
                 ),
                 Err(e) => check(&id, CheckStatus::Error, format!("{model}: {} ({})", e.message, e.code)),
             });

@@ -26,8 +26,8 @@ support branch.
 
 Iris is a local command-line tool. These problems are worth a private report:
 
-- An API key (`OPENAI_API_KEY` or `GEMINI_API_KEY`) that appears in logs, error messages, job
-  records, or any other output.
+- An API key (`OPENAI_API_KEY`, `GEMINI_API_KEY`, or `AI_GATEWAY_API_KEY`) that appears in logs,
+  error messages, job records, or any other output.
 - A request that carries a credential to a host other than the provider's configured API origin,
   including through a redirect.
 - Path traversal, or other unsafe file handling, in output or download file names.

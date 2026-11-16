@@ -29,8 +29,9 @@ decision that depends on it.
 **Decision.** Each provider adapter is a small REST client on `reqwest`, inside
 `src/providers/PROVIDER/`. Iris uses no provider SDK crate.
 
-**Why.** Neither provider publishes an official Rust SDK: OpenAI lists only a community library for
-Rust, and Google's official Gemini SDKs cover Python, JavaScript and TypeScript, Go, Java, and C#.
+**Why.** No provider that Iris supports publishes an official Rust SDK: OpenAI lists only a
+community library for Rust, Google's official Gemini SDKs cover Python, JavaScript and TypeScript,
+Go, Java, and C#, and Vercel's AI SDK covers TypeScript and Python.
 The community crates that were evaluated don't fit Iris's rules:
 
 - `async-openai` retries POST requests on 429 and 5xx by default. Turning that off needs an
@@ -177,6 +178,66 @@ tried, and the provider documents no support for it.
 [Files API reference](https://ai.google.dev/api/files) ·
 [python-genai `models.py`](https://github.com/googleapis/python-genai/blob/7672ff6a08b92d45f6718e1195845b818705bad6/google/genai/models.py) ·
 [js-genai converters](https://github.com/googleapis/js-genai/blob/4d7e80b03dda3b9104649cb69bd8471f52f0c207/src/converters/_models_converters.ts)
+
+### Vercel AI Gateway: image-only models through the OpenAI-compatible Images endpoint
+
+**Decision.** Iris reaches the Vercel AI Gateway with `POST /v1/images/generations`, sending
+`model`, `prompt`, `response_format: "b64_json"`, and `size` only when you set one. It registers one
+model, `bfl/flux-3-image-klein`, for image generation only, and declines `bfl/flux-3-image`. It
+doesn't offer image edits or video through the gateway. `--check-access` reads `GET
+/v1/models?include_availability` with the key. The key comes from `AI_GATEWAY_API_KEY`, the variable
+that the gateway's documentation uses, and goes in `Authorization: Bearer`.
+
+
+**Why.**
+
+- The image generation guide documents the Images endpoint for image-only models, by example:
+  `model`, `prompt`, `n`, and `response_format: "b64_json"`, with base64 images in `data[]`.
+- `models list` compares every image model on the cost of one 1024x1024 image, so a model needs a
+  request that's documented to give that size. For FLUX 3 Image Klein, the Black Forest Labs
+  provider options that the guide links to say "To request exact dimensions, pass `size`", and the
+  gateway's prices for Klein name five square sizes, including 1024x1024. So `size` accepts exactly
+  those five, Iris estimates the cost before the request, and Iris checks every saved image against
+  the requested size (`output_size_mismatch`). When you set no size, the estimate uses the listed
+  base price (`pricing.image`). A live request on 2026-11-14 asked Klein for 768x768 and got a
+  768x768 image.
+- The same page says that for `flux-3-image`, a `size` "is used only to derive a supported aspect
+  ratio", and that a `resolution` tier sets the pixel area. It gives no pixel size per tier, so Iris
+  can't ask for a 1024x1024 image or know which price applies. Iris declines the model and names
+  Klein instead.
+- Many other gateway image models have a flat per-image price but no documented way to ask for a
+  1024x1024 image. Others have no listed price, or are priced by token usage or by style.
+- Iris requests one image per call and never sends `n`. The guide shows `n` but not its limit for
+  these models.
+- The gateway's model list gives Klein text input only, and the edit guide doesn't list Klein among
+  the models that accept input images, so Iris offers no edits through the gateway.
+- The gateway documents video jobs only through its SDKs: the JavaScript AI SDK's
+  `experimental_startVideo` and `experimental_getVideoStatus`, and a Python SDK in beta. It
+  documents no HTTP API for starting a job or reading its status. Iris doesn't build a recoverable
+  job on an undocumented interface.
+- The rate-limit page says that a 429 "is not a failure of your request" and that "the same request
+  can succeed later without changes, so retry it", but it doesn't say "not billed". With your own
+  provider key (BYOK), the gateway retries a failed request with Vercel's keys, so a 429 on that
+  second attempt can follow a first attempt that the provider may have billed you for. So Iris
+  doesn't resend a paid gateway request after a 429: it reports `rate_limited`, retryable, with the
+  delay that the gateway asked for, and you decide. The access check, which is free, still retries
+  a 429.
+- The gateway documents no idempotency key for images and no 5xx response as "not processed", so
+  an HTTP 408 or 5xx, or a timeout after sending, is `submission_uncertain`.
+- The REST API reference documents `include_availability` as each model's eligibility under the
+  team's configuration, and says that a model can serve a request when its status is `eligible` and
+  the account's `http` runtime is `available`. That's a better access check than the public model
+  list, which responds without a key. Iris reads that list once for all the models it checks. A
+  `transient` ineligibility, or a verdict for another runtime than `http`, is `unknown`, not
+  `unavailable`.
+
+**Sources.** [Image generation with the OpenAI-compatible API](https://vercel.com/docs/ai-gateway/modalities/image-generation/openai) ·
+[Black Forest Labs provider options](https://ai-sdk.dev/providers/ai-sdk-providers/black-forest-labs) ·
+[Video generation](https://vercel.com/docs/ai-gateway/modalities/video-generation) ·
+[REST API reference](https://vercel.com/docs/ai-gateway/sdks-and-apis/rest-api) ·
+[Rate limits](https://vercel.com/docs/ai-gateway/rate-limits) ·
+[Pricing](https://vercel.com/docs/ai-gateway/pricing) ·
+[Model list with prices](https://ai-gateway.vercel.sh/v1/models), all checked 2026-11-14.
 
 ## Models
 
@@ -397,9 +458,10 @@ that trying again can't help, such as an uncertain paid submission or a used-up 
 waited it out and sent the request again could pay twice, or only fail again. An
 `x-should-retry: false` response header, which OpenAI sends, stops retries.
 
-**Why.** Both providers' guidance says to retry 5xx errors and timeouts, and OpenAI's official
-Python SDK resends a POST on connection errors, 408, 409, 429, and 5xx. But neither the Images API
-nor Veo offers an idempotency key, or a way to find a request whose response was lost. Resending an
+**Why.** OpenAI's and Google's guidance says to retry 5xx errors and timeouts, and OpenAI's official
+Python SDK resends a POST on connection errors, 408, 409, 429, and 5xx. But neither the Images API,
+Veo, nor the Vercel AI Gateway's Images endpoint offers an idempotency key, or a way to find a
+request whose response was lost. Resending an
 ambiguous paid request can generate, and bill, the same output twice. So Iris retries paid
 requests only where the provider has said that the request wasn't processed, and leaves every other
 decision to the caller. Rate-limit retries follow OpenAI's guidance to honor `Retry-After` as a
@@ -419,11 +481,12 @@ will wait.
 **Decision.** A paid request whose outcome is unknown is reported as `submission_uncertain` (exit
 code 5), and never resubmitted:
 
-- **Images, both providers:** a timeout or a lost connection after the request was sent, or a
+- **Images, every provider:** a timeout or a lost connection after the request was sent, or a
   response that couldn't be read in full, because it was cut off or longer than the 512 MiB that
   Iris reads. The error has `retryable: false`, `details.charge_possible: true`, and
   `job_id: null`.
 - **OpenAI images:** also an HTTP 408 or 5xx response, except the documented overload rejection.
+- **Vercel AI Gateway images:** also an HTTP 408 or 5xx response.
 - **Gemini images:** an HTTP 4xx or 5xx response isn't uncertain. It keeps its ordinary code, such
   as a retryable `provider_error` for a 5xx, without `charge_possible`.
 - **Veo:** a 408 or 5xx response, a timeout or reset after sending, or a 2xx response without a
@@ -435,8 +498,8 @@ Ctrl+C, SIGTERM, or SIGHUP while a paid request is in flight reports `interrupte
 interrupt waits for the response, so that the operation name is recorded.
 
 **Why.** Google's billing documentation says that requests that fail with a 400 or 500 error aren't
-charged, so a Gemini error response proves that nothing was billed. OpenAI makes no such
-statement, and neither provider documents whether a request that timed out on the client was
+charged, so a Gemini error response proves that nothing was billed. OpenAI and Vercel make no such
+statement, and no provider documents whether a request that timed out on the client was
 processed. Veo keeps the strict rule for every 5xx, because such a response doesn't prove that no
 operation was created. An operation that exists runs, and is billed if it succeeds, with nothing for
 Iris to follow it by. Exit code 5 and `charge_possible` tell a caller to check the provider's usage
@@ -575,10 +638,13 @@ so it must not turn a paid job into `expired`.
   point estimate is supportable, for example with an `auto` size or quality on OpenAI, Iris says so
   instead of guessing, and the model's estimator names the options to pass for one.
 - Every model declares its `billing`, which `models list`, `models show`, and dry-run plans report.
-  It's `paid` for every model in Iris 0.1.0: requests are billed to the provider account at its
-  published prices, and neither provider has a free tier for these models. Not every request is
-  billed: Google doesn't charge for a video that it blocks. Human output derives its "this is a paid
-  request" wording from that value.
+  It's `paid` for every OpenAI and Gemini model: requests are billed to the provider account at its
+  published prices, and neither provider has a free tier for these models. The Vercel AI Gateway
+  model is `paid_with_free_tier`: the gateway has a free tier for a subset of its models, and its
+  docs don't say whether Klein is in it, so `paid`, which promises no free tier, would claim too
+  much. Changing what `paid` means would need a `schema_version` bump, while `billing` is an open
+  set, so the new value is additive. Not every request is billed: Google doesn't charge for a video
+  that it blocks. Human output calls every such request "paid".
 - `--max-cost USD` caps what one generation command may spend. A request whose estimate before
   sending is above the cap, or that has no estimate, is refused before anything is sent
   (`cost_limit_exceeded`), in a dry run too. The cap is given on the command line only, with no

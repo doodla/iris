@@ -31,10 +31,11 @@ fn saved_dir(v: &Value) -> std::path::PathBuf {
     path.parent().unwrap().to_path_buf()
 }
 
-/// A mock that answers every provider route with a success.
+/// A mock that answers every provider route with a success, with an image of the size
+/// the tests ask for (1024x1024).
 fn answering_api() -> MockApi {
     let api = MockApi::start();
-    let image = png(8, 8);
+    let image = png(1024, 1024);
     api.on("POST", OPENAI_GENERATIONS, openai_images(&[&image], "req_e2e_cli"));
     api.on("POST", OPENAI_EDITS, openai_images(&[&image], "req_e2e_cli"));
     let part = serde_json::json!([inline_part("image/png", &image)]);
@@ -349,10 +350,8 @@ fn dry_runs_never_contact_a_provider_and_need_no_keys() {
             base.clone().args(["image", "generate", "-m", OPENAI_IMAGE_MODEL, "a fox", "--dry-run"]).run();
         assert!(out.human().starts_with("Dry run: nothing was sent"), "{}", out.stdout);
         assert!(
-            out.human().contains(
-                "\n  billing:    paid (requests are billed to the provider account at its published prices; no \
-                 free tier)\n"
-            ),
+            out.human()
+                .contains("\n  billing:    paid (requests are billed to the provider account at its published prices; no free tier)\n"),
             "{}",
             out.stdout
         );
@@ -1695,14 +1694,17 @@ fn doctor_checks_access_to_every_model_of_a_provider_with_a_key() {
             json_response(200, serde_json::json!({ "id": id, "object": "model" })),
         );
     }
-    // Only the OpenAI key is set, so Gemini is skipped and the mock sees every call.
+    // Only the OpenAI key is set, so Gemini and Vercel are skipped and the mock sees every call.
     let v = sb.iris().openai(&api).args(["doctor", "--check-access", "--json"]).run().ok();
     let checks = v["result"]["checks"].as_array().unwrap();
     let access: Vec<&Value> =
         checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")).collect();
     let ids: Vec<String> = access.iter().map(|c| c["id"].as_str().unwrap().to_string()).collect();
-    let expected: Vec<String> =
-        models.iter().map(|id| format!("access.openai.{id}")).chain(["access.gemini".to_string()]).collect();
+    let expected: Vec<String> = models
+        .iter()
+        .map(|id| format!("access.openai.{id}"))
+        .chain(["access.gemini".to_string(), "access.vercel".to_string()])
+        .collect();
     assert_eq!(ids, expected, "{v}");
     assert!(access[..models.len()].iter().all(|c| c["status"] == "ok"), "{v}");
     assert_eq!(v["result"]["healthy"], true, "{v}");
@@ -1728,4 +1730,97 @@ fn every_provider_starts_without_a_key_and_with_an_unreachable_base_url() {
         assert_eq!(source, "env", "{provider}: {v}");
         assert!(value.as_str().unwrap().starts_with(DEAD_URL), "{provider}: {v}");
     }
+}
+
+/// `doctor --check-access` with only the Vercel key reads the gateway's annotated
+/// model list once, and words each result as the gateway's eligibility check.
+#[test]
+fn doctor_checks_vercel_access_with_one_read_of_the_model_list() {
+    let models: Vec<&str> = iris::catalog::all()
+        .filter(|m| m.provider == iris::domain::ProviderId::Vercel)
+        .map(|m| m.id)
+        .collect();
+    let run = |eligibility: Value| {
+        let sb = Sandbox::new();
+        let api = MockApi::start();
+        let rows: Vec<Value> =
+            models.iter().map(|id| serde_json::json!({"id": id, "model_eligibility": eligibility})).collect();
+        api.on(
+            "GET",
+            "/v1/models",
+            json_response(
+                200,
+                serde_json::json!({"object": "list", "data": rows,
+                                   "request_context_availability": {"http": {"status": "available"}}}),
+            ),
+        );
+        let v = sb.iris().vercel(&api).args(["doctor", "--check-access", "--json"]).run().ok();
+        assert_eq!(api.count("GET", "/v1/models"), 1, "one read answers every model");
+        assert_eq!(api.total(), 1);
+        api.assert_credentials_only_in(Some(("authorization", &format!("Bearer {VERCEL_KEY}"))));
+        v
+    };
+    let find = |v: &Value, model: &str| {
+        let id = format!("access.vercel.{model}");
+        v["result"]["checks"].as_array().unwrap().iter().find(|c| c["id"] == id.as_str()).cloned().unwrap()
+    };
+
+    let v = run(serde_json::json!({"evaluated_runtime": "http", "status": "eligible"}));
+    for model in &models {
+        let check = find(&v, model);
+        assert_eq!(check["status"], "ok", "{v}");
+        assert!(check["message"].as_str().unwrap().contains("is eligible for this key's team"), "{v}");
+    }
+    let v =
+        run(serde_json::json!({"evaluated_runtime": "http", "status": "ineligible", "category": "policy"}));
+    for model in &models {
+        let check = find(&v, model);
+        assert_eq!(check["status"], "warning", "{v}");
+        let message = check["message"].as_str().unwrap();
+        assert!(
+            message.contains("not eligible for this key's team") && !message.contains("found no model"),
+            "{v}"
+        );
+    }
+}
+
+/// `models show --check-access` for a gateway model reports the team-eligibility scope,
+/// and a refused model list is an error, not an unknown result.
+#[test]
+fn models_show_checks_vercel_access_in_the_gateways_terms() {
+    let model = "bfl/flux-3-image-klein";
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on(
+        "GET",
+        "/v1/models",
+        json_response(
+            200,
+            serde_json::json!({"object": "list",
+                "data": [{"id": model, "model_eligibility": {"evaluated_runtime": "http", "status": "eligible"}}],
+                "request_context_availability": {"http": {"status": "available"}}}),
+        ),
+    );
+    let v = sb.iris().vercel(&api).args(["models", "show", model, "--check-access", "--json"]).run().ok();
+    let access = &v["result"]["model"]["access"];
+    assert_eq!(access["account_access"], "available", "{v}");
+    assert_eq!(access["checked_scope"], "team_eligibility", "{v}");
+    assert_eq!(v["result"]["model"]["billing"], "paid_with_free_tier", "{v}");
+    let human = sb.iris().vercel(&api).args(["models", "show", model, "--check-access"]).run();
+    assert!(
+        human.human().contains("account access: available: eligible for this key's team"),
+        "{}",
+        human.stdout
+    );
+
+    let sb = Sandbox::new();
+    let api = MockApi::start();
+    api.on(
+        "GET",
+        "/v1/models",
+        json_response(403, serde_json::json!({"error": {"message": "team blocked"}})),
+    );
+    let out = sb.iris().vercel(&api).args(["models", "show", model, "--check-access", "--json"]).run();
+    let v = out.json();
+    assert_eq!(v["error"]["code"], "permission_denied", "{v}");
 }

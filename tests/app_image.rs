@@ -68,7 +68,19 @@ impl Fixture {
         }
     }
 
+    /// Run, and fail on an `output_size_mismatch`: a fake must return the size that a
+    /// test asks for, unless the test is about the mismatch ([`Self::run_any`]).
     async fn run(
+        &self,
+        op: Operation,
+        a: ImageArgs,
+    ) -> (Result<GenerationOutcome<ImageResult>, IrisError>, Vec<Warning>) {
+        let (r, warnings) = self.run_any(op, a).await;
+        assert!(!has_warning(&warnings, "output_size_mismatch"), "unexpected size mismatch: {warnings:?}");
+        (r, warnings)
+    }
+
+    async fn run_any(
         &self,
         op: Operation,
         a: ImageArgs,
@@ -968,4 +980,73 @@ async fn max_cost_refuses_a_request_estimated_above_it_or_without_an_estimate() 
     let mut a = args("x");
     a.common.dry_run = true;
     assert_eq!(planned(f.run(Operation::ImageGenerate, a).await.0.unwrap()).max_cost, None);
+}
+
+// ----- checks of what was saved against the catalog --------------------------------------------
+
+#[tokio::test]
+async fn an_image_of_another_size_than_requested_is_kept_with_a_warning() {
+    let f = Fixture::new();
+    f.openai.images().push(Ok(image_output(vec![png(16, 8)])));
+    let mut a = args("a red kite");
+    a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "low", "--quality")];
+    let (r, warnings) = f.run_any(Operation::ImageGenerate, a).await;
+    let res = completed(r.unwrap());
+    assert_eq!(res.artifacts.len(), 1, "the paid image is kept");
+    let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
+    assert!(w.message.contains("is 16x8, but the request asked for 1024x1024"), "{}", w.message);
+    assert!(w.message.contains("the cost estimate is for the requested size"), "{}", w.message);
+
+    // With reported usage, the estimate comes from it, and the warning says so.
+    let f = Fixture::new();
+    let mut out = image_output(vec![png(16, 8)]);
+    out.usage = Some(Usage { output_tokens: Some(250), ..Default::default() });
+    f.openai.images().push(Ok(out));
+    let mut a = args("a red kite");
+    a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "low", "--quality")];
+    let (r, warnings) = f.run_any(Operation::ImageGenerate, a).await;
+    r.unwrap();
+    let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
+    assert!(w.message.contains("comes from the usage that the provider reported"), "{}", w.message);
+
+    // Without any estimate, the warning does not mention one that does not exist.
+    let f = Fixture::new();
+    f.openai.images().push(Ok(image_output(vec![png(16, 8)])));
+    let mut a = args("a red kite");
+    a.common.options = vec![flag("size", "1024x1024", "--size"), flag("quality", "auto", "--quality")];
+    let (r, warnings) = f.run_any(Operation::ImageGenerate, a).await;
+    r.unwrap();
+    assert!(has_warning(&warnings, "cost_estimate_unavailable"));
+    let w = warnings.iter().find(|w| w.code == "output_size_mismatch").expect("a size warning");
+    assert!(w.message.contains("Iris has no cost estimate for this request"), "{}", w.message);
+
+    // The requested size, or no pixel size at all, gives no warning.
+    for (size, image) in [(Some("16x8"), png(16, 8)), (Some("auto"), png(4, 4)), (None, png(4, 4))] {
+        let f = Fixture::new();
+        f.openai.images().push(Ok(image_output(vec![image])));
+        let mut a = args("a red kite");
+        a.common.options = vec![flag("quality", "low", "--quality")];
+        a.common.options.extend(size.map(|s| flag("size", s, "--size")));
+        let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+        r.unwrap();
+        assert!(!has_warning(&warnings, "output_size_mismatch"), "{size:?}");
+    }
+}
+
+#[tokio::test]
+async fn an_image_of_a_type_the_model_does_not_declare_is_kept_with_a_warning() {
+    let f = Fixture::new();
+    let mut webp = std::io::Cursor::new(Vec::new());
+    ::image::DynamicImage::ImageRgba8(::image::RgbaImage::from_pixel(8, 8, ::image::Rgba([1, 2, 3, 255])))
+        .write_to(&mut webp, ::image::ImageFormat::WebP)
+        .unwrap();
+    // The Gemini-like fake declares only PNG and JPEG.
+    f.gemini.images().push(Ok(image_output(vec![webp.into_inner()])));
+    let mut a = args("a red kite");
+    a.common.model = Some("fake-gemini-image".into());
+    let (r, warnings) = f.run(Operation::ImageGenerate, a).await;
+    let res = completed(r.unwrap());
+    assert_eq!(res.artifacts[0].media_type, "image/webp");
+    let w = warnings.iter().find(|w| w.code == "output_type_undeclared").expect("a type warning");
+    assert!(w.message.contains("image/webp") && w.message.contains("image/png, image/jpeg"), "{}", w.message);
 }

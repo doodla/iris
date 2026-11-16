@@ -18,11 +18,13 @@ use crate::output::CommandName;
 pub static VERSION: LazyLock<String> =
     LazyLock::new(|| format!("{} ({})", env!("CARGO_PKG_VERSION"), info::target()));
 
-const ABOUT: &str = "Generate and edit images and generate videos with OpenAI and Google Gemini/Veo";
+const ABOUT: &str =
+    "Generate and edit images and generate videos with OpenAI, Google Gemini/Veo, and the Vercel AI Gateway";
 
 const LONG_ABOUT: &str = "\
-Iris generates and edits images (OpenAI GPT Image, Google Gemini \"Nano Banana\") and generates \
-videos (Google Veo) from one agent-friendly command line.
+Iris generates and edits images (OpenAI GPT Image, Google Gemini \"Nano Banana\"), generates images \
+through the Vercel AI Gateway (Black Forest Labs FLUX 3 Image Klein), and generates videos (Google Veo) from one \
+agent-friendly command line.
 
 Every generation command names its model: pass -m/--model, or set the model in the config file \
 ([image] model, [video] model). Iris never chooses a model for you; `iris models list` shows the \
@@ -34,8 +36,9 @@ is a provider-native job: Iris records it locally, waits, and saves the video; w
 returns a job id that later commands (iris jobs status/wait/download) resume, even from another \
 process that uses the same state directory (`iris config path`).
 
-Credentials are read only from the OPENAI_API_KEY and GEMINI_API_KEY environment variables. \
-Provider usage is billed by the provider to your API account; Iris reports cost estimates only.
+Credentials are read only from the OPENAI_API_KEY, GEMINI_API_KEY, and AI_GATEWAY_API_KEY \
+environment variables. Provider usage is billed by the provider to your API account (for the \
+Vercel AI Gateway, your team's AI Gateway Credits); Iris reports cost estimates only.
 
 With --json, every command prints exactly one JSON document on stdout (schema: `iris schema`); \
 progress and diagnostics go to stderr. Iris never prompts interactively.";
@@ -154,10 +157,11 @@ pub enum Command {
     #[command(
         long_about = "Check credential presence (never values; no provider key at all is an error, since every \
                       generation command would fail), configuration validity, state and output directory \
-                      writability, and base URL overrides. --check-access additionally makes free \
-                      metadata calls to see whether every catalog model of each provider whose API key is set \
-                      is visible to your key; they do not check billing tier, prepaid credit, or organization \
-                      verification, so a paid request can still be refused.\n\nExit status: \
+                      writability, and base URL overrides. --check-access additionally asks each provider \
+                      whose API key is set, with free requests, whether you can use each of its catalog models. \
+                      Each result says what the provider's check covered: for OpenAI and Gemini only that the \
+                      model is visible to your key, for the Vercel AI Gateway your team's eligibility and \
+                      account. A paid request can still be refused.\n\nExit status: \
                       doctor exits 0 whenever its checks ran, even when it finds problems. Read `healthy` \
                       (result.healthy with --json) or look for [error] lines instead of relying on the exit \
                       code.",
@@ -753,9 +757,9 @@ pub enum ModelsCommand {
                       published prices, the estimated cost of the standard output that `models list` \
                       compares models on, with the options that give it, and documented access requirements. Without --check-access it reads only the \
                       catalog and whether the API key is set, so it runs even when the config file is invalid. \
-                      --check-access also asks the provider with a free metadata call whether the model is \
-                      visible to your key; billing tier, prepaid credit, and organization verification are \
-                      not checked.",
+                      --check-access also asks the provider, with a free request, whether you can use the \
+                      model, and says what the provider's check covered (access.checked_scope): for OpenAI and \
+                      Gemini only that the model is visible to your key.",
         after_help = "Examples:\n  iris models show nano-banana-2\n  iris models show gpt-image-2 --json\n  iris \
                       models show veo-fast --check-access"
     )]
@@ -777,7 +781,7 @@ pub struct ModelsShowArgs {
     /// Model id or alias
     #[arg(value_name = "MODEL")]
     pub model: String,
-    /// Check with a free metadata call whether the model is visible to your key (needs the provider's API key)
+    /// Check with a free request whether you can use the model (needs the provider's API key)
     #[arg(long)]
     pub check_access: bool,
 }
@@ -787,10 +791,10 @@ pub enum ProvidersCommand {
     /// List providers, credential variables, presence, and base URLs
     #[command(
         long_about = "List every provider Iris supports with its operations, the environment variable its \
-                      API key is read from (OPENAI_API_KEY or GEMINI_API_KEY), whether that variable is set \
-                      (never its value), and the base URL requests go to. The key is sent to that base URL, \
-                      including an override from IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, or the config \
-                      file.",
+                      API key is read from (OPENAI_API_KEY, GEMINI_API_KEY, or AI_GATEWAY_API_KEY), whether that \
+                      variable is set (never its value), and the base URL requests go to. The key is sent to \
+                      that base URL, including an override from IRIS_OPENAI_BASE_URL, IRIS_GEMINI_BASE_URL, \
+                      IRIS_VERCEL_BASE_URL, or the config file.",
         after_help = "Examples:\n  iris providers list\n  iris providers list --json"
     )]
     List,
@@ -820,8 +824,7 @@ pub enum ConfigCommand {
 
 #[derive(Debug, Args)]
 pub struct DoctorArgs {
-    /// Also check with free metadata calls whether each model of a provider whose API key is set is
-    /// visible to your key
+    /// Also check with free requests whether you can use each model of a provider whose API key is set
     #[arg(long)]
     pub check_access: bool,
 }

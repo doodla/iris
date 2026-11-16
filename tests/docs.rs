@@ -357,3 +357,52 @@ fn the_checks_catch_problems() {
     let expected: BTreeSet<String> = ["after", "last"].into_iter().map(String::from).collect();
     assert_eq!(headings, expected);
 }
+
+/// The first cells of the rows of the Markdown table under the header row that starts
+/// with `header`, lowercased.
+fn table_first_cells(text: &str, header: &str) -> Vec<String> {
+    let start = text.find(header).unwrap_or_else(|| panic!("a table with the header {header:?}"));
+    text[start..]
+        .lines()
+        .skip(2)
+        .take_while(|line| line.starts_with('|'))
+        .map(|line| line.trim_matches('|').split('|').next().unwrap_or("").trim().to_ascii_lowercase())
+        .collect()
+}
+
+/// The pages a new provider must update by hand (docs/contributing/adding-a-provider.md,
+/// "Updated by hand") cover every provider: the install guide shows how to set its key,
+/// the Configuration reference's key table has a row with its variable, and Check your
+/// access has a row saying what its `--check-access` confirms.
+#[test]
+fn the_setup_and_access_pages_cover_every_provider() {
+    let install = read(Path::new("docs/guides/install.md"));
+    let keys = read(Path::new("docs/reference/configuration.md"));
+    let guide = read(Path::new("docs/guides/models-and-costs.md"));
+    let access = &guide[guide.find("## Check your access").expect("a Check your access section")..];
+    let key_rows = keys
+        .lines()
+        .skip_while(|line| !line.starts_with("| Provider | Environment variable |"))
+        .take_while(|line| line.starts_with('|'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let confirms = table_first_cells(access, "| Provider | What `--check-access` confirms |");
+    for provider in iris::domain::ProviderId::ALL {
+        let var = provider.credential_env();
+        assert!(install.contains(&format!("export {var}=")), "install.md does not show how to set {var}");
+        assert!(
+            key_rows.contains(&format!("`{var}`")),
+            "the Configuration reference's key table lacks {var}"
+        );
+        assert!(
+            confirms.iter().any(|cell| cell.contains(provider.as_str())),
+            "Check your access has no `--check-access` row for {provider}: {confirms:?}"
+        );
+    }
+}
+
+#[test]
+fn table_first_cells_reads_one_table() {
+    let text = "x\n| A | B |\n|---|---|\n| One, Two | 1 |\n| Three | 3 |\n\n| Other | t |\n";
+    assert_eq!(table_first_cells(text, "| A | B |"), ["one, two", "three"]);
+}

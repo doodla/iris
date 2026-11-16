@@ -17,6 +17,9 @@ pub enum ProviderId {
     OpenAi,
     /// Google Gemini developer API (generativelanguage.googleapis.com), including Veo.
     Gemini,
+    /// Vercel AI Gateway (ai-gateway.vercel.sh), image-only models through its
+    /// OpenAI-compatible Images endpoint.
+    Vercel,
 }
 
 /// The one place that names each provider's fixed identity: its id, display name,
@@ -28,7 +31,7 @@ impl ProviderId {
     /// `Registry::builtin()`, which `providers list` iterates). The compiler does not
     /// check that this list is complete; the `all_lists_every_provider_once` test
     /// below compares it with the enum's variants, the registry, and the catalog.
-    pub const ALL: &'static [ProviderId] = &[ProviderId::OpenAi, ProviderId::Gemini];
+    pub const ALL: &'static [ProviderId] = &[ProviderId::OpenAi, ProviderId::Gemini, ProviderId::Vercel];
 
     /// The provider's id: its serde name, `--provider` value, and the name of its
     /// `[providers.<id>]` config table.
@@ -36,6 +39,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "openai",
             ProviderId::Gemini => "gemini",
+            ProviderId::Vercel => "vercel",
         }
     }
 
@@ -44,6 +48,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "OpenAI",
             ProviderId::Gemini => "Google Gemini API",
+            ProviderId::Vercel => "Vercel AI Gateway",
         }
     }
 
@@ -52,6 +57,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "OPENAI_API_KEY",
             ProviderId::Gemini => "GEMINI_API_KEY",
+            ProviderId::Vercel => "AI_GATEWAY_API_KEY",
         }
     }
 
@@ -63,6 +69,8 @@ impl ProviderId {
             ProviderId::OpenAi => "https://api.openai.com/v1",
             // The origin: the adapter appends the API version (`/v1` or `/v1beta`).
             ProviderId::Gemini => "https://generativelanguage.googleapis.com",
+            // Endpoint paths are appended to it.
+            ProviderId::Vercel => "https://ai-gateway.vercel.sh/v1",
         }
     }
 
@@ -72,6 +80,7 @@ impl ProviderId {
         match self {
             ProviderId::OpenAi => "IRIS_OPENAI_BASE_URL",
             ProviderId::Gemini => "IRIS_GEMINI_BASE_URL",
+            ProviderId::Vercel => "IRIS_VERCEL_BASE_URL",
         }
     }
 }
@@ -176,26 +185,38 @@ pub enum ModelSource {
 }
 
 /// Whether a model's requests cost money, as the catalog declares it. An open set
-/// (docs/reference/json-output.md): a later Iris may add a value, and human output uses each
-/// value as the adjective for a request ("this is a paid request").
+/// (docs/reference/json-output.md): a later Iris may add a value. Human output calls a
+/// request by [`Billing::adjective`] ("this is a paid request").
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Billing {
     /// Requests are billed to the provider account at its published prices; the
     /// provider offers no free tier.
     Paid,
+    /// Requests are billed at the provider's published prices, and the provider has a
+    /// free tier that may cover some requests (the model's access notes say what is
+    /// known about it).
+    PaidWithFreeTier,
 }
 
 impl Billing {
     /// Every value, in the documented order. The compiler does not check that it is
     /// complete; the `billing_values_are_distinct_snake_case_names` test compares it
     /// with the enum's variants.
-    pub const ALL: &'static [Billing] = &[Billing::Paid];
+    pub const ALL: &'static [Billing] = &[Billing::Paid, Billing::PaidWithFreeTier];
 
     /// The serialized value.
     pub const fn as_str(self) -> &'static str {
         match self {
             Billing::Paid => "paid",
+            Billing::PaidWithFreeTier => "paid_with_free_tier",
+        }
+    }
+
+    /// The adjective for a request in human output ("this is a paid request").
+    pub const fn adjective(self) -> &'static str {
+        match self {
+            Billing::Paid | Billing::PaidWithFreeTier => "paid",
         }
     }
 
@@ -204,6 +225,10 @@ impl Billing {
         match self {
             Billing::Paid => {
                 "requests are billed to the provider account at its published prices; no free tier"
+            }
+            Billing::PaidWithFreeTier => {
+                "requests are billed at the provider's published prices; the provider has a free tier that may \
+                 cover some requests (see the model's access notes)"
             }
         }
     }
@@ -328,6 +353,10 @@ pub enum WarningCode {
     /// The model takes no output format: the provider picks the image type, so an
     /// `-o` extension may be changed when the image is saved.
     OutputExtensionMayChange,
+    /// A saved output's type is not one the model's catalog entry declares.
+    OutputTypeUndeclared,
+    /// A saved image's pixel size differs from the size the request set.
+    OutputSizeMismatch,
 }
 
 impl WarningCode {
@@ -352,6 +381,8 @@ impl WarningCode {
         WarningCode::OutputItemUnusable,
         WarningCode::OutputSavedElsewhere,
         WarningCode::OutputExtensionMayChange,
+        WarningCode::OutputTypeUndeclared,
+        WarningCode::OutputSizeMismatch,
     ];
 
     /// The public snake_case code.
@@ -372,6 +403,8 @@ impl WarningCode {
             WarningCode::UnexpectedOutputCount => "unexpected_output_count",
             WarningCode::StatusRefreshFailed => "status_refresh_failed",
             WarningCode::OutputItemUnusable => "output_item_unusable",
+            WarningCode::OutputTypeUndeclared => "output_type_undeclared",
+            WarningCode::OutputSizeMismatch => "output_size_mismatch",
             WarningCode::OutputSavedElsewhere => "output_saved_elsewhere",
             WarningCode::OutputExtensionMayChange => "output_extension_may_change",
         }

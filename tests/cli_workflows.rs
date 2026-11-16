@@ -637,11 +637,17 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
     let v = f.run(&["models", "show", "fake-video-1", "--check-access", "--json"]).await.json();
     assert_eq!(v["result"]["model"]["access"]["account_access"], "available");
     assert!(v["result"]["model"]["access"]["checked_at"].is_string());
+    assert_eq!(v["result"]["model"]["access"]["checked_scope"], "model_metadata");
     assert_eq!(f.gemini.access_calls.load(Ordering::SeqCst), 1);
     let run = f.run(&["models", "show", "fake-video-1", "--check-access"]).await;
-    assert!(run.stdout.contains("account access: visible to this key (checked "), "{}", run.stdout);
     assert!(
-        run.stdout.contains("model metadata only, billing and verification not checked"),
+        run.stdout.contains("account access: available: visible to this key (checked "),
+        "{}",
+        run.stdout
+    );
+    assert!(
+        run.stdout
+            .contains("model metadata only; billing tier, prepaid credit, and organization verification"),
         "{}",
         run.stdout
     );
@@ -665,10 +671,8 @@ async fn models_and_providers_describe_the_catalog_without_revealing_keys() {
         run.stdout
     );
     assert!(
-        run.stdout.contains(
-            "\n  billing:     paid (requests are billed to the provider account at its published prices; no free \
-             tier)\n"
-        ),
+        run.stdout
+            .contains("\n  billing:     paid (requests are billed to the provider account at its published prices; no free tier)\n"),
         "{}",
         run.stdout
     );
@@ -769,8 +773,8 @@ async fn doctor_is_unhealthy_without_any_provider_key() {
         assert_eq!(find("credentials")["status"], "error");
         assert_eq!(
             find("credentials")["message"],
-            "no provider API key is set (OPENAI_API_KEY, GEMINI_API_KEY): every generation command would fail \
-             with missing_credentials"
+            "no provider API key is set (OPENAI_API_KEY, GEMINI_API_KEY, AI_GATEWAY_API_KEY): every generation \
+             command would fail with missing_credentials"
         );
     }
     let human = doctor(f.sandbox.env_without_keys(), &["doctor"]).await;
@@ -805,9 +809,20 @@ async fn doctor_check_ids_are_unique_and_access_means_visible_to_the_key() {
     let access: Vec<&str> = ids.iter().copied().filter(|id| id.starts_with("access.")).collect();
     assert_eq!(
         access,
-        ["access.openai.fake-image-1", "access.gemini.fake-gemini-image", "access.gemini.fake-video-1"]
+        [
+            "access.openai.fake-image-1",
+            "access.gemini.fake-gemini-image",
+            "access.gemini.fake-video-1",
+            "access.vercel"
+        ]
     );
-    for check in checks.iter().filter(|c| c["id"].as_str().unwrap().starts_with("access.")) {
+    // The fake registry has no Vercel adapter, and the sandbox sets no Vercel key.
+    let vercel = checks.iter().find(|c| c["id"] == "access.vercel").unwrap();
+    assert_eq!(vercel["message"], "not checked: AI_GATEWAY_API_KEY is not set", "{v}");
+    for check in checks
+        .iter()
+        .filter(|c| c["id"].as_str().unwrap().starts_with("access.") && c["id"] != "access.vercel")
+    {
         let message = check["message"].as_str().unwrap();
         assert!(message.contains("is visible to this key"), "{message}");
         assert!(message.contains("organization verification are not checked"), "{message}");

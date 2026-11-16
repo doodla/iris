@@ -529,6 +529,8 @@ fn describe_lists_every_setting_with_sources_and_never_secrets() {
             "providers.gemini.base_url",
             "providers.gemini.request_timeout",
             "providers.gemini.submit_timeout",
+            "providers.vercel.base_url",
+            "providers.vercel.request_timeout",
             "log",
         ]
     );
@@ -548,7 +550,14 @@ fn describe_lists_every_setting_with_sources_and_never_secrets() {
     assert!(show.config_file_exists);
 
     let creds: Vec<(String, bool)> = show.credentials.iter().map(|c| (c.env.clone(), c.present)).collect();
-    assert_eq!(creds, [("OPENAI_API_KEY".to_string(), true), ("GEMINI_API_KEY".to_string(), false)]);
+    assert_eq!(
+        creds,
+        [
+            ("OPENAI_API_KEY".to_string(), true),
+            ("GEMINI_API_KEY".to_string(), false),
+            ("AI_GATEWAY_API_KEY".to_string(), false)
+        ]
+    );
     let json = serde_json::to_string(&show).unwrap();
     assert!(!json.contains(FAKE_OPENAI), "config show must never include a key");
     assert!(!format!("{s:?}").contains(FAKE_OPENAI), "Debug must never include a key");

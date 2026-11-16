@@ -1,16 +1,42 @@
 {
   "$defs": {
+    "AccessScope": {
+      "anyOf": [
+        {
+          "enum": [
+            "model_metadata",
+            "team_eligibility"
+          ]
+        },
+        {
+          "pattern": "^[a-z][a-z0-9_]*$"
+        }
+      ],
+      "description": "What a provider's access check established: one of the listed values (model_metadata: model metadata only; billing tier, prepaid credit, and organization verification are not checked; team_eligibility: the provider's eligibility check of the team's settings and account admission (funds, quota, verification); a budget or the upstream provider can still refuse a request), or a value a later version of this schema_version adds. Read a value you do not know as: the model is at least visible to the key.",
+      "type": "string"
+    },
     "AccessView": {
       "properties": {
         "account_access": {
           "$ref": "#/$defs/AccountAccess",
-          "description": "Result of `--check-access` (`not_checked` without it): `available` means the\nprovider's model metadata is visible to this key. Billing tier, prepaid credit,\nand organization verification are not checked."
+          "description": "Result of `--check-access` (`not_checked` without it): `available` means at\nleast that the model is visible to this key; `checked_scope` says what the\nprovider's check established."
         },
         "checked_at": {
           "type": [
             "string",
             "null"
           ]
+        },
+        "checked_scope": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AccessScope"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "What the provider's access check establishes (null when not checked): an open\nset, `model_metadata` or `team_eligibility` (docs/reference/json-output.md)."
         },
         "credential_env": {
           "type": "string"
@@ -31,7 +57,8 @@
         "credential_present",
         "requirements",
         "account_access",
-        "checked_at"
+        "checked_at",
+        "checked_scope"
       ],
       "type": "object"
     },
@@ -110,14 +137,15 @@
       "anyOf": [
         {
           "enum": [
-            "paid"
+            "paid",
+            "paid_with_free_tier"
           ]
         },
         {
           "pattern": "^[a-z][a-z0-9_]*$"
         }
       ],
-      "description": "Whether a model's requests cost money: one of the listed values (paid: requests are billed to the provider account at its published prices; no free tier), or a value a later version of this schema_version adds. Read a value you do not know as: requests may cost money.",
+      "description": "Whether a model's requests cost money: one of the listed values (paid: requests are billed to the provider account at its published prices; no free tier; paid_with_free_tier: requests are billed at the provider's published prices; the provider has a free tier that may cover some requests (see the model's access notes)), or a value a later version of this schema_version adds. Read a value you do not know as: requests may cost money.",
       "type": "string"
     },
     "CheckStatus": {
@@ -2295,7 +2323,8 @@
         {
           "enum": [
             "openai",
-            "gemini"
+            "gemini",
+            "vercel"
           ]
         },
         {
@@ -2620,7 +2649,9 @@
                 "status_refresh_failed",
                 "output_item_unusable",
                 "output_saved_elsewhere",
-                "output_extension_may_change"
+                "output_extension_may_change",
+                "output_type_undeclared",
+                "output_size_mismatch"
               ]
             },
             {

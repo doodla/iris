@@ -236,7 +236,7 @@ async fn generate(
     ctx.progress.line(format!(
         "Submitting job {job_id} to {provider} ({}); this is a {} request",
         request::progress_model(&resolved, model_source, op),
-        spec.billing
+        spec.billing.adjective()
     ));
     // One that arrived before the request is sent (while the record was written or
     // the line printed) stops here, without sending it. `count()` would miss it: the

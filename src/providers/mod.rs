@@ -6,8 +6,11 @@
 //!
 //! Provider wire types live only inside `providers/<name>/`.
 
+mod errors;
 pub mod gemini;
 pub mod openai;
+mod openai_compat;
+pub mod vercel;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -231,6 +234,65 @@ pub enum AccountAccess {
     Unknown,
 }
 
+/// What a provider's free access check establishes. An open set in the JSON output
+/// (`access.checked_scope`, docs/reference/json-output.md): a later Iris may add a value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AccessScope {
+    /// A model metadata read: whether the key can see the model, and nothing about
+    /// billing or verification (OpenAI, Gemini).
+    ModelMetadata,
+    /// The provider's eligibility check of the team's settings and account admission
+    /// (the Vercel AI Gateway's `include_availability`).
+    TeamEligibility,
+}
+
+impl AccessScope {
+    /// Every value, in the documented order.
+    pub const ALL: &'static [AccessScope] = &[AccessScope::ModelMetadata, AccessScope::TeamEligibility];
+
+    /// The serialized value.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => "model_metadata",
+            AccessScope::TeamEligibility => "team_eligibility",
+        }
+    }
+
+    /// Said of a model the check found usable, e.g. "visible to this key".
+    pub const fn available(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => "visible to this key",
+            AccessScope::TeamEligibility => "eligible for this key's team",
+        }
+    }
+
+    /// Said of a model the check found not usable.
+    pub const fn unavailable(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => {
+                "not visible to this key or its project (the metadata read found no model)"
+            }
+            AccessScope::TeamEligibility => {
+                "not eligible for this key's team, or the team cannot make requests now"
+            }
+        }
+    }
+
+    /// What the check covers and what it does not.
+    pub const fn basis(self) -> &'static str {
+        match self {
+            AccessScope::ModelMetadata => {
+                "model metadata only; billing tier, prepaid credit, and organization verification are not checked"
+            }
+            AccessScope::TeamEligibility => {
+                "the provider's eligibility check of the team's settings and account admission (funds, quota, \
+                 verification); a budget or the upstream provider can still refuse a request"
+            }
+        }
+    }
+}
+
 /// How a provider authenticates: header name and value prefix.
 #[derive(Debug, Clone, Copy)]
 pub struct CredentialHeader {
@@ -262,6 +324,26 @@ pub trait Provider: Send + Sync {
 
     /// Free metadata call (model lookup) to check whether this account can see `model_id`.
     async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError>;
+
+    /// [`Self::check_access`] for several models, one result per model in order. The
+    /// default checks them one by one; a provider whose check reads one list for
+    /// every model overrides it to read the list once.
+    async fn check_access_many(
+        &self,
+        model_ids: &[&str],
+        ctx: &ProviderContext,
+    ) -> Vec<Result<AccountAccess, IrisError>> {
+        let mut results = Vec::with_capacity(model_ids.len());
+        for id in model_ids {
+            results.push(self.check_access(id, ctx).await);
+        }
+        results
+    }
+
+    /// What [`Self::check_access`] establishes. The default is a model metadata read.
+    fn access_scope(&self) -> AccessScope {
+        AccessScope::ModelMetadata
+    }
 
     fn image(&self) -> Option<&dyn ImageProvider> {
         None
@@ -330,7 +412,11 @@ pub struct Registry {
 impl Registry {
     pub fn builtin() -> Self {
         Registry {
-            providers: vec![Arc::new(openai::OpenAiProvider::new()), Arc::new(gemini::GeminiProvider::new())],
+            providers: vec![
+                Arc::new(openai::OpenAiProvider::new()),
+                Arc::new(gemini::GeminiProvider::new()),
+                Arc::new(vercel::VercelProvider::new()),
+            ],
         }
     }
 

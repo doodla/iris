@@ -36,6 +36,7 @@ use crate::catalog;
 use crate::domain::{Operation, ProviderId};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass};
+use crate::providers::errors::scrub_credential;
 
 /// The Gemini API adapter (images and Veo).
 #[derive(Debug, Default)]
@@ -68,30 +69,7 @@ impl Provider for GeminiProvider {
     /// Image models are looked up on `v1` (the version their generation call uses),
     /// Veo and unknown models on `v1beta` (Veo exists only there).
     async fn check_access(&self, model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError> {
-        client::validate_model_id(model_id)?;
-        let version = match catalog::find(model_id) {
-            Some(spec) if spec.provider == ProviderId::Gemini && !spec.supports(Operation::VideoGenerate) => {
-                API_V1
-            }
-            _ => API_V1BETA,
-        };
-        let auth = client::auth(ctx)?;
-        let url = client::endpoint(ctx, version, &format!("models/{model_id}"));
-        let call = client::call(RetryClass::IdempotentRead, ctx.timeouts.poll);
-        match ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), client::classify).await {
-            Ok(_) => Ok(AccountAccess::Available),
-            Err(HttpError::Error(e)) if e.provider_status == Some(404) => Ok(AccountAccess::Unavailable),
-            Err(HttpError::Error(e))
-                if e.code == ErrorCode::AuthenticationFailed || e.provider_status == Some(403) =>
-            {
-                Err(e)
-            }
-            Err(other) => {
-                let err = other.into_iris();
-                tracing::debug!(code = %err.code, "gemini access check inconclusive");
-                Ok(AccountAccess::Unknown)
-            }
-        }
+        check_access(model_id, ctx).await.map_err(|e| scrub_credential(e, ctx))
     }
 
     fn image(&self) -> Option<&dyn ImageProvider> {
@@ -103,14 +81,58 @@ impl Provider for GeminiProvider {
     }
 }
 
+/// The body of [`Provider::check_access`] for Gemini.
+async fn check_access(model_id: &str, ctx: &ProviderContext) -> Result<AccountAccess, IrisError> {
+    client::validate_model_id(model_id)?;
+    let version = match catalog::find(model_id) {
+        Some(spec) if spec.provider == ProviderId::Gemini && !spec.supports(Operation::VideoGenerate) => {
+            API_V1
+        }
+        _ => API_V1BETA,
+    };
+    let auth = client::auth(ctx)?;
+    let url = client::endpoint(ctx, version, &format!("models/{model_id}"));
+    let call = client::call(RetryClass::IdempotentRead, ctx.timeouts.poll);
+    match ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), client::classify).await {
+        Ok(_) => Ok(AccountAccess::Available),
+        Err(HttpError::Error(e)) if e.provider_status == Some(404) => Ok(AccountAccess::Unavailable),
+        Err(HttpError::Error(e))
+            if e.code == ErrorCode::AuthenticationFailed || e.provider_status == Some(403) =>
+        {
+            Err(e)
+        }
+        Err(other) => {
+            let err = other.into_iris();
+            tracing::debug!(code = %err.code, "gemini access check inconclusive");
+            Ok(AccountAccess::Unknown)
+        }
+    }
+}
+
+/// Remove the context's own credential from an image failure (see
+/// `providers::errors::scrub_credential`).
+fn scrub_failure(mut failure: ImageFailure, ctx: &ProviderContext) -> ImageFailure {
+    failure.error = scrub_credential(failure.error, ctx);
+    failure
+}
+
+/// Remove the context's own credential from the error a remote status carries.
+fn scrub_status(status: RemoteStatus, ctx: &ProviderContext) -> RemoteStatus {
+    match status {
+        RemoteStatus::Failed { error } => RemoteStatus::Failed { error: scrub_credential(error, ctx) },
+        RemoteStatus::Gone { error } => RemoteStatus::Gone { error: scrub_credential(error, ctx) },
+        other => other,
+    }
+}
+
 #[async_trait]
 impl ImageProvider for GeminiProvider {
     async fn generate(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
-        image::run(Operation::ImageGenerate, req, ctx).await
+        image::run(Operation::ImageGenerate, req, ctx).await.map_err(|f| scrub_failure(f, ctx))
     }
 
     async fn edit(&self, req: &ImageRequest, ctx: &ProviderContext) -> Result<ImageOutput, ImageFailure> {
-        image::run(Operation::ImageEdit, req, ctx).await
+        image::run(Operation::ImageEdit, req, ctx).await.map_err(|f| scrub_failure(f, ctx))
     }
 }
 
@@ -125,11 +147,14 @@ impl VideoProvider for GeminiProvider {
         req: &VideoRequest,
         ctx: &ProviderContext,
     ) -> Result<SubmittedOperation, IrisError> {
-        veo::submit(req, ctx).await
+        veo::submit(req, ctx).await.map_err(|e| scrub_credential(e, ctx))
     }
 
     async fn poll(&self, remote_id: &str, ctx: &ProviderContext) -> Result<RemoteStatus, IrisError> {
-        veo::poll(remote_id, ctx).await
+        match veo::poll(remote_id, ctx).await {
+            Ok(status) => Ok(scrub_status(status, ctx)),
+            Err(e) => Err(scrub_credential(e, ctx)),
+        }
     }
 
     /// "Generated videos are stored on the server for 2 days" (Veo guide).

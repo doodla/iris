@@ -17,7 +17,7 @@
 # if any check failed, and 0 otherwise.
 #
 # Like the test suite, it needs no API key and costs nothing: it unsets
-# OPENAI_API_KEY and GEMINI_API_KEY before it starts.
+# OPENAI_API_KEY, GEMINI_API_KEY, and AI_GATEWAY_API_KEY before it starts.
 
 set -u
 
@@ -49,7 +49,7 @@ for arg in "$@"; do
 done
 
 # Never let a real key reach a check.
-unset OPENAI_API_KEY GEMINI_API_KEY
+unset OPENAI_API_KEY GEMINI_API_KEY AI_GATEWAY_API_KEY
 
 summary=""
 failed=0

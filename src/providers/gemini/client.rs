@@ -10,8 +10,7 @@ use super::wire::{ErrorBody, ErrorStatus};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{
-    AuthHeader, Call, HttpResponse, RetryClass, Verdict, parse_protobuf_duration, redact_urls_in_text,
-    sanitize_request_id,
+    AuthHeader, Call, HttpResponse, RetryClass, Verdict, parse_protobuf_duration, sanitize_request_id,
 };
 use crate::providers::{CredentialHeader, ProviderContext, USAGE_MAX_DEPTH, USAGE_MAX_ENTRIES};
 use crate::redact;
@@ -83,9 +82,10 @@ pub fn base64_len(n: usize) -> usize {
     n.div_ceil(3).saturating_mul(4)
 }
 
-/// Provider text made safe to show: URLs redacted, secrets scrubbed, truncated.
+/// Provider text made safe to show: URLs redacted, secrets scrubbed, trimmed, and
+/// truncated (the shared `providers::errors::clean`).
 pub fn safe_text(text: &str) -> String {
-    redact::truncate(&redact::scrub(&redact_urls_in_text(text)), PROVIDER_TEXT_MAX)
+    crate::providers::errors::clean(text, PROVIDER_TEXT_MAX)
 }
 
 /// Facts extracted from a Google error body.

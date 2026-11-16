@@ -8,6 +8,23 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Added
 
+- **`billing: paid_with_free_tier`.** A new value of the open `billing` set: requests are billed at
+  the provider's published prices, and the provider has a free tier that may cover some requests.
+  The Vercel AI Gateway model has it, because Vercel's docs don't say which models its free tier
+  covers. `paid` keeps its meaning, with no free tier. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
+- **Saved images are checked against the catalog.** Iris warns with `output_type_undeclared` when
+  a saved output's type isn't one that `models show` lists for the model, and with
+  `output_size_mismatch` when an image's pixel size differs from the `--size` that you asked for
+  (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. See
+  [Errors](https://github.com/doodla/iris/blob/main/docs/reference/errors.md#warning-codes).
+- **Vercel AI Gateway provider.** `iris image generate` can run Black Forest Labs' FLUX 3 Image
+  Klein (`-m bfl/flux-3-image-klein`) through the Vercel AI Gateway, with the key in
+  `AI_GATEWAY_API_KEY` and the base URL in `IRIS_VERCEL_BASE_URL` or `[providers.vercel]`. `--size`
+  takes the five square sizes that the gateway prices, and the cost is estimated before the
+  request. `bfl/flux-3-image` is declined, because its size can't be requested or priced exactly. `--check-access` reads the team's eligibility for each model.
+  The gateway's image edits and video aren't offered: see
+  [Decisions](https://github.com/doodla/iris/blob/main/docs/contributing/decisions.md#vercel-ai-gateway-image-only-models-through-the-openai-compatible-images-endpoint).
 - **Jobs commands take a label.** `iris jobs status`, `jobs wait`, `jobs download`, and
   `jobs delete` find a job by the label that `video generate --label` gave it, with `--label`
   instead of the job ID. A script or agent that chose the label can follow its job without keeping
@@ -20,6 +37,15 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- **Each provider's catalog date.** `models show` reports each provider's own `catalog_as_of`
+  date, so the Vercel model shows the day it was checked. The other models keep their date.
+- **Access checks say what they checked.** `models show --check-access` adds
+  `access.checked_scope` (`model_metadata` or `team_eligibility`, an open set), and `doctor` and
+  `models show` word each access result in those terms. A refusal of the check, such as an HTTP 403,
+  is reported as an error, not as an unknown result. A Vercel AI Gateway model is reported as eligible or not for your
+  team, instead of as visible or not to your key, and the gateway's model list is read once per
+  `doctor --check-access` run instead of once per model. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **The installer falls back to git tags.** When GitHub's `releases/latest` page can't be read and
   `git` is installed, `install.sh` installs the highest `vX.Y.Z` tag that has a published release,
   and warns that it did. See [Install Iris](https://github.com/doodla/iris/blob/main/docs/guides/install.md).
@@ -121,6 +147,11 @@ Google models, for people and for agents.
 
 ### Added
 
+- **`billing: paid_with_free_tier`.** A new value of the open `billing` set: requests are billed at
+  the provider's published prices, and the provider has a free tier that may cover some requests.
+  The Vercel AI Gateway model has it, because Vercel's docs don't say which models its free tier
+  covers. `paid` keeps its meaning, with no free tier. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **Image generation and editing** with OpenAI's GPT Image 2.5 Sunburst, GPT Image 2.5 Flare, and
   GPT Image 2, and Google's Nano Banana 2, Nano Banana 2 Lite, and Nano Banana Pro. Edits can use
   several reference images and, with OpenAI, a mask. See

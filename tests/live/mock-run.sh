@@ -118,7 +118,7 @@ expect_count all 0 "" "--plan sent no request"
 run_mock() {
   env -i PATH="$PATH" HOME="$W/home" TMPDIR="$W/tmp" \
     IRIS_LIVE_ALLOW_BASE_URL_OVERRIDE=mock-only \
-    IRIS_OPENAI_BASE_URL="$MOCK/v1" IRIS_GEMINI_BASE_URL="$MOCK" \
+    IRIS_OPENAI_BASE_URL="$MOCK/v1" IRIS_GEMINI_BASE_URL="$MOCK" IRIS_VERCEL_BASE_URL="$MOCK/v1" \
     OPENAI_API_KEY=fake-openai-key-for-the-mock GEMINI_API_KEY=fake-gemini-key-for-the-mock \
     IRIS_LIVE_CONFIRM=yes-i-accept-charges IRIS_LIVE_VEO_CONFIRM=submit-one-veo-job \
     IRIS_LIVE_WAIT=2m \

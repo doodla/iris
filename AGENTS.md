@@ -10,8 +10,9 @@ source for that.
 - The CLI command tree, flags, JSON envelope, error `code`s, warning codes, and exit
   codes are public contracts. Change them only deliberately: additive JSON fields and
   codes are fine; renames, removals, or semantic changes require bumping
-  `schema_version`. Any change regenerates `schema/` (a test enforces this), updates
-  the docs, and gets a changelog entry.
+  `schema_version`. A value's published description is part of its meaning: compare
+  with the last release's `schema/` before rewording one. Any change regenerates
+  `schema/` (a test enforces this), updates the docs, and gets a changelog entry.
 - Persisted job records are versioned. Readers must keep loading older records and
   preserve fields they do not know.
 - `--json` mode prints exactly one JSON document on stdout. Everything else goes to stderr.
@@ -30,15 +31,17 @@ source for that.
 - Keep synchronous generation and provider-native async jobs distinct. Never offer
   detach, resume, or cancellation for an operation the provider cannot recover.
 - Do not claim capabilities, access, cancellation, or recovery that a provider does not
-  document. When providers differ, implement the honest subset.
+  document. When providers differ, implement the honest subset. For a gateway that routes
+  to other providers, read the per-model option docs it links to, not only its own API.
 - Adding a provider means: an adapter, one registry entry, its `ProviderId` identity,
   catalog declarations, tests, and the regenerated schema and docs. If it requires edits
   across the app, fix the abstraction first.
 
 ## Money, credentials, and safety
 
-- Credentials come only from `OPENAI_API_KEY` and `GEMINI_API_KEY`. Never print, log,
-  persist, or put them in URLs, argv, fixtures, or error messages. Check presence only.
+- Credentials come only from `OPENAI_API_KEY`, `GEMINI_API_KEY`, and `AI_GATEWAY_API_KEY`.
+  Never print, log, persist, or put them in URLs, argv, fixtures, or error messages. Check
+  presence only.
 - Paid submissions are never retried automatically unless the request provably did not
   reach the provider, or the provider explicitly rejected it before processing (rate
   limit, documented overload). Ambiguous outcomes are reported as uncertain and never

@@ -47,8 +47,10 @@ src/providers/seedance/
   wire.rs     -- request/response types (private)
 ```
 
-Implement `Provider`: `id`, the credential header, `docs_url`, and the free `check_access` metadata
-call. The default base URL comes from `ProviderId`. Then implement `VideoProvider`: `submit`,
+Implement `Provider`: `id`, the credential header, `docs_url`, and the free `check_access` call.
+If that call establishes more than that the key can see the model, return its `AccessScope` from
+`access_scope`, adding a value if none fits. If one request covers several models, override
+`check_access_many` to make it once. The default base URL comes from `ProviderId`. Then implement `VideoProvider`: `submit`,
 `poll`, and `output_retention`, and optionally `validate`, which runs the local checks that
 `submit` makes before the job record is written, and `check_output_uri`. For the trait
 definitions, see [Architecture](architecture.md#sync-and-async-two-provider-traits). A provider
@@ -105,10 +107,10 @@ doesn't:
   `VideoProvider::check_output_uri`. `providers/gemini/veo.rs::validate_output_uri` shows the
   pattern: the same origin and a narrow path shape. A refused URI fails that output's download,
   never the job.
-- **Redact before an error can leak.** Pass provider error text through `redact::scrub`, which
-  removes configured credential values, before it reaches `IrisError`.
-  `providers/openai/client.rs::scrub_credential` is the reference: it cleans every string field of
-  an error.
+- **Redact before an error can leak.** Use the shared helpers in `providers/errors.rs`, not your
+  own copies: `clean` and `annotate` make provider text display-safe before it reaches
+  `IrisError`, and `scrub_credential` removes the adapter's own key from every string field of an
+  error.
 
 ## Step 3: Give the provider its identity
 
@@ -158,7 +160,7 @@ pub static MODELS: &[ModelSpec] = &[
         inputs: InputSpec { /* image counts, media types, sizes, mask rules, frames, references,
                                inline request cap */ },
         options: OPTIONS,                              // every accepted option, typed (see below)
-        outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1 },
+        outputs: OutputSpec { media_types: &["video/mp4"], max_count: 1, exact_size_option: None },
         limits: Limits { max_prompt_chars: Some(2000) },
         pricing: PRICING,                              // &[PriceRule { .. }], with source_url + as_of
         access_notes: &["Preview model", "Paid tier required"],
@@ -183,8 +185,10 @@ pub const DECLINED: &[DeclinedName] = &[DeclinedName {
 ```
 
 Add the module to `src/catalog/mod.rs`: `pub mod seedance;`, its `MODELS` in the `all()` chain, its
-`DECLINED` names in the `declined_names()` chain, and a `model_id_syntax` arm for the IDs that its
-adapter can send. Then fill in the declarations:
+`DECLINED` names in the `declined_names()` chain, a `model_id_syntax` arm for the IDs that its
+adapter can send, and a `checked_on` arm with the date that you checked its entries: the module's
+own `CATALOG_AS_OF`, as `catalog/vercel.rs` has. `models show` reports that date as
+`catalog_as_of`. Then fill in the declarations:
 
 - **Options.** Declare every option that the model accepts as an `OptionSpec`: `OptionKind::Enum`
   of strings, `IntegerEnum` of integers, `Integer { min, max }`, `Boolean`, `Text { max_chars }`,
@@ -197,6 +201,12 @@ adapter can send. Then fill in the declarations:
   and `tests/cli_process.rs::every_typed_flag_is_declared_by_some_model_for_its_command`. Never
   declare an option that your adapter can't send: if the provider accepts it but your adapter has
   nowhere to put it yet, leave it out of the catalog.
+- **Outputs.** List every media type that the provider documents for the model in
+  `OutputSpec::media_types`: Iris warns with `output_type_undeclared` when a saved output has
+  another type. If an option sets the exact pixel size of every image as `WxH`, name it in
+  `exact_size_option`, and Iris warns with `output_size_mismatch` when a saved image has another
+  size. Name it only when the provider documents that the size is exact: a live run can confirm a
+  documented behavior, but can't stand in for the documentation.
 - **Inputs.** Declare the input rules that the provider documents in `InputSpec`: accepted types
   and sizes, and mask rules (`MaskSpec`). If inputs are sent inline, add a limit on the whole
   request (`RequestSizeLimit`), with allowances for the JSON that your adapter adds. Iris enforces
@@ -280,8 +290,9 @@ Everything that a provider like the Seedance example touches.
 
 - `src/providers/seedance/`, the adapter, and in `src/providers/mod.rs`, `pub mod seedance;` and
   one `Registry::builtin()` line.
-- `src/catalog/seedance.rs`, and in `src/catalog/mod.rs`, its `pub mod`, its models in `all()`, its
-  declined names in `declined_names()`, and a `model_id_syntax` arm.
+- `src/catalog/seedance.rs`, with its own `CATALOG_AS_OF`, and in `src/catalog/mod.rs`, its
+  `pub mod`, its models in `all()`, its declined names in `declined_names()`, and an arm in each of
+  `model_id_syntax` and `checked_on`.
 - `ProviderId` in `src/domain.rs`: the variant, the `ALL` entry, and one arm in each of `as_str`,
   `display_name`, `credential_env`, `default_base_url`, and `base_url_env`. The compiler checks the
   arms, and the `domain` unit tests check the `ALL` entry and the names (see
@@ -325,6 +336,16 @@ Everything that a provider like the Seedance example touches.
     [Configuration reference](../reference/configuration.md).
   - The module table in [Architecture](architecture.md), which names `providers/openai/`,
     `providers/gemini/`, and each catalog file.
+  - [Install Iris](../guides/install.md#set-your-api-keys): the key to set, and where the provider
+    issues it.
+  - [Check your access](../guides/models-and-costs.md#check-your-access): the provider's account and
+    billing requirements, and what its `--check-access` confirms (its `Provider::access_scope`).
+  - [How Iris handles paid requests](../concepts/paid-requests.md): the retry table and the
+    uncertain-outcome table, if the provider's rules differ from the others.
+
+  `tests/docs.rs` fails until the install guide shows how to set every provider's key, the
+  Configuration reference's key table lists it, and Check your access has a row for the provider
+  in its `--check-access` table.
   - `CHANGELOG.md`.
   - [Decisions](decisions.md), with the API choices that you made, their sources, and the date
     that you checked them.

@@ -443,7 +443,7 @@ fn the_standard_output_is_priced_at_every_quality_with_an_estimate() {
         let gives = |options: &ResolvedOptions| {
             let size = m.effective(options, "size").unwrap();
             let (width, height) =
-                openai::parse_size(size.as_str().unwrap()).unwrap_or_else(|| panic!("{size}"));
+                iris::catalog::parse_pixel_size(size.as_str().unwrap()).unwrap_or_else(|| panic!("{size}"));
             StandardOutput::Image { width, height }
         };
         let amounts = catalog_support::assert_standard_requests_give_the_standard_output(m, gives);

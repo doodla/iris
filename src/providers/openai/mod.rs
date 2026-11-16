@@ -23,17 +23,18 @@ mod wire;
 
 use async_trait::async_trait;
 use base64::Engine as _;
-use base64::engine::general_purpose::{STANDARD, STANDARD_PAD_INDIFFERENT};
+use base64::engine::general_purpose::STANDARD;
 
+use super::openai_compat::{ImagesResponse, decode_items};
 use super::{
-    AccountAccess, CredentialHeader, GeneratedImage, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
-    InputImage, Provider, ProviderContext, UnusableOutput, with_reported_usage,
+    AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest, InputImage,
+    Provider, ProviderContext, with_reported_usage,
 };
 use crate::artifacts::media;
 use crate::domain::{ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, HttpResponse};
-use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireImagesResponse, WireOptions};
+use wire::{EditBody, GenerateBody, ImageRef, OUTPUT_FORMATS, WireOptions};
 
 /// Official image generation guide.
 pub const DOCS_URL: &str = crate::catalog::openai::DOCS_URL;
@@ -254,18 +255,6 @@ impl Expected {
     }
 }
 
-/// Why one `data[]` item of a response cannot be used.
-struct Unusable {
-    /// Human reason naming the item by its position in the response, e.g. "response
-    /// item 1 is not valid base64".
-    why: String,
-    /// Sniffed type of content that is not an image (e.g. `video/mp4`), if any.
-    actual: Option<&'static str>,
-    /// The item's content as received: decoded bytes, or the `b64_json` text when it
-    /// is not base64; `None` for an item without inline data.
-    content: Option<Vec<u8>>,
-}
-
 /// Decode an `ImagesResponse`: every `data[].b64_json` (standard base64), typed by
 /// its magic bytes and checked against the requested and echoed `output_format`
 /// (with neither, the provider default png). Items are decoded one by one, and
@@ -287,10 +276,11 @@ struct Unusable {
 /// * A number of items other than the requested `n` is reported with warning
 ///   `unexpected_output_count`.
 fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, ImageFailure> {
-    let parsed = WireImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
+    let parsed = ImagesResponse::parse(&resp.body).map_err(|why| client::bad_response(resp, &why))?;
+    let usage = parsed.usage.as_ref().and_then(wire::parse_usage);
     if parsed.data.is_empty() {
         let err = client::bad_response(resp, "it contains no images");
-        return Err(with_reported_usage(err, parsed.usage.as_ref()).into());
+        return Err(with_reported_usage(err, usage.as_ref()).into());
     }
     let format_media_type = |format: &str| {
         media_type_for_format(format)
@@ -312,28 +302,18 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
     // The echo (pushed last) is the most specific statement.
     let expected = expectations.last().map_or(media::PNG, |(_, media_type)| media_type);
 
-    let returned = parsed.data.len();
-    let mut images = Vec::with_capacity(returned);
-    let mut unusable = Vec::new();
-    let mut kept = Vec::new();
-    let mut revised = Vec::new();
-    let mut warnings = Vec::new();
-    for (index, item) in parsed.data.into_iter().enumerate() {
-        if let Some(text) = item.revised_prompt
-            && !revised.contains(&text)
-        {
-            revised.push(text);
+    let decoded = decode_items(parsed.data, expected, " (GPT image models return base64)");
+    if decoded.images.is_empty() {
+        let mut err = client::bad_response(resp, &decoded.reasons());
+        if let Some(actual) = decoded.problems.first().and_then(|p| p.actual) {
+            err = err.with_detail("expected_media_type", expected).with_detail("actual_media_type", actual);
         }
-        let image = match decode_item(index, item.b64_json, item.has_url, expected) {
-            Ok(image) => image,
-            Err(mut problem) => {
-                if let Some(bytes) = problem.content.take() {
-                    kept.push(UnusableOutput { item: index, bytes });
-                }
-                unusable.push(problem);
-                continue;
-            }
-        };
+        let err = with_reported_usage(err, usage.as_ref());
+        return Err(ImageFailure { error: err, unusable: decoded.unusable });
+    }
+
+    let mut warnings = Vec::new();
+    for image in &decoded.images {
         let actual = image.media_type.as_str();
         let unmet: Vec<&str> =
             expectations.iter().filter(|(_, m)| *m != actual).map(|(why, _)| why.as_str()).collect();
@@ -341,47 +321,20 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
             warnings.push(Warning::new(
                 WarningCode::OutputFormatMismatch,
                 format!(
-                    "OpenAI returned response item {index} as {actual}, but {}; it is kept as {actual} \
+                    "OpenAI returned response item {} as {actual}, but {}; it is kept as {actual} \
                      because the request completed and may have been billed",
+                    image.item,
                     unmet.join(" and ")
                 ),
             ));
         }
-        images.push(image);
     }
-
-    if images.is_empty() {
-        let reasons: Vec<&str> = unusable.iter().map(|u| u.why.as_str()).collect();
-        let mut err = client::bad_response(resp, &reasons.join("; "));
-        if let Some(actual) = unusable.first().and_then(|u| u.actual) {
-            err = err.with_detail("expected_media_type", expected).with_detail("actual_media_type", actual);
-        }
-        let err = with_reported_usage(err, parsed.usage.as_ref());
-        return Err(ImageFailure { error: err, unusable: kept });
-    }
-    for problem in &unusable {
-        warnings.push(Warning::new(
-            WarningCode::OutputItemUnusable,
-            format!("{}; it was skipped and every usable image was kept", problem.why),
-        ));
-    }
-
-    let wanted = expect.count.unwrap_or(1);
-    if i64::try_from(returned).ok() != Some(wanted) {
-        let noun = if returned == 1 { "item" } else { "items" };
-        let usable = images.len();
-        warnings.push(Warning::new(
-            WarningCode::UnexpectedOutputCount,
-            format!(
-                "OpenAI returned {returned} {noun} ({usable} usable) for a request of {wanted} (n); every \
-                 usable image was kept"
-            ),
-        ));
-    }
+    warnings.extend(decoded.unusable_warnings());
+    warnings.extend(decoded.count_warning("OpenAI", expect.count.unwrap_or(1), " (n)"));
 
     // Text in the result is always reported with `provider_text_output`
     // (docs/reference/json-output.md), as the Gemini adapter does.
-    let text = (!revised.is_empty()).then(|| revised.join("\n\n"));
+    let text = (!decoded.revised_prompts.is_empty()).then(|| decoded.revised_prompts.join("\n\n"));
     if text.is_some() {
         warnings.push(Warning::new(
             WarningCode::ProviderTextOutput,
@@ -390,53 +343,11 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
     }
 
     Ok(ImageOutput {
-        images,
-        unusable: kept,
+        images: decoded.images,
+        unusable: decoded.unusable,
         text,
-        usage: parsed.usage,
+        usage,
         provider_request_id: resp.request_id.clone(),
         warnings,
     })
-}
-
-/// Decode one `data[]` item into an image typed by its magic bytes, or say why it
-/// cannot be used. `expected` is only used to phrase the reason.
-fn decode_item(
-    index: usize,
-    b64_json: Option<String>,
-    has_url: bool,
-    expected: &str,
-) -> Result<GeneratedImage, Unusable> {
-    let unusable = |why: String| Unusable { why, actual: None, content: None };
-    let Some(b64) = b64_json else {
-        return Err(unusable(if has_url {
-            format!(
-                "response item {index} is a URL instead of inline base64 data (GPT image models return \
-                 base64); Iris does not fetch it"
-            )
-        } else {
-            format!("response item {index} has no b64_json data")
-        }));
-    };
-    let bytes = match STANDARD_PAD_INDIFFERENT.decode(b64.trim()) {
-        Ok(bytes) => bytes,
-        Err(_) => {
-            let why = format!("response item {index} is not valid base64");
-            return Err(Unusable { why, actual: None, content: Some(b64.into_bytes()) });
-        }
-    };
-    drop(b64);
-    match media::sniff(&bytes) {
-        Some(actual) if media::is_image(actual) => {
-            Ok(GeneratedImage { item: index, media_type: actual.to_string(), bytes })
-        }
-        other => Err(Unusable {
-            why: format!(
-                "response item {index} should be {expected} but its content is {}",
-                other.unwrap_or("not a recognized image")
-            ),
-            actual: Some(other.unwrap_or("unknown")),
-            content: Some(bytes),
-        }),
-    }
 }

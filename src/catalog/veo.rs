@@ -73,7 +73,7 @@ const fn inputs(max_reference_images: u32) -> InputSpec {
     }
 }
 
-const OUTPUTS: OutputSpec = OutputSpec { media_types: &["video/mp4"], max_count: 1 };
+const OUTPUTS: OutputSpec = OutputSpec { media_types: &["video/mp4"], max_count: 1, exact_size_option: None };
 
 /// The server limit is 1,024 tokens; Iris cannot count Veo tokens, so it applies a
 /// generous character cap and lets the provider's 400 surface beyond that.

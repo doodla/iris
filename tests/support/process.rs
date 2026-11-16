@@ -21,6 +21,7 @@ pub const BIN: &str = env!("CARGO_BIN_EXE_iris");
 /// and distinctive enough to search for in every output and file.
 pub const OPENAI_KEY: &str = "fake-openai-key-e2e-5b1f0c7d";
 pub const GEMINI_KEY: &str = "fake-gemini-key-e2e-93ad7e21";
+pub const VERCEL_KEY: &str = "fake-vercel-key-e2e-4c62d0b8";
 
 /// Credential variables that must never reach a child from the developer's
 /// environment (the child starts from an empty environment anyway): every
@@ -163,6 +164,8 @@ pub struct Iris {
     env: BTreeMap<OsString, OsString>,
     cwd: PathBuf,
     stdin: Option<Vec<u8>>,
+    /// Whether the run may report `output_size_mismatch` (see [`Out::assert_hygiene`]).
+    size_mismatch_expected: bool,
 }
 
 impl Iris {
@@ -183,7 +186,7 @@ impl Iris {
         set("https_proxy", OsStr::new(dead));
         set("NO_PROXY", OsStr::new("127.0.0.1,localhost"));
         set("no_proxy", OsStr::new("127.0.0.1,localhost"));
-        Iris { args: Vec::new(), env, cwd: sandbox.work(), stdin: None }
+        Iris { args: Vec::new(), env, cwd: sandbox.work(), stdin: None, size_mismatch_expected: false }
     }
 
     pub fn arg(&mut self, arg: impl AsRef<OsStr>) -> &mut Iris {
@@ -217,6 +220,12 @@ impl Iris {
         self
     }
 
+    /// The mock returns an image of another size than requested on purpose.
+    pub fn expect_size_mismatch(&mut self) -> &mut Iris {
+        self.size_mismatch_expected = true;
+        self
+    }
+
     pub fn stdin(&mut self, bytes: impl Into<Vec<u8>>) -> &mut Iris {
         self.stdin = Some(bytes.into());
         self
@@ -232,9 +241,16 @@ impl Iris {
         self.env("IRIS_GEMINI_BASE_URL", api.uri()).env("GEMINI_API_KEY", GEMINI_KEY)
     }
 
-    /// Set both fake keys (providers stay unreachable unless a mock is attached).
+    /// Point the Vercel AI Gateway base URL at `api` (`<uri>/v1`) and set the fake key.
+    pub fn vercel(&mut self, api: &MockApi) -> &mut Iris {
+        self.env("IRIS_VERCEL_BASE_URL", format!("{}/v1", api.uri())).env("AI_GATEWAY_API_KEY", VERCEL_KEY)
+    }
+
+    /// Set every fake key (providers stay unreachable unless a mock is attached).
     pub fn keys(&mut self) -> &mut Iris {
-        self.env("OPENAI_API_KEY", OPENAI_KEY).env("GEMINI_API_KEY", GEMINI_KEY)
+        self.env("OPENAI_API_KEY", OPENAI_KEY)
+            .env("GEMINI_API_KEY", GEMINI_KEY)
+            .env("AI_GATEWAY_API_KEY", VERCEL_KEY)
     }
 
     fn command(&self) -> Command {
@@ -260,6 +276,7 @@ impl Iris {
             stdout: String::from_utf8(output.stdout).expect("stdout is UTF-8"),
             stderr: String::from_utf8(output.stderr).expect("stderr is UTF-8"),
             elapsed: started.elapsed(),
+            size_mismatch_expected: self.size_mismatch_expected,
         }
     }
 
@@ -367,6 +384,7 @@ impl Running {
             stdout,
             stderr,
             elapsed: self.started.elapsed(),
+            size_mismatch_expected: false,
         }
     }
 }
@@ -389,6 +407,8 @@ pub struct Out {
     pub stdout: String,
     pub stderr: String,
     pub elapsed: Duration,
+    /// Whether the run may report `output_size_mismatch`.
+    pub size_mismatch_expected: bool,
 }
 
 impl Out {
@@ -442,11 +462,22 @@ impl Out {
     /// Output hygiene of every run: no key anywhere, no terminal escapes, and no
     /// JSON envelope on stderr (diagnostics only).
     pub fn assert_hygiene(&self) {
-        for key in [OPENAI_KEY, GEMINI_KEY] {
+        for key in [OPENAI_KEY, GEMINI_KEY, VERCEL_KEY] {
             assert!(!self.stdout.contains(key), "a key leaked to stdout\n{}", self.describe());
             assert!(!self.stderr.contains(key), "a key leaked to stderr\n{}", self.describe());
         }
         assert!(!self.stderr.contains('\u{1b}'), "terminal escapes on stderr\n{}", self.describe());
+        // A mock must return the size that a run asks for, unless the test is about the
+        // mismatch, so that the size check never fires unnoticed.
+        if !self.size_mismatch_expected {
+            for text in [&self.stdout, &self.stderr] {
+                assert!(
+                    !text.contains("output_size_mismatch"),
+                    "unexpected output_size_mismatch (call expect_size_mismatch() if intended)\n{}",
+                    self.describe()
+                );
+            }
+        }
         assert!(
             !self.stderr.contains("\"schema_version\""),
             "an envelope went to stderr\n{}",

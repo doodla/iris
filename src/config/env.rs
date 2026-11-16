@@ -43,8 +43,8 @@ pub const SETTING_VARS: &[&str] = &[
 
 /// The environment Iris resolves settings from: the platform, home and current
 /// directories, the non-secret variables in [`SETTING_VARS`] and each provider's
-/// base URL override, and each provider's credential (`OPENAI_API_KEY` /
-/// `GEMINI_API_KEY`, held as [`Secret`]s, never as plain strings).
+/// base URL override, and each provider's credential ([`ProviderId::credential_env`],
+/// held as [`Secret`]s, never as plain strings).
 ///
 /// The current directory may be unknown (it was deleted, or is not accessible):
 /// only a command that needs it fails, when it asks ([`EnvSnapshot::cwd`]).
@@ -100,8 +100,8 @@ impl EnvSnapshot {
         }
     }
 
-    /// Set a variable. `OPENAI_API_KEY` / `GEMINI_API_KEY` are stored as [`Secret`]s
-    /// (trimmed; empty means absent) and are not readable through [`EnvSnapshot::var`].
+    /// Set a variable. A provider's credential variable is stored as a [`Secret`]
+    /// (trimmed; empty means absent) and is not readable through [`EnvSnapshot::var`].
     pub fn with_var(mut self, name: &str, value: &str) -> Self {
         if let Some(provider) = ProviderId::ALL.iter().find(|p| p.credential_env() == name) {
             let trimmed = value.trim();

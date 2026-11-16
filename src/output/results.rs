@@ -293,11 +293,14 @@ pub struct AccessView {
     pub credential_present: bool,
     /// Documented account requirements (tier, verification, allowlists).
     pub requirements: Vec<String>,
-    /// Result of `--check-access` (`not_checked` without it): `available` means the
-    /// provider's model metadata is visible to this key. Billing tier, prepaid credit,
-    /// and organization verification are not checked.
+    /// Result of `--check-access` (`not_checked` without it): `available` means at
+    /// least that the model is visible to this key; `checked_scope` says what the
+    /// provider's check established.
     pub account_access: AccountAccess,
     pub checked_at: Option<String>,
+    /// What the provider's access check establishes (null when not checked): an open
+    /// set, `model_metadata` or `team_eligibility` (docs/reference/json-output.md).
+    pub checked_scope: Option<crate::providers::AccessScope>,
 }
 
 /// `models.show`.

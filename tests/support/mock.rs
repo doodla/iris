@@ -14,7 +14,7 @@ use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
 
 use super::media::{b64, mp4};
-use super::process::{GEMINI_KEY, OPENAI_KEY};
+use super::process::{GEMINI_KEY, OPENAI_KEY, VERCEL_KEY};
 
 /// A running mock server with a small synchronous API (the server runs on its own
 /// thread; this runtime only drives registration and request inspection).
@@ -84,7 +84,7 @@ impl MockApi {
     pub fn assert_credentials_only_in(&self, allowed: Option<(&str, &str)>) {
         for req in self.requests() {
             let url = req.url.as_str();
-            for key in [OPENAI_KEY, GEMINI_KEY] {
+            for key in [OPENAI_KEY, GEMINI_KEY, VERCEL_KEY] {
                 assert!(!url.contains(key), "a key in a request URL: {url}");
             }
             assert!(
@@ -98,7 +98,7 @@ impl MockApi {
                         assert_eq!(value, key, "{name} of {} {url} holds the wrong credential", req.method);
                     }
                     _ => {
-                        for key in [OPENAI_KEY, GEMINI_KEY] {
+                        for key in [OPENAI_KEY, GEMINI_KEY, VERCEL_KEY] {
                             assert!(
                                 !value.contains(key),
                                 "{} {url} carries a key in header {name}",
