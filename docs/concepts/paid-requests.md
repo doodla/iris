@@ -105,8 +105,7 @@ error with `details.charge_possible: true` instead.
 Iris judges each returned image by its content, not by the type that the provider reports:
 
 - An image of a different type than you asked for is saved under its real type, with an
-  `output_format_mismatch` warning, or `output_type_undeclared` when the model isn't declared to
-  return that type. See [Warning codes](../reference/errors.md#warning-codes).
+  `output_format_mismatch` warning.
 - An item that isn't a usable image is skipped, with an `output_item_unusable` warning. Iris keeps
   its content, as received, in a `.bin` file in the `unsaved` folder of the state directory.
 - If Iris can't write a valid image where you asked, for example because the disk is full, it saves

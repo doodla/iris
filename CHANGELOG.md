@@ -13,11 +13,12 @@ All notable changes to this project are documented in this file. The format foll
   The Vercel AI Gateway model has it, because Vercel's docs don't say which models its free tier
   covers. `paid` keeps its meaning, with no free tier. See
   [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
-- **Saved images are checked against the catalog.** Iris warns with `output_type_undeclared` when
-  a saved output's type isn't one that `models show` lists for the model, and with
-  `output_size_mismatch` when an image's pixel size differs from the `--size` that you asked for
-  (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. An image of an
-  undeclared type gets only `output_type_undeclared`, not `output_format_mismatch` as well. See
+- **Returned images are checked against the catalog.** Iris warns with `output_type_undeclared`
+  when a returned image's type isn't one that `models show` lists for the model, and with
+  `output_size_mismatch` when a saved image's pixel size differs from the `--size` that you asked
+  for (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. An image that
+  already gets `output_format_mismatch` gets no `output_type_undeclared` as well: the mismatch
+  message says that the type is undeclared. See
   [Errors](https://github.com/doodla/iris/blob/main/docs/reference/errors.md#warning-codes).
 - **`models show` names the exact-size option.** `outputs.exact_size_option` names the option whose
   `WxH` value is the exact pixel size of every image, such as `size`, or is `null`. When it's set,

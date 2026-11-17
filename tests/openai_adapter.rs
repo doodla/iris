@@ -130,10 +130,6 @@ fn generate_request(opts: ResolvedOptions) -> ImageRequest {
         images: Vec::new(),
         mask: None,
         options: opts,
-        output_types: iris::catalog::find("gpt-image-2.5-sunburst")
-            .expect("a catalog model")
-            .outputs
-            .media_types,
     }
 }
 
@@ -144,10 +140,6 @@ fn edit_request(images: Vec<InputImage>, mask: Option<InputImage>, opts: Resolve
         images,
         mask,
         options: opts,
-        output_types: iris::catalog::find("gpt-image-2.5-sunburst")
-            .expect("a catalog model")
-            .outputs
-            .media_types,
     }
 }
 
@@ -588,7 +580,7 @@ async fn output_media_type_comes_from_the_magic_bytes_and_matches_the_echo_and_r
 }
 
 /// A minimal valid GIF (1x1). OpenAI never returns one; it stands for "a valid image
-/// of a type the catalog doesn't declare".
+/// of a type nobody asked for".
 const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
 
 #[tokio::test]
@@ -613,11 +605,11 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
             "asked for output_format jpeg",
         ),
         (
-            "no echo, no format, bytes jpeg",
-            jpeg(8, 8),
+            "no echo, no format, bytes gif",
+            GIF_1X1.to_vec(),
             None,
             None,
-            "image/jpeg",
+            "image/gif",
             "default output_format is png",
         ),
     ];
@@ -633,9 +625,11 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
         assert_eq!(out.images[0].media_type, kept, "{name}");
         assert_eq!(out.images[0].bytes, bytes, "{name}: kept verbatim");
         assert_eq!(out.provider_request_id.as_deref(), Some("req_ok_123"), "{name}");
-        assert_eq!(out.warnings.len(), 1, "{name}: {:?}", out.warnings);
-        assert_eq!(out.warnings[0].code, "output_format_mismatch", "{name}");
-        let message = &out.warnings[0].message;
+        // The adapter describes the difference on the image; the app reports it, as
+        // `output_format_mismatch`, together with the catalog's declared types.
+        assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
+        let message =
+            out.images[0].format_mismatch.as_deref().unwrap_or_else(|| panic!("{name}: no mismatch"));
         assert!(message.contains(kept) && message.contains(names), "{name}: {message}");
         if name.starts_with("echo png matches") {
             assert!(!message.contains("declared"), "{name}: the met echo is not a complaint: {message}");
@@ -650,23 +644,9 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
     let out = generate(&server, options(&[("count", OptionValue::Int(2))])).await.unwrap();
     let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
     assert_eq!(types, ["image/png", "image/jpeg"]);
-    assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
-    assert!(out.warnings[0].message.contains("response item 1 "), "{}", out.warnings[0].message);
-}
-
-/// An image of a type the catalog doesn't declare for the model is kept without
-/// `output_format_mismatch`: the app reports it as `output_type_undeclared`, and one
-/// image gets one type warning.
-#[tokio::test]
-async fn a_valid_image_of_an_undeclared_type_is_kept_without_a_format_warning() {
-    for echo in [None, Some("png")] {
-        let server = MockServer::start().await;
-        mount(&server, GEN, ok(images_body(&[GIF_1X1], echo))).await;
-        let out = generate(&server, options(&[("format", s("jpeg"))])).await.unwrap();
-        assert_eq!(out.images[0].media_type, "image/gif", "{echo:?}");
-        assert_eq!(out.images[0].bytes, GIF_1X1, "{echo:?}: kept verbatim");
-        assert!(out.warnings.is_empty(), "{echo:?}: {:?}", out.warnings);
-    }
+    assert!(out.images[0].format_mismatch.is_none());
+    let message = out.images[1].format_mismatch.as_deref().unwrap();
+    assert!(message.contains("response item 1 "), "{message}");
 }
 
 #[tokio::test]

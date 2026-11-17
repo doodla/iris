@@ -18,7 +18,7 @@ use crate::catalog::{self, InputCounts, OptionSource, RawOption, ResolvedModel};
 use crate::domain::{Artifact, JobStatus, ModelSource, Operation, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::output::results::{ImageResult, PlanResult, PromptFingerprint};
-use crate::providers::{ImageFailure, ImageOutput, ImageRequest, InputRole, UnusableOutput};
+use crate::providers::{GeneratedImage, ImageFailure, ImageOutput, ImageRequest, InputRole, UnusableOutput};
 
 use super::context::AppContext;
 use super::jobs::Commands;
@@ -222,7 +222,6 @@ async fn run_checked(
         images,
         mask,
         options: opts.clone(),
-        output_types: spec.outputs.media_types,
     };
     let created_at = ctx.now();
     ctx.progress.line(format!(
@@ -262,6 +261,7 @@ async fn run_checked(
         }
     };
     warnings.extend(output.warnings.iter().cloned());
+    warnings.extend(type_warnings(spec, &resolved.id, &output.images));
     let kept = keep_unusable(ctx, &run_id, &output.unusable, warnings);
     if output.images.is_empty() {
         return Err(kept.report(
@@ -312,7 +312,7 @@ async fn run_checked(
         (Ok(_), false) => CostSource::Requested,
     };
     // Every saved image is checked, also when another could not be saved.
-    warnings.extend(check_saved(spec, &opts, &resolved.id, &saving.saved, cost_source));
+    warnings.extend(check_saved(spec, &opts, &saving.saved, cost_source));
     if let Some(e) = saving.failure {
         let paths = |artifacts: &[Artifact]| artifacts.iter().map(|a| a.path.clone()).collect::<Vec<_>>();
         let e = kept.report(e, saving.elsewhere);
@@ -538,15 +538,43 @@ fn save_all(
     saving
 }
 
-/// What the catalog says every saved output should be, checked against what was
-/// saved, for every provider alike: a type the model is not declared to return is
-/// `output_type_undeclared`, and an image whose pixels differ from the size the
-/// request set (the model's [`exact_size_option`](crate::catalog::OutputSpec::exact_size_option))
-/// is `output_size_mismatch`. Both keep the image: it was paid for.
+/// Each returned image's one type warning, for every provider alike, whether or not
+/// it can be saved (docs/reference/errors.md#warning-codes):
+///
+/// * `output_format_mismatch` when its type differs from the one that the request
+///   asked for or the response labeled ([`GeneratedImage::format_mismatch`], from the
+///   adapter), with a note when the model isn't declared to return that type either;
+/// * otherwise `output_type_undeclared` when the model isn't declared to return it.
+fn type_warnings(spec: &crate::catalog::ModelSpec, model: &str, images: &[GeneratedImage]) -> Vec<Warning> {
+    let declared = spec.outputs.media_types;
+    let undeclared = |media_type: &str| {
+        (!declared.contains(&media_type)).then(|| {
+            format!("{media_type}, which {model} is not declared to return ({})", declared.join(", "))
+        })
+    };
+    images
+        .iter()
+        .filter_map(|image| match (&image.format_mismatch, undeclared(&image.media_type)) {
+            (Some(mismatch), None) => Some(Warning::new(WarningCode::OutputFormatMismatch, mismatch.clone())),
+            (Some(mismatch), Some(why)) => {
+                Some(Warning::new(WarningCode::OutputFormatMismatch, format!("{mismatch}. It is also {why}")))
+            }
+            (None, Some(why)) => Some(Warning::new(
+                WarningCode::OutputTypeUndeclared,
+                format!("response item {} is {why}; it was kept under its real type", image.item),
+            )),
+            (None, None) => None,
+        })
+        .collect()
+}
+
+/// What the catalog says every saved image's size should be: an image whose pixels
+/// differ from the size the request set (the model's
+/// [`exact_size_option`](crate::catalog::OutputSpec::exact_size_option)) is
+/// `output_size_mismatch`. It keeps the image: it was paid for.
 fn check_saved(
     spec: &crate::catalog::ModelSpec,
     opts: &crate::catalog::ResolvedOptions,
-    model: &str,
     saved: &[Artifact],
     cost_source: CostSource,
 ) -> Vec<Warning> {
@@ -557,23 +585,11 @@ fn check_saved(
         }
         CostSource::None => "Iris has no cost estimate for this request",
     };
-    let declared = spec.outputs.media_types;
     let requested = spec.outputs.exact_size_option.and_then(|name| opts.get(name)).and_then(|value| {
         value.as_str().and_then(crate::catalog::parse_pixel_size).map(|size| (value.to_string(), size))
     });
     let mut warnings = Vec::new();
     for artifact in saved {
-        if !declared.contains(&artifact.media_type.as_str()) {
-            warnings.push(Warning::new(
-                WarningCode::OutputTypeUndeclared,
-                format!(
-                    "{} is {}, which {model} is not declared to return ({}); it was saved under its real type",
-                    artifact.path,
-                    artifact.media_type,
-                    declared.join(", ")
-                ),
-            ));
-        }
         if let (Some((asked, (w, h))), Some(width), Some(height)) =
             (&requested, artifact.width, artifact.height)
             && (u64::from(width), u64::from(height)) != (*w, *h)

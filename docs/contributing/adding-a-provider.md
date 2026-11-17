@@ -79,10 +79,13 @@ doesn't:
   response carries the usage that the response reported (`providers::with_reported_usage`), and
   `details.charged: true` only when the provider documents that such a response is billed.
 - **Build warnings from the registry.** Use `Warning::new(WarningCode::…, message)`, and reuse an
-  existing code when one fits, such as `output_format_mismatch`, `output_item_unusable`, or
-  `unexpected_output_count`. To add a code, add it to `WarningCode` in `src/domain.rs` and to the
-  table in the [Errors reference](../reference/errors.md#warning-codes). A contract test checks
-  that both lists agree, and that no other source file spells out a code.
+  existing code when one fits, such as `output_item_unusable` or `unexpected_output_count`. An
+  image whose type differs from the requested or labeled one isn't a warning of the adapter's:
+  describe the difference in `GeneratedImage::format_mismatch`, and the app reports the image's
+  type warning (see [Warning codes](../reference/errors.md#warning-codes)). To add a code, add it
+  to `WarningCode` in `src/domain.rs` and to the table in the
+  [Errors reference](../reference/errors.md#warning-codes). A contract test checks that both lists
+  agree, and that no other source file spells out a code.
 - **Keep `poll` idempotent.** It uses the `IdempotentRead` retry class, which retries connection
   errors, timeouts, and HTTP 408, 429, and 5xx. It must never change anything that Iris can't
   safely repeat.
@@ -202,9 +205,9 @@ own `CATALOG_AS_OF`, as `catalog/vercel.rs` has. `models show` reports that date
   declare an option that your adapter can't send: if the provider accepts it but your adapter has
   nowhere to put it yet, leave it out of the catalog.
 - **Outputs.** List every media type that the provider documents for the model in
-  `OutputSpec::media_types`: Iris warns with `output_type_undeclared` when a saved output has
-  another type. The adapter receives these types as `ImageRequest::output_types`, and reports
-  `output_format_mismatch` only for an image of one of them, so one image never gets both. If an option sets the exact pixel size of every image as `WxH`, name it in
+  `OutputSpec::media_types`: Iris reports a returned image of another type (see
+  [Warning codes](../reference/errors.md#warning-codes)). If an option sets the exact pixel size of
+  every image as `WxH`, name it in
   `exact_size_option`, and Iris warns with `output_size_mismatch` when a saved image has another
   size. Name it only when the provider documents that the size is exact: a live run can confirm a
   documented behavior, but can't stand in for the documentation.

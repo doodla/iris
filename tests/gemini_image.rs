@@ -101,7 +101,6 @@ fn generate_request(opts: ResolvedOptions) -> ImageRequest {
         images: vec![],
         mask: None,
         options: opts,
-        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     }
 }
 
@@ -227,7 +226,6 @@ async fn edit_sends_the_prompt_first_then_every_reference_in_order_with_all_opti
             ("resolution", s("512")),
             ("thinking_level", s("high")),
         ]),
-        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     };
 
     let out = GeminiProvider::new().edit(&req, &ctx(&server)).await.unwrap();
@@ -481,12 +479,14 @@ async fn images_are_typed_by_their_bytes_and_kept_whatever_their_label() {
         assert_eq!(out.images.len(), 1, "{name}");
         assert_eq!(out.images[0].media_type, kept, "{name}");
         assert_eq!(out.images[0].bytes, jpeg_bytes, "{name}: kept verbatim");
-        if warns {
-            assert_eq!(codes(&out), ["output_format_mismatch"], "{name}");
-            let message = &out.warnings[0].message;
-            assert!(message.contains("response item 0 ") && message.contains(kept), "{name}: {message}");
-        } else {
-            assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
+        // The adapter describes a mismatch on the image; the app reports it.
+        assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
+        match &out.images[0].format_mismatch {
+            Some(message) => {
+                assert!(warns, "{name}: {message}");
+                assert!(message.contains("response item 0 ") && message.contains(kept), "{name}: {message}");
+            }
+            None => assert!(!warns, "{name}: no mismatch"),
         }
         assert_eq!(requests(&server).await.len(), 1, "{name}: never repeated");
     }
@@ -505,9 +505,11 @@ async fn one_bad_item_never_drops_the_good_ones() {
     let out = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap();
     let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
     assert_eq!(types, ["image/png", "image/jpeg"]);
-    assert_eq!(codes(&out), ["output_format_mismatch", "unexpected_output_count"]);
-    assert!(out.warnings[0].message.contains("response item 1 "), "{}", out.warnings[0].message);
-    let count = &out.warnings[1].message;
+    assert_eq!(codes(&out), ["unexpected_output_count"]);
+    assert!(out.images[0].format_mismatch.is_none());
+    let mismatch = out.images[1].format_mismatch.as_deref().unwrap();
+    assert!(mismatch.contains("response item 1 "), "{mismatch}");
+    let count = &out.warnings[0].message;
     assert!(count.contains("returned 2 items (2 usable) for a request of 1"), "{count}");
 
     // A correct image next to items that are not images: the image is kept, each
@@ -1003,7 +1005,6 @@ async fn requests_above_twenty_megabytes_fail_locally_with_zero_requests() {
         images: vec![input(big, "image/png", "big.png")],
         mask: None,
         options: ResolvedOptions::new(),
-        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     };
     let err = GeminiProvider::new().edit(&req, &ctx(&server)).await.unwrap_err();
     assert_eq!(err.code, ErrorCode::InvalidArgument);

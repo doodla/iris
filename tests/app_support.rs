@@ -556,7 +556,7 @@ pub fn image_output(images: Vec<Vec<u8>>) -> ImageOutput {
             .enumerate()
             .map(|(item, bytes)| {
                 let media_type = iris::artifacts::media::sniff(&bytes).unwrap_or("image/png").to_string();
-                GeneratedImage { item, media_type, bytes }
+                GeneratedImage { item, media_type, bytes, format_mismatch: None }
             })
             .collect(),
         unusable: Vec::new(),

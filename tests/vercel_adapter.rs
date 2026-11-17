@@ -73,7 +73,6 @@ fn request(options: ResolvedOptions) -> ImageRequest {
         images: Vec::new(),
         mask: None,
         options,
-        output_types: iris::catalog::find(MODEL).expect("a catalog model").outputs.media_types,
     }
 }
 

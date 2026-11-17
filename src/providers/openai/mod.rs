@@ -102,7 +102,7 @@ impl ImageProvider for OpenAiProvider {
             .into());
         }
         let options = WireOptions::from_resolved(&req.options)?;
-        let expect = Expected::of(&options, req);
+        let expect = Expected::of(&options);
         let body = GenerateBody { model: &req.model, prompt: &req.prompt, options };
         let body = serde_json::to_vec(&body)
             .map_err(|e| IrisError::internal(format!("could not encode the OpenAI request: {e}")))?;
@@ -123,7 +123,7 @@ impl ImageProvider for OpenAiProvider {
             .into());
         }
         let options = WireOptions::from_resolved(&req.options)?;
-        let expect = Expected::of(&options, req);
+        let expect = Expected::of(&options);
         if let Some(mask) = &req.mask {
             check_mask(mask, &req.images[0])?;
         }
@@ -252,13 +252,11 @@ struct Expected {
     format: Option<String>,
     /// `n` sent; `None` means the provider default (1).
     count: Option<i64>,
-    /// The types the catalog declares for the model ([`ImageRequest::output_types`]).
-    declared: &'static [&'static str],
 }
 
 impl Expected {
-    fn of(options: &WireOptions, req: &ImageRequest) -> Expected {
-        Expected { format: options.output_format.clone(), count: options.n, declared: req.output_types }
+    fn of(options: &WireOptions) -> Expected {
+        Expected { format: options.output_format.clone(), count: options.n }
     }
 }
 
@@ -267,10 +265,10 @@ impl Expected {
 /// (with neither, the provider default png). Items are decoded one by one, and
 /// paid output is never discarded because of another item:
 ///
-/// * A valid image of another type is kept under its real media type: the request
-///   completed and may have been billed (see `iris --help`). It gets the warning
-///   `output_format_mismatch` when the catalog declares its type for the model; the
-///   app reports any other type as `output_type_undeclared`.
+/// * A valid image of another type is kept under its real media type, with the
+///   difference in [`GeneratedImage::format_mismatch`], which the app reports as
+///   `output_format_mismatch`: the request completed and may have been billed (see
+///   `iris --help`).
 /// * An item that cannot be used (a URL instead of inline data, missing or invalid
 ///   base64, content that is not a recognized image) is skipped with warning
 ///   `output_item_unusable` naming it; every usable item is kept, and the content of
@@ -320,26 +318,21 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         return Err(ImageFailure { error: err, unusable: decoded.unusable });
     }
 
-    let mut warnings = Vec::new();
-    for image in &decoded.images {
+    let mut decoded = decoded;
+    for image in &mut decoded.images {
         let actual = image.media_type.as_str();
-        if !expect.declared.contains(&actual) {
-            continue;
-        }
         let unmet: Vec<&str> =
             expectations.iter().filter(|(_, m)| *m != actual).map(|(why, _)| why.as_str()).collect();
         if !unmet.is_empty() {
-            warnings.push(Warning::new(
-                WarningCode::OutputFormatMismatch,
-                format!(
-                    "OpenAI returned response item {} as {actual}, but {}; it is kept as {actual} \
-                     because the request completed and may have been billed",
-                    image.item,
-                    unmet.join(" and ")
-                ),
+            image.format_mismatch = Some(format!(
+                "OpenAI returned response item {} as {actual}, but {}; it is kept as {actual} because the \
+                 request completed and may have been billed",
+                image.item,
+                unmet.join(" and ")
             ));
         }
     }
+    let mut warnings = Vec::new();
     warnings.extend(decoded.unusable_warnings());
     warnings.extend(decoded.count_warning(&IMAGES_API, expect.count.unwrap_or(1)));
 

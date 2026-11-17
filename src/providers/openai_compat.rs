@@ -252,9 +252,12 @@ pub(crate) fn decode_items(items: Vec<ImageItem>, expected: ExpectedItem, api: &
         };
         drop(b64);
         match media::sniff(&bytes) {
-            Some(actual) if media::is_image(actual) => {
-                out.images.push(GeneratedImage { item: index, media_type: actual.to_string(), bytes })
-            }
+            Some(actual) if media::is_image(actual) => out.images.push(GeneratedImage {
+                item: index,
+                media_type: actual.to_string(),
+                bytes,
+                format_mismatch: None,
+            }),
             other => {
                 out.problems.push(ItemProblem {
                     why: format!(

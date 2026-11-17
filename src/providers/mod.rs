@@ -77,11 +77,6 @@ pub struct ImageRequest {
     pub images: Vec<InputImage>,
     pub mask: Option<InputImage>,
     pub options: ResolvedOptions,
-    /// The media types the catalog declares for the model's outputs
-    /// (`OutputSpec::media_types`). An adapter reports `output_format_mismatch` only
-    /// for an image of one of these types: the app reports every other type as
-    /// `output_type_undeclared`, so one image never gets both warnings.
-    pub output_types: &'static [&'static str],
 }
 
 /// Validated request for `video.generate`.
@@ -102,9 +97,14 @@ pub struct GeneratedImage {
     /// artifact index once an earlier item was not a usable image.
     pub item: usize,
     /// Media type sniffed from the bytes (the provider's label may differ; see
-    /// `output_format_mismatch`).
+    /// `format_mismatch`).
     pub media_type: String,
     pub bytes: Vec<u8>,
+    /// How `media_type` differs from the type that the request asked for or the
+    /// response labeled, as a sentence, or `None` when it doesn't. The adapter only
+    /// describes the difference: the app turns it into the image's one type warning
+    /// (`output_format_mismatch`), together with the catalog's declared types.
+    pub format_mismatch: Option<String>,
 }
 
 impl std::fmt::Debug for GeneratedImage {
@@ -113,6 +113,7 @@ impl std::fmt::Debug for GeneratedImage {
             .field("item", &self.item)
             .field("media_type", &self.media_type)
             .field("bytes", &self.bytes.len())
+            .field("format_mismatch", &self.format_mismatch)
             .finish()
     }
 }
