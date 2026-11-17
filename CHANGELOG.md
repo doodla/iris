@@ -44,6 +44,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- **One wording for `output_format_mismatch`.** Iris now phrases the warning the same way for every
+  provider, from what the request asked for and what the response stated, such as "OpenAI returned
+  response item 0 as image/png, but the request asked for format jpeg". It comes after the
+  provider's other warnings about the response, instead of among them. When it's emitted is
+  unchanged.
 - **Each provider's catalog date.** `models show` reports each provider's own `catalog_as_of`
   date, so the Vercel model shows the day it was checked. The other models keep their date.
 - **Access checks say what they checked.** `models show --check-access` adds

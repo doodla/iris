@@ -418,10 +418,10 @@ case.
 | `output_type_undeclared` | A returned image's type isn't one that `iris models show` lists for the model. Iris kept it under its real type. |
 | `output_size_mismatch` | A saved image's pixel size differs from the size that the request set, so the provider ignored or changed it. Iris kept the image. The message says whether the cost estimate comes from the usage that the provider reported, or is for the requested size and may not match the charge. |
 
-Each returned image gets at most one of `output_format_mismatch` and `output_type_undeclared`, also
-when Iris can't save it. If its type differs from the one that you requested or the provider
-labeled, it gets `output_format_mismatch`, and the message also says when the model isn't declared
-to return that type. Otherwise, an image of a type that the model isn't declared to return gets
+Each returned image gets at most one of `output_format_mismatch` and `output_type_undeclared`. If
+its type differs from the one that you requested or the provider stated, it gets
+`output_format_mismatch`, and the message also says when the model isn't declared to return that
+type. Otherwise, an image of a type that the model isn't declared to return gets
 `output_type_undeclared`.
 
 The warning messages that describe returned items number them by their position in the provider's
@@ -434,7 +434,7 @@ response didn't match, reported three warnings:
 ```json
 "warnings": [
   {"code":"output_extension_adjusted","message":"/home/you/circle has no extension; saving as /home/you/circle.jpg"},
-  {"code":"output_format_mismatch","message":"OpenAI returned response item 0 as image/png, but the request asked for output_format jpeg and the response declared output_format jpeg; it is kept as image/png because the request completed and may have been billed"},
+  {"code":"output_format_mismatch","message":"OpenAI returned response item 0 as image/png, but the request asked for format jpeg and the response declared format jpeg"},
   {"code":"output_extension_adjusted","message":"the provider returned image/png; saving as /home/you/circle.png instead of /home/you/circle.jpg"}
 ]
 ```

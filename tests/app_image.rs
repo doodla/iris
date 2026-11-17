@@ -493,7 +493,7 @@ async fn kept_content_is_named_by_response_position_and_all_of_it_is_listed() {
             item: 1,
             media_type: "image/png".into(),
             bytes: truncated.clone(),
-            format_mismatch: None,
+            format_mismatch: Vec::new(),
         }],
         unusable: vec![UnusableOutput { item: 0, bytes: b"skipped".to_vec() }],
         ..image_output(Vec::new())
@@ -1056,18 +1056,19 @@ async fn an_image_of_a_type_the_model_does_not_declare_is_kept_with_a_warning() 
     assert!(w.message.contains("image/webp") && w.message.contains("image/png, image/jpeg"), "{}", w.message);
 }
 
-/// One returned image gets one type warning, decided by the app for every provider:
-/// the adapter's `output_format_mismatch` (with a note when the type is also
-/// undeclared), else `output_type_undeclared`; and an image that can't be saved
-/// still gets it.
+/// One returned image gets one type warning, phrased by the app for every provider
+/// from the adapter's facts and the catalog: `output_format_mismatch` (saying when
+/// the type is also undeclared), else `output_type_undeclared`. An image that can't
+/// be saved still gets it, and no message claims that the image was kept.
 #[tokio::test]
 async fn each_returned_image_gets_one_type_warning_saved_or_not() {
+    use iris::providers::TypeExpectation::{Labeled, Requested};
     const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
-    let image = |media_type: &str, bytes: Vec<u8>, mismatch: Option<&str>| GeneratedImage {
+    let image = |media_type: &str, bytes: Vec<u8>, format_mismatch| GeneratedImage {
         item: 0,
         media_type: media_type.into(),
         bytes,
-        format_mismatch: mismatch.map(str::to_string),
+        format_mismatch,
     };
     let types = |warnings: &[Warning]| -> Vec<(String, String)> {
         warnings
@@ -1076,30 +1077,43 @@ async fn each_returned_image_gets_one_type_warning_saved_or_not() {
             .map(|w| (w.code.clone(), w.message.clone()))
             .collect()
     };
-    // (image, saved, expected code, text the message contains)
+    let png = || "png".to_string();
+    // (image, saved, expected code, the whole message)
     let cases = [
-        // A declared type other than the requested one: the adapter's sentence, as is.
-        (image("image/jpeg", jpeg(8, 8), Some("asked png")), true, "output_format_mismatch", "asked png"),
-        // Also undeclared: one warning, which says so.
         (
-            image("image/gif", GIF_1X1.to_vec(), Some("asked png")),
+            image("image/jpeg", jpeg(8, 8), vec![Requested(png())]),
             true,
             "output_format_mismatch",
-            "asked png. It is also image/gif, which fake-image-1 is not declared to return",
+            "OpenAI returned response item 0 as image/jpeg, but the request asked for format png",
         ),
-        // Undeclared and as requested (no mismatch): the catalog's warning.
         (
-            image("image/gif", GIF_1X1.to_vec(), None),
+            image("image/jpeg", jpeg(8, 8), vec![Requested(png()), Labeled("image/png".into())]),
+            true,
+            "output_format_mismatch",
+            "OpenAI returned response item 0 as image/jpeg, but the request asked for format png and the \
+             response labeled it image/png",
+        ),
+        (
+            image("image/gif", GIF_1X1.to_vec(), vec![Requested(png())]),
+            true,
+            "output_format_mismatch",
+            "OpenAI returned response item 0 as image/gif, but the request asked for format png, and \
+             fake-image-1 is not declared to return it (image/png, image/jpeg, image/webp)",
+        ),
+        (
+            image("image/gif", GIF_1X1.to_vec(), Vec::new()),
             true,
             "output_type_undeclared",
-            "response item 0 is image/gif",
+            "OpenAI returned response item 0 as image/gif, but fake-image-1 is not declared to return it \
+             (image/png, image/jpeg, image/webp)",
         ),
-        // Cut off, so it can't be saved: still reported.
+        // Cut off, so it can't be saved: still reported, the same way.
         (
-            image("image/gif", GIF_1X1[..20].to_vec(), Some("asked png")),
+            image("image/gif", GIF_1X1[..20].to_vec(), vec![Requested(png())]),
             false,
             "output_format_mismatch",
-            "It is also",
+            "OpenAI returned response item 0 as image/gif, but the request asked for format png, and \
+             fake-image-1 is not declared to return it (image/png, image/jpeg, image/webp)",
         ),
     ];
     for (i, (image, saved, code, text)) in cases.into_iter().enumerate() {
@@ -1110,6 +1124,6 @@ async fn each_returned_image_gets_one_type_warning_saved_or_not() {
         let found = types(&warnings);
         assert_eq!(found.len(), 1, "case {i}: {found:?}");
         assert_eq!(found[0].0, code, "case {i}");
-        assert!(found[0].1.contains(text), "case {i}: {}", found[0].1);
+        assert_eq!(found[0].1, text, "case {i}");
     }
 }

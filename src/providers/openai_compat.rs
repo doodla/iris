@@ -256,7 +256,7 @@ pub(crate) fn decode_items(items: Vec<ImageItem>, expected: ExpectedItem, api: &
                 item: index,
                 media_type: actual.to_string(),
                 bytes,
-                format_mismatch: None,
+                format_mismatch: Vec::new(),
             }),
             other => {
                 out.problems.push(ItemProblem {

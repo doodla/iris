@@ -19,7 +19,8 @@ use crate::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass, TransportKind};
 use crate::providers::{
-    self, GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, UnusableOutput,
+    self, GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, TypeExpectation,
+    UnusableOutput,
 };
 use crate::redact;
 
@@ -412,12 +413,11 @@ fn decode_image(index: usize, declared: Option<&str>, data: &str) -> Result<Gene
         }
     };
     let matches_label = declared.is_some_and(|d| media::is_image(d) && media::accepts(&[d], sniffed));
-    let format_mismatch = (!matches_label).then(|| {
-        format!(
-            "the Gemini API returned response item {index} {labeled} but its content is {sniffed}; it is kept \
-             as {sniffed} because the request completed and may have been billed"
-        )
-    });
+    let format_mismatch = match (&label, matches_label) {
+        (_, true) => Vec::new(),
+        (Some(label), false) => vec![TypeExpectation::Labeled(label.clone())],
+        (None, false) => vec![TypeExpectation::Unlabeled],
+    };
     Ok(GeneratedImage { item: index, media_type: sniffed.to_string(), bytes, format_mismatch })
 }
 

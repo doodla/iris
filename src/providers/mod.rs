@@ -100,11 +100,41 @@ pub struct GeneratedImage {
     /// `format_mismatch`).
     pub media_type: String,
     pub bytes: Vec<u8>,
-    /// How `media_type` differs from the type that the request asked for or the
-    /// response labeled, as a sentence, or `None` when it doesn't. The adapter only
-    /// describes the difference: the app turns it into the image's one type warning
-    /// (`output_format_mismatch`), together with the catalog's declared types.
-    pub format_mismatch: Option<String>,
+    /// Every statement about the image's type that `media_type` contradicts, or
+    /// empty when it contradicts none. The adapter only states the facts: the app
+    /// phrases the image's one type warning (`output_format_mismatch`) from them,
+    /// together with the catalog's declared types.
+    pub format_mismatch: Vec<TypeExpectation>,
+}
+
+/// A statement about the type a returned image should have, which its content can
+/// contradict ([`GeneratedImage::format_mismatch`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeExpectation {
+    /// The request asked for this output format, e.g. `jpeg`.
+    Requested(String),
+    /// The response declared this output format.
+    Declared(String),
+    /// The provider documents this format as its default, and none was requested.
+    ProviderDefault(String),
+    /// The response labeled the item with this media type.
+    Labeled(String),
+    /// The response gave the item no media type.
+    Unlabeled,
+}
+
+impl std::fmt::Display for TypeExpectation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeExpectation::Requested(format) => write!(f, "the request asked for format {format}"),
+            TypeExpectation::Declared(format) => write!(f, "the response declared format {format}"),
+            TypeExpectation::ProviderDefault(format) => {
+                write!(f, "the provider's default format is {format}")
+            }
+            TypeExpectation::Labeled(media_type) => write!(f, "the response labeled it {media_type}"),
+            TypeExpectation::Unlabeled => f.write_str("the response gave it no media type"),
+        }
+    }
 }
 
 impl std::fmt::Debug for GeneratedImage {

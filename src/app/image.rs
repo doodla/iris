@@ -538,32 +538,40 @@ fn save_all(
     saving
 }
 
-/// Each returned image's one type warning, for every provider alike, whether or not
-/// it can be saved (docs/reference/errors.md#warning-codes):
+/// Each returned image's one type warning, for every provider alike
+/// (docs/reference/errors.md#warning-codes), phrased here from the adapter's facts
+/// ([`GeneratedImage::format_mismatch`]) and the catalog's declared types:
 ///
-/// * `output_format_mismatch` when its type differs from the one that the request
-///   asked for or the response labeled ([`GeneratedImage::format_mismatch`], from the
-///   adapter), with a note when the model isn't declared to return that type either;
+/// * `output_format_mismatch` when its type contradicts what the request asked for
+///   or the response stated, saying also when the model isn't declared to return it;
 /// * otherwise `output_type_undeclared` when the model isn't declared to return it.
+///
+/// The messages say nothing about saving: that is reported when it happens.
 fn type_warnings(spec: &crate::catalog::ModelSpec, model: &str, images: &[GeneratedImage]) -> Vec<Warning> {
     let declared = spec.outputs.media_types;
-    let undeclared = |media_type: &str| {
-        (!declared.contains(&media_type)).then(|| {
-            format!("{media_type}, which {model} is not declared to return ({})", declared.join(", "))
-        })
-    };
+    let provider = spec.provider.display_name();
     images
         .iter()
-        .filter_map(|image| match (&image.format_mismatch, undeclared(&image.media_type)) {
-            (Some(mismatch), None) => Some(Warning::new(WarningCode::OutputFormatMismatch, mismatch.clone())),
-            (Some(mismatch), Some(why)) => {
-                Some(Warning::new(WarningCode::OutputFormatMismatch, format!("{mismatch}. It is also {why}")))
+        .filter_map(|image| {
+            let returned =
+                format!("{provider} returned response item {} as {}", image.item, image.media_type);
+            let undeclared = !declared.contains(&image.media_type.as_str());
+            let not_declared = format!("{model} is not declared to return it ({})", declared.join(", "));
+            if !image.format_mismatch.is_empty() {
+                let unmet: Vec<String> = image.format_mismatch.iter().map(ToString::to_string).collect();
+                let mut message = format!("{returned}, but {}", unmet.join(" and "));
+                if undeclared {
+                    message.push_str(&format!(", and {not_declared}"));
+                }
+                Some(Warning::new(WarningCode::OutputFormatMismatch, message))
+            } else if undeclared {
+                Some(Warning::new(
+                    WarningCode::OutputTypeUndeclared,
+                    format!("{returned}, but {not_declared}"),
+                ))
+            } else {
+                None
             }
-            (None, Some(why)) => Some(Warning::new(
-                WarningCode::OutputTypeUndeclared,
-                format!("response item {} is {why}; it was kept under its real type", image.item),
-            )),
-            (None, None) => None,
         })
         .collect()
 }

@@ -28,7 +28,7 @@ use base64::engine::general_purpose::STANDARD;
 use super::openai_compat::{ExpectedItem, ImagesApi, ImagesResponse, decode_items};
 use super::{
     AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest, InputImage,
-    Provider, ProviderContext, with_reported_usage,
+    Provider, ProviderContext, TypeExpectation, with_reported_usage,
 };
 use crate::artifacts::media;
 use crate::domain::{ProviderId, Warning, WarningCode};
@@ -292,23 +292,21 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         media_type_for_format(format)
             .ok_or_else(|| IrisError::internal(format!("unexpected output format '{format}'")))
     };
-    // Every statement about the type the images should have: (why, media type).
-    let mut expectations: Vec<(String, &'static str)> = Vec::new();
+    // Every statement about the type the images should have, with its media type.
+    let mut expectations: Vec<(TypeExpectation, &'static str)> = Vec::new();
     if let Some(format) = expect.format.as_deref() {
-        expectations
-            .push((format!("the request asked for output_format {format}"), format_media_type(format)?));
+        expectations.push((TypeExpectation::Requested(format.to_string()), format_media_type(format)?));
     }
     if let Some(format) = parsed.output_format.as_deref().filter(|f| OUTPUT_FORMATS.contains(f)) {
-        expectations
-            .push((format!("the response declared output_format {format}"), format_media_type(format)?));
+        expectations.push((TypeExpectation::Declared(format.to_string()), format_media_type(format)?));
     }
     if expectations.is_empty() {
-        expectations.push(("OpenAI's default output_format is png".to_string(), media::PNG));
+        expectations.push((TypeExpectation::ProviderDefault("png".to_string()), media::PNG));
     }
     // The echo (pushed last) is the most specific statement.
     let expected = expectations.last().map_or(media::PNG, |(_, media_type)| media_type);
 
-    let decoded = decode_items(parsed.data, ExpectedItem::MediaType(expected), &IMAGES_API);
+    let mut decoded = decode_items(parsed.data, ExpectedItem::MediaType(expected), &IMAGES_API);
     if decoded.images.is_empty() {
         let mut err = client::bad_response(resp, &decoded.reasons());
         if let Some(actual) = decoded.problems.first().and_then(|p| p.actual) {
@@ -318,22 +316,14 @@ fn decode_images(resp: &HttpResponse, expect: &Expected) -> Result<ImageOutput, 
         return Err(ImageFailure { error: err, unusable: decoded.unusable });
     }
 
-    let mut decoded = decoded;
     for image in &mut decoded.images {
-        let actual = image.media_type.as_str();
-        let unmet: Vec<&str> =
-            expectations.iter().filter(|(_, m)| *m != actual).map(|(why, _)| why.as_str()).collect();
-        if !unmet.is_empty() {
-            image.format_mismatch = Some(format!(
-                "OpenAI returned response item {} as {actual}, but {}; it is kept as {actual} because the \
-                 request completed and may have been billed",
-                image.item,
-                unmet.join(" and ")
-            ));
-        }
+        image.format_mismatch = expectations
+            .iter()
+            .filter(|(_, media_type)| *media_type != image.media_type)
+            .map(|(expectation, _)| expectation.clone())
+            .collect();
     }
-    let mut warnings = Vec::new();
-    warnings.extend(decoded.unusable_warnings());
+    let mut warnings = decoded.unusable_warnings();
     warnings.extend(decoded.count_warning(&IMAGES_API, expect.count.unwrap_or(1)));
 
     // Text in the result is always reported with `provider_text_output`
