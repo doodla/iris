@@ -138,20 +138,10 @@ macro_rules! rates {
 const FLUX_3_KLEIN: Rates = rates!(0.009;
     ("768x768", 0.008), ("1024x1024", 0.009), ("1536x1536", 0.011), ("2048x2048", 0.014), ("4096x4096", 0.036));
 
-/// An [`Estimator`] bound to one model's [`Rates`], so the estimate reads the rates
-/// that model declares, without a lookup by model id.
-macro_rules! estimator {
-    ($rates:path, $standard:expr) => {
-        Estimator {
-            estimate: {
-                fn estimate(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
-                    estimate_image(&$rates, spec, input)
-                }
-                estimate
-            },
-            standard: $standard,
-        }
-    };
+/// Klein's estimate, at the rates it declares ([`estimate_image`]). Each model has its
+/// own estimator function, so no estimate looks its rates up by model id.
+fn estimate_klein(spec: &ModelSpec, input: &EstimateInput<'_>) -> Result<CostEstimate, String> {
+    estimate_image(&FLUX_3_KLEIN, spec, input)
 }
 
 /// Gateway models Iris gives no model, with the reason (sources in the module docs).
@@ -186,7 +176,7 @@ pub static MODELS: &[ModelSpec] = &[ModelSpec {
     access_notes: ACCESS_NOTES,
     docs_url: DOCS_URL,
     validate: None,
-    estimate: Some(estimator!(FLUX_3_KLEIN, STANDARD)),
+    estimate: Some(Estimator { estimate: estimate_klein, standard: STANDARD }),
     estimate_usage: None,
 }];
 
