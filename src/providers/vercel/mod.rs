@@ -121,7 +121,7 @@ impl ImageProvider for VercelProvider {
 
 /// What the gateway's Images endpoint returns: one image per request, so no count is
 /// sent.
-const IMAGES_API: ImagesApi = ImagesApi { wording: &client::WORDING, count_field: None, base64_only: None };
+const IMAGES_API: ImagesApi = ImagesApi { who: client::WORDING.who, count_field: None, base64_only: None };
 
 /// Decode an images response (see `providers::openai_compat`): every item typed by
 /// its magic bytes. Paid output is never discarded because of another item: an item

@@ -674,7 +674,7 @@ fn models_list_is_consistent_with_the_catalog() {
     assert_eq!(exact("gpt-image-2.5-sunburst"), "size");
     assert!(exact("gemini-3-pro-image").is_null());
     let human = run(iris(&sandbox).args(["models", "show", "bfl/flux-3-image-klein"])).stdout;
-    assert!(human.contains("(at most 1 per request; size sets the exact pixel size)"), "{human}");
+    assert!(human.contains("(at most 1 per request; a WxH size sets the exact pixel size)"), "{human}");
 }
 
 /// A request breaking a published constraint names it in `details.constraint`.

@@ -59,8 +59,8 @@ impl<'a> GenerateBody<'a> {
 /// message string, which some answers carry instead.
 pub(super) fn parse_error(body: &[u8]) -> ErrorBody {
     match error_member(body) {
-        Some(Value::String(s)) => {
-            ErrorBody { message: text_field(Some(&Value::String(s))), ..ErrorBody::default() }
+        Some(message @ Value::String(_)) => {
+            ErrorBody { message: text_field(Some(&message)), ..ErrorBody::default() }
         }
         Some(error) => ErrorBody::from_member(&error),
         None => ErrorBody::default(),

@@ -18,7 +18,7 @@ use crate::artifacts::media;
 use crate::domain::{ProviderId, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::HttpResponse;
-use crate::providers::errors::{self, PaidWording};
+use crate::providers::errors;
 use crate::providers::{GeneratedImage, UnusableOutput};
 
 /// The `error` member of an error body, or `None` when the body is not a JSON object
@@ -185,8 +185,8 @@ pub(crate) struct DecodedItems {
 /// that [`decode_items`] and [`DecodedItems::count_warning`] phrase their reasons and
 /// warnings from.
 pub(crate) struct ImagesApi {
-    /// How the provider is named in its errors and warnings.
-    pub wording: &'static PaidWording,
+    /// The provider as a sentence subject, e.g. "OpenAI" (its `PaidWording::who`).
+    pub who: &'static str,
     /// The request field that sets the number of images (`n`), when the adapter sends
     /// one.
     pub count_field: Option<&'static str>,
@@ -291,7 +291,7 @@ impl DecodedItems {
     /// `unexpected_output_count` when the response held a number of items other
     /// than `wanted`.
     pub fn count_warning(&self, api: &ImagesApi, wanted: i64) -> Option<Warning> {
-        let who = api.wording.who;
+        let who = api.who;
         let asked = api.count_field.map(|field| format!(" ({field})")).unwrap_or_default();
         let returned = self.returned;
         if i64::try_from(returned).ok() == Some(wanted) {
@@ -328,9 +328,6 @@ mod tests {
         }
     }
 
-    const WORDING: PaidWording =
-        PaidWording { provider: ProviderId::OpenAi, who: "OpenAI", usage: "usage", support: "support" };
-
     fn item(b64: Option<&str>, url: bool) -> ImageItem {
         ImageItem { b64_json: b64.map(str::to_string), has_url: url, revised_prompt: None }
     }
@@ -338,8 +335,8 @@ mod tests {
     #[test]
     fn reasons_and_warnings_are_phrased_from_the_declared_facts() {
         let documented =
-            ImagesApi { wording: &WORDING, count_field: Some("n"), base64_only: Some("GPT image models") };
-        let plain = ImagesApi { wording: &WORDING, count_field: None, base64_only: None };
+            ImagesApi { who: "OpenAI", count_field: Some("n"), base64_only: Some("GPT image models") };
+        let plain = ImagesApi { who: "OpenAI", count_field: None, base64_only: None };
         let text = base64::engine::general_purpose::STANDARD.encode(b"not an image");
         let items = || vec![item(None, true), item(Some(&text), false)];
 

@@ -244,7 +244,7 @@ fn media_type_for_format(format: &str) -> Option<&'static str> {
 /// What the Images API returns: the count is sent as `n`, and GPT Image models
 /// return base64 only.
 const IMAGES_API: ImagesApi =
-    ImagesApi { wording: &client::WORDING, count_field: Some("n"), base64_only: Some("GPT image models") };
+    ImagesApi { who: client::WORDING.who, count_field: Some("n"), base64_only: Some("GPT image models") };
 
 /// What a paid request asked for, to check the response against.
 struct Expected {

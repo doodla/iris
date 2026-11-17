@@ -461,7 +461,7 @@ fn model_show(m: &ModelCapabilities) -> String {
             m.outputs
                 .exact_size_option
                 .as_deref()
-                .map(|option| format!("; {option} sets the exact pixel size"))
+                .map(|option| format!("; a WxH {option} sets the exact pixel size"))
                 .unwrap_or_default()
         ),
     );
