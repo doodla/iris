@@ -413,10 +413,10 @@ fn decode_image(index: usize, declared: Option<&str>, data: &str) -> Result<Gene
         }
     };
     let matches_label = declared.is_some_and(|d| media::is_image(d) && media::accepts(&[d], sniffed));
-    let format_mismatch = match (&label, matches_label) {
-        (_, true) => Vec::new(),
-        (Some(label), false) => vec![TypeExpectation::Labeled(label.clone())],
-        (None, false) => vec![TypeExpectation::Unlabeled],
+    let format_mismatch = if matches_label {
+        Vec::new()
+    } else {
+        vec![label.clone().map_or(TypeExpectation::Unlabeled, TypeExpectation::Labeled)]
     };
     Ok(GeneratedImage { item: index, media_type: sniffed.to_string(), bytes, format_mismatch })
 }

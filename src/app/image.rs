@@ -11,6 +11,7 @@
 //! `<state_dir>/unsaved/`, and returned content that is not a valid image is kept
 //! there as received, as `.bin`).
 
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use crate::artifacts::{self, FinalizeMode, Naming, PathRequest};
@@ -553,25 +554,26 @@ fn type_warnings(spec: &crate::catalog::ModelSpec, model: &str, images: &[Genera
     images
         .iter()
         .filter_map(|image| {
-            let returned =
-                format!("{provider} returned response item {} as {}", image.item, image.media_type);
             let undeclared = !declared.contains(&image.media_type.as_str());
-            let not_declared = format!("{model} is not declared to return it ({})", declared.join(", "));
-            if !image.format_mismatch.is_empty() {
-                let unmet: Vec<String> = image.format_mismatch.iter().map(ToString::to_string).collect();
-                let mut message = format!("{returned}, but {}", unmet.join(" and "));
-                if undeclared {
-                    message.push_str(&format!(", and {not_declared}"));
-                }
-                Some(Warning::new(WarningCode::OutputFormatMismatch, message))
-            } else if undeclared {
-                Some(Warning::new(
-                    WarningCode::OutputTypeUndeclared,
-                    format!("{returned}, but {not_declared}"),
-                ))
-            } else {
-                None
+            if image.format_mismatch.is_empty() && !undeclared {
+                return None;
             }
+            let mut message =
+                format!("{provider} returned response item {} as {}, but ", image.item, image.media_type);
+            let code = if image.format_mismatch.is_empty() {
+                WarningCode::OutputTypeUndeclared
+            } else {
+                let unmet: Vec<String> = image.format_mismatch.iter().map(ToString::to_string).collect();
+                message += &unmet.join(" and ");
+                if undeclared {
+                    message += ", and ";
+                }
+                WarningCode::OutputFormatMismatch
+            };
+            if undeclared {
+                let _ = write!(message, "{model} is not declared to return it ({})", declared.join(", "));
+            }
+            Some(Warning::new(code, message))
         })
         .collect()
 }
