@@ -15,7 +15,7 @@
 use bytes::Bytes;
 use reqwest::header::CONTENT_TYPE;
 
-use super::wire::{Availability, AvailabilityList, parse_error};
+use super::wire::{Availability, availability, parse_error};
 use crate::domain::ProviderId;
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{AuthHeader, Call, HttpError, HttpResponse, RetryClass, Verdict};
@@ -200,11 +200,10 @@ pub(super) async fn check_access(
     let result = ctx.http.execute(&call, |c| Ok(auth.apply(c.get(&url))), classify_read).await;
     let error = match result {
         Ok(resp) => {
-            let list = AvailabilityList::parse(&resp.body, models);
-            return models
-                .iter()
-                .map(|model| {
-                    Ok(match list.of(model) {
+            return availability(&resp.body, models)
+                .into_iter()
+                .map(|answer| {
+                    Ok(match answer {
                         Availability::Eligible => AccountAccess::Available,
                         Availability::Ineligible => AccountAccess::Unavailable,
                         Availability::Unknown => AccountAccess::Unknown,
