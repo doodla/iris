@@ -14,7 +14,7 @@
 #      and sends nothing: every proxy variable points at the local mock, which
 #      would record any request that tried to leave.
 #   2. A full run in the script's mock mode (IRIS_LIVE_ALLOW_BASE_URL_OVERRIDE=
-#      mock-only, fake keys, both base URLs on the mock at 127.0.0.1) passes all
+#      mock-only, fake keys, every base URL on the mock at 127.0.0.1) passes all
 #      eight steps, every ledger line says mode=MOCK, and the mock received
 #      exactly one OpenAI generation and one edit, two Gemini generateContent
 #      calls, one Veo submission, one operation poll and one video download,

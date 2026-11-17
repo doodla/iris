@@ -455,22 +455,33 @@ fn codes(out: &ImageOutput) -> Vec<&str> {
 
 #[tokio::test]
 async fn images_are_typed_by_their_bytes_and_kept_whatever_their_label() {
-    // (case, part, kept media type, warning expected)
+    use iris::providers::TypeExpectation::{Labeled, Unlabeled};
+    // (case, part, kept media type, the statements the content contradicts)
     let jpeg_bytes = jpeg();
-    let cases: Vec<(&str, Value, &str, bool)> = vec![
-        ("labeled png, content jpeg", image_part("image/png", &jpeg_bytes), "image/jpeg", true),
-        ("no mimeType", json!({"inlineData": {"data": b64(&jpeg_bytes)}}), "image/jpeg", true),
+    let cases: Vec<(&str, Value, &str, Vec<iris::providers::TypeExpectation>)> = vec![
+        (
+            "labeled png, content jpeg",
+            image_part("image/png", &jpeg_bytes),
+            "image/jpeg",
+            vec![Labeled("image/png".into())],
+        ),
+        ("no mimeType", json!({"inlineData": {"data": b64(&jpeg_bytes)}}), "image/jpeg", vec![Unlabeled]),
         (
             "empty mimeType",
             json!({"inlineData": {"mimeType": "", "data": b64(&jpeg_bytes)}}),
             "image/jpeg",
-            true,
+            vec![Unlabeled],
         ),
-        ("a non-image label", image_part("application/octet-stream", &jpeg_bytes), "image/jpeg", true),
-        ("image/jpg alias", image_part("image/jpg", &jpeg_bytes), "image/jpeg", false),
-        ("correct label", image_part("image/jpeg", &jpeg_bytes), "image/jpeg", false),
+        (
+            "a non-image label",
+            image_part("application/octet-stream", &jpeg_bytes),
+            "image/jpeg",
+            vec![Labeled("application/octet-stream".into())],
+        ),
+        ("image/jpg alias", image_part("image/jpg", &jpeg_bytes), "image/jpeg", vec![]),
+        ("correct label", image_part("image/jpeg", &jpeg_bytes), "image/jpeg", vec![]),
     ];
-    for (name, part, kept, warns) in cases {
+    for (name, part, kept, unmet) in cases {
         let server = MockServer::start().await;
         mount_ok(&server, response_with(vec![part], "STOP")).await;
         let out = generate(&server, &generate_request(ResolvedOptions::new()))
@@ -479,13 +490,9 @@ async fn images_are_typed_by_their_bytes_and_kept_whatever_their_label() {
         assert_eq!(out.images.len(), 1, "{name}");
         assert_eq!(out.images[0].media_type, kept, "{name}");
         assert_eq!(out.images[0].bytes, jpeg_bytes, "{name}: kept verbatim");
-        if warns {
-            assert_eq!(codes(&out), ["output_format_mismatch"], "{name}");
-            let message = &out.warnings[0].message;
-            assert!(message.contains("response item 0 ") && message.contains(kept), "{name}: {message}");
-        } else {
-            assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
-        }
+        // The adapter states the facts on the image; the app phrases the warning.
+        assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
+        assert_eq!(out.images[0].format_mismatch, unmet, "{name}");
         assert_eq!(requests(&server).await.len(), 1, "{name}: never repeated");
     }
 }
@@ -503,9 +510,13 @@ async fn one_bad_item_never_drops_the_good_ones() {
     let out = generate(&server, &generate_request(ResolvedOptions::new())).await.unwrap();
     let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
     assert_eq!(types, ["image/png", "image/jpeg"]);
-    assert_eq!(codes(&out), ["output_format_mismatch", "unexpected_output_count"]);
-    assert!(out.warnings[0].message.contains("response item 1 "), "{}", out.warnings[0].message);
-    let count = &out.warnings[1].message;
+    assert_eq!(codes(&out), ["unexpected_output_count"]);
+    assert!(out.images[0].format_mismatch.is_empty());
+    assert_eq!(
+        out.images[1].format_mismatch,
+        [iris::providers::TypeExpectation::Labeled("image/png".into())]
+    );
+    let count = &out.warnings[0].message;
     assert!(count.contains("returned 2 items (2 usable) for a request of 1"), "{count}");
 
     // A correct image next to items that are not images: the image is kept, each

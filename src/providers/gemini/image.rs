@@ -19,7 +19,8 @@ use crate::domain::{Operation, ProviderId, Usage, Warning, WarningCode};
 use crate::error::{ErrorCode, IrisError};
 use crate::http::{HttpError, RetryClass, TransportKind};
 use crate::providers::{
-    self, GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, UnusableOutput,
+    self, GeneratedImage, ImageFailure, ImageOutput, ImageRequest, ProviderContext, TypeExpectation,
+    UnusableOutput,
 };
 use crate::redact;
 
@@ -266,7 +267,8 @@ struct Unusable {
 /// Every non-thought part with `inlineData` is a returned item, whatever its label.
 /// Each is judged by its bytes, never by its label, and paid output is never
 /// discarded because of another item: a valid image is kept under its sniffed type
-/// (with `output_format_mismatch` when the label differs or is missing); an item that
+/// (with [`GeneratedImage::format_mismatch`] when the label differs or is missing,
+/// which the app reports as `output_format_mismatch`); an item that
 /// is not a usable image is skipped with `output_item_unusable`, its content handed
 /// to the app in `unusable` to be saved as received. Only an answer without any
 /// usable image is an error (with that content in the failure); it completed, so it
@@ -283,7 +285,6 @@ fn interpret(
         header_request_id.or_else(|| resp.response_id.as_deref().and_then(crate::http::sanitize_request_id));
     let mut images = Vec::new();
     let mut texts = Vec::new();
-    let mut mismatches = Vec::new();
     let mut unusable = Vec::new();
     let mut returned = 0usize;
     let candidates = resp.candidates.as_deref().unwrap_or_default();
@@ -299,10 +300,7 @@ fn interpret(
         returned += 1;
         let declared = blob.mime_type.as_deref().map(str::trim).filter(|m| !m.is_empty());
         match decode_image(index, declared, blob.data.as_deref().unwrap_or("")) {
-            Ok((image, mismatch)) => {
-                images.push(image);
-                mismatches.extend(mismatch);
-            }
+            Ok(image) => images.push(image),
             Err(problem) => unusable.push((index, problem)),
         }
     }
@@ -358,7 +356,6 @@ fn interpret(
             "the model also returned text; it is reported in the result's `text` field",
         ));
     }
-    warnings.extend(mismatches);
     for problem in &unusable {
         warnings.push(Warning::new(
             WarningCode::OutputItemUnusable,
@@ -379,14 +376,10 @@ fn interpret(
 }
 
 /// Decode one returned inline item (item `index`, labeled `declared`) and type it by
-/// its magic bytes. A recognized image is kept under its sniffed type, with an
-/// `output_format_mismatch` warning when the label is missing or names another type;
+/// its magic bytes. A recognized image is kept under its sniffed type, with a
+/// [`GeneratedImage::format_mismatch`] when the label is missing or names another type;
 /// anything else (no data, not base64, not an image) is [`Unusable`].
-fn decode_image(
-    index: usize,
-    declared: Option<&str>,
-    data: &str,
-) -> Result<(GeneratedImage, Option<Warning>), Unusable> {
+fn decode_image(index: usize, declared: Option<&str>, data: &str) -> Result<GeneratedImage, Unusable> {
     let label = declared.map(client::safe_text);
     let unusable = |why: String, sniffed: Option<&'static str>, content: Option<Vec<u8>>| Unusable {
         why,
@@ -420,16 +413,12 @@ fn decode_image(
         }
     };
     let matches_label = declared.is_some_and(|d| media::is_image(d) && media::accepts(&[d], sniffed));
-    let warning = (!matches_label).then(|| {
-        Warning::new(
-            WarningCode::OutputFormatMismatch,
-            format!(
-                "the Gemini API returned response item {index} {labeled} but its content is {sniffed}; it \
-                 is kept as {sniffed} because the request completed and may have been billed"
-            ),
-        )
-    });
-    Ok((GeneratedImage { item: index, media_type: sniffed.to_string(), bytes }, warning))
+    let format_mismatch = if matches_label {
+        Vec::new()
+    } else {
+        vec![label.clone().map_or(TypeExpectation::Unlabeled, TypeExpectation::Labeled)]
+    };
+    Ok(GeneratedImage { item: index, media_type: sniffed.to_string(), bytes, format_mismatch })
 }
 
 /// Normalize `usageMetadata`: input = prompt tokens; output = candidate plus

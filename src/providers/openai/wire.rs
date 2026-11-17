@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::catalog::{OptionValue, ResolvedOptions};
 use crate::domain::Usage;
 use crate::error::IrisError;
+use crate::providers::openai_compat::{ErrorBody, error_member, text_field};
 use crate::providers::{USAGE_MAX_DEPTH, USAGE_MAX_ENTRIES};
 
 /// Option fields shared by generation and edit bodies (see the model catalog's wire mapping). Only
@@ -164,9 +165,8 @@ pub(super) fn numbers_only(value: &Value, depth: usize) -> Option<Value> {
 /// read defensively (any field may be missing; gateways may send HTML).
 #[derive(Debug, Default)]
 pub(super) struct WireError {
-    pub message: Option<String>,
-    pub kind: Option<String>,
-    pub code: Option<String>,
+    /// `message`, `type`, and `code`, as every OpenAI-style error body carries them.
+    pub common: ErrorBody,
     /// True if the error carries a `moderation_details` object (documented only for
     /// `code = moderation_blocked`).
     pub moderation_details: bool,
@@ -180,24 +180,14 @@ impl WireError {
     /// Parse an error body; a body that is not the documented JSON shape yields an
     /// empty `WireError` (all fields `None`).
     pub fn parse(body: &[u8]) -> WireError {
-        let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        let Some(error) = error_member(body).filter(Value::is_object) else {
             return WireError::default();
-        };
-        let Some(error) = value.get("error").filter(|e| e.is_object()) else {
-            return WireError::default();
-        };
-        let string = |v: Option<&Value>| match v {
-            Some(Value::String(s)) if !s.trim().is_empty() => Some(s.trim().to_string()),
-            Some(Value::Number(n)) => Some(n.to_string()),
-            _ => None,
         };
         let details = error.get("moderation_details").filter(|d| d.is_object());
         WireError {
-            message: string(error.get("message")),
-            kind: string(error.get("type")),
-            code: string(error.get("code")),
+            common: ErrorBody::from_member(&error),
             moderation_details: details.is_some(),
-            moderation_stage: string(details.and_then(|d| d.get("moderation_stage"))),
+            moderation_stage: text_field(details.and_then(|d| d.get("moderation_stage"))),
             categories: details
                 .and_then(|d| d.get("categories"))
                 .and_then(Value::as_array)
@@ -208,7 +198,7 @@ impl WireError {
 
     /// True if `code` or `type` equals `value`.
     pub fn is(&self, value: &str) -> bool {
-        self.code.as_deref() == Some(value) || self.kind.as_deref() == Some(value)
+        self.common.is(value)
     }
 }
 
@@ -250,10 +240,12 @@ mod tests {
     #[test]
     fn error_bodies_are_read_defensively() {
         let e = WireError::parse(b"<html>bad gateway</html>");
-        assert!(e.message.is_none() && e.code.is_none() && e.kind.is_none());
+        assert!(e.common.message.is_none() && e.common.code.is_none() && e.common.kind.is_none());
+        let e = WireError::parse(br#"{"error": "plain"}"#);
+        assert!(e.common.message.is_none(), "OpenAI documents only an error object");
         let e = WireError::parse(br#"{"error": {"message": " m ", "type": "t", "code": 42}}"#);
-        assert_eq!(e.message.as_deref(), Some("m"));
-        assert_eq!(e.code.as_deref(), Some("42"));
+        assert_eq!(e.common.message.as_deref(), Some("m"));
+        assert_eq!(e.common.code.as_deref(), Some("42"));
         assert!(e.is("t") && e.is("42") && !e.is("m"));
         assert!(!e.moderation_details);
         let e = WireError::parse(br#"{"error": {"code": "x", "moderation_details": {}}}"#);

@@ -415,8 +415,16 @@ case.
 | `output_item_unusable` | A returned item isn't a usable image, so Iris skipped it. Iris kept every usable image. |
 | `output_saved_elsewhere` | Iris saved a paid output in the state directory instead of where you asked: an image that it couldn't write there, which is also listed in `artifacts`, or the content of an item that isn't a usable image, kept as a `.bin` file. |
 | `output_extension_may_change` | The model takes no `format` option, so the provider chooses the image type, and the `-o` extension may change. The message names the other paths, where an existing file stops the run without `--overwrite`. Iris reports it before sending, in a dry run too. |
-| `output_type_undeclared` | A saved output's type isn't one that `iris models show` lists for the model. Iris saved it under its real type. |
+| `output_type_undeclared` | A returned image's type isn't one that `iris models show` lists for the model. |
 | `output_size_mismatch` | A saved image's pixel size differs from the size that the request set, so the provider ignored or changed it. Iris kept the image. The message says whether the cost estimate comes from the usage that the provider reported, or is for the requested size and may not match the charge. |
+
+Each returned image gets at most one of `output_format_mismatch` and `output_type_undeclared`. If
+its type differs from the one that you requested, that the provider stated, or that is the
+provider's default when you requested none, it gets `output_format_mismatch`, and the message also
+says when the model isn't declared to return that type. Otherwise, an image of a type that the model
+isn't declared to return gets `output_type_undeclared`. Neither warning says where the image went:
+`artifacts` lists the images that Iris saved, and `output_saved_elsewhere` or the error reports
+any other.
 
 The warning messages that describe returned items number them by their position in the provider's
 response, from 0. That position can differ from an artifact's `index` when Iris skipped an earlier
@@ -428,7 +436,7 @@ response didn't match, reported three warnings:
 ```json
 "warnings": [
   {"code":"output_extension_adjusted","message":"/home/you/circle has no extension; saving as /home/you/circle.jpg"},
-  {"code":"output_format_mismatch","message":"OpenAI returned response item 0 as image/png, but the request asked for output_format jpeg and the response declared output_format jpeg; it is kept as image/png because the request completed and may have been billed"},
+  {"code":"output_format_mismatch","message":"OpenAI returned response item 0 as image/png, but the request asked for format jpeg and the response declared format jpeg"},
   {"code":"output_extension_adjusted","message":"the provider returned image/png; saving as /home/you/circle.png instead of /home/you/circle.jpg"}
 ]
 ```

@@ -96,7 +96,7 @@ pub(super) async fn post_paid(
 }
 
 /// How the paid-request errors name OpenAI.
-const WORDING: errors::PaidWording = errors::PaidWording {
+pub(super) const WORDING: errors::PaidWording = errors::PaidWording {
     provider: OPENAI,
     who: "OpenAI",
     usage: "your OpenAI usage",
@@ -133,8 +133,8 @@ fn uncertain_transport(t: &TransportError, client_request_id: &str) -> IrisError
 fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
     let status = resp.status.as_u16();
     let wire = WireError::parse(&resp.body);
-    let provider_says = provider_suffix(&wire);
-    let err = |code: ErrorCode, message: String| error_from(resp, &wire, code, message);
+    let provider_says = wire.common.suffix();
+    let err = |code: ErrorCode, message: String| wire.common.error(resp, OPENAI, code, message);
     match status {
         429 if is_quota(&wire) => Verdict::Final(quota_error(resp, &wire)),
         429 => Verdict::RetryableRejection {
@@ -232,7 +232,7 @@ fn classify_paid(resp: &HttpResponse, model: &str) -> Verdict {
         ),
         _ => {
             let mut e = resp.fallback_error(Some(OPENAI));
-            annotate(&mut e, resp, &wire);
+            wire.common.annotate(&mut e, resp);
             Verdict::Final(e)
         }
     }
@@ -255,7 +255,7 @@ fn is_moderation_block(wire: &WireError) -> bool {
 }
 
 fn quota_error(resp: &HttpResponse, wire: &WireError) -> IrisError {
-    let hint = match wire.code.as_deref() {
+    let hint = match wire.common.code.as_deref() {
         Some("credit_balance_exhausted") => {
             "the organization has no prepaid credits left; add credits at \
              https://platform.openai.com/settings/organization/billing"
@@ -275,17 +275,18 @@ fn quota_error(resp: &HttpResponse, wire: &WireError) -> IrisError {
             "check credits, billing, and spend limits at https://platform.openai.com/settings/organization/billing"
         }
     };
-    error_from(
-        resp,
-        wire,
-        ErrorCode::QuotaExceeded,
-        format!(
-            "OpenAI refused the request because of billing or quota limits (HTTP {}){}",
-            resp.status.as_u16(),
-            provider_suffix(wire)
-        ),
-    )
-    .with_hint(format!("{hint}; retrying will not help until the limit changes"))
+    wire.common
+        .error(
+            resp,
+            OPENAI,
+            ErrorCode::QuotaExceeded,
+            format!(
+                "OpenAI refused the request because of billing or quota limits (HTTP {}){}",
+                resp.status.as_u16(),
+                wire.common.suffix()
+            ),
+        )
+        .with_hint(format!("{hint}; retrying will not help until the limit changes"))
 }
 
 fn content_blocked(resp: &HttpResponse, wire: &WireError) -> IrisError {
@@ -298,13 +299,15 @@ fn content_blocked(resp: &HttpResponse, wire: &WireError) -> IrisError {
         context.push(format!("categories: {}", cats.join(", ")));
     }
     let context = if context.is_empty() { String::new() } else { format!(" ({})", context.join("; ")) };
-    let mut e = error_from(
-        resp,
-        wire,
-        ErrorCode::ContentBlocked,
-        format!("OpenAI blocked this request under its content policy{context}"),
-    )
-    .with_hint("change the prompt or input images; Iris does not retry blocked requests");
+    let mut e = wire
+        .common
+        .error(
+            resp,
+            OPENAI,
+            ErrorCode::ContentBlocked,
+            format!("OpenAI blocked this request under its content policy{context}"),
+        )
+        .with_hint("change the prompt or input images; Iris does not retry blocked requests");
     if let Some(stage) = &wire.moderation_stage {
         e = e.with_detail("moderation_stage", clean(stage, 40));
     }
@@ -314,23 +317,6 @@ fn content_blocked(resp: &HttpResponse, wire: &WireError) -> IrisError {
         e = e.with_detail("categories", serde_json::Value::Array(cats));
     }
     e
-}
-
-/// An error for a non-2xx answer: provider, status, request id, provider code, and
-/// the scrubbed provider message.
-fn error_from(resp: &HttpResponse, wire: &WireError, code: ErrorCode, message: String) -> IrisError {
-    let provider_code = wire.code.as_deref().or(wire.kind.as_deref());
-    errors::error_from(resp, OPENAI, code, message, provider_code, wire.message.as_deref())
-}
-
-/// Attach the provider code (`error.code`, else `error.type`) and message.
-fn annotate(e: &mut IrisError, resp: &HttpResponse, wire: &WireError) {
-    errors::annotate(e, resp, wire.code.as_deref().or(wire.kind.as_deref()), wire.message.as_deref());
-}
-
-/// `": <provider message>"` for human messages, or empty.
-fn provider_suffix(wire: &WireError) -> String {
-    errors::provider_suffix(wire.message.as_deref())
 }
 
 /// A 2xx answer Iris cannot use. The request completed, so it may have been billed.
@@ -372,12 +358,12 @@ pub(super) async fn check_access(model: &str, ctx: &ProviderContext) -> Result<A
 fn classify_read(resp: &HttpResponse, model: &str) -> Verdict {
     let wire = WireError::parse(&resp.body);
     let status = resp.status.as_u16();
-    let err = |code: ErrorCode, message: String| error_from(resp, &wire, code, message);
+    let err = |code: ErrorCode, message: String| wire.common.error(resp, OPENAI, code, message);
     match status {
         401 => Verdict::Final(
             err(
                 ErrorCode::AuthenticationFailed,
-                format!("OpenAI rejected the API key (HTTP 401){}", provider_suffix(&wire)),
+                format!("OpenAI rejected the API key (HTTP 401){}", wire.common.suffix()),
             )
             .with_hint("check that OPENAI_API_KEY holds a valid API key"),
         ),
@@ -400,7 +386,7 @@ fn classify_read(resp: &HttpResponse, model: &str) -> Verdict {
         },
         _ => {
             let mut e = resp.fallback_error(Some(OPENAI));
-            annotate(&mut e, resp, &wire);
+            wire.common.annotate(&mut e, resp);
             Verdict::Final(e)
         }
     }

@@ -159,6 +159,10 @@ request_timeout = "300s"
 base_url = "https://generativelanguage.googleapis.com"   # the origin: Iris adds /v1 or /v1beta
 request_timeout = "300s"
 submit_timeout = "60s"
+
+[providers.vercel]
+base_url = "https://ai-gateway.vercel.sh/v1"
+request_timeout = "300s"
 ```
 
 `[image] model` and `[video] model` are the only settings that name a model. Each must be a catalog
@@ -167,9 +171,9 @@ a nickname such as `nano-banana-2`, or a dated snapshot as written. `iris config
 ID. `--capabilities-from` has no config equivalent. For how to choose a model, see
 [Choose a model and control costs](../guides/models-and-costs.md).
 
-There's one `[providers.PROVIDER]` table for each provider, `openai` and `gemini`, with the same
-keys. `submit_timeout` applies only to a provider with video models, so setting it for `openai`
-fails with `config_invalid`.
+There's one `[providers.PROVIDER]` table for each provider, `openai`, `gemini`, and `vercel`, with
+the same keys. `submit_timeout` applies only to a provider with video models, so setting it for
+`openai` or `vercel` fails with `config_invalid`.
 
 ### Validation
 

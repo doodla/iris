@@ -23,7 +23,7 @@ mod wire;
 
 use async_trait::async_trait;
 
-use super::openai_compat::{ImagesResponse, decode_items};
+use super::openai_compat::{ExpectedItem, ImagesApi, ImagesResponse, decode_items};
 use super::{
     AccessScope, AccountAccess, CredentialHeader, ImageFailure, ImageOutput, ImageProvider, ImageRequest,
     Provider, ProviderContext,
@@ -119,6 +119,10 @@ impl ImageProvider for VercelProvider {
     }
 }
 
+/// What the gateway's Images endpoint returns: one image per request, so no count is
+/// sent.
+const IMAGES_API: ImagesApi = ImagesApi { who: client::WORDING.who, count_field: None, base64_only: None };
+
 /// Decode an images response (see `providers::openai_compat`): every item typed by
 /// its magic bytes. Paid output is never discarded because of another item: an item
 /// that cannot be used is skipped with `output_item_unusable`, and its content handed
@@ -129,13 +133,13 @@ fn decode_images(resp: &HttpResponse) -> Result<ImageOutput, ImageFailure> {
     if parsed.data.is_empty() {
         return Err(client::bad_response(resp, "it contains no images").into());
     }
-    let decoded = decode_items(parsed.data, "an image", "");
+    let decoded = decode_items(parsed.data, ExpectedItem::AnyImage, &IMAGES_API);
     if decoded.images.is_empty() {
         let error = client::bad_response(resp, &decoded.reasons());
         return Err(ImageFailure { error, unusable: decoded.unusable });
     }
     let mut warnings = decoded.unusable_warnings();
-    warnings.extend(decoded.count_warning("the Vercel AI Gateway", 1, ""));
+    warnings.extend(decoded.count_warning(&IMAGES_API, 1));
     Ok(ImageOutput {
         images: decoded.images,
         unusable: decoded.unusable,

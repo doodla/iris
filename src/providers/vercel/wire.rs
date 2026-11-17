@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::catalog::ResolvedOptions;
 use crate::error::IrisError;
+use crate::providers::openai_compat::{ErrorBody, error_member, text_field};
 
 /// `POST /images/generations` body. No `Debug`: it holds the prompt.
 #[derive(Serialize)]
@@ -54,37 +55,15 @@ impl<'a> GenerateBody<'a> {
     }
 }
 
-/// A gateway error body, read defensively.
-#[derive(Debug, Default)]
-pub(super) struct WireError {
-    pub message: Option<String>,
-    /// `error.type`, e.g. `rate_limit_exceeded`, `model_not_found`.
-    pub kind: Option<String>,
-    /// `error.code`, when present.
-    pub code: Option<String>,
-}
-
-impl WireError {
-    pub fn parse(body: &[u8]) -> WireError {
-        let Ok(value) = serde_json::from_slice::<Value>(body) else {
-            return WireError::default();
-        };
-        let Some(error) = value.get("error") else {
-            return WireError::default();
-        };
-        let text = |key: &str| match error.get(key) {
-            Some(Value::String(s)) => Some(s.trim().to_string()).filter(|s| !s.is_empty()),
-            Some(Value::Number(n)) => Some(n.to_string()),
-            _ => None,
-        };
-        match error {
-            // Some answers carry the message as a bare string.
-            Value::String(s) => WireError {
-                message: Some(s.trim().to_string()).filter(|m| !m.is_empty()),
-                ..WireError::default()
-            },
-            _ => WireError { message: text("message"), kind: text("type"), code: text("code") },
+/// A gateway error body, read defensively: the OpenAI-style object, or a bare
+/// message string, which some answers carry instead.
+pub(super) fn parse_error(body: &[u8]) -> ErrorBody {
+    match error_member(body) {
+        Some(message @ Value::String(_)) => {
+            ErrorBody { message: text_field(Some(&message)), ..ErrorBody::default() }
         }
+        Some(error) => ErrorBody::from_member(&error),
+        None => ErrorBody::default(),
     }
 }
 
@@ -95,42 +74,52 @@ pub(super) enum Availability {
     Unknown,
 }
 
-/// An annotated model list (`GET /models?include_availability`), parsed once for
-/// every model it answers.
-pub(super) struct AvailabilityList {
-    /// The `model_eligibility` of each listed model, by id; `None` when the body is
-    /// not a readable list.
+/// The availability of each of `models`, in order, from one annotated model list
+/// (`GET /models?include_availability`). The gateway lists every model it routes to;
+/// only the rows of `models` are kept, and their values are moved out of the parsed
+/// document, never copied. Each answer follows [`AvailabilityList::of`].
+pub(super) fn availability(body: &[u8], models: &[&str]) -> Vec<Availability> {
+    let list = AvailabilityList::parse(body, models);
+    models.iter().map(|model| list.of(model)).collect()
+}
+
+/// The parts of the list that answer the requested models. Private, so that only
+/// the models it was parsed for are ever asked about.
+struct AvailabilityList {
+    /// The `model_eligibility` of each requested model that the list names, by id;
+    /// `None` when the body is not a readable list.
     rows: Option<std::collections::HashMap<String, Value>>,
     /// `request_context_availability.http.status`.
     account: Option<String>,
 }
 
 impl AvailabilityList {
-    pub fn parse(body: &[u8]) -> AvailabilityList {
-        let value = serde_json::from_slice::<Value>(body).ok();
-        let rows = value.as_ref().and_then(|v| v.get("data")).and_then(Value::as_array).map(|models| {
-            models
-                .iter()
-                .filter_map(|m| {
-                    let id = m.get("id")?.as_str()?;
-                    Some((id.to_string(), m.get("model_eligibility").cloned().unwrap_or(Value::Null)))
-                })
-                .collect()
-        });
+    fn parse(body: &[u8], wanted: &[&str]) -> AvailabilityList {
+        let mut value = serde_json::from_slice::<Value>(body).ok();
         let account = value
             .as_ref()
             .and_then(|v| v.pointer("/request_context_availability/http/status"))
             .and_then(Value::as_str)
             .map(str::to_string);
+        let rows =
+            value.as_mut().and_then(|v| v.get_mut("data")).and_then(Value::as_array_mut).map(|models| {
+                models
+                    .iter_mut()
+                    .filter_map(|m| {
+                        let id = m.get("id")?.as_str().filter(|id| wanted.contains(id))?.to_string();
+                        Some((id, m.get_mut("model_eligibility").map(Value::take).unwrap_or(Value::Null)))
+                    })
+                    .collect()
+            });
         AvailabilityList { rows, account }
     }
 
-    /// The availability of `model`: it must be listed, its `model_eligibility.status`
-    /// `eligible`, and `request_context_availability.http.status` `available` (the
+    /// The availability of `model`, one of the models parsed for: it must be listed,
+    /// its `model_eligibility.status` `eligible`, and `request_context_availability.http.status` `available` (the
     /// REST API reference's rule). A missing model is ineligible; a transient
     /// ineligibility, a verdict for another runtime than `http`, or anything
     /// unreadable is unknown.
-    pub fn of(&self, model: &str) -> Availability {
+    fn of(&self, model: &str) -> Availability {
         let Some(rows) = &self.rows else {
             return Availability::Unknown;
         };
@@ -156,16 +145,15 @@ impl AvailabilityList {
     }
 }
 
-/// [`AvailabilityList::of`] for one model of a body.
-#[cfg(test)]
-fn availability(body: &[u8], model: &str) -> Availability {
-    AvailabilityList::parse(body).of(model)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::catalog::OptionValue;
+
+    /// [`availability`] of one model.
+    fn one(body: &[u8], model: &str) -> Availability {
+        availability(body, &[model]).remove(0)
+    }
 
     #[test]
     fn body_sends_size_and_b64_json_but_never_count() {
@@ -192,15 +180,17 @@ mod tests {
 
     #[test]
     fn error_bodies_are_read_defensively() {
-        let e = WireError::parse(b"<html>bad gateway</html>");
+        let e = parse_error(b"<html>bad gateway</html>");
         assert!(e.message.is_none() && e.kind.is_none());
-        let e = WireError::parse(
-            br#"{"error": {"message": " Rate limit exceeded ", "type": "rate_limit_exceeded"}}"#,
-        );
+        let e =
+            parse_error(br#"{"error": {"message": " Rate limit exceeded ", "type": "rate_limit_exceeded"}}"#);
         assert_eq!(e.message.as_deref(), Some("Rate limit exceeded"));
         assert_eq!(e.kind.as_deref(), Some("rate_limit_exceeded"));
-        let e = WireError::parse(br#"{"error": "plain"}"#);
+        let e = parse_error(br#"{"error": "plain"}"#);
         assert_eq!(e.message.as_deref(), Some("plain"));
+        let e = parse_error(br#"{"error": {"message": "m", "code": 7}}"#);
+        assert_eq!(e.code.as_deref(), Some("7"));
+        assert!(e.is("7"));
     }
 
     #[test]
@@ -210,7 +200,7 @@ mod tests {
             "request_context_availability": {"http": {"status": "unavailable"}}
         }))
         .unwrap();
-        assert!(matches!(availability(&body, "m"), Availability::Ineligible));
+        assert!(matches!(one(&body, "m"), Availability::Ineligible));
     }
 
     #[test]
@@ -223,13 +213,32 @@ mod tests {
             .unwrap()
         };
         let transient = serde_json::json!({"status": "ineligible", "category": "transient", "reason": "x"});
-        assert!(matches!(availability(&body(transient), "m"), Availability::Unknown));
+        assert!(matches!(one(&body(transient), "m"), Availability::Unknown));
         let policy = serde_json::json!({"status": "ineligible", "category": "policy"});
-        assert!(matches!(availability(&body(policy), "m"), Availability::Ineligible));
+        assert!(matches!(one(&body(policy), "m"), Availability::Ineligible));
         let websocket = serde_json::json!({"status": "eligible", "evaluated_runtime": "realtime_websocket"});
-        assert!(matches!(availability(&body(websocket), "m"), Availability::Unknown));
+        assert!(matches!(one(&body(websocket), "m"), Availability::Unknown));
         let http = serde_json::json!({"status": "eligible", "evaluated_runtime": "http"});
-        assert!(matches!(availability(&body(http), "m"), Availability::Eligible));
+        assert!(matches!(one(&body(http), "m"), Availability::Eligible));
+    }
+
+    #[test]
+    fn each_requested_model_is_answered_in_order() {
+        let body = serde_json::to_vec(&serde_json::json!({
+            "data": [
+                {"id": "a", "model_eligibility": {"status": "eligible"}},
+                {"id": "b", "model_eligibility": {"status": "ineligible", "category": "policy"}},
+                {"id": "c", "model_eligibility": {"status": "eligible"}},
+                {"id": 7}, {"model_eligibility": {}}
+            ],
+            "request_context_availability": {"http": {"status": "available"}}
+        }))
+        .unwrap();
+        let answers = availability(&body, &["a", "b", "missing"]);
+        assert!(matches!(
+            answers.as_slice(),
+            [Availability::Eligible, Availability::Ineligible, Availability::Ineligible]
+        ));
     }
 
     #[test]
@@ -242,25 +251,22 @@ mod tests {
             .unwrap()
         };
         assert!(matches!(
-            availability(&body("eligible", "available"), "bfl/flux-3-image-klein"),
+            one(&body("eligible", "available"), "bfl/flux-3-image-klein"),
             Availability::Eligible
         ));
         assert!(matches!(
-            availability(&body("ineligible", "available"), "bfl/flux-3-image-klein"),
+            one(&body("ineligible", "available"), "bfl/flux-3-image-klein"),
             Availability::Ineligible
         ));
         assert!(matches!(
-            availability(&body("eligible", "unavailable"), "bfl/flux-3-image-klein"),
+            one(&body("eligible", "unavailable"), "bfl/flux-3-image-klein"),
             Availability::Ineligible
         ));
         assert!(matches!(
-            availability(&body("unknown", "available"), "bfl/flux-3-image-klein"),
+            one(&body("unknown", "available"), "bfl/flux-3-image-klein"),
             Availability::Unknown
         ));
-        assert!(matches!(
-            availability(&body("eligible", "available"), "bfl/other"),
-            Availability::Ineligible
-        ));
-        assert!(matches!(availability(b"nope", "bfl/flux-3-image-klein"), Availability::Unknown));
+        assert!(matches!(one(&body("eligible", "available"), "bfl/other"), Availability::Ineligible));
+        assert!(matches!(one(b"nope", "bfl/flux-3-image-klein"), Availability::Unknown));
     }
 }

@@ -585,16 +585,18 @@ const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\
 
 #[tokio::test]
 async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warning() {
-    // (name, content, output_format echo, requested --format, kept media type, text the warning names)
+    use iris::providers::TypeExpectation::{Declared, ProviderDefault, Requested};
+    let st = |f: &str| f.to_string();
+    // (name, content, output_format echo, requested --format, kept media type, the statements it contradicts)
     let cases = [
-        ("echo png, bytes jpeg", jpeg(8, 8), Some("png"), None, "image/jpeg", "declared output_format png"),
+        ("echo png, bytes jpeg", jpeg(8, 8), Some("png"), None, "image/jpeg", vec![Declared(st("png"))]),
         (
             "requested webp, bytes png",
             png_rgb(8, 8),
             None,
             Some("webp"),
             "image/png",
-            "asked for output_format webp",
+            vec![Requested(st("webp"))],
         ),
         (
             "echo png matches the bytes, requested jpeg",
@@ -602,7 +604,15 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
             Some("png"),
             Some("jpeg"),
             "image/png",
-            "asked for output_format jpeg",
+            vec![Requested(st("jpeg"))],
+        ),
+        (
+            "requested jpeg, echo jpeg, bytes png",
+            png_rgb(8, 8),
+            Some("jpeg"),
+            Some("jpeg"),
+            "image/png",
+            vec![Requested(st("jpeg")), Declared(st("jpeg"))],
         ),
         (
             "no echo, no format, bytes gif",
@@ -610,10 +620,10 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
             None,
             None,
             "image/gif",
-            "default output_format is png",
+            vec![ProviderDefault(st("png"))],
         ),
     ];
-    for (name, bytes, echo, requested, kept, names) in cases {
+    for (name, bytes, echo, requested, kept, unmet) in cases {
         let server = MockServer::start().await;
         mount(&server, GEN, ok(images_body(&[&bytes], echo))).await;
         let opts = match requested {
@@ -625,13 +635,9 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
         assert_eq!(out.images[0].media_type, kept, "{name}");
         assert_eq!(out.images[0].bytes, bytes, "{name}: kept verbatim");
         assert_eq!(out.provider_request_id.as_deref(), Some("req_ok_123"), "{name}");
-        assert_eq!(out.warnings.len(), 1, "{name}: {:?}", out.warnings);
-        assert_eq!(out.warnings[0].code, "output_format_mismatch", "{name}");
-        let message = &out.warnings[0].message;
-        assert!(message.contains(kept) && message.contains(names), "{name}: {message}");
-        if name.starts_with("echo png matches") {
-            assert!(!message.contains("declared"), "{name}: the met echo is not a complaint: {message}");
-        }
+        // The adapter states the facts on the image; the app phrases the warning.
+        assert!(out.warnings.is_empty(), "{name}: {:?}", out.warnings);
+        assert_eq!(out.images[0].format_mismatch, unmet, "{name}: a met statement is not a complaint");
         assert_eq!(requests(&server).await.len(), 1, "{name}: a paid call is never repeated");
     }
 
@@ -642,8 +648,8 @@ async fn a_valid_image_of_another_type_is_kept_under_its_real_type_with_a_warnin
     let out = generate(&server, options(&[("count", OptionValue::Int(2))])).await.unwrap();
     let types: Vec<&str> = out.images.iter().map(|i| i.media_type.as_str()).collect();
     assert_eq!(types, ["image/png", "image/jpeg"]);
-    assert_eq!(out.warnings.len(), 1, "{:?}", out.warnings);
-    assert!(out.warnings[0].message.contains("response item 1 "), "{}", out.warnings[0].message);
+    assert!(out.images[0].format_mismatch.is_empty());
+    assert_eq!(out.images[1].format_mismatch, [Declared(st("png"))]);
 }
 
 #[tokio::test]

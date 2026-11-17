@@ -228,7 +228,8 @@ and `pricing`:
                  "description": "Number of images to produce in one request (sent as `n`)." } ],
   "constraints": [ { "id": "compression_requires_jpeg_or_webp", "options": ["compression", "format"],
                      "inputs": [], "description": "compression applies only to jpeg or webp output (the default format is png)" } ],
-  "outputs": { "media_types": ["image/png","image/jpeg","image/webp"], "max_count": 10 },
+  "outputs": { "media_types": ["image/png","image/jpeg","image/webp"], "max_count": 10,
+               "exact_size_option": "size" },
   "limits": { "max_prompt_chars": 32000 },
   "pricing": [ { "description": "Text input tokens (prompt)", "unit": "1M text input tokens",
                  "usd": 5.0, "source_url": "https://developers.openai.com/api/docs/pricing",
@@ -248,7 +249,7 @@ and `pricing`:
 | `inputs` | Accepted input images: their number, media types, and size in bytes; whether the model takes a mask (`mask_requirements` is `null` if not); first and last frames; reference images; and `max_request_bytes`, the documented limit on a whole request that carries its inputs inline, or `null`. Iris checks an upper bound of the encoded request size against it before sending. |
 | `options` | Every option the model accepts. See [Options](#options). |
 | `constraints` | Rules that relate several options or inputs, each with an `id`, the `options` and `inputs` that it involves, and a `description`. Iris enforces every listed rule: a request that breaks one fails with `invalid_argument`, with the rule's ID in `details.constraint`. |
-| `outputs` | The media types that the model returns, and the most outputs per request. |
+| `outputs` | The media types that the model returns, and the most outputs per request. `exact_size_option` names the option whose `WxH` value is the exact pixel size of every image, such as `size`, or is `null`. When it's set, Iris checks each saved image against that option's value, and warns with `output_size_mismatch` when they differ. |
 | `limits` | Other limits, such as `max_prompt_chars`. |
 | `pricing` | The published prices, each with a `description`, a `unit`, the price in `usd`, a `source_url`, and the date checked (`as_of`). |
 | `access` | The API key variable and whether it's set, the documented access `requirements`, and `account_access`. |

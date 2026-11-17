@@ -636,6 +636,59 @@ fn a_mislabeled_or_unlabeled_gemini_image_is_saved_under_its_real_type() {
     }
 }
 
+/// A minimal valid GIF (1x1): a type no image model in the catalog declares.
+const GIF_1X1: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\xff\xff\x00\x00\x00\x21\xf9\x04\x01\x00\x00\x00\x00\x2c\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02\x44\x01\x00\x3b";
+
+/// One image gets one type warning, whichever provider returned it: a GIF where PNG
+/// was asked for or labeled is `output_format_mismatch` as in 0.1.0, and the message
+/// adds that the model isn't declared to return GIF; no `output_type_undeclared` too.
+#[test]
+fn an_image_of_an_undeclared_type_gets_one_type_warning() {
+    let openai =
+        json!({"created": 1_790_000_000, "data": [{"b64_json": b64(GIF_1X1)}], "output_format": "png"});
+    let sb_openai = Sandbox::new();
+    let api_openai = MockApi::start();
+    api_openai.on("POST", OPENAI_GENERATIONS, json_response(200, openai));
+    // The 1x1 GIF is not the requested 1024x1024 either, which is its own warning.
+    let openai_out = sb_openai
+        .iris()
+        .openai(&api_openai)
+        .expect_size_mismatch()
+        .args([
+            "image",
+            "generate",
+            "-m",
+            OPENAI_IMAGE_MODEL,
+            PROMPT,
+            "--size",
+            "1024x1024",
+            "--quality",
+            "low",
+        ])
+        .args(["-o", "o.png", "--json"])
+        .run();
+    let (sb_gemini, api_gemini, gemini_out) =
+        gemini_run(gemini_parts(json!([inline_part("image/png", GIF_1X1)])), &["-o", "g.png"]);
+    for (name, sb, api, out) in
+        [("openai", sb_openai, api_openai, openai_out), ("gemini", sb_gemini, api_gemini, gemini_out)]
+    {
+        let v = out.ok();
+        assert_eq!(api.total(), 1, "{name}");
+        assert_eq!(artifacts(&v)[0]["media_type"], "image/gif", "{name}: kept under its real type");
+        let types: Vec<&Value> = v["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|w| w["code"] == "output_format_mismatch" || w["code"] == "output_type_undeclared")
+            .collect();
+        assert_eq!(types.len(), 1, "{name}: one type warning per image: {v}");
+        assert_eq!(types[0]["code"], "output_format_mismatch", "{name}: {v}");
+        let message = types[0]["message"].as_str().unwrap();
+        assert!(message.contains("is not declared to return"), "{name}: {message}");
+        assert_eq!(files_in(&sb.work()).len(), 1, "{name}");
+    }
+}
+
 #[test]
 fn an_image_that_cannot_be_saved_where_requested_is_kept_in_the_state_directory() {
     let sb = Sandbox::new();

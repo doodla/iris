@@ -13,11 +13,18 @@ All notable changes to this project are documented in this file. The format foll
   The Vercel AI Gateway model has it, because Vercel's docs don't say which models its free tier
   covers. `paid` keeps its meaning, with no free tier. See
   [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
-- **Saved images are checked against the catalog.** Iris warns with `output_type_undeclared` when
-  a saved output's type isn't one that `models show` lists for the model, and with
-  `output_size_mismatch` when an image's pixel size differs from the `--size` that you asked for
-  (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. See
+- **Returned images are checked against the catalog.** Iris warns with `output_type_undeclared`
+  when a returned image's type isn't one that `models show` lists for the model, and with
+  `output_size_mismatch` when a saved image's pixel size differs from the `--size` that you asked
+  for (the GPT Image and Vercel AI Gateway models). Iris keeps the image either way. An image that
+  already gets `output_format_mismatch` gets no `output_type_undeclared` as well: the mismatch
+  message says that the type is undeclared. See
   [Errors](https://github.com/doodla/iris/blob/main/docs/reference/errors.md#warning-codes).
+- **`models show` names the exact-size option.** `outputs.exact_size_option` names the option whose
+  `WxH` value is the exact pixel size of every image, such as `size`, or is `null`. When it's set,
+  Iris checks each saved image against it (`output_size_mismatch`), so an agent can tell before a
+  request whether `--size` is enforced. See
+  [JSON output](https://github.com/doodla/iris/blob/main/docs/reference/json-output.md).
 - **Vercel AI Gateway provider.** `iris image generate` can run Black Forest Labs' FLUX 3 Image
   Klein (`-m bfl/flux-3-image-klein`) through the Vercel AI Gateway, with the key in
   `AI_GATEWAY_API_KEY` and the base URL in `IRIS_VERCEL_BASE_URL` or `[providers.vercel]`. `--size`
@@ -37,6 +44,11 @@ All notable changes to this project are documented in this file. The format foll
 
 ### Changed
 
+- **One wording for `output_format_mismatch`.** Iris now phrases the warning the same way for every
+  provider, from what the request asked for and what the response stated, such as "OpenAI returned
+  response item 0 as image/png, but the request asked for format jpeg". It comes after the
+  provider's other warnings about the response, instead of among them. When it's emitted is
+  unchanged.
 - **Each provider's catalog date.** `models show` reports each provider's own `catalog_as_of`
   date, so the Vercel model shows the day it was checked. The other models keep their date.
 - **Access checks say what they checked.** `models show --check-access` adds
